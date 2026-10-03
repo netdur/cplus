@@ -1,0 +1,156 @@
+// Native property/event checks; HTTP is only used by the external keyboard driver.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/text" as text;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/text_field" as field;
+import "facet/text_area" as area;
+import "facet/web" as web;
+import "facet/list" as list;
+import "facet/collection" as collection;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet/component" as component;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/record" as record;
+import "facet_agent_winui/facet_agent_winui" as connector;
+import "agent_mcp/agent_mcp" as mcp;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+extern fn fflush(p: *u8) -> i32;
+fn log(message: str) {io::println(message);let f: i32=fflush(0 as *u8);}
+fn must[T](take value: result::Result[T,rt::Error]) -> T {
+    match value {result::Result::Ok(v)=>{return v;},result::Result::Err(e)=>{io::println("native error ${e.code}");assert false;}}
+    return #zero::[T]();
+}
+fn node(key: str) -> *core::Node {
+    return match mount::find(key) {option::Option::Some(v)=>v,option::Option::None=>{assert false;0 as *core::Node}};
+}
+fn object(key: str) -> rt::Object {return (*(core::view_of(node(key)) as *record::View)).object.clone();}
+fn address(name: str) -> text::Text {return match env::var(name) {option::Option::Some(v)=>v,option::Option::None=>{assert false;text::new()}};}
+fn browser() -> web::Web {return match web::find("web") {option::Option::Some(v)=>v,option::Option::None=>{assert false;#zero::[web::Web]()}};}
+fn bind_row(index: usize,n: *core::Node,ctx: *u8) {assert ctx!=0 as *u8;let p: *Probe=ctx as *Probe;(*p).bindings=(*p).bindings+1;}
+struct Probe {thresholds: i32,step: i32,starts: i32,submits: i32,selections: i32,list_taps: i32,list_selections: i32,grid_selections: i32,scrolled: i32,bindings: i32,web_done: bool,passed: bool,timer: services::Cancellable,ticks: i32}
+impl Probe {
+    fn threshold(ref this,sender: *u8) {
+        assert component::key_of(sender)=="grid";this.thresholds=this.thresholds+1;
+        if this.thresholds==1 {let p: *props::CollectionProps=(*core::node_data(node("grid"))).props as *props::CollectionProps;(*p).count=24;core::touch(node("grid"),collection::P_COUNT);}
+        else if this.thresholds==2 {let old=mount::replace("grid",ui::label("Threshold callback removed grid",key:"grid").height(96.0f64));}
+        else {assert false;}
+    }
+    fn list_row(ref this,index: usize) -> core::Node {return ui::label("List ${index}",key:"list-row-${index}").height(32.0f64);}
+    fn grid_row(ref this,index: usize) -> core::Node {return ui::label("Grid ${index}",key:"grid-row-${index}").height(80.0f64);}
+    fn list_selected(ref this,sender: *u8) {assert component::key_of(sender)=="list";this.list_selections=this.list_selections+1;log("LIST SELECT ${this.list_selections}");}
+    fn list_tapped(ref this,sender: *u8) {this.list_taps=this.list_taps+1;log("LIST TAP ${this.list_taps}");}
+    fn grid_selected(ref this,sender: *u8) {assert component::key_of(sender)=="grid";this.grid_selections=this.grid_selections+1;log("GRID SELECT ${this.grid_selections}");}
+    fn grid_scrolled(ref this,sender: *u8) {this.scrolled=this.scrolled+1;}
+    fn submit(ref this,sender: *u8) {
+        let key: text::Text=component::key_of(sender);this.submits=this.submits+1;
+        log("SUBMIT ${key}");
+    }
+    fn selection(ref this,sender: *u8) {this.selections=this.selections+1;log("SELECTION area");}
+    fn navigating(ref this,sender: *u8) {this.starts=this.starts+1;}
+    fn navigated(ref this,sender: *u8) {
+        let current: web::Web=browser();let source: text::Text=text::from_str(current.source());
+        log("PARITY: navigation step ${this.step}: ${source}");
+        if this.step==0 && source=="about:blank" {return;}
+        let view: native::IWebView2=must::[native::IWebView2](native::IWebView2::query(object("web")));
+        let engine: native::ICoreWebView2=must::[native::ICoreWebView2](native::ICoreWebView2::query(must::[rt::Object](view.core_web_view2())));
+        let settings: native::ICoreWebView2Settings2=must::[native::ICoreWebView2Settings2](native::ICoreWebView2Settings2::query(must::[rt::Object](engine.settings())));
+        if this.step==0 {
+            assert source.contains("first.html");assert must::[text::Text](settings.user_agent())=="FacetParity/1";
+            this.step=1;let changed: web::Web=current.set_user_agent("").set_source(address("CPLUS_PARITY_SECOND"));return;
+        }
+        if this.step==1 {
+            assert source.contains("second.html");assert current.can_go_back();assert must::[text::Text](settings.user_agent())!="FacetParity/1";
+            this.step=2;let changed: web::Web=current.go_back();return;
+        }
+        if this.step==2 {assert source.contains("first.html");assert current.can_go_forward();this.step=3;let changed: web::Web=current.go_forward();return;}
+        if this.step==3 {assert source.contains("second.html");this.step=4;let changed: web::Web=current.reload();return;}
+        if this.step==4 {assert source.contains("second.html");this.step=5;let changed: web::Web=current.eval("location.href='third.html'");return;}
+        if this.step==5 {assert source.contains("third.html");assert this.starts>=6;this.step=6;this.web_done=true;log("PASS: browser history, reload, script, user-agent reset and navigation callbacks");}
+    }
+    fn build(ref this) -> core::Node {
+        return @ui {row(key:"root") {column {
+            text_field("ab😀cd",key:"input",cursor_position:2,selection_length:2,on_submit:this.submit).height(40.0f64)
+            search_field("search",key:"search",on_submit:this.submit).height(40.0f64)
+            text_area("alpha beta",key:"area",on_submit:this.submit).height(80.0f64)
+            list(key:"list",count:20,row:this.list_row,bind:bind_row,row_height:32,selection_mode:vocab::SelectionMode::Single,on_item_selected:this.list_selected,on_item_tapped:this.list_tapped).height(112.0f64)
+            collection(key:"grid",count:12,remaining_threshold:2,on_remaining_items_threshold_reached:this.threshold,row:this.grid_row,bind:bind_row,columns:2,selection_mode:vocab::SelectionMode::Multiple,on_selection_changed:this.grid_selected,observe_scrolled:this.grid_scrolled).height(96.0f64)
+        }.width(400.0f64).gap(8.0f64)
+            web(address("CPLUS_PARITY_FIRST"),key:"web",user_agent:"FacetParity/1",on_navigating:this.navigating,on_navigated:this.navigated).width(350.0f64).height(400.0f64)
+        }.padding(16.0f64).gap(8.0f64)};
+    }
+    fn ready(ref this) {
+        log("PARITY: host loaded");
+        let editor: native::ITextBox=must::[native::ITextBox](native::ITextBox::query(object("input")));
+        let initial_start: i32=must::[i32](editor.selection_start());let initial_length: i32=must::[i32](editor.selection_length());
+        log("PARITY: initial selection ${initial_start}, ${initial_length}");
+        assert initial_start==2;assert initial_length==2;
+        if let option::Option::Some(v)=field::find("input") {let updated: field::TextField=v.set_cursor_position(100).set_selection_length(100);} else {assert false;}
+        if let option::Option::Some(v)=area::find("area") {let updated: area::TextArea=v.set_on_selection_changed(this.selection);} else {assert false;}
+        this.timer=services::after(0.1f64,this.inspect_selection);
+    }
+    fn inspect_selection(ref this) {
+        let editor: native::ITextBox=must::[native::ITextBox](native::ITextBox::query(object("input")));
+        let live_start: i32=must::[i32](editor.selection_start());let live_length: i32=must::[i32](editor.selection_length());
+        log("PARITY: updated selection ${live_start}, ${live_length}");
+        assert live_start==6;assert live_length==0;
+        let multiline: native::ITextBox=must::[native::ITextBox](native::ITextBox::query(object("area")));
+        assert multiline.select(2,3).is_ok();
+        this.timer=services::after(0.1f64,this.selection_delivered);
+    }
+    fn selection_delivered(ref this) {
+        assert this.selections==1;
+        if let option::Option::Some(v)=area::find("area") {assert v.cursor_position()==2;assert v.selection_length()==3;} else {assert false;}
+        log("PASS: UTF-16 selection, clamping and selection-only event/readback");
+        let port: u16=mcp::loopback_port(mcp::current_pid());log("PARITY INPUT READY ${port}");
+        this.timer=services::after(0.1f64,this.poll);
+    }
+    fn poll(ref this) {
+        this.ticks=this.ticks+1;assert this.ticks<500;
+        if this.web_done && this.submits==3 && this.list_taps==3 && this.grid_selections==3 {
+            assert this.thresholds==0;assert this.list_selections==2;
+            let lp: *props::ListProps=(*core::node_data(node("list"))).props as *props::ListProps;
+            let gp: *props::CollectionProps=(*core::node_data(node("grid"))).props as *props::CollectionProps;
+            assert (*lp).selected_index==1;assert (*lp).selection.count()==1;
+            assert (*gp).selection.count()==1;assert (*gp).selection.has(1);
+            log("PASS: real list and collection selection, toggling and tap callbacks");
+            (*gp).items_view.scroll_to_index=8;core::touch(node("grid"),collection::P_SCROLL_TO);
+            this.timer=services::after(0.3f64,this.finish);return;
+        }
+        this.timer=services::after(0.1f64,this.poll);
+    }
+    fn finish(ref this) {
+            let scroll: native::IScrollViewer=must::[native::IScrollViewer](native::IScrollViewer::query(object("grid")));
+            assert must::[f64](scroll.vertical_offset())>0.0f64;assert this.scrolled>0;
+            assert this.bindings>0;
+            log("PASS: collection scroll-to and scroll notification");
+            assert this.thresholds==1;let p: *props::CollectionProps=(*core::node_data(node("grid"))).props as *props::CollectionProps;assert (*p).count==24;
+            (*p).items_view.remaining_threshold=-1;(*p).items_view.scroll_to_index=23;core::touch(node("grid"),0xffffffffffffffffu64);
+            this.timer=services::after(0.3f64,this.threshold_disabled);
+    }
+    fn threshold_disabled(ref this) {
+        assert this.thresholds==1;let p: *props::CollectionProps=(*core::node_data(node("grid"))).props as *props::CollectionProps;
+        (*p).items_view.remaining_threshold=0;core::touch(node("grid"),0xffffffffffffffffu64);this.timer=services::after(0.3f64,this.threshold_finished);
+    }
+    fn threshold_finished(ref this) {
+        assert this.thresholds==2;assert core::kind_of(node("grid"))==props::K_LABEL;
+        log("PASS: visible-item threshold, append, suppression, re-enable and callback removal");
+        this.passed=true;log("PASS: real keyboard submits input/search and Ctrl+Enter submits multiline");assert host::close().is_ok();
+    }
+
+}
+fn run() -> i32 {
+    let owner: box::Box[Probe]=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};
+    let p: *Probe=owner.ptr();connector::enable("facet-winui-parity");
+    let status: rt::Status=host::run((*p).build(),"Facet WinUI parity",on_ready:(*p).ready);
+    assert status.is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;
+    connector::disable();log("PASS: parity teardown");return 0;
+}

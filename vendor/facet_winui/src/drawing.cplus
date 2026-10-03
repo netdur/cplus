@@ -2,6 +2,7 @@ import "winui/winui" as ui;
 import "winrt/runtime" as rt;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/canvas" as canvas;
 import "facet/vocabulary" as vocab;
 import "./native" as native;
 import "./style" as style;
@@ -31,8 +32,13 @@ fn place(value: rt::Object,b: vocab::Rect) {
     let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));native::check(element.set_width(b.width));native::check(element.set_height(b.height));
     let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left(value,b.x));native::check(canvas.set_top(value,b.y));return;
 }
+fn apply(r: *record::View) {
+    if (core::dirty_of((*r).node)&(canvas::P_DRAWABLE|canvas::P_REDRAW))!=0 {(*r).draw_pending=true;}
+}
 fn render(r: *record::View,width: f64,height: f64) {
     if width<=0.0f64 || height<=0.0f64 {return;}
+    if !(*r).draw_pending && (*r).draw_width==width && (*r).draw_height==height {return;}
+    (*r).draw_pending=false;(*r).draw_width=width;(*r).draw_height=height;
     let p: *props::CanvasProps=(*core::node_data((*r).node)).props as *props::CanvasProps;
     var commands: vocab::Canvas=vocab::Canvas::of(vocab::Size {width:width,height:height});
     (*p).drawable.draw(#addr_of(commands),vocab::Rect::of(0.0f64,0.0f64,width,height),(*p).drawable.ctx);
@@ -62,7 +68,7 @@ fn render(r: *record::View,width: f64,height: f64) {
         if !value.is_null() {
             if shape {let s: ui::IShape=native::must::[ui::IShape](ui::IShape::query(value));if filled {native::check(s.set_fill(fill));} else {native::check(s.set_stroke(stroke));native::check(s.set_stroke_thickness(stroke_width));}}
             if positioned {place(value,c.bounds);}
-            let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(value));native::check(element.set_opacity(opacity));native::check(children.append(value));
+            let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(value));native::check(element.set_is_hit_test_visible(false));native::check(element.set_opacity(opacity));native::check(children.append(value));
         }
         i=i+1;
     }

@@ -1,0 +1,52 @@
+// Owned Facet subtrees used as native TreeViewNode content.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/tree" as tree;
+import "flex_layout/flex_layout" as flex;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./record" as record;
+import "./native" as native;
+struct Row {node: core::Node,canvas: rt::Object,token: ui::EventRegistrationToken,opaque host: *record::View,id: text::Text,kind: usize,depth: usize,height: f64}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn context(own: *u8,shared: *u8) -> *u8 {return if own.is_not_null() {own} else {shared};}
+fn lookup(model: *tree::TreeNode,id: str) -> *tree::TreeNode {
+    if (*model).id.view()==id {return model;}var i: usize=0;while i<(*model).child_count() {match (*model).child_ptr(i) {option::Option::Some(child)=>{let found=lookup(child,id);if found.is_not_null() {return found;}},option::Option::None=>{}}i=i+1;}return 0 as *tree::TreeNode;
+}
+fn item(ctx: *u8) -> *u8 {let row=ctx as *Row;let p=(*core::node_data((*(*row).host).node)).props as *tree::TreeProps;return lookup(#addr_of((*p).root),(*row).id.view()) as *u8;}
+fn shape(p: *tree::TreeProps,model: *tree::TreeNode) -> usize {return (*p).row_kind(model,context((*p).row_kind_ctx,(*p).ctx));}
+fn children(row: *Row) -> ui::IVector_Microsoft_UI_Xaml_UIElement {let panel=native::must::[ui::IPanel](ui::IPanel::query((*row).canvas));return native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));}
+fn sized(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {let row=ctx as *Row;core::touch((*(*row).host).node,0u64);return rt::Status {code:0};}
+fn realise(row: *Row,model: *tree::TreeNode,p: *tree::TreeProps) {
+    let n=#addr_of((*row).node);
+    if (*p).bind!=tree::no_bind {(*p).bind(model,context((*p).bind_ctx,(*p).ctx),n);}
+    let view=mount::realise(n) as *record::View;assert view.is_not_null();(*view).parent=(*row).host as *u8;(*view).item_reader=item;(*view).item_context=row as *u8;
+    native::check(children(row).append((*view).object));
+}
+fn create(host: *record::View,model: *tree::TreeNode,p: *tree::TreeProps,depth: usize) -> *Row {
+    let canvas=native::must::[ui::Canvas](ui::Canvas::new());
+    let owner=match box::new::[Row](Row {node:(*p).row(model,context((*p).row_ctx,(*p).ctx)),canvas:canvas.object(),token:#zero::[ui::EventRegistrationToken](),host:host,id:text::from_str((*model).id.view()),kind:shape(p,model),depth:depth,height:-1.0f64}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return 0 as *Row;}};
+    let row=owner.ptr();realise(row,model,p);
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(canvas.object()));let callback=native::must::[ui::SizeChangedEventHandler](ui::SizeChangedEventHandler::new(sized,row as *u8));(*row).token=native::must::[ui::EventRegistrationToken](element.add_size_changed(callback.object()));LIVE=LIVE+1;return owner.into_raw() as *Row;
+}
+fn refresh(row: *Row,model: *tree::TreeNode,p: *tree::TreeProps,rebuild: bool) {
+    let kind=shape(p,model);
+    if rebuild || kind!=(*row).kind {
+        native::check(children(row).clear());mount::unrealise(#addr_of((*row).node));
+        (*row).node=(*p).row(model,context((*p).row_ctx,(*p).ctx));(*row).kind=kind;realise(row,model,p);
+    } else if (*p).bind!=tree::no_bind {(*p).bind(model,context((*p).bind_ctx,(*p).ctx),#addr_of((*row).node));}
+}
+fn place(row: *Row,width: f64,height: i64,layout: fn(*core::Node,f64,f64)->f64) {
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*row).canvas));let actual=native::must::[f64](element.actual_width());
+    let available=if actual>0.0f64 {actual} else {width-40.0f64-(*row).depth as f64*16.0f64};
+    mount::sync_from(#addr_of((*row).node));let result=layout(#addr_of((*row).node),if available>0.0f64 {available} else {1.0f64},if height>0 {if height>4 {height as f64-4.0f64} else {1.0f64}} else {flex::undefined()});
+    if result!=(*row).height {native::check(element.set_height(result));(*row).height=result;}
+}
+fn release(row: *Row) {
+    if row.is_null() {return;}let owner: box::Box[Row]=box::from_raw::[Row](row as *u8);
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*row).canvas));native::check(element.remove_size_changed((*row).token));LIVE=LIVE-1;mount::unrealise(#addr_of((*row).node));
+}

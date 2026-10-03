@@ -6,11 +6,15 @@ import "facet/text_button" as text_button;
 import "facet/vocabulary" as vocab;
 import "./native" as native;
 import "./style" as style;
+import "./typography" as typography;
 import "./record" as record;
+import "./sliding" as sliding;
+import "./progressing" as progressing;
+import "./choice_colors" as choice_colors;
 static LIVE: i64=0;
-fn subscriptions() -> i64 {return LIVE;}
+fn subscriptions() -> i64 {return LIVE+sliding::subscriptions()+progressing::subscriptions();}
 fn supports(k: u32) -> bool {return k==props::K_CHECKBOX || k==props::K_TOGGLE || k==props::K_RADIO || k==props::K_SLIDER || k==props::K_STEPPER || k==props::K_PROGRESS || k==props::K_SPINNER || k==text_button::K_TEXT_BUTTON;}
-fn create(k: u32) -> rt::Object {
+fn create(k: u32,n: *core::Node) -> rt::Object {
     if k==props::K_CHECKBOX {let v: ui::CheckBox=native::must::[ui::CheckBox](ui::CheckBox::new());return v.object();}
     if k==props::K_TOGGLE {let v: ui::ToggleSwitch=native::must::[ui::ToggleSwitch](ui::ToggleSwitch::new());return v.object();}
     if k==props::K_RADIO {let v: ui::RadioButton=native::must::[ui::RadioButton](ui::RadioButton::new());return v.object();}
@@ -18,9 +22,27 @@ fn create(k: u32) -> rt::Object {
     if k==props::K_STEPPER {let v: ui::NumberBox=native::must::[ui::NumberBox](ui::NumberBox::new());return v.object();}
     if k==props::K_PROGRESS {let v: ui::ProgressBar=native::must::[ui::ProgressBar](ui::ProgressBar::new());return v.object();}
     if k==props::K_SPINNER {let v: ui::ProgressRing=native::must::[ui::ProgressRing](ui::ProgressRing::new());return v.object();}
+    let p: *text_button::TextButtonProps=(*core::node_data(n)).props as *text_button::TextButtonProps;
+    if (*p).toggles {let v=native::must::[ui::ToggleButton](ui::ToggleButton::new());return v.object();}
     let v: ui::Button=native::must::[ui::Button](ui::Button::new());return v.object();
 }
 fn boxed(value: bool) -> rt::Object {let f: ui::IPropertyValueStatics=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());return native::must::[rt::Object](f.create_boolean(value));}
+fn is_checked(value: rt::Object) -> bool {
+    let v=native::must::[ui::IToggleButton](ui::IToggleButton::query(value));let raw=native::must::[rt::Object](v.is_checked());
+    if raw.is_null() {return false;}let reference=native::must::[ui::IReference_Bool](ui::IReference_Bool::query(raw));return native::must::[bool](reference.value());
+}
+// Native TogglePattern changes IsChecked without raising Click. Subscribe to
+// its state events for toggles, and suppress renderer-authored writes in the
+// caller's handler. This gives pointer, keyboard and automation one callback.
+fn click_attach(r: *record::View,toggles: bool,callback: fn(rt::Object,rt::Object,*u8)->rt::Status) {
+    let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(callback,r as *u8));
+    if toggles {let v=native::must::[ui::IToggleButton](ui::IToggleButton::query((*r).object));(*r).token=native::must::[ui::EventRegistrationToken](v.add_checked(handler.object()));(*r).token2=native::must::[ui::EventRegistrationToken](v.add_unchecked(handler.object()));LIVE=LIVE+2;}
+    else {let v=native::must::[ui::IButtonBase](ui::IButtonBase::query((*r).object));(*r).token=native::must::[ui::EventRegistrationToken](v.add_click(handler.object()));LIVE=LIVE+1;}
+}
+fn click_release(r: *record::View,toggles: bool) {
+    if toggles {let v=native::must::[ui::IToggleButton](ui::IToggleButton::query((*r).object));native::check(v.remove_checked((*r).token));native::check(v.remove_unchecked((*r).token2));LIVE=LIVE-2;}
+    else {let v=native::must::[ui::IButtonBase](ui::IButtonBase::query((*r).object));native::check(v.remove_click((*r).token));LIVE=LIVE-1;}
+}
 fn content(value: rt::Object,title: str) {
     let f: ui::IPropertyValueStatics=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());
     let control: ui::IContentControl=native::must::[ui::IContentControl](ui::IContentControl::query(value));native::check(control.set_content(native::must::[rt::Object](f.create_string(title))));return;
@@ -31,17 +53,63 @@ fn apply(r: *record::View) {
     if k==props::K_CHECKBOX || k==props::K_RADIO {
         let button: ui::IToggleButton=native::must::[ui::IToggleButton](ui::IToggleButton::query(value));
         let on: bool=if k==props::K_CHECKBOX {(*(raw as *props::CheckboxProps)).on} else {(*(raw as *props::RadioProps)).on};native::check(button.set_is_checked(boxed(on)));
-        if k==props::K_RADIO {let p: *props::RadioProps=raw as *props::RadioProps;let radio: ui::IRadioButton=native::must::[ui::IRadioButton](ui::IRadioButton::query(value));native::check(radio.set_group_name((*p).group.view()));content(value,(*p).text.view());}
+        if k==props::K_RADIO {let p: *props::RadioProps=raw as *props::RadioProps;let radio: ui::IRadioButton=native::must::[ui::IRadioButton](ui::IRadioButton::query(value));native::check(radio.set_group_name((*p).group.view()));content(value,typography::transformed((*p).text.view(),(*p).text_transform).view());}
     }
     if k==props::K_TOGGLE {let p: *props::ToggleProps=raw as *props::ToggleProps;let v: ui::IToggleSwitch=native::must::[ui::IToggleSwitch](ui::IToggleSwitch::query(value));native::check(v.set_is_on((*p).on));}
     if k==props::K_SLIDER || k==props::K_PROGRESS {
         let range: ui::IRangeBase=native::must::[ui::IRangeBase](ui::IRangeBase::query(value));
-        if k==props::K_SLIDER {let p: *props::SliderProps=raw as *props::SliderProps;native::check(range.set_maximum((*p).maximum));native::check(range.set_minimum((*p).minimum));native::check(range.set_value((*p).value));native::check(range.set_small_change(((*p).maximum-(*p).minimum)/100.0f64));}
-        else {let p: *props::ProgressProps=raw as *props::ProgressProps;native::check(range.set_maximum(1.0f64));native::check(range.set_value((*p).progress));}
+        if k==props::K_SLIDER {let p: *props::SliderProps=raw as *props::SliderProps;native::check(range.set_maximum((*p).maximum));native::check(range.set_minimum((*p).minimum));native::check(range.set_value((*p).value));let increment=if (*p).maximum>(*p).minimum {((*p).maximum-(*p).minimum)/100.0f64} else {1.0f64};native::check(range.set_small_change(increment));
+            // SmallChange controls keyboard input; pointer snapping and tooltip
+            // precision use StepFrequency independently (native default is 1).
+            let slider=native::must::[ui::ISlider](ui::ISlider::query(value));native::check(slider.set_step_frequency(increment));
+            // The native template binds its normal-state tracks to these brushes.
+            // Keep WinUI's pointer/pressed/disabled visual-state feedback.
+            let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());
+            if (*p).minimum_track_color.is_set() {native::check(control.set_foreground(style::brush((*p).minimum_track_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.foreground_property()));}
+            if (*p).maximum_track_color.is_set() {native::check(control.set_background(style::brush((*p).maximum_track_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.background_property()));}}
+        else {let p: *props::ProgressProps=raw as *props::ProgressProps;native::check(range.set_maximum(1.0f64));progressing::apply(r);
+            let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());if (*p).progress_color.is_set() {native::check(control.set_foreground(style::brush((*p).progress_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.foreground_property()));}}
     }
     if k==props::K_STEPPER {let p: *props::StepperProps=raw as *props::StepperProps;let v: ui::INumberBox=native::must::[ui::INumberBox](ui::INumberBox::query(value));native::check(v.set_maximum((*p).maximum));native::check(v.set_minimum((*p).minimum));native::check(v.set_small_change((*p).increment));native::check(v.set_value((*p).value));native::check(v.set_spin_button_placement_mode(ui::number_box_spin_button_placement_mode_inline));}
     if k==props::K_SPINNER {let p: *props::SpinnerProps=raw as *props::SpinnerProps;let v: ui::IProgressRing=native::must::[ui::IProgressRing](ui::IProgressRing::query(value));native::check(v.set_is_active((*p).is_running));let size: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));native::check(size.set_max_width(24.0f64));native::check(size.set_max_height(24.0f64));native::check(control.set_foreground(style::brush((*p).color)));}
-    if k==text_button::K_TEXT_BUTTON {let p: *text_button::TextButtonProps=raw as *text_button::TextButtonProps;content(value,(*p).title.view());native::check(control.set_background(style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.0f64))));native::check(control.set_border_thickness(ui::Thickness {left:0.0f64,top:0.0f64,right:0.0f64,bottom:0.0f64}));if (*p).text_color.is_set() {native::check(control.set_foreground(style::brush((*p).text_color)));}if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));}}
+    if k==props::K_RADIO {
+        let p: *props::RadioProps=raw as *props::RadioProps;
+        let defaults: ui::IControlStatics=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());
+        if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
+        native::check(control.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](control.font_size()))));
+        native::check(control.set_font_weight(style::weight((*p).font_weight)));
+        native::check(control.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));
+        native::check(control.set_is_text_scale_factor_enabled((*p).font_scales));
+        if (*p).font_family.is_empty() {typography::clear(value,native::must::[rt::Object](defaults.font_family_property()));} else {native::check(control.set_font_family(typography::font((*p).font_family.view())));}
+        if (*p).text_color.is_set() {native::check(control.set_foreground(style::brush((*p).text_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.foreground_property()));}
+    }
+    if k==text_button::K_TEXT_BUTTON {
+        let p: *text_button::TextButtonProps=raw as *text_button::TextButtonProps;
+        if (*p).toggles {let toggle=native::must::[ui::IToggleButton](ui::IToggleButton::query(value));native::check(toggle.set_is_checked(boxed((*p).on)));}
+        let defaults: ui::IControlStatics=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());
+        if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
+        native::check(control.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](control.font_size()))));
+        native::check(control.set_font_weight(style::weight((*p).font_weight)));
+        native::check(control.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));
+        native::check(control.set_is_text_scale_factor_enabled((*p).font_scales));
+        if (*p).font_family.is_empty() {typography::clear(value,native::must::[rt::Object](defaults.font_family_property()));} else {native::check(control.set_font_family(typography::font((*p).font_family.view())));}
+        if (*p).text_color.is_set() {native::check(control.set_foreground(style::brush((*p).text_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.foreground_property()));}
+        if (*r).content.is_null() {
+            let label=native::must::[ui::TextBlock](ui::TextBlock::new());(*r).content=label.object();
+            let host=native::must::[ui::IContentControl](ui::IContentControl::query(value));native::check(host.set_content((*r).content));
+        }
+        let label=native::must::[ui::ITextBlock](ui::ITextBlock::query((*r).content));native::check(label.set_text(typography::transformed((*p).title.view(),(*p).text_transform).view()));typography::breaking(label,(*p).line_break);
+        native::check(label.set_text_alignment(typography::alignment((*p).text_align)));
+        native::check(label.set_text_decorations(typography::decoration((*p).text_decoration)));
+        native::check(control.set_horizontal_content_alignment(ui::horizontal_alignment_stretch));
+        native::check(control.set_background(style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.0f64))));
+        let width=if (*p).bordered && (*p).border_width>0.0f64 {(*p).border_width} else {0.0f64};
+        native::check(control.set_border_thickness(ui::Thickness {left:width,top:width,right:width,bottom:width}));
+        if (*p).border_color.is_set() {native::check(control.set_border_brush(style::brush((*p).border_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.border_brush_property()));}
+        native::check(control.set_corner_radius(style::corners((*p).corner_radius)));
+    }
+    if k==props::K_SLIDER {sliding::apply(r);}
+    if k==props::K_TOGGLE || k==props::K_CHECKBOX || k==props::K_RADIO {choice_colors::apply(r);}
     (*r).applying=false;(*(*r).node).mark_content_changed();return;
 }
 fn changed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
@@ -57,28 +125,30 @@ fn changed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     if k==props::K_TOGGLE {let p: *props::ToggleProps=raw as *props::ToggleProps;let v: ui::IToggleSwitch=native::must::[ui::IToggleSwitch](ui::IToggleSwitch::query(sender));let on: bool=native::must::[bool](v.is_on());if on==(*p).on {return rt::Status {code:0};};(*p).on=on;call=(*p).on_toggled;ctx=(*p).on_toggled_ctx;}
     if k==props::K_SLIDER {let p: *props::SliderProps=raw as *props::SliderProps;let v: ui::IRangeBase=native::must::[ui::IRangeBase](ui::IRangeBase::query(sender));let value: f64=native::must::[f64](v.value());if value==(*p).value {return rt::Status {code:0};};(*p).value=value;call=(*p).on_value_changed;ctx=(*p).on_value_changed_ctx;}
     if k==props::K_STEPPER {let p: *props::StepperProps=raw as *props::StepperProps;let v: ui::INumberBox=native::must::[ui::INumberBox](ui::INumberBox::query(sender));let value: f64=native::must::[f64](v.value());if value==(*p).value {return rt::Status {code:0};};(*p).value=value;call=(*p).on_value_changed;ctx=(*p).on_value_changed_ctx;}
-    if k==text_button::K_TEXT_BUTTON {let p: *text_button::TextButtonProps=raw as *text_button::TextButtonProps;if (*p).toggles {(*p).on=!(*p).on;}call=(*p).on_click;ctx=(*p).on_click_ctx;}
+    if k==text_button::K_TEXT_BUTTON {let p: *text_button::TextButtonProps=raw as *text_button::TextButtonProps;if (*p).toggles {(*p).on=is_checked(sender);}call=(*p).on_click;ctx=(*p).on_click_ctx;}
     if call!=props::no_handler {call(context,ctx);}return rt::Status {code:0};
 }
 fn attach(r: *record::View) {
     let k: u32=(*r).kind;let value: rt::Object=(*r).object.clone();
-    if k==props::K_CHECKBOX || k==props::K_RADIO || k==props::K_TOGGLE || k==text_button::K_TEXT_BUTTON {
+    if k==props::K_CHECKBOX || k==props::K_RADIO || k==props::K_TOGGLE {
         let handler: ui::RoutedEventHandler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(changed,r as *u8));
         if k==props::K_TOGGLE {let v: ui::IToggleSwitch=native::must::[ui::IToggleSwitch](ui::IToggleSwitch::query(value));(*r).token=native::must::[ui::EventRegistrationToken](v.add_toggled(handler.object()));}
-        else if k==text_button::K_TEXT_BUTTON {let v: ui::IButtonBase=native::must::[ui::IButtonBase](ui::IButtonBase::query(value));(*r).token=native::must::[ui::EventRegistrationToken](v.add_click(handler.object()));}
+
         else {let v: ui::IToggleButton=native::must::[ui::IToggleButton](ui::IToggleButton::query(value));(*r).token=native::must::[ui::EventRegistrationToken](v.add_checked(handler.object()));(*r).token2=native::must::[ui::EventRegistrationToken](v.add_unchecked(handler.object()));LIVE=LIVE+1;}
         LIVE=LIVE+1;
     }
-    if k==props::K_SLIDER {let v: ui::IRangeBase=native::must::[ui::IRangeBase](ui::IRangeBase::query(value));let handler: ui::RangeBaseValueChangedEventHandler=native::must::[ui::RangeBaseValueChangedEventHandler](ui::RangeBaseValueChangedEventHandler::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](v.add_value_changed(handler.object()));LIVE=LIVE+1;}
+    if k==text_button::K_TEXT_BUTTON {let p: *text_button::TextButtonProps=(*core::node_data((*r).node)).props as *text_button::TextButtonProps;click_attach(r,(*p).toggles,changed);}
+    if k==props::K_SLIDER {sliding::attach(r);let v: ui::IRangeBase=native::must::[ui::IRangeBase](ui::IRangeBase::query(value));let handler: ui::RangeBaseValueChangedEventHandler=native::must::[ui::RangeBaseValueChangedEventHandler](ui::RangeBaseValueChangedEventHandler::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](v.add_value_changed(handler.object()));LIVE=LIVE+1;}
     if k==props::K_STEPPER {let v: ui::INumberBox=native::must::[ui::INumberBox](ui::INumberBox::query(value));let handler: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_NumberBox_Microsoft_UI_Xaml_Controls_NumberBoxValueChangedEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_NumberBox_Microsoft_UI_Xaml_Controls_NumberBoxValueChangedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_NumberBox_Microsoft_UI_Xaml_Controls_NumberBoxValueChangedEventArgs::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](v.add_value_changed(handler.object()));LIVE=LIVE+1;}
     return;
 }
 fn release(r: *record::View) {
+    if (*r).kind==props::K_PROGRESS {progressing::release(r);}
     let k: u32=(*r).kind;let value: rt::Object=(*r).object.clone();
     if k==props::K_CHECKBOX || k==props::K_RADIO {let v: ui::IToggleButton=native::must::[ui::IToggleButton](ui::IToggleButton::query(value));native::check(v.remove_checked((*r).token));native::check(v.remove_unchecked((*r).token2));LIVE=LIVE-2;}
     if k==props::K_TOGGLE {let v: ui::IToggleSwitch=native::must::[ui::IToggleSwitch](ui::IToggleSwitch::query(value));native::check(v.remove_toggled((*r).token));LIVE=LIVE-1;}
-    if k==text_button::K_TEXT_BUTTON {let v: ui::IButtonBase=native::must::[ui::IButtonBase](ui::IButtonBase::query(value));native::check(v.remove_click((*r).token));LIVE=LIVE-1;}
-    if k==props::K_SLIDER {let v: ui::IRangeBase=native::must::[ui::IRangeBase](ui::IRangeBase::query(value));native::check(v.remove_value_changed((*r).token));LIVE=LIVE-1;}
+    if k==text_button::K_TEXT_BUTTON {let p: *text_button::TextButtonProps=(*core::node_data((*r).node)).props as *text_button::TextButtonProps;click_release(r,(*p).toggles); }
+    if k==props::K_SLIDER {sliding::release(r);let v: ui::IRangeBase=native::must::[ui::IRangeBase](ui::IRangeBase::query(value));native::check(v.remove_value_changed((*r).token));LIVE=LIVE-1;}
     if k==props::K_STEPPER {let v: ui::INumberBox=native::must::[ui::INumberBox](ui::INumberBox::query(value));native::check(v.remove_value_changed((*r).token));LIVE=LIVE-1;}
     return;
 }

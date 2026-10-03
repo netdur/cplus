@@ -1,0 +1,356 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/popup" as popup;
+import "facet/tree" as tree;
+import "facet/list" as list;
+import "facet/text_button" as text_button;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn key(index: usize) -> str {return if index==0 {"popup"} else if index==1 {"date"} else if index==2 {"time"} else if index==3 {"input"} else if index==4 {"search"} else if index==5 {"area"} else if index==6 {"radio"} else {"text_button"};}
+fn control(index: usize) -> native::IControl {return check::must::[native::IControl](native::IControl::query(check::object(key(index))));}
+fn family(value: rt::Object) -> text::Text {let f=check::must::[native::IFontFamily](native::IFontFamily::query(value));return check::must::[text::Text](f.source());}
+fn scope_value(value: rt::Object) -> i32 {
+    let scope=check::must::[native::IInputScope](native::IInputScope::query(value));let names=check::must::[native::IVector_Microsoft_UI_Xaml_Input_InputScopeName](native::IVector_Microsoft_UI_Xaml_Input_InputScopeName::query(check::must::[rt::Object](scope.names())));
+    let entry=check::must::[native::IInputScopeName](native::IInputScopeName::query(check::must::[rt::Object](names.get_at(0))));return check::must::[i32](entry.name_value());
+}
+fn tree_props() -> *tree::TreeProps {return (*core::node_data(check::node("tree"))).props as *tree::TreeProps;}
+fn selected_nodes() -> native::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode {let c=check::must::[native::ITreeView](native::ITreeView::query(check::object("tree")));return check::must::[native::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode](native::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode::query(check::must::[rt::Object](c.selected_nodes())));}
+struct Probe {height_scale: f64,height_calls: usize,tree_events: i32,allow_second: bool,sizes: [f64;8],families: [text::Text;8],label_size: f64,label_family: text::Text,opens: i32,closes: i32,passed: bool,tooltip_object: rt::Object,timer: services::Cancellable}
+impl Probe {
+    fn row_height(ref this,index: usize) -> f64 {this.height_calls=this.height_calls+1;return (if index%2==0 {24.0f64} else {48.0f64})*this.height_scale;}
+    fn separator_row(ref this,index: usize) -> core::Node {return ui::label("Row ${index}",key:"separator_row_${index}");}
+    fn tree_selected(ref this,item: *tree::TreeNode) {this.tree_events=this.tree_events+1;assert (*item).id.view()=="a" || (*item).id.view()=="b";}
+    fn item_enabled(ref this,index: usize) -> bool {return index==0 || this.allow_second;}
+    fn check_enabled(ref this,expected: bool) {
+        let host=check::must::[native::IItemsControl](native::IItemsControl::query(check::object("popup")));let items=check::must::[native::IVector_Object](native::IVector_Object::query(check::must::[rt::Object](host.items())));
+        let item=check::must::[native::IControl](native::IControl::query(check::must::[rt::Object](items.get_at(1))));assert check::must::[bool](item.is_enabled())==expected;
+    }
+    fn opened(ref this,sender: *u8) {this.opens=this.opens+1;let name=component::key_of(sender);check::log("OPEN ${name}");}
+    fn closed(ref this,sender: *u8) {this.closes=this.closes+1;let name=component::key_of(sender);check::log("CLOSE ${name}");}
+    fn remove_popup(ref this,sender: *u8) {let old=mount::replace("ephemeral",ui::label("Replaced",key:"ephemeral"));check::log("PASS: popup removed safely from its opened callback");}
+    fn build(ref this) -> core::Node {
+        var values: vocab::TextList=vocab::TextList::new();let added=values.add("One");let more=values.add("Two");
+        var root=tree::TreeNode::new("Root","root",true);let a=root.add_child(tree::TreeNode::new("Alpha","a"));let b=root.add_child(tree::TreeNode::new("Beta","b"));
+        return @ui {column {
+            list(key:"separators",count:3,row:this.separator_row,row_height:28).height(64.0f64)
+            tree(root,key:"tree",on_select:this.tree_selected).height(80.0f64)
+            label("Style probe",key:"label").height(40.0f64)
+            popup("Choose",key:"popup",items:values,on_opened:this.opened,on_closed:this.closed).height(48.0f64)
+            date_picker(vocab::Date {year:2026,month:9,day:30},key:"date",on_opened:this.opened,on_closed:this.closed).height(48.0f64)
+            time_picker(vocab::Duration {seconds:3600.0f64},key:"time").height(48.0f64)
+            text_field("Field",key:"input").height(40.0f64)
+            search_field("Search",key:"search").height(40.0f64)
+            text_area("Area",key:"area").height(48.0f64)
+            radio(false,text:"Radio",key:"radio").height(40.0f64)
+            text_button("Text button",key:"text_button").height(40.0f64)
+            text_field("1234",key:"password",secure:true,keyboard:vocab::Keyboard::Numeric).height(32.0f64)
+            scroll(key:"scroll").height(32.0f64)
+            popup("Remove on open",key:"ephemeral",on_opened:this.remove_popup).height(48.0f64)
+        }.padding(20.0f64).gap(12.0f64)};
+    }
+    fn ready(ref this) {
+        match popup::find("popup") {option::Option::Some(v)=>{let updated=v.set_item_enabled(this.item_enabled);},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.1f64,this.style_ready);
+    }
+    fn style_ready(ref this) {
+        let scroll: *props::ScrollProps=(*core::node_data(check::node("scroll"))).props as *props::ScrollProps;(*scroll).cascades_input=false;core::touch(check::node("scroll"),0xffffffffffffffffu64);
+        this.check_enabled(false);this.allow_second=true;
+        var i: usize=0;while i<8 {let c=control(i);this.sizes[i]=check::must::[f64](c.font_size());this.families[i]=family(check::must::[rt::Object](c.font_family()));i=i+1;}
+        let label=check::must::[native::ITextBlock](native::ITextBlock::query(check::object("label")));
+        this.label_size=check::must::[f64](label.font_size());this.label_family=family(check::must::[rt::Object](label.font_family()));
+        {let p: *props::PopupProps=(*core::node_data(check::node("popup"))).props as *props::PopupProps;
+            (*p).font_size=20.0f64;(*p).character_spacing=2.0f64;
+            (*p).font_weight=vocab::FontWeight::Bold;(*p).is_italic=true;(*p).font_scales=false;
+            (*p).font_family=text::from_str("Consolas");(*p).text_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);
+            core::touch(check::node("popup"),0xffffffffffffffffu64);
+        }
+        {let p: *props::RadioProps=(*core::node_data(check::node("radio"))).props as *props::RadioProps;
+            (*p).font_size=20.0f64;(*p).character_spacing=2.0f64;
+            (*p).font_weight=vocab::FontWeight::Bold;(*p).is_italic=true;(*p).font_scales=false;
+            (*p).font_family=text::from_str("Consolas");(*p).text_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);
+            core::touch(check::node("radio"),0xffffffffffffffffu64);
+        }
+        {let p: *text_button::TextButtonProps=(*core::node_data(check::node("text_button"))).props as *text_button::TextButtonProps;
+            (*p).font_size=20.0f64;(*p).character_spacing=2.0f64;
+            (*p).font_weight=vocab::FontWeight::Bold;(*p).is_italic=true;(*p).font_scales=false;
+            (*p).font_family=text::from_str("Consolas");(*p).text_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);
+            (*p).bordered=true;(*p).border_width=3.0f64;(*p).border_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);
+            (*p).corner_radius=vocab::Corners::all(8.0f64);(*p).text_decoration=vocab::TextDecoration::Underline;(*p).text_align=vocab::TextAlign::End;
+            core::touch(check::node("text_button"),0xffffffffffffffffu64);
+        }
+        {let p: *props::DatePickerProps=(*core::node_data(check::node("date"))).props as *props::DatePickerProps;
+            (*p).font_size=20.0f64;(*p).character_spacing=2.0f64;
+            (*p).font_weight=vocab::FontWeight::Bold;(*p).is_italic=true;(*p).font_scales=false;
+            (*p).font_family=text::from_str("Consolas");(*p).text_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);
+            core::touch(check::node("date"),0xffffffffffffffffu64);
+        }
+        {let p: *props::TimePickerProps=(*core::node_data(check::node("time"))).props as *props::TimePickerProps;
+            (*p).font_size=20.0f64;(*p).character_spacing=2.0f64;
+            (*p).font_weight=vocab::FontWeight::Bold;(*p).is_italic=true;(*p).font_scales=false;
+            (*p).font_family=text::from_str("Consolas");(*p).text_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);
+            core::touch(check::node("time"),0xffffffffffffffffu64);
+        }
+        let p: *props::LabelProps=(*core::node_data(check::node("label"))).props as *props::LabelProps;
+        (*p).font_size=20.0f64;(*p).font_family=text::from_str("Consolas");(*p).character_spacing=2.0f64;(*p).font_scales=false;
+        (*p).text_align=vocab::TextAlign::Center;(*p).text_decoration=vocab::TextDecoration::Underline;
+        core::touch(check::node("label"),0xffffffffffffffffu64);
+        {let p: *props::TextFieldProps=(*core::node_data(check::node("input"))).props as *props::TextFieldProps;
+            (*p).input_view.font_size=20.0f64;(*p).input_view.character_spacing=2.0f64;
+            (*p).input_view.font_weight=vocab::FontWeight::Bold;(*p).input_view.is_italic=true;(*p).input_view.font_scales=false;
+            (*p).input_view.font_family=text::from_str("Consolas");(*p).input_view.text_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);
+            (*p).text_align=vocab::TextAlign::End;(*p).vertical_align=vocab::TextAlign::End;
+            (*p).input_view.keyboard=vocab::Keyboard::Numeric;
+            core::touch(check::node("input"),0xffffffffffffffffu64);
+        }
+        {let p: *props::SearchFieldProps=(*core::node_data(check::node("search"))).props as *props::SearchFieldProps;
+            (*p).input_view.font_size=20.0f64;(*p).input_view.character_spacing=2.0f64;
+            (*p).input_view.font_weight=vocab::FontWeight::Bold;(*p).input_view.is_italic=true;(*p).input_view.font_scales=false;
+            (*p).input_view.font_family=text::from_str("Consolas");(*p).input_view.text_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);
+            (*p).text_align=vocab::TextAlign::End;(*p).vertical_align=vocab::TextAlign::End;
+            (*p).input_view.keyboard=vocab::Keyboard::Email;
+            core::touch(check::node("search"),0xffffffffffffffffu64);
+        }
+        {let p: *props::TextAreaProps=(*core::node_data(check::node("area"))).props as *props::TextAreaProps;
+            (*p).input_view.font_size=20.0f64;(*p).input_view.character_spacing=2.0f64;
+            (*p).input_view.font_weight=vocab::FontWeight::Bold;(*p).input_view.is_italic=true;(*p).input_view.font_scales=false;
+            (*p).input_view.font_family=text::from_str("Consolas");(*p).input_view.text_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);
+            (*p).text_align=vocab::TextAlign::End;(*p).vertical_align=vocab::TextAlign::End;
+            (*p).input_view.keyboard=vocab::Keyboard::Url;
+            core::touch(check::node("area"),0xffffffffffffffffu64);
+        }
+        this.timer=services::after(0.2f64,this.changed);
+    }
+    fn changed(ref this) {
+        var n: usize=3;while n<6 {let edit=check::must::[native::ITextBox](native::ITextBox::query(check::object(key(n))));let expected=if n==3 {native::input_scope_name_value_number} else if n==4 {native::input_scope_name_value_email_smtp_address} else {native::input_scope_name_value_url};assert scope_value(check::must::[rt::Object](edit.input_scope()))==expected;n=n+1;}
+        let pw=check::must::[native::IPasswordBox](native::IPasswordBox::query(check::object("password")));assert scope_value(check::must::[rt::Object](pw.input_scope()))==native::input_scope_name_value_numeric_pin;
+        let pp: *props::TextFieldProps=(*core::node_data(check::node("password"))).props as *props::TextFieldProps;(*pp).input_view.keyboard=vocab::Keyboard::Default;core::touch(check::node("password"),0xffffffffffffffffu64);
+        let scroll=check::must::[native::IScrollViewer](native::IScrollViewer::query(check::object("scroll")));assert !check::must::[bool](scroll.is_horizontal_scroll_chaining_enabled());assert !check::must::[bool](scroll.is_vertical_scroll_chaining_enabled());
+        let sp: *props::ScrollProps=(*core::node_data(check::node("scroll"))).props as *props::ScrollProps;(*sp).cascades_input=true;core::touch(check::node("scroll"),0xffffffffffffffffu64);
+        this.check_enabled(true);this.allow_second=false;
+        var i: usize=0;while i<8 {
+            let c=control(i);assert check::must::[f64](c.font_size())==20.0f64;assert check::must::[i32](c.character_spacing())==100;
+            assert check::must::[native::FontWeight](c.font_weight()).weight==700;
+            assert check::must::[i32](c.font_style())==native::font_style_italic;assert !check::must::[bool](c.is_text_scale_factor_enabled());
+            assert family(check::must::[rt::Object](c.font_family()))=="Consolas";
+            let brush=check::must::[native::ISolidColorBrush](native::ISolidColorBrush::query(check::must::[rt::Object](c.foreground())));
+            let color=check::must::[native::Color](brush.color());assert color.r==255 && color.g==0 && color.b==0;
+            if i>=3 && i<6 {let edit=check::must::[native::ITextBox](native::ITextBox::query(check::object(key(i))));assert check::must::[i32](edit.text_alignment())==native::text_alignment_right;assert check::must::[i32](c.vertical_content_alignment())==native::vertical_alignment_bottom;}
+            i=i+1;
+        }
+        let button=control(7);assert check::must::[native::Thickness](button.border_thickness()).left==3.0f64;
+        assert check::must::[native::CornerRadius](button.corner_radius()).top_left==8.0f64;
+        let title_host=check::must::[native::IContentControl](native::IContentControl::query(check::object("text_button")));
+        let title=check::must::[native::ITextBlock](native::ITextBlock::query(check::must::[rt::Object](title_host.content())));
+        assert check::must::[u32](title.text_decorations())==native::text_decorations_underline;
+        assert check::must::[i32](title.text_alignment())==native::text_alignment_right;
+        assert check::must::[f64](title.font_size())==20.0f64;
+        let label=check::must::[native::ITextBlock](native::ITextBlock::query(check::object("label")));
+        assert check::must::[i32](label.character_spacing())==100;assert !check::must::[bool](label.is_text_scale_factor_enabled());
+        assert check::must::[i32](label.text_alignment())==native::text_alignment_center;
+        assert check::must::[u32](label.text_decorations())==native::text_decorations_underline;
+        {let p: *props::PopupProps=(*core::node_data(check::node("popup"))).props as *props::PopupProps;
+            (*p).font_size=0.0f64;(*p).character_spacing=0.0f64;
+            (*p).font_weight=vocab::FontWeight::Default;(*p).is_italic=false;(*p).font_scales=true;
+            (*p).font_family=text::from_str("");(*p).text_color=vocab::Color::clear();
+            core::touch(check::node("popup"),0xffffffffffffffffu64);
+        }
+        {let p: *props::RadioProps=(*core::node_data(check::node("radio"))).props as *props::RadioProps;
+            (*p).font_size=0.0f64;(*p).character_spacing=0.0f64;
+            (*p).font_weight=vocab::FontWeight::Default;(*p).is_italic=false;(*p).font_scales=true;
+            (*p).font_family=text::from_str("");(*p).text_color=vocab::Color::clear();
+            core::touch(check::node("radio"),0xffffffffffffffffu64);
+        }
+        {let p: *text_button::TextButtonProps=(*core::node_data(check::node("text_button"))).props as *text_button::TextButtonProps;
+            (*p).font_size=0.0f64;(*p).character_spacing=0.0f64;
+            (*p).font_weight=vocab::FontWeight::Default;(*p).is_italic=false;(*p).font_scales=true;
+            (*p).font_family=text::from_str("");(*p).text_color=vocab::Color::clear();
+            (*p).bordered=false;(*p).border_color=vocab::Color::clear();(*p).corner_radius=vocab::Corners::none();
+            (*p).text_decoration=vocab::TextDecoration::None;(*p).text_align=vocab::TextAlign::Center;
+            core::touch(check::node("text_button"),0xffffffffffffffffu64);
+        }
+        {let p: *props::DatePickerProps=(*core::node_data(check::node("date"))).props as *props::DatePickerProps;
+            (*p).font_size=0.0f64;(*p).character_spacing=0.0f64;
+            (*p).font_weight=vocab::FontWeight::Default;(*p).is_italic=false;(*p).font_scales=true;
+            (*p).font_family=text::from_str("");(*p).text_color=vocab::Color::clear();
+            core::touch(check::node("date"),0xffffffffffffffffu64);
+        }
+        {let p: *props::TimePickerProps=(*core::node_data(check::node("time"))).props as *props::TimePickerProps;
+            (*p).font_size=0.0f64;(*p).character_spacing=0.0f64;
+            (*p).font_weight=vocab::FontWeight::Default;(*p).is_italic=false;(*p).font_scales=true;
+            (*p).font_family=text::from_str("");(*p).text_color=vocab::Color::clear();
+            core::touch(check::node("time"),0xffffffffffffffffu64);
+        }
+        let p: *props::LabelProps=(*core::node_data(check::node("label"))).props as *props::LabelProps;
+        (*p).font_size=0.0f64;(*p).font_family=text::new();(*p).character_spacing=0.0f64;(*p).font_scales=true;
+        (*p).text_align=vocab::TextAlign::Start;(*p).text_decoration=vocab::TextDecoration::None;
+        core::touch(check::node("label"),0xffffffffffffffffu64);
+        {let p: *props::TextFieldProps=(*core::node_data(check::node("input"))).props as *props::TextFieldProps;
+            (*p).input_view.font_size=0.0f64;(*p).input_view.character_spacing=0.0f64;
+            (*p).input_view.font_weight=vocab::FontWeight::Default;(*p).input_view.is_italic=false;(*p).input_view.font_scales=true;
+            (*p).input_view.font_family=text::from_str("");(*p).input_view.text_color=vocab::Color::clear();
+            (*p).text_align=vocab::TextAlign::Start;(*p).vertical_align=vocab::TextAlign::Start;
+            (*p).input_view.keyboard=vocab::Keyboard::Default;
+            core::touch(check::node("input"),0xffffffffffffffffu64);
+        }
+        {let p: *props::SearchFieldProps=(*core::node_data(check::node("search"))).props as *props::SearchFieldProps;
+            (*p).input_view.font_size=0.0f64;(*p).input_view.character_spacing=0.0f64;
+            (*p).input_view.font_weight=vocab::FontWeight::Default;(*p).input_view.is_italic=false;(*p).input_view.font_scales=true;
+            (*p).input_view.font_family=text::from_str("");(*p).input_view.text_color=vocab::Color::clear();
+            (*p).text_align=vocab::TextAlign::Start;(*p).vertical_align=vocab::TextAlign::Start;
+            (*p).input_view.keyboard=vocab::Keyboard::Default;
+            core::touch(check::node("search"),0xffffffffffffffffu64);
+        }
+        {let p: *props::TextAreaProps=(*core::node_data(check::node("area"))).props as *props::TextAreaProps;
+            (*p).input_view.font_size=0.0f64;(*p).input_view.character_spacing=0.0f64;
+            (*p).input_view.font_weight=vocab::FontWeight::Default;(*p).input_view.is_italic=false;(*p).input_view.font_scales=true;
+            (*p).input_view.font_family=text::from_str("");(*p).input_view.text_color=vocab::Color::clear();
+            (*p).text_align=vocab::TextAlign::Start;(*p).vertical_align=vocab::TextAlign::Start;
+            (*p).input_view.keyboard=vocab::Keyboard::Default;
+            core::touch(check::node("area"),0xffffffffffffffffu64);
+        }
+        this.timer=services::after(0.2f64,this.reset);
+    }
+    fn reset(ref this) {
+        var n: usize=3;while n<6 {let edit=check::must::[native::ITextBox](native::ITextBox::query(check::object(key(n))));let expected=if n==4 {native::input_scope_name_value_search} else {native::input_scope_name_value_default_value};assert scope_value(check::must::[rt::Object](edit.input_scope()))==expected;n=n+1;}
+        let pw=check::must::[native::IPasswordBox](native::IPasswordBox::query(check::object("password")));assert scope_value(check::must::[rt::Object](pw.input_scope()))==native::input_scope_name_value_password;
+        let scroll=check::must::[native::IScrollViewer](native::IScrollViewer::query(check::object("scroll")));assert check::must::[bool](scroll.is_horizontal_scroll_chaining_enabled());assert check::must::[bool](scroll.is_vertical_scroll_chaining_enabled());
+        check::log("PASS: keyboard scopes, secure numeric/default scope and scroll chaining updates");
+        this.check_enabled(false);check::log("PASS: popup item-enabled callback and live refresh");
+        var i: usize=0;while i<8 {let c=control(i);assert check::must::[f64](c.font_size())==this.sizes[i];
+            assert family(check::must::[rt::Object](c.font_family()))==this.families[i];assert check::must::[i32](c.character_spacing())==0;
+            assert check::must::[i32](c.font_style())==native::font_style_normal;assert check::must::[bool](c.is_text_scale_factor_enabled());i=i+1;}
+        let button=control(7);assert check::must::[native::Thickness](button.border_thickness()).left==0.0f64;
+        assert check::must::[native::CornerRadius](button.corner_radius()).top_left==0.0f64;
+        let title_host=check::must::[native::IContentControl](native::IContentControl::query(check::object("text_button")));
+        let title=check::must::[native::ITextBlock](native::ITextBlock::query(check::must::[rt::Object](title_host.content())));
+        assert check::must::[u32](title.text_decorations())==native::text_decorations_none;
+        assert check::must::[i32](title.text_alignment())==native::text_alignment_center;
+        check::log("PASS: radio/text-button typography, decoration, alignment and border updates/reset");
+        let label=check::must::[native::ITextBlock](native::ITextBlock::query(check::object("label")));
+        assert check::must::[f64](label.font_size())==this.label_size;assert family(check::must::[rt::Object](label.font_family()))==this.label_family;
+        assert check::must::[u32](label.text_decorations())==native::text_decorations_none;
+        assert check::must::[i32](label.character_spacing())==0;assert check::must::[bool](label.is_text_scale_factor_enabled());
+        check::log("PASS: label/picker live typography and native-default reset");
+        let combo=check::must::[native::IComboBox](native::IComboBox::query(check::object("popup")));assert combo.set_is_drop_down_open(true).is_ok();
+        this.timer=services::after(0.2f64,this.close_popup);
+    }
+    fn close_popup(ref this) {
+        assert this.opens==1;
+        let p: *props::PopupProps=(*core::node_data(check::node("popup"))).props as *props::PopupProps;assert (*p).is_open;
+        let combo=check::must::[native::IComboBox](native::IComboBox::query(check::object("popup")));assert combo.set_is_drop_down_open(false).is_ok();
+        this.timer=services::after(0.2f64,this.open_date);
+    }
+    fn open_date(ref this) {
+        assert this.closes==1;let p: *props::PopupProps=(*core::node_data(check::node("popup"))).props as *props::PopupProps;assert !(*p).is_open;
+        let date=check::must::[native::ICalendarDatePicker](native::ICalendarDatePicker::query(check::object("date")));assert date.set_is_calendar_open(true).is_ok();
+        this.timer=services::after(0.2f64,this.close_date);
+    }
+    fn close_date(ref this) {
+        assert this.opens==2;let p: *props::DatePickerProps=(*core::node_data(check::node("date"))).props as *props::DatePickerProps;assert (*p).is_open;
+        let date=check::must::[native::ICalendarDatePicker](native::ICalendarDatePicker::query(check::object("date")));assert date.set_is_calendar_open(false).is_ok();
+        this.timer=services::after(0.2f64,this.finish);
+    }
+    fn finish(ref this) {
+        assert this.closes==2;check::log("PASS: popup/calendar open-close events and readback");
+        let combo=check::must::[native::IComboBox](native::IComboBox::query(check::object("ephemeral")));assert combo.set_is_drop_down_open(true).is_ok();
+        this.timer=services::after(0.2f64,this.removed);
+    }
+    fn removed(ref this) {
+        assert core::kind_of(check::node("ephemeral"))==props::K_LABEL;
+        let p=tree_props();(*p).selection_mode=vocab::SelectionMode::Multiple;let b=(*p).selection.add("b");core::touch(check::node("tree"),tree::P_SELECTED|tree::P_SELECTION_MODE);
+        this.timer=services::after(0.2f64,this.tree_multiple);
+    }
+    fn tree_multiple(ref this) {
+        assert check::must::[u32](selected_nodes().size())==1;assert this.tree_events==0;
+        let control=check::must::[native::ITreeView](native::ITreeView::query(check::object("tree")));assert control.select_all().is_ok();this.timer=services::after(0.2f64,this.tree_readback);
+    }
+    fn tree_readback(ref this) {
+        let p=tree_props();assert (*p).selection.count()==2;assert (*p).selection.has("a");assert (*p).selection.has("b");assert this.tree_events==1;
+        (*p).selection.clear();(*p).selected=text::new();(*p).selection_mode=vocab::SelectionMode::Single;core::touch(check::node("tree"),tree::P_SELECTED|tree::P_SELECTION_MODE);
+        this.timer=services::after(0.2f64,this.tree_clear);
+    }
+    fn tree_clear(ref this) {
+        assert check::must::[u32](selected_nodes().size())==0;assert this.tree_events==1;
+        let p=tree_props();let b=(*p).selection.add("b");(*p).selected=text::from_str("b");core::touch(check::node("tree"),tree::P_SELECTED);
+        this.timer=services::after(0.2f64,this.tree_single);
+    }
+    fn tree_single(ref this) {
+        assert check::must::[u32](selected_nodes().size())==1;assert this.tree_events==1;
+        let p=tree_props();(*p).selection_mode=vocab::SelectionMode::None;core::touch(check::node("tree"),tree::P_SELECTION_MODE);
+        this.timer=services::after(0.2f64,this.tree_none);
+    }
+    fn tree_none(ref this) {
+        assert check::must::[u32](selected_nodes().size())==0;assert this.tree_events==1;
+        check::log("PASS: tree multiple/single/none selection, clearing and native readback");
+        let p: *props::ListProps=(*core::node_data(check::node("separators"))).props as *props::ListProps;(*p).separator_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);(*p).separator=vocab::Separator::Default;core::touch(check::node("separators"),0xffffffffffffffffu64);this.timer=services::after(0.2f64,this.separator_on);
+    }
+    fn separator_border(ref this) -> native::IBorder {
+        let host=check::must::[native::IContentControl](native::IContentControl::query(check::object("separators")));let panel=check::must::[native::IPanel](native::IPanel::query(check::must::[rt::Object](host.content())));let children=check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));return check::must::[native::IBorder](native::IBorder::query(check::must::[rt::Object](children.get_at(0))));
+    }
+    fn separator_on(ref this) {
+        let border=this.separator_border();assert check::must::[native::Thickness](border.border_thickness()).bottom==1.0f64;let brush=check::must::[native::ISolidColorBrush](native::ISolidColorBrush::query(check::must::[rt::Object](border.border_brush())));assert check::must::[native::Color](brush.color()).r==255;
+        let p: *props::ListProps=(*core::node_data(check::node("separators"))).props as *props::ListProps;(*p).separator=vocab::Separator::None;core::touch(check::node("separators"),0xffffffffffffffffu64);this.timer=services::after(0.2f64,this.separator_off);
+    }
+    fn separator_off(ref this) {
+        assert check::must::[native::Thickness](this.separator_border().border_thickness()).bottom==0.0f64;check::log("PASS: list separator color and live removal");
+        this.height_scale=1.0f64;match list::find("separators") {option::Option::Some(v)=>{let changed=v.set_count(20).set_uneven_rows(true).set_row_height_of(this.row_height);},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.2f64,this.uneven_ready);
+    }
+    fn uneven_ready(ref this) {
+        let scroll=check::must::[native::IScrollViewer](native::IScrollViewer::query(check::object("separators")));assert check::must::[f64](scroll.extent_height())==720.0f64;assert this.height_calls==20;
+        assert check::must::[f64](check::must::[native::IFrameworkElement](native::IFrameworkElement::query(this.separator_border().object())).height())==24.0f64;
+        match list::find("separators") {option::Option::Some(v)=>{let changed=v.scroll_to(10);},option::Option::None=>{assert false;}}this.timer=services::after(0.2f64,this.uneven_scrolled);
+    }
+    fn uneven_scrolled(ref this) {
+        let scroll=check::must::[native::IScrollViewer](native::IScrollViewer::query(check::object("separators")));assert check::must::[f64](scroll.vertical_offset())==360.0f64;assert this.height_calls==20;
+        this.height_scale=2.0f64;match list::find("separators") {option::Option::Some(v)=>{let changed=v.set_row_height_of(this.row_height);},option::Option::None=>{assert false;}}this.timer=services::after(0.2f64,this.uneven_changed);
+    }
+    fn uneven_changed(ref this) {
+        let scroll=check::must::[native::IScrollViewer](native::IScrollViewer::query(check::object("separators")));assert check::must::[f64](scroll.extent_height())==1440.0f64;assert this.height_calls==40;
+        match list::find("separators") {option::Option::Some(v)=>{let changed=v.set_uneven_rows(false);},option::Option::None=>{assert false;}}this.timer=services::after(0.2f64,this.uneven_reset);
+    }
+    fn uneven_reset(ref this) {
+        let scroll=check::must::[native::IScrollViewer](native::IScrollViewer::query(check::object("separators")));assert check::must::[f64](scroll.extent_height())==560.0f64;assert this.height_calls==40;
+        check::log("PASS: variable list heights, cached measurements, scroll-to and uniform reset");
+        let p=#addr_of((*core::node_data(check::node("label"))).common);
+        (*p).accessibility_label=text::from_str("Accessible heading");(*p).accessibility_hint=text::from_str("Additional help");(*p).heading_level=3;(*p).tooltip=text::from_str("Tip — 世界");core::touch(check::node("label"),0xffffffffffffffffu64);
+        this.timer=services::after(0.2f64,this.accessible_ready);
+    }
+    fn accessible_ready(ref this) {
+        let a=check::must::[native::IAutomationPropertiesStatics](native::AutomationProperties::i_automation_properties_statics_factory());let view=check::object("label");
+        assert check::must(a.get_name(view)).view()=="Accessible heading";assert check::must(a.get_help_text(view)).view()=="Additional help";assert check::must::[i32](a.get_heading_level(view))==3;
+        let tips=check::must::[native::IToolTipServiceStatics](native::ToolTipService::i_tool_tip_service_statics_factory());this.tooltip_object=check::must::[rt::Object](tips.get_tool_tip(view));let boxed=check::must::[native::IPropertyValue](native::IPropertyValue::query(this.tooltip_object));assert check::must(boxed.get_string()).view()=="Tip — 世界";
+        core::touch(check::node("label"),0xffffffffffffffffu64);this.timer=services::after(0.2f64,this.accessible_update);
+    }
+    fn accessible_update(ref this) {
+        let tips=check::must::[native::IToolTipServiceStatics](native::ToolTipService::i_tool_tip_service_statics_factory());assert check::must::[rt::Object](tips.get_tool_tip(check::object("label"))).raw()==this.tooltip_object.raw();
+        let p=#addr_of((*core::node_data(check::node("label"))).common);(*p).accessibility_label=text::from_str("Updated heading");(*p).heading_level=9;(*p).tooltip=text::from_str("Updated tip");core::touch(check::node("label"),0xffffffffffffffffu64);this.timer=services::after(0.2f64,this.accessible_clear);
+    }
+    fn accessible_clear(ref this) {
+        let a=check::must::[native::IAutomationPropertiesStatics](native::AutomationProperties::i_automation_properties_statics_factory());let view=check::object("label");assert check::must(a.get_name(view)).view()=="Updated heading";assert check::must::[i32](a.get_heading_level(view))==9;
+        let tips=check::must::[native::IToolTipServiceStatics](native::ToolTipService::i_tool_tip_service_statics_factory());let boxed=check::must::[native::IPropertyValue](native::IPropertyValue::query(check::must::[rt::Object](tips.get_tool_tip(view))));assert check::must(boxed.get_string()).view()=="Updated tip";
+        let p=#addr_of((*core::node_data(check::node("label"))).common);(*p).accessibility_label=text::new();(*p).accessibility_hint=text::new();(*p).heading_level=99;(*p).tooltip=text::new();core::touch(check::node("label"),0xffffffffffffffffu64);this.timer=services::after(0.2f64,this.accessible_reset);
+    }
+    fn accessible_reset(ref this) {
+        let a=check::must::[native::IAutomationPropertiesStatics](native::AutomationProperties::i_automation_properties_statics_factory());let view=check::object("label");assert check::must(a.get_name(view)).count()==0;assert check::must(a.get_help_text(view)).count()==0;assert check::must::[i32](a.get_heading_level(view))==native::automation_heading_level_none;
+        let tips=check::must::[native::IToolTipServiceStatics](native::ToolTipService::i_tool_tip_service_statics_factory());assert check::must::[rt::Object](tips.get_tool_tip(view)).is_null();
+        let factory=check::must::[native::IFrameworkElementAutomationPeerStatics](native::FrameworkElementAutomationPeer::i_framework_element_automation_peer_statics_factory());let peer=check::must::[native::IAutomationPeer](native::IAutomationPeer::query(check::must::[rt::Object](factory.create_peer_for_element(view))));assert check::must(peer.get_name()).view()=="Style probe";
+        check::log("PASS: accessibility name/help reset, heading levels and Unicode tooltip updates/reset");this.passed=true;assert host::close().is_ok();
+    }
+
+}
+fn run() -> i32 {
+    let owner: box::Box[Probe]=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};
+    let p: *Probe=owner.ptr();assert host::run((*p).build(),"Facet WinUI styles",on_ready:(*p).ready).is_ok();
+    assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: style/event teardown");return 0;
+}

@@ -59,6 +59,7 @@ fn delegate_context(object: *u8) -> *u8;
 fn delegate_query(self: *u8, id: *Guid, out: *usize) -> i32;
 fn delegate_add_ref(self: *u8) -> u32;
 fn delegate_release(self: *u8) -> u32;
+fn box_interface(value: Object, reference_iid: Guid) -> Result[Object, Error];
 ```
 
 Offsets are bytes; slots are pointer indices. AddRef/Release accept zero.
@@ -67,6 +68,13 @@ pointers are borrowed. `agile: true` opts into IAgileObject and requires the
 caller to satisfy callback/context threading rules. It adds no synchronization.
 Delegate support functions apply only to allocations
 created by `delegate`. Prefer a generated typed delegate constructor.
+
+`box_interface` owns a reference to an interface/delegate value through an
+`IInspectable` implementing `IReference<T>`. The caller must supply the
+matching parameterized IID and interface pointer; generated delegate
+`boxed()` methods do this automatically. The box's `Value` getter returns
+an owned reference. It does not implement `IAgileObject` or expose the
+delegate interface directly through QueryInterface.
 
 `unknown_iid() -> Guid`, `inspectable_iid() -> Guid`, `agile_iid() -> Guid`, and
 `guid_equal(a: Guid, b: Guid) -> bool` expose identity constants/comparison.

@@ -35,6 +35,8 @@ import "./demos/layout/zstacks" as zstacks;
 import "./demos/layout/responsive" as responsive;
 import "./demos/lists" as lists;
 import "./demos/relists" as relists;
+import "./demos/tabs_demo" as tabs_demo;
+import "./demos/menus_demo" as menus_demo;
 import "./demos/collections" as collections;
 import "./demos/trees" as trees;
 import "./demos/page_dots_demo" as page_dots_demo;
@@ -89,6 +91,8 @@ const ID_GRID: i32 = 32;
 const ID_PLACEMENT: i32 = 33;
 const ID_A11Y: i32 = 34;
 const ID_RELIST: i32 = 35;
+const ID_TABS: i32 = 36;
+const ID_MENUS: i32 = 37;
 
 const NAV_OVERVIEW: str = "overview";
 const NAV_BUTTON: str = "button";
@@ -109,6 +113,8 @@ const NAV_ZSTACK: str = "zstack";
 const NAV_RESPONSIVE: str = "responsive";
 const NAV_LIST: str = "list";
 const NAV_RELIST: str = "relist";
+const NAV_TABS: str = "tabs";
+const NAV_MENUS: str = "menus";
 const NAV_COLLECTION: str = "collection";
 const NAV_TREE: str = "tree";
 const NAV_PAGE_DOTS: str = "page_dots";
@@ -155,6 +161,8 @@ struct Gallery {
     responsive: responsive::Responsive,
     lists: lists::Lists,
     relists: relists::Relists,
+    tabs_demo: tabs_demo::TabsDemo,
+    menus_demo: menus_demo::MenusDemo,
     collections: collections::Collections,
     trees: trees::Trees,
     page_dots: page_dots_demo::PageDotsDemo,
@@ -193,6 +201,8 @@ fn demo_id_for(nav_id: str) -> i32 {
     if nav_id == NAV_ZSTACK { return ID_ZSTACK; }
     if nav_id == NAV_RESPONSIVE { return ID_RESPONSIVE; }
     if nav_id == NAV_LIST { return ID_LIST; }
+    if nav_id == NAV_TABS { return ID_TABS; }
+    if nav_id == NAV_MENUS { return ID_MENUS; }
     if nav_id == NAV_RELIST { return ID_RELIST; }
     if nav_id == NAV_COLLECTION { return ID_COLLECTION; }
     if nav_id == NAV_TREE { return ID_TREE; }
@@ -258,6 +268,8 @@ fn catalog_model() -> tree::TreeNode {
     let _co: status::Status = cols.add_child(leaf("Collection", NAV_COLLECTION));
     let _tr: status::Status = cols.add_child(leaf("Tree", NAV_TREE));
     let _pd: status::Status = cols.add_child(leaf("Page dots", NAV_PAGE_DOTS));
+    let _tabs: status::Status = cols.add_child(leaf("Tabs", NAV_TABS));
+    let _menus: status::Status = cols.add_child(leaf("Menus", NAV_MENUS));
     let _tb: status::Status = cols.add_child(leaf("Table", NAV_TABLE));
     let _cr: status::Status = cols.add_child(leaf("Carousel", NAV_CAROUSEL));
     let _cs: status::Status = root.add_child(cols);
@@ -308,6 +320,8 @@ impl Gallery {
             responsive: responsive::Responsive::new(),
             lists: lists::Lists::new(),
             relists: relists::Relists::new(),
+            tabs_demo: tabs_demo::TabsDemo::new(),
+            menus_demo: menus_demo::MenusDemo::new(),
             collections: collections::Collections::new(),
             trees: trees::Trees::new(),
             page_dots: page_dots_demo::PageDotsDemo::new(),
@@ -368,6 +382,10 @@ impl Gallery {
                     let _ok: bool = mount::set_content(out, this.responsive);
                 } else if id == ID_LIST {
                     let _ok: bool = mount::set_content(out, this.lists);
+                } else if id == ID_MENUS {
+                    let _ok: bool = mount::set_content(out, this.menus_demo);
+                } else if id == ID_TABS {
+                    let _ok: bool = mount::set_content(out, this.tabs_demo);
                 } else if id == ID_RELIST {
                     let _ok: bool = mount::set_content(out, this.relists);
                 } else if id == ID_COLLECTION {
@@ -540,7 +558,7 @@ fn start_walk() {
 }
 
 fn walk_step(user: *u8) {
-    if WALK_AT > ID_RELIST {
+    if WALK_AT > ID_MENUS {
         io::println("gallery walk: visited ${WALK_AT} demos, no crash");
         // The walk ends by NOT re-arming, and the app is left running — a walk
         // that quit would take the exit code with it and hide anything printed

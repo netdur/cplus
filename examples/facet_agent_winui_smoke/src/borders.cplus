@@ -1,0 +1,50 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/bordered" as bordered;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "./texts" as texts;
+fn outline() -> rt::Object {return texts::named_part(check::object("border"),"facet:border-stroke");}
+fn shape() -> native::IShape {return check::must::[native::IShape](native::IShape::query(outline()));}
+fn data() -> rt::Object {let path=check::must::[native::IPath](native::IPath::query(outline()));return check::must::[rt::Object](path.data());}
+fn handle() -> bordered::Bordered {return match bordered::find("border") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[bordered::Bordered]();}};}
+fn pattern() -> native::DoubleCollection {return check::must::[native::DoubleCollection](native::DoubleCollection::query(check::must::[rt::Object](shape().stroke_dash_array())));}
+struct Probe {passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn build(ref this) -> core::Node {
+        var frame=ui::bordered(key:"border",stroke:vocab::Brush::solid(vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64)),stroke_width:4.0f64,stroke_dash:vocab::Dashes::of(8.0f64,4.0f64),stroke_dash_offset:2.0f64,stroke_cap:vocab::LineCap::Round,stroke_join:vocab::LineJoin::Bevel,stroke_miter_limit:4.0f64,stroke_shape:vocab::Shape::rounded(20.0f64)).width(240.0f64).height(100.0f64).padding(12.0f64);
+        assert frame.add_child(ui::label("Inside border",key:"child")).is_ok();return @ui {column {frame}.padding(20.0f64)};
+    }
+    fn ready(ref this) {this.timer=services::after(0.3f64,this.initial);}
+    fn initial(ref this) {
+        let s=shape();assert check::must::[f64](s.stroke_thickness())==4.0f64;assert check::must::[i32](s.stroke_dash_cap())==native::pen_line_cap_round;assert check::must::[i32](s.stroke_line_join())==native::pen_line_join_bevel;assert check::must::[f64](s.stroke_miter_limit())==4.0f64;
+        assert check::must::[u32](pattern().size())==2;assert check::must::[f64](pattern().get_at(0))==2.0f64;assert check::must::[f64](pattern().get_at(1))==1.0f64;assert check::must::[f64](s.stroke_dash_offset())==0.5f64;
+        let geometry=check::must::[native::IPathGeometry](native::IPathGeometry::query(data()));let figures=check::must::[native::IVector_Microsoft_UI_Xaml_Media_PathFigure](native::IVector_Microsoft_UI_Xaml_Media_PathFigure::query(check::must::[rt::Object](geometry.figures())));let figure=check::must::[native::IPathFigure](native::IPathFigure::query(check::must::[rt::Object](figures.get_at(0))));assert check::must::[native::Point](figure.start_point()).x==20.0f32;
+        let visual=check::must::[native::IUIElement](native::IUIElement::query(outline()));assert !check::must::[bool](visual.is_hit_test_visible());
+        let border=check::must::[native::IBorder](native::IBorder::query(check::object("border")));assert check::must::[native::Thickness](border.border_thickness()).left==0.0f64;
+        check::log("PASS: rounded native border, DIP dash lengths/phase, caps, joins and miter limit");
+        let updated=handle().set_stroke_width(2.0f64).set_stroke_shape(vocab::Shape {kind:3,corners:vocab::Corners::none()});
+        let old=mount::replace("child",ui::label("Replacement inside border",key:"child"));this.timer=services::after(0.2f64,this.ellipse);
+    }
+    fn ellipse(ref this) {
+        let geometry=check::must::[native::IEllipseGeometry](native::IEllipseGeometry::query(data()));let frame=(*check::node("border")).frame();assert check::must::[f64](geometry.radius_x())==(frame.width-2.0f64)*0.5f64;assert check::must::[f64](geometry.radius_y())==(frame.height-2.0f64)*0.5f64;assert check::must::[f64](pattern().get_at(0))==4.0f64;
+        let border=check::must::[native::IBorder](native::IBorder::query(check::object("border")));let panel=check::must::[native::IPanel](native::IPanel::query(check::must::[rt::Object](border.child())));let children=check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));assert check::must::[u32](children.size())==2;
+        check::log("PASS: live ellipse outline, dash rescaling and content replacement");
+        let updated=handle().set_stroke_dash(vocab::Dashes::none()).set_stroke_dash_offset(0.0f64).set_stroke_cap(vocab::LineCap::Flat).set_stroke_join(vocab::LineJoin::Miter).set_stroke_miter_limit(0.0f64).set_stroke_shape(vocab::Shape::none()).set_width(300.0f64);
+        this.timer=services::after(0.2f64,this.reset);
+    }
+    fn reset(ref this) {
+        assert check::must::[u32](pattern().size())==0;assert check::must::[f64](shape().stroke_dash_offset())==0.0f64;assert check::must::[i32](shape().stroke_dash_cap())==native::pen_line_cap_flat;assert check::must::[i32](shape().stroke_line_join())==native::pen_line_join_miter;assert check::must::[f64](shape().stroke_miter_limit())==10.0f64;
+        let geometry=check::must::[native::IPathGeometry](native::IPathGeometry::query(data()));
+        let bounds=check::must::[native::IGeometry](native::IGeometry::query(data()));assert check::must::[native::Rect](bounds.bounds()).width==298.0f32;
+        check::log("PASS: border native defaults restored and geometry replaced on resize");this.passed=true;assert host::close().is_ok();
+    }
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI borders",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: border teardown");return 0;}

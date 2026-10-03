@@ -16,6 +16,13 @@ struct Values {
 impl Values {
     fn new() -> Values { return Values { n: 0 }; }
 
+    fn colors(ref this, sender: *u8) {
+        this.n = 1 - this.n;
+        let accent = if this.n == 1 {vocab::Color::rgba(0.55f64,0.18f64,0.75f64,1.0f64)} else {vocab::Color::clear()};
+        if let option::Option::Some(s) = slider::find("val:slider") {let updated=s.set_thumb_color(accent).set_minimum_track_color(accent);}
+        if let option::Option::Some(l) = label::find("val:style_status") {let updated=l.set_text(if this.n == 1 {"Custom slider colors"} else {"Default slider colors"});}
+    }
+
     fn paint(ref this, v: f64) {
         match label::find("val:readout") {
             option::Option[label::Label]::Some(l) => {
@@ -65,6 +72,9 @@ impl Values: component::Component {
             on_value_changed: this.on_slider));
         body.add(ui::label("Value: 40%", key: "val:readout",
             font_size: 15.0, text_color: vocab::Color::ink()));
+
+        body.add(ui::button("Switch slider colors",key:"val:colors",on_click:this.colors));
+        body.add(ui::label("Default slider colors",key:"val:style_status"));
 
         body.add(shell::caption("Stepper  ·  0…10"));
         body.add(ui::stepper(4.0, key: "val:stepper", minimum: 0.0, maximum: 10.0,

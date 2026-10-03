@@ -31,7 +31,7 @@ impl Counter {
         match mount::replace("increment",this.increment()) {
             option::Option::Some(old)=>{}, option::Option::None=>{assert false;}
         }
-        assert host::live_views()==13; assert host::live_subscriptions()==3;
+        assert host::live_views()==13; assert host::live_subscriptions()==9;
         if count==1 || count==2 {
             match field::find("input") {
                 option::Option::Some(value)=>{let updated: field::TextField=value.set_read_only(count==1);},option::Option::None=>{assert false;}

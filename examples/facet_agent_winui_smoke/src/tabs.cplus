@@ -1,0 +1,67 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/tabs" as tabs;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "./choice_colors" as colors;
+import "flex_layout/flex_layout" as flex;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "./texts" as texts;
+fn strip() -> native::ITabView {return check::must::[native::ITabView](native::ITabView::query(texts::named_part(check::object("tabs"),"facet:tab-strip")));}
+fn handle() -> tabs::Tabs {return match tabs::find("tabs") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[tabs::Tabs]();}};}
+fn item(index: u32) -> rt::Object {let list=check::must::[native::IVector_Object](native::IVector_Object::query(check::must::[rt::Object](strip().tab_items())));return check::must::[rt::Object](list.get_at(index));}
+fn selected_fill() -> native::Color {let shape=check::must::[native::IShape](native::IShape::query(texts::named_part(item(1),"SelectedBackgroundPath")));return texts::brush_color(check::must::[rt::Object](shape.fill()));}
+fn unselected_fill() -> native::Color {let panel=check::must::[native::IPanel](native::IPanel::query(texts::named_part(item(0),"TabContainer")));return texts::brush_color(check::must::[rt::Object](panel.background()));}
+struct Probe {original: native::Color,original_unselected: native::Color,passed: bool,calls: i64,timer: services::Cancellable}
+impl Probe {
+    fn changed(ref this,sender: *u8) {
+        this.calls=this.calls+1;assert handle().selected_index()==0;
+        if this.calls==2 {let removed=mount::replace("tabs",ui::label("Tabs removed",key:"replacement"));}
+    }
+    fn build(ref this) -> core::Node {
+        var tabs_node=ui::tabs(key:"tabs",selected_index:1,bar_background:vocab::Brush {start:colors::red(),end:vocab::Color::rgba(0.0f64,0.0f64,1.0f64,1.0f64),angle:0.0f64,is_gradient:true},bar_background_color:colors::red(),on_tab_changed:this.changed).height(180.0f64);
+        assert tabs_node.add_child(ui::label("First pane",key:"First")).is_ok();assert tabs_node.add_child(ui::label("Second pane",key:"Second")).is_ok();
+        return @ui {column {tabs_node}.padding(20.0f64)};
+    }
+    fn ready(ref this) {this.timer=services::after(0.3f64,this.initial);}
+    fn initial(ref this) {
+        assert check::must::[i32](strip().selected_index())==1;assert this.calls==0;
+        this.original=selected_fill();this.original_unselected=unselected_fill();
+        let bar=check::must::[native::IControl](native::IControl::query(strip().object()));let gradient=check::must::[native::ILinearGradientBrush](native::ILinearGradientBrush::query(check::must::[rt::Object](bar.background())));
+        assert core::display_of(check::node("First"))==flex::Display::None;assert core::display_of(check::node("Second"))==flex::Display::Flex;
+        assert (*check::node("Second")).frame().top>=(*check::node("tabs")).frame().top+48.0f64;
+        assert strip().set_selected_index(0).is_ok();assert this.calls==1;assert handle().selected_index()==0;
+        assert strip().set_selected_index(0).is_ok();assert this.calls==1;
+        check::log("PASS: initial tabs, native selection, pane visibility and duplicate suppression");
+        let focus=check::must::[native::IUIElement](native::IUIElement::query(item(0)));assert check::must::[bool](focus.focus(native::focus_state_keyboard));
+        let updated=handle().set_selected_index(1).set_bar_background(vocab::Brush::none()).set_selected_tab_color(colors::red()).set_unselected_tab_color(vocab::Color::rgba(0.0f64,0.0f64,1.0f64,1.0f64)).set_bar_background_color(colors::red()).set_bar_text_color(colors::red());this.timer=services::after(0.15f64,this.programmatic);
+    }
+    fn programmatic(ref this) {
+        assert this.calls==1;assert check::must::[i32](strip().selected_index())==1;
+        let focused=check::must::[native::IUIElement](native::IUIElement::query(item(0)));assert check::must::[i32](focused.focus_state())==native::focus_state_keyboard;
+        assert selected_fill().r==255u8 && selected_fill().g==0u8;assert unselected_fill().b==255u8 && unselected_fill().r==0u8;
+        let bar=check::must::[native::IControl](native::IControl::query(strip().object()));assert texts::brush_color(check::must::[rt::Object](bar.background())).r==255u8;
+        let presenter=check::must::[native::IContentPresenter](native::IContentPresenter::query(texts::named_part(item(1),"ContentPresenter")));assert texts::brush_color(check::must::[rt::Object](presenter.foreground())).g==0u8;
+        let updated=handle().set_selected_tab_color(vocab::Color::clear()).set_unselected_tab_color(vocab::Color::clear()).set_bar_text_color(vocab::Color::clear()).set_bar_background_color(vocab::Color::clear());this.timer=services::after(0.15f64,this.cleared);
+    }
+    fn cleared(ref this) {
+        colors::same(selected_fill(),this.original);colors::same(unselected_fill(),this.original_unselected);check::log("PASS: rendered tab colors and theme reset");
+        let removed=mount::replace("Second",ui::label("New second pane",key:"Second"));
+        let updated=handle().set_selected_index(99);this.timer=services::after(0.15f64,this.invalid);
+    }
+    fn invalid(ref this) {
+        assert this.calls==1;assert handle().selected_index()==99;assert check::must::[i32](strip().selected_index())==-1;
+        assert core::display_of(check::node("First"))==flex::Display::None;assert core::display_of(check::node("Second"))==flex::Display::None;
+        let list=check::must::[native::IVector_Object](native::IVector_Object::query(check::must::[rt::Object](strip().tab_items())));assert check::must::[u32](list.size())==2;
+        check::log("PASS: programmatic selection, child replacement and invalid index remain silent");
+        assert strip().set_selected_index(0).is_ok();assert this.calls==2;this.timer=services::after(0.15f64,this.finish);
+    }
+    fn finish(ref this) {this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI tabs",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: tabs teardown");return 0;}

@@ -10,38 +10,230 @@ import "facet/props" as props;
 import "facet/relist" as relist;
 import "facet/mount" as mount;
 import "facet/vocabulary" as vocab;
+import "facet/list" as list;
+import "facet/collection" as collection;
+import "flex_layout/flex_layout" as flex;
 import "./record" as record;
 import "./native" as native;
-struct Row {node: box::Box[core::Node],index: usize}
-struct State {rows: vec::Vec[Row],invalid: bool,first: usize,last: usize,width: f64,row_height: f64,scroll_to: i64}
+import "./style" as style;
+import "./scheduler" as scheduler;
+extern fn GetKeyState(key: i32) -> i16;
+struct Tap {opaque host: *record::View,opaque node: *core::Node,index: usize}
+struct Row {node: box::Box[core::Node],index: usize,visual: rt::Object,tap: box::Box[Tap],token: ui::EventRegistrationToken,subscribed: bool,announced: bool}
+struct State {item_count: usize,laid_columns: usize,anchor_pending: bool,anchor_bottom: bool,anchor_item: bool,anchor_index: usize,anchor_offset: f64,anchor_intra: f64,scroll_timer: u64,retired: vec::Vec[Row],events_timer: u64,metric_count: usize,heights: vec::Vec[f64],positions: vec::Vec[f64],rows: vec::Vec[Row],invalid: bool,first: usize,last: usize,width: f64,row_height: f64,scroll_to: i64,threshold_inside: bool,threshold_count: usize,threshold_timer: u64}
 static LIVE: i64=0;
 fn subscriptions() -> i64 {return LIVE;}
 fn supports(k: u32) -> bool {return k==props::K_LIST || k==props::K_COLLECTION || k==relist::K_RELIST;}
 fn state(r: *record::View) -> *State {return (*r).extra as *State;}
-fn scrolled(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {let r: *record::View=ctx as *record::View;core::touch((*r).node,0u64);return rt::Status {code:0};}
+fn scrolled(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View;core::touch((*r).node,0u64);
+    let s=state(r);if (*s).scroll_timer==0 {(*s).scroll_timer=scheduler::after(0.0f64,scroll_deliver,ctx);}return rt::Status {code:0};
+}
+fn scroll_deliver(ctx: *u8) {
+    let r=ctx as *record::View;(*state(r)).scroll_timer=0;
+    let raw: *u8=(*core::node_data((*r).node)).props;var call: fn(*u8,*u8)=props::no_handler;var context: *u8=0 as *u8;
+    if (*r).kind==props::K_LIST {let p: *props::ListProps=raw as *props::ListProps;call=(*p).observe_scrolled;context=(*p).observe_scrolled_ctx;}
+    if (*r).kind==props::K_COLLECTION {let p: *props::CollectionProps=raw as *props::CollectionProps;call=(*p).items_view.observe_scrolled;context=(*p).items_view.observe_scrolled_ctx;}
+    if call!=props::no_handler {call(ctx,context);}
+}
+fn threshold_deliver(ctx: *u8) {
+    let r=ctx as *record::View;(*state(r)).threshold_timer=0;
+    let p: *props::CollectionProps=(*core::node_data((*r).node)).props as *props::CollectionProps;
+    if (*p).items_view.remaining_threshold<0 {return;}
+    let call=(*p).items_view.on_remaining_items_threshold_reached;let context=(*p).items_view.on_remaining_items_threshold_reached_ctx;
+    // Loading more data or removing this host is safe outside layout.
+    if call!=props::no_handler {call(ctx,context);}
+}
+fn remaining(r: *record::View,count: usize,last_visible: usize,viewport: f64) {
+    if (*r).kind!=props::K_COLLECTION {return;}
+    let s=state(r);let p: *props::CollectionProps=(*core::node_data((*r).node)).props as *props::CollectionProps;
+    let threshold=(*p).items_view.remaining_threshold;
+    // Count visible items, not the extra rows retained on either side.
+    let last=if last_visible>count {count} else {last_visible};
+    let inside=viewport>0.0f64 && count>0 && threshold>=0 && (count-last)<=threshold as usize;
+    if !inside {if (*s).threshold_timer!=0 {scheduler::cancel((*s).threshold_timer);(*s).threshold_timer=0;}}
+    else if !(*s).threshold_inside || (*s).threshold_count!=count {
+        if (*s).threshold_timer==0 && (*p).items_view.on_remaining_items_threshold_reached!=props::no_handler {(*s).threshold_timer=scheduler::after(0.0f64,threshold_deliver,r as *u8);}
+    }
+    (*s).threshold_inside=inside;(*s).threshold_count=count;
+}
+fn selected(r: *record::View,index: usize) -> bool {
+    let raw: *u8=(*core::node_data((*r).node)).props;
+    if (*r).kind==props::K_LIST {let p: *props::ListProps=raw as *props::ListProps;return (*p).selection_mode!=vocab::SelectionMode::None && (*p).selection_highlight!=vocab::SelectionHighlight::None && (*p).selection.has(index);}
+    if (*r).kind==props::K_COLLECTION {let p: *props::CollectionProps=raw as *props::CollectionProps;return (*p).selectable_items_view.selection_mode!=vocab::SelectionMode::None && (*p).selection_highlight!=vocab::SelectionHighlight::None && (*p).selection.has(index);}
+    return false;
+}
+fn selection(old: vocab::IndexList,mode: vocab::SelectionMode,index: usize) -> vocab::IndexList {
+    var out: vocab::IndexList=vocab::IndexList::new();
+    if mode==vocab::SelectionMode::Multiple && GetKeyState(17)<0 {
+        var i: usize=0;while i<old.count() {let n: i64=old.at(i);if n>=0 && n as usize!=index {let added=out.add(n as usize);}i=i+1;}
+        if !old.has(index) {let added=out.add(index);}
+    } else {let added=out.add(index);}
+    return out;
+}
+fn tapped(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let tap: *Tap=context as *Tap;let r: *record::View=(*tap).host;let index: usize=(*tap).index;
+    let sender_view: *u8=core::view_of((*tap).node);let raw: *u8=(*core::node_data((*r).node)).props;
+    var call: fn(*u8,*u8)=props::no_handler;var ctx: *u8=0 as *u8;
+    var tap_call: fn(*u8,*u8)=props::no_handler;var tap_ctx: *u8=0 as *u8;
+    if (*r).kind==props::K_LIST {
+        let p: *props::ListProps=raw as *props::ListProps;tap_call=(*p).on_item_tapped;tap_ctx=(*p).on_item_tapped_ctx;
+        if (*p).selection_mode!=vocab::SelectionMode::None {
+            let next: vocab::IndexList=selection((*p).selection,(*p).selection_mode,index);
+            if !vocab::same_indexes(#addr_of((*p).selection),#addr_of(next)) {
+            list::note_selection(p,next);
+            call=(*p).on_item_selected;ctx=(*p).on_item_selected_ctx;core::touch((*r).node,list::P_SELECTED_INDEX);
+            }
+        }
+    }
+    if (*r).kind==props::K_COLLECTION {
+        let p: *props::CollectionProps=raw as *props::CollectionProps;
+        if (*p).selectable_items_view.selection_mode!=vocab::SelectionMode::None {
+            let next: vocab::IndexList=selection((*p).selection,(*p).selectable_items_view.selection_mode,index);
+            if !vocab::same_indexes(#addr_of((*p).selection),#addr_of(next)) {
+            collection::note_selection(p,next);
+            call=(*p).selectable_items_view.on_selection_changed;ctx=(*p).selectable_items_view.on_selection_changed_ctx;core::touch((*r).node,collection::P_SELECTED_INDEX);
+            }
+        }
+    }
+    // Either callback may remove the list and free this event's row context.
+    let before: u64=flex::removal_count();if call!=props::no_handler {call(r as *u8,ctx);}
+    if before==flex::removal_count() && tap_call!=props::no_handler {tap_call(sender_view,tap_ctx);}
+    return rt::Status {code:0};
+}
+fn bar(value: vocab::ScrollBars) -> i32 {
+    return match value {vocab::ScrollBars::Always=>ui::scroll_bar_visibility_visible,vocab::ScrollBars::Never=>ui::scroll_bar_visibility_hidden,_=>ui::scroll_bar_visibility_auto};
+}
 fn attach(r: *record::View) {
-    let owner: box::Box[State]=match box::new::[State](State {rows:vec::new::[Row](),invalid:true,first:0,last:0,width:0.0f64,row_height:0.0f64,scroll_to:-1}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();
+    let owner: box::Box[State]=match box::new::[State](State {item_count:0,laid_columns:1,anchor_pending:false,anchor_bottom:false,anchor_item:false,anchor_index:0,anchor_offset:0.0f64,anchor_intra:0.0f64,scroll_timer:0,retired:vec::new::[Row](),events_timer:0,metric_count:0,heights:vec::new::[f64](),positions:vec::new::[f64](),rows:vec::new::[Row](),invalid:true,first:0,last:0,width:0.0f64,row_height:0.0f64,scroll_to:-1,threshold_inside:false,threshold_count:0,threshold_timer:0}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();
     let canvas: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new());(*r).content=canvas.object();
     let content: ui::IContentControl=native::must::[ui::IContentControl](ui::IContentControl::query((*r).object));native::check(content.set_content((*r).content));
     let scroll: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*r).object));native::check(scroll.set_horizontal_scroll_bar_visibility(ui::scroll_bar_visibility_disabled));native::check(scroll.set_vertical_scroll_bar_visibility(ui::scroll_bar_visibility_auto));
     let handler: ui::EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangedEventArgs=native::must::[ui::EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangedEventArgs](ui::EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangedEventArgs::new(scrolled,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](scroll.add_view_changed(handler.object()));LIVE=LIVE+1;return;
 }
+fn separator(r: *record::View,value: rt::Object) {
+    if (*r).kind!=props::K_LIST {return;}let p: *props::ListProps=(*core::node_data((*r).node)).props as *props::ListProps;
+    let border=native::must::[ui::IBorder](ui::IBorder::query(value));let width=if (*p).separator==vocab::Separator::None {0.0f64} else {1.0f64};
+    native::check(border.set_border_thickness(ui::Thickness {left:0.0f64,top:0.0f64,right:0.0f64,bottom:width}));
+    native::check(border.set_border_brush(style::brush(if (*p).separator_color.is_set() {(*p).separator_color} else {vocab::Color::rgba(0.5f64,0.5f64,0.5f64,0.35f64)})));
+}
+fn capture_anchor(r: *record::View,p: *props::CollectionProps,scroll: ui::IScrollViewer,dirty: u64) {
+    if (dirty&(collection::P_COUNT|collection::P_ROW|collection::P_INVALIDATE_ROW|collection::P_SPLICE_ROWS|collection::P_COLUMNS|collection::P_ITEM_SIZING|collection::P_SCROLL_ANCHOR))==0 {return;}
+    let s=state(r);let offset=native::must::[f64](scroll.vertical_offset());let viewport=native::must::[f64](scroll.viewport_height());let extent=native::must::[f64](scroll.extent_height());
+    (*s).anchor_pending=true;(*s).anchor_offset=offset;(*s).anchor_bottom=(*p).items_view.scroll_anchor==vocab::ScrollAnchor::KeepLastItemInView && offset+viewport>=extent-1.0f64;
+    (*s).anchor_item=(*p).items_view.scroll_anchor==vocab::ScrollAnchor::KeepItemsInView && (*s).item_count>0;(*s).anchor_intra=0.0f64;
+    if (*s).anchor_item {
+        var index=if (*s).positions.count()>0 {row_at(s,offset,(*s).item_count,(*s).laid_columns)} else {(offset/(*s).row_height) as usize*(*s).laid_columns};
+        (*s).anchor_intra=offset-row_top(s,index,(*s).laid_columns,(*s).row_height);
+        if (dirty&collection::P_SPLICE_ROWS)!=0 && (*p).splice_at>=0 {
+            let at=(*p).splice_at as usize;let delta=(*p).splice_count;
+            if delta>0 && at<=index {index=index+delta as usize;}
+            if delta<0 && at<=index {let removed=(0i64-delta) as usize;if index>=at+removed {index=index-removed;} else {index=at;(*s).anchor_intra=0.0f64;}}
+        }
+        (*s).anchor_index=index;
+    }
+}
 fn apply(r: *record::View) {
-    let s: *State=state(r);(*s).invalid=true;let raw: *u8=(*core::node_data((*r).node)).props;
-    if (*r).kind==relist::K_RELIST {let p: *relist::RelistProps=raw as *relist::RelistProps;(*p).node=(*r).node;if (*p).scroll_to_index>=0 {(*s).scroll_to=(*p).scroll_to_index;(*p).scroll_to_index=-1;};(*p).has_pending=false;}
-    if (*r).kind==props::K_LIST {let p: *props::ListProps=raw as *props::ListProps;if (*p).scroll_to_index>=0 {(*s).scroll_to=(*p).scroll_to_index;(*p).scroll_to_index=-1;}}
+    let s: *State=state(r);let raw: *u8=(*core::node_data((*r).node)).props;let dirty: u64=core::dirty_of((*r).node);
+    let scroll: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*r).object));
+    if (*r).kind==relist::K_RELIST {(*s).invalid=true;let p: *relist::RelistProps=raw as *relist::RelistProps;(*p).node=(*r).node;if (*p).scroll_to_index>=0 {(*s).scroll_to=(*p).scroll_to_index;(*p).scroll_to_index=-1;};(*p).has_pending=false;}
+    if (*r).kind==props::K_LIST {
+        let p: *props::ListProps=raw as *props::ListProps;
+        (*p).splice_at=-1;(*p).splice_count=0;
+        if (dirty&(list::P_COUNT|list::P_ROW|list::P_ROW_HEIGHT|list::P_HAS_UNEVEN_ROWS|list::P_INVALIDATE_ROW|list::P_SPLICE_ROWS))!=0 {(*s).invalid=true;}
+        native::check(scroll.set_horizontal_scroll_bar_visibility(bar((*p).horizontal_scroll_bars)));native::check(scroll.set_vertical_scroll_bar_visibility(bar((*p).vertical_scroll_bars)));
+        if (*p).scroll_to_index>=0 {(*s).scroll_to=(*p).scroll_to_index;(*p).scroll_to_index=-1;}
+    }
+    if (*r).kind==props::K_COLLECTION {
+        let p: *props::CollectionProps=raw as *props::CollectionProps;
+        capture_anchor(r,p,scroll,dirty);(*p).splice_at=-1;(*p).splice_count=0;
+        if (dirty&(collection::P_COUNT|collection::P_ROW|collection::P_INVALIDATE_ROW|collection::P_SPLICE_ROWS|collection::P_COLUMNS|collection::P_ITEM_SIZING))!=0 {(*s).invalid=true;}
+        native::check(scroll.set_horizontal_scroll_bar_visibility(bar((*p).items_view.horizontal_scroll_bars)));native::check(scroll.set_vertical_scroll_bar_visibility(bar((*p).items_view.vertical_scroll_bars)));
+        if (*p).items_view.scroll_to_index>=0 {(*s).scroll_to=(*p).items_view.scroll_to_index;(*p).items_view.scroll_to_index=-1;}
+    }
+    if (*r).kind==props::K_LIST {var i: usize=0;while i<(*s).rows.count() {match (*s).rows.at_ptr(i) {option::Option::Some(row)=>{separator(r,(*row).visual);},option::Option::None=>{}}i=i+1;}}
     return;
 }
 fn children(r: *record::View) -> ui::IVector_Microsoft_UI_Xaml_UIElement {let panel: ui::IPanel=native::must::[ui::IPanel](ui::IPanel::query((*r).content));return native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));}
+// Callbacks run outside layout. A retired row remains owned until its
+// disappearing callback returns; removing the host cannot free that sender.
+fn events_deliver(ctx: *u8) {
+    let r=ctx as *record::View;let s=state(r);(*s).events_timer=0;
+    // A callback may mutate any tree. Queue continuation before calling it;
+    // host teardown cancels this timer and unrelated removals leave it alive.
+    (*s).events_timer=scheduler::after(0.0f64,events_deliver,ctx);
+    while (*s).retired.count()>0 {
+        match (*s).retired.remove(0) {option::Option::Some(row)=>{
+            let p: *props::ListProps=(*core::node_data((*r).node)).props as *props::ListProps;
+            let call=(*p).on_item_disappearing;let context=(*p).on_item_disappearing_ctx;let before=flex::removal_count();
+            if row.announced && call!=props::no_handler {call(core::view_of(row.node.ptr()),context);}
+            mount::unrealise(row.node.ptr());if before!=flex::removal_count() {return;}
+        },option::Option::None=>{}}
+    }
+    var i: usize=0;
+    while i<(*s).rows.count() {
+        match (*s).rows.at_ptr(i) {option::Option::Some(row)=>{
+            if !(*row).announced {
+                (*row).announced=true;let p: *props::ListProps=(*core::node_data((*r).node)).props as *props::ListProps;
+                let call=(*p).on_item_appearing;let context=(*p).on_item_appearing_ctx;let sender=core::view_of((*row).node.ptr());let before=flex::removal_count();
+                if call!=props::no_handler {call(sender,context);}if before!=flex::removal_count() {return;}
+            }
+        },option::Option::None=>{}}i=i+1;
+    }
+    scheduler::cancel((*s).events_timer);(*s).events_timer=0;
+}
+fn queue_events(r: *record::View) {
+    if (*r).kind!=props::K_LIST {return;}let s=state(r);if (*s).events_timer!=0 {return;}
+    let p: *props::ListProps=(*core::node_data((*r).node)).props as *props::ListProps;
+    if (*p).on_item_appearing==props::no_handler && (*p).on_item_disappearing==props::no_handler && (*s).retired.count()==0 {return;}
+    var pending=(*s).retired.count()>0;var i: usize=0;while !pending && i<(*s).rows.count() {match (*s).rows.at_ptr(i) {option::Option::Some(row)=>{pending=!(*row).announced;},option::Option::None=>{}}i=i+1;}
+    if pending {(*s).events_timer=scheduler::after(0.0f64,events_deliver,r as *u8);}
+}
 fn clear(r: *record::View,detach: bool=true) {
-    let s: *State=state(r);if detach {native::check(children(r).clear());}var i: usize=0;
-    while i<(*s).rows.count() {match (*s).rows.at_ptr(i) {option::Option::Some(row)=>{let n: *core::Node=(*row).node.ptr();if (*r).kind==relist::K_RELIST {relist::note_released((*r).node,n);}mount::unrealise(n);},option::Option::None=>{}}i=i+1;}
-    (*s).rows.remove_all();return;
+    let s=state(r);if detach {native::check(children(r).clear());}
+    while (*s).rows.count()>0 {match (*s).rows.remove(0) {option::Option::Some(row)=>{
+        let n=row.node.ptr();if row.subscribed {let element=native::must::[ui::IUIElement](ui::IUIElement::query(row.visual));native::check(element.remove_tapped(row.token));LIVE=LIVE-1;}
+        if (*r).kind==relist::K_RELIST {relist::note_released((*r).node,n);}
+        var defer_event: bool=false;if detach && (*r).kind==props::K_LIST && row.announced {let p: *props::ListProps=(*core::node_data((*r).node)).props as *props::ListProps;defer_event=(*p).on_item_disappearing!=props::no_handler;}
+        if defer_event {let added=(*s).retired.append(row);} else {mount::unrealise(n);}
+    },option::Option::None=>{}}}
 }
 fn release(r: *record::View) {
-    // The ScrollViewer owns the native children until it is destroyed. Do not
-    // mutate that collection during window shutdown; release row lifecycles.
-    let scroll: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*r).object));native::check(scroll.remove_view_changed((*r).token));LIVE=LIVE-1;clear(r,false);let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;return;
+    // Shutdown drops queued events without calling into application owners.
+    let s=state(r);if (*s).scroll_timer!=0 {scheduler::cancel((*s).scroll_timer);}if (*s).threshold_timer!=0 {scheduler::cancel((*s).threshold_timer);}if (*s).events_timer!=0 {scheduler::cancel((*s).events_timer);}
+    let scroll=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*r).object));native::check(scroll.remove_view_changed((*r).token));LIVE=LIVE-1;clear(r,false);
+    var i: usize=0;while i<(*s).retired.count() {match (*s).retired.at_ptr(i) {option::Option::Some(row)=>{mount::unrealise((*row).node.ptr());},option::Option::None=>{}}i=i+1;}
+    let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;
+}
+// Prefix offsets let a large variable-height list locate its viewport without
+// rebuilding or measuring every row on each scroll event.
+fn metrics(r: *record::View,count: usize,columns: usize,pitch: f64,width: f64) -> f64 {
+    if (*r).kind!=props::K_LIST && (*r).kind!=props::K_COLLECTION {return pitch;}
+    let s=state(r);var measure: fn(usize,*u8)->f64=props::no_row_height_of;var context: *u8=0 as *u8;var first_only: bool=false;
+    if (*r).kind==props::K_LIST {let p: *props::ListProps=(*core::node_data((*r).node)).props as *props::ListProps;if (*p).has_uneven_rows {measure=(*p).row_height_of;context=props::bind_ctx_of((*p).row_height_of_ctx,(*p).row_ctx);}}
+    if (*r).kind==props::K_COLLECTION {let p: *props::CollectionProps=(*core::node_data((*r).node)).props as *props::CollectionProps;measure=(*p).row_height_of;context=props::bind_ctx_of((*p).row_height_of_ctx,(*p).row_ctx);first_only=(*p).structured_items_view.item_sizing==vocab::ItemSizing::MeasureFirstItem;}
+    if measure==props::no_row_height_of {(*s).positions.remove_all();(*s).heights.remove_all();return pitch;}
+    if !(*s).invalid && (*s).metric_count==count && (*s).width==width {return (*s).row_height;}
+    (*s).metric_count=count;(*s).positions.remove_all();(*s).heights.remove_all();
+    if first_only {if count>0 {let measured=measure(0,context);if measured>0.0f64 {return measured;}}return pitch;}
+    var total: f64=0.0f64;var tallest: f64=0.0f64;let start=(*s).positions.append(total);var i: usize=0;
+    while i<count {
+        let measured=measure(i,context);let height=if measured>0.0f64 {measured} else {pitch};let added=(*s).heights.append(height);if height>tallest {tallest=height;}
+        i=i+1;if i%columns==0 || i==count {total=total+tallest;let appended=(*s).positions.append(total);tallest=0.0f64;}
+    }
+    return pitch;
+}
+fn row_top(s: *State,index: usize,columns: usize,pitch: f64) -> f64 {
+    if (*s).positions.count()>0 {return match (*s).positions.at(index/columns) {option::Option::Some(v)=>v,option::Option::None=>0.0f64};}
+    return (index/columns) as f64*pitch;
+}
+fn row_size(s: *State,index: usize,pitch: f64) -> f64 {
+    return match (*s).heights.at(index) {option::Option::Some(v)=>v,option::Option::None=>pitch};
+}
+fn row_at(s: *State,offset: f64,count: usize,columns: usize) -> usize {
+    var lo: usize=0;var hi=(count+columns-1)/columns;
+    while lo<hi {let mid=lo+(hi-lo)/2;if row_top(s,(mid+1)*columns,columns,0.0f64)<=offset {lo=mid+1;} else {hi=mid;}}
+    return lo*columns;
 }
 fn place(r: *record::View,width: f64,height: f64,layout: fn(*core::Node,f64,f64)->f64) {
     if width<=0.0f64 || height<=0.0f64 {return;}
@@ -50,20 +242,50 @@ fn place(r: *record::View,width: f64,height: f64,layout: fn(*core::Node,f64,f64)
     if (*r).kind==props::K_COLLECTION {let p: *props::CollectionProps=raw as *props::CollectionProps;if (*p).count>0 {count=(*p).count as usize;}build=(*p).row;ctx=(*p).row_ctx;bind=(*p).bind;bind_ctx=(*p).bind_ctx;columns=(*p).structured_items_view.columns;row_height=80.0f64;}
     if (*r).kind==relist::K_RELIST {let p: *relist::RelistProps=raw as *relist::RelistProps;count=(*p).count_of((*p).rows);build=(*p).builder;ctx=(*p).builder_ctx;columns=(*p).columns;row_height=76.0f64;if (*p).row_height_of!=props::no_row_height_of {let h: f64=(*p).row_height_of(0,(*p).row_height_of_ctx);if h>0.0f64 {row_height=h;}}}
     if columns<1 {columns=1;}
+    row_height=metrics(r,count,columns,row_height,width);
     let usable: f64=if width>20.0f64 {width-16.0f64} else {width};let cell_width: f64=usable/(columns as f64);let lines: usize=(count+columns-1)/columns;
-    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).content));native::check(element.set_width(usable));native::check(element.set_height((lines as f64)*row_height));
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).content));native::check(element.set_width(usable));native::check(element.set_height(if (*s).positions.count()>0 {row_top(s,lines*columns,columns,row_height)} else {(lines as f64)*row_height}));
     let scroll: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*r).object));
-    if (*s).scroll_to>=0 {let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(element.update_layout());if native::must::[f64](scroll.viewport_height())>0.0f64 {let factory: ui::IPropertyValueStatics=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());let offset: rt::Object=native::must::[rt::Object](factory.create_double((((*s).scroll_to as usize)/columns) as f64*row_height));let ok: bool=native::must::[bool](scroll.change_view_with_optional_animation(rt::Object::empty(),offset,rt::Object::empty(),true));(*s).scroll_to=-1;}}
-    let offset: f64=native::must::[f64](scroll.vertical_offset());var first: usize=(offset/row_height) as usize*columns;if first>=columns {first=first-columns;}var last: usize=first+(((height/row_height) as usize)+4)*columns;if last>count {last=count;}if first>last {first=last;}
+    if (*s).scroll_to>=0 || (*s).anchor_pending {
+        let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(visual.update_layout());let viewport=native::must::[f64](scroll.viewport_height());
+        if viewport>0.0f64 {
+            var target=(*s).anchor_offset;
+            if (*s).scroll_to>=0 {let index=if count==0 {0 as usize} else if (*s).scroll_to as usize>=count {count-1} else {(*s).scroll_to as usize};target=row_top(s,index,columns,row_height);}
+            else if (*s).anchor_bottom {target=native::must::[f64](scroll.extent_height())-viewport;}
+            else if (*s).anchor_item {let index=if count==0 {0 as usize} else if (*s).anchor_index>=count {count-1} else {(*s).anchor_index};target=row_top(s,index,columns,row_height)+(*s).anchor_intra;}
+            if target<0.0f64 {target=0.0f64;}
+            let factory=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());let boxed=native::must::[rt::Object](factory.create_double(target));let changed=native::must::[bool](scroll.change_view_with_optional_animation(rt::Object::empty(),boxed,rt::Object::empty(),true));
+            (*s).scroll_to=-1;(*s).anchor_pending=false;
+        }
+    }
+    (*s).item_count=count;(*s).laid_columns=columns;
+    let offset: f64=native::must::[f64](scroll.vertical_offset());var first: usize=if (*s).positions.count()>0 {row_at(s,offset,count,columns)} else {(offset/row_height) as usize*columns};if first>=columns {first=first-columns;}var last: usize=if (*s).positions.count()>0 {row_at(s,offset+height,count,columns)+columns*3} else {first+(((height/row_height) as usize)+4)*columns};if last>count {last=count;}if first>last {first=last;}
     if (*s).invalid || (*s).first!=first || (*s).last!=last || (*s).width!=width || (*s).row_height!=row_height {
         clear(r);(*s).invalid=false;(*s).first=first;(*s).last=last;(*s).width=width;(*s).row_height=row_height;var i: usize=first;
         while i<last {
-            let owner: box::Box[core::Node]=match box::new::[core::Node](build(i,ctx)) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};let n: *core::Node=owner.ptr();core::set_item_index(n,i);if bind!=props::no_bind {bind(i,n,bind_ctx);}
-            let view: *u8=mount::realise(n);let h: f64=layout(n,cell_width,row_height);let value: rt::Object=(*(view as *record::View)).object.clone();native::check(children(r).append(value));
+            let owner: box::Box[core::Node]=match box::new::[core::Node](build(i,ctx)) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};let n: *core::Node=owner.ptr();core::set_item_index(n,i);if bind!=props::no_bind {bind(i,n,props::bind_ctx_of(bind_ctx,ctx));}
+            let view: *u8=mount::realise(n);let h: f64=layout(n,cell_width,row_size(s,i,row_height));var value: rt::Object=(*(view as *record::View)).object.clone();
+            let tap: box::Box[Tap]=match box::new::[Tap](Tap {host:r,node:n,index:i}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+            var token: ui::EventRegistrationToken=#zero::[ui::EventRegistrationToken]();let subscribed: bool=(*r).kind!=relist::K_RELIST;
+            if subscribed {
+                let wrapper: ui::Border=native::must::[ui::Border](ui::Border::new());native::check(wrapper.set_child(value));value=wrapper.object();
+                let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(value));
+                let handler: ui::TappedEventHandler=native::must::[ui::TappedEventHandler](ui::TappedEventHandler::new(tapped,tap.ptr() as *u8));token=native::must::[ui::EventRegistrationToken](element.add_tapped(handler.object()));LIVE=LIVE+1;
+            }
+            if subscribed {separator(r,value);}
+            native::check(children(r).append(value));
             if (*r).kind==relist::K_RELIST {relist::note_realised((*r).node,n);}
-            let _a=(*s).rows.append(Row {node:owner,index:i});i=i+1;
+            let _a=(*s).rows.append(Row {node:owner,index:i,visual:value,tap:tap,token:token,subscribed:subscribed,announced:false});i=i+1;
         }
     }
-    var j: usize=0;while j<(*s).rows.count() {match (*s).rows.at_ptr(j) {option::Option::Some(row)=>{let n: *core::Node=(*row).node.ptr();mount::sync_from(n);let h: f64=layout(n,cell_width,row_height);let value: rt::Object=(*(core::view_of(n) as *record::View)).object.clone();let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left(value,((*row).index%columns) as f64*cell_width));native::check(canvas.set_top(value,((*row).index/columns) as f64*row_height));},option::Option::None=>{}}j=j+1;}
+    var j: usize=0;while j<(*s).rows.count() {match (*s).rows.at_ptr(j) {option::Option::Some(row)=>{
+        let n: *core::Node=(*row).node.ptr();mount::sync_from(n);let item_height=row_size(s,(*row).index,row_height);let h: f64=layout(n,cell_width,item_height);let value: rt::Object=(*row).visual.clone();
+        if (*row).subscribed {let border: ui::IBorder=native::must::[ui::IBorder](ui::IBorder::query(value));native::check(border.set_background(style::brush(if selected(r,(*row).index) {vocab::Color::rgba(0.2f64,0.4f64,0.8f64,0.35f64)} else {vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.0f64)})));let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));native::check(element.set_width(cell_width));native::check(element.set_height(item_height));}
+        let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left(value,((*row).index%columns) as f64*cell_width));native::check(canvas.set_top(value,row_top(s,(*row).index,columns,row_height)));
+    },option::Option::None=>{}}j=j+1;}
+    let viewport=native::must::[f64](scroll.viewport_height());let edge=offset+viewport-0.001f64;
+    let visible_end=if (*s).positions.count()>0 {row_at(s,if edge>0.0f64 {edge} else {0.0f64},count,columns)+columns} else {((if edge>0.0f64 {edge} else {0.0f64})/row_height) as usize*columns+columns};
+    remaining(r,count,visible_end,viewport);
+    queue_events(r);
     return;
 }

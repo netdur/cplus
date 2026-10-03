@@ -63,6 +63,10 @@ from WinRT signatures, not guessed from the generic definition GUID.
 Delegate constructors default to non-agile. `agile: true` explicitly enables
 IAgileObject for APIs such as DispatcherQueue; the caller must satisfy the
 callback/context threading contract. This does not marshal a UI object.
+Generated delegates also provide `boxed()` for inspectable-object APIs such
+as WinUI `AddHandler`. It creates an owned `IReference<Delegate>` with the
+derived parameterized IID. Retain the same box for `RemoveHandler`; use
+`object()` for ordinary typed event subscriptions. Boxes are non-agile.
 
 Current scope is Windows x64, a selected API subset. Object parameters and
 returns use owned `winrt::Object` handles; use typed interface queries as

@@ -1,0 +1,51 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/canvas" as canvas;
+import "facet/label" as label;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "./texts" as texts;
+fn handle() -> canvas::Canvas {return match canvas::find("canvas") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[canvas::Canvas]();}};}
+fn children() -> native::IVector_Microsoft_UI_Xaml_UIElement {let panel=check::must::[native::IPanel](native::IPanel::query(check::object("canvas")));return check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));}
+struct Probe {draws: i32,before: i32,red: bool,passed: bool,shape: rt::Object,timer: services::Cancellable}
+impl Probe {
+    fn draw(ref this,cv: *vocab::Canvas,bounds: vocab::Rect) {
+        this.draws=this.draws+1;
+        let fill=(*cv).set_fill(if this.red {vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64)} else {vocab::Color::rgba(0.0f64,0.0f64,1.0f64,1.0f64)});
+        let rect=(*cv).fill_rect(bounds);
+    }
+    fn build(ref this) -> core::Node {return @ui {column {
+        canvas(key:"canvas",drawable:vocab::Drawable::of(this.draw)).width(200.0f64).height(100.0f64)
+        label("Before",key:"label")
+    }.padding(20.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.3f64,this.initial);}
+    fn initial(ref this) {
+        assert this.draws>0;this.before=this.draws;this.shape=check::must::[rt::Object](children().get_at(0));
+        this.red=true;
+        if let option::Option::Some(l)=label::find("label") {let updated=l.set_text("Unrelated layout update");}
+        this.timer=services::after(0.2f64,this.retained);
+    }
+    fn retained(ref this) {
+        assert this.draws==this.before;assert check::must::[rt::Object](children().get_at(0)).raw()==this.shape.raw();
+        this.shape=rt::Object::empty();
+        let updated=handle().redraw();this.timer=services::after(0.2f64,this.redrawn);
+    }
+    fn redrawn(ref this) {
+        assert this.draws==this.before+1;
+        let shape=check::must::[native::IShape](native::IShape::query(check::must::[rt::Object](children().get_at(0))));let color=texts::brush_color(check::must::[rt::Object](shape.fill()));assert color.r==255u8 && color.b==0u8;
+        check::log("PASS: canvas retains shapes across unrelated layout; explicit redraw updates native fill");
+        this.before=this.draws;let updated=handle().set_width(240.0f64);this.timer=services::after(0.2f64,this.resized);
+    }
+    fn resized(ref this) {
+        assert this.draws==this.before+1;let element=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(check::must::[rt::Object](children().get_at(0))));assert check::must::[f64](element.width())==240.0f64;
+        let updated=handle().set_drawable(vocab::Drawable::none());this.timer=services::after(0.2f64,this.cleared);
+    }
+    fn cleared(ref this) {assert check::must::[u32](children().size())==0;check::log("PASS: canvas size invalidation and drawable clearing");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI canvas redraw",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: canvas redraw teardown");return 0;}

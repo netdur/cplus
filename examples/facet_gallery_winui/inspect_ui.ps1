@@ -1,4 +1,4 @@
-param([ValidateSet('inspect','navigate','invoke','toggle','value','range','scroll')][string]$Action='inspect',[string]$Id='',[string]$Value='')
+param([ValidateSet('inspect','navigate','invoke','toggle','value','range','scroll','focus')][string]$Action='inspect',[string]$Id='',[string]$Value='')
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName UIAutomationClient
@@ -30,7 +30,15 @@ if ($Action -eq 'navigate') {
     $item=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,$Id))
     if (!$item) {throw "Control not found: $Id"}
     switch ($Action) {
-        'invoke' {([System.Windows.Automation.InvokePattern]$item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()}
+        'invoke' {
+            $activationPattern=$null
+            if ($item.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$activationPattern)) {
+                ([System.Windows.Automation.InvokePattern]$activationPattern).Invoke()
+            } elseif ($item.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$activationPattern)) {
+                ([System.Windows.Automation.TogglePattern]$activationPattern).Toggle()
+            } else {throw "Control exposes neither Invoke nor Toggle: $Id"}
+        }
+        'focus' {$item.SetFocus()}
         'toggle' {([System.Windows.Automation.TogglePattern]$item.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)).Toggle()}
         'value' {([System.Windows.Automation.ValuePattern]$item.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)).SetValue($Value)}
         'range' {([System.Windows.Automation.RangeValuePattern]$item.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern)).SetValue([double]$Value)}
@@ -45,7 +53,9 @@ $result=@(foreach ($node in $nodes) {
     if ($c.AutomationId -or $c.Name) {
         $value=$null;$p=$null
         if (!$c.IsPassword -and $node.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$p)) {$value=([System.Windows.Automation.ValuePattern]$p).Current.Value}
-        @{id=$c.AutomationId;name=$c.Name;type=$c.ControlType.ProgrammaticName;enabled=$c.IsEnabled;offscreen=$c.IsOffscreen;password=$c.IsPassword;value=$value;bounds=@($b.X,$b.Y,$b.Width,$b.Height)}
+        $toggle=$null;$p=$null
+        if ($node.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$p)) {$toggle=([System.Windows.Automation.TogglePattern]$p).Current.ToggleState.ToString()}
+        @{id=$c.AutomationId;name=$c.Name;type=$c.ControlType.ProgrammaticName;enabled=$c.IsEnabled;offscreen=$c.IsOffscreen;password=$c.IsPassword;value=$value;toggle=$toggle;bounds=@($b.X,$b.Y,$b.Width,$b.Height)}
     }
 })
 ConvertTo-Json -InputObject $result -Depth 4 -Compress

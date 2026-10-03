@@ -194,6 +194,65 @@ fn delegate(iid: Guid, invoke: *u8, callback: *u8, context: *u8, agile: bool=fal
 fn delegate_callback(object: *u8) -> *u8 { return read_pointer(object,32); }
 fn delegate_context(object: *u8) -> *u8 { return read_pointer(object,40); }
 
+// IReference<interface/delegate> has the six IInspectable slots, then Value.
+// The generated binding supplies the parameterized IID. The box owns one
+// reference to its value; it deliberately makes no agility promise.
+fn _box_query(self: *u8,id: *Guid,out: *usize) -> i32 {
+    if out.is_null() {return pointer_error();};*out=0;
+    if id.is_null() {return pointer_error();}
+    if guid_equal(*id,unknown_iid()) || guid_equal(*id,inspectable_iid()) || guid_equal(*id,*((self+16) as *Guid)) {
+        *out=self as usize;let count=delegate_add_ref(self);return 0;
+    }
+    return no_interface();
+}
+fn _box_release(self: *u8) -> u32 {
+    let remaining=atomic::fetch_sub_i32((self+8) as *i32,1,atomic::Ordering::AcqRel)-1;
+    if remaining==0 {release(read_pointer(self,32));free(self);}return remaining as u32;
+}
+fn _box_iids(self: *u8,count: *u32,out: *usize) -> i32 {
+    if count.is_null() || out.is_null() {return pointer_error();};*count=0;*out=0;
+    let memory=CoTaskMemAlloc(16);if memory.is_null() {return out_of_memory();}
+    *(memory as *Guid)=*((self+16) as *Guid);*count=1;*out=memory as usize;return 0;
+}
+fn _box_name(self: *u8,out: *usize) -> i32 {if out.is_null() {return pointer_error();};*out=0;return 0;}
+fn _box_trust(self: *u8,out: *i32) -> i32 {if out.is_null() {return pointer_error();};*out=0;return 0;}
+fn _box_value(self: *u8,out: *usize) -> i32 {
+    if out.is_null() {return pointer_error();}let value=read_pointer(self,32);add_ref(value);*out=value as usize;return 0;
+}
+fn box_interface(value: Object,reference_iid: Guid) -> result::Result[Object,Error] {
+    let memory=malloc(96);if memory.is_null() {return result::Result[Object,Error]::Err(Error {code:out_of_memory()});}
+    let cleared=memset(memory,0,96);let table=memory+40;write_pointer(memory,0,table);*((memory+8) as *i32)=1;
+    *((memory+16) as *Guid)=reference_iid;add_ref(value.raw());write_pointer(memory,32,value.raw());
+    let query: fn(*u8,*Guid,*usize)->i32=_box_query;let retain: fn(*u8)->u32=delegate_add_ref;let dispose: fn(*u8)->u32=_box_release;
+    let iids: fn(*u8,*u32,*usize)->i32=_box_iids;let name: fn(*u8,*usize)->i32=_box_name;let trust: fn(*u8,*i32)->i32=_box_trust;let get: fn(*u8,*usize)->i32=_box_value;
+    write_pointer(table,0,query as *u8);write_pointer(table,8,retain as *u8);write_pointer(table,16,dispose as *u8);
+    write_pointer(table,24,iids as *u8);write_pointer(table,32,name as *u8);write_pointer(table,40,trust as *u8);write_pointer(table,48,get as *u8);
+    return result::Result[Object,Error]::Ok(Object::adopt(memory));
+}
+
+#[test]
+fn winrt_boxed_delegate_abi_and_ownership() {
+    let invoke: fn(*u8)->i32=_test_invoke;
+    var delegate_id=unknown_iid();delegate_id.a=71;var box_id=unknown_iid();box_id.a=72;
+    let value=match delegate(delegate_id,invoke as *u8,0 as *u8,0 as *u8) {result::Result::Ok(v)=>v,result::Result::Err(e)=>{assert false;return;}};
+    {
+        let boxed=match box_interface(value,box_id) {result::Result::Ok(v)=>v,result::Result::Err(e)=>{assert false;return;}};
+        assert *((value.raw()+8) as *i32)==2;
+        let inspectable=match boxed.query(inspectable_iid()) {result::Result::Ok(v)=>v,result::Result::Err(e)=>{assert false;return;}};
+        let reference=match inspectable.query(box_id) {result::Result::Ok(v)=>v,result::Result::Err(e)=>{assert false;return;}};
+        assert reference.raw()==boxed.raw();
+        match boxed.query(delegate_id) {result::Result::Err(e)=>{assert e.code==no_interface();},result::Result::Ok(v)=>{assert false;}}
+        match boxed.query(agile_iid()) {result::Result::Err(e)=>{assert e.code==no_interface();},result::Result::Ok(v)=>{assert false;}}
+        let get: fn(*u8,*usize)->i32=slot(reference.raw(),6) as fn(*u8,*usize)->i32;var raw: usize=0;
+        assert get(reference.raw(),#addr_of(raw))==0;
+        {let returned=Object::adopt(raw as *u8);assert returned.raw()==value.raw();assert *((value.raw()+8) as *i32)==3;}
+        assert *((value.raw()+8) as *i32)==2;
+        let iids: fn(*u8,*u32,*usize)->i32=slot(inspectable.raw(),3) as fn(*u8,*u32,*usize)->i32;
+        var count: u32=0;var ids: usize=0;assert iids(inspectable.raw(),#addr_of(count),#addr_of(ids))==0;assert count==1;assert guid_equal(*(ids as *Guid),box_id);CoTaskMemFree(ids as *u8);
+    }
+    assert *((value.raw()+8) as *i32)==1;
+}
+
 #[test]
 fn winrt_hstring_utf8_roundtrip() {
     let h: HString = match HString::new("C+ — 日本語 🪟") { result::Result::Ok(v)=>{v}, result::Result::Err(e)=>{assert e.code==0; return;} };

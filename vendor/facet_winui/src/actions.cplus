@@ -2,9 +2,23 @@ import "winui/winui" as ui;
 import "winrt/runtime" as rt;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/swipe_item" as swipe_item;
+import "facet/menu_item" as menu_item;
+import "facet/context_menu_item" as context_item;
+import "facet/toolbar_item" as toolbar_item;
 import "./record" as record;
 import "./native" as native;
 import "./style" as style;
+import "./typography" as typography;
+import "./media" as media;
+import "./shortcuts" as shortcuts;
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/vocabulary" as vocab;
+// A native Click can outlive its Facet record when application code removes it.
+// Active deliveries retain this small state until the outermost callback returns.
+struct Delivery {opaque record: *record::View,depth: u32,applied: bool,label: rt::Object,panel: rt::Object,has_icon: bool}
+fn drop_delivery(p: *Delivery) {let owner: box::Box[Delivery]=box::from_raw::[Delivery](p as *u8);}
 static LIVE: i64=0;
 fn subscriptions() -> i64 {return LIVE;}
 fn menu(r: *record::View) -> ui::IMenuFlyout {
@@ -13,7 +27,70 @@ fn menu(r: *record::View) -> ui::IMenuFlyout {
 }
 fn entries(r: *record::View) -> ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase {return native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase](ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase::query(native::must::[rt::Object](menu(r).items())));}
 fn host(r: *record::View) {let flyout: ui::MenuFlyout=native::must::[ui::MenuFlyout](ui::MenuFlyout::new());let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(element.set_context_flyout(flyout.object()));return;}
-fn apply(r: *record::View) {let p: *props::SwipeItemProps=(*core::node_data((*r).node)).props as *props::SwipeItemProps;let item: ui::IMenuFlyoutItem=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));native::check(item.set_text((*p).menu_item.text.view()));return;}
-fn clicked(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {let r: *record::View=ctx as *record::View;let p: *props::SwipeItemProps=(*core::node_data((*r).node)).props as *props::SwipeItemProps;let call: fn(*u8,*u8)=(*p).menu_item.on_clicked;let context: *u8=(*p).menu_item.on_clicked_ctx;if call!=props::no_handler {call(ctx,context);}return rt::Status {code:0};}
-fn attach(r: *record::View) {let item: ui::IMenuFlyoutItem=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));let handler: ui::RoutedEventHandler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(clicked,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](item.add_click(handler.object()));LIVE=LIVE+1;return;}
-fn release(r: *record::View) {let item: ui::IMenuFlyoutItem=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));native::check(item.remove_click((*r).token));LIVE=LIVE-1;return;}
+fn supports(k: u32) -> bool {return k==props::K_SWIPE_ITEM || k==props::K_MENU_ITEM || k==props::K_CONTEXT_MENU_ITEM || k==props::K_TOOLBAR_ITEM;}
+fn flyout_item(k: u32) -> bool {return supports(k) && k!=props::K_TOOLBAR_ITEM;}
+fn item_props(r: *record::View) -> *props::MenuItemProps {
+    let raw=(*core::node_data((*r).node)).props;
+    if (*r).kind==props::K_SWIPE_ITEM {let p=raw as *props::SwipeItemProps;return #addr_of((*p).menu_item);}
+    if (*r).kind==props::K_CONTEXT_MENU_ITEM {let p=raw as *props::ContextMenuItemProps;return #addr_of((*p).menu_item);}
+    if (*r).kind==props::K_TOOLBAR_ITEM {let p=raw as *props::ToolbarItemProps;return #addr_of((*p).menu_item);}
+    return raw as *props::MenuItemProps;
+}
+fn icon(source: str) -> rt::Object {
+    if source.is_empty() {return rt::Object::empty();}
+    if media::image_source(source) {
+        let value=native::must::[ui::BitmapIcon](ui::BitmapIcon::new());let bitmap=native::must::[ui::IBitmapIcon](ui::IBitmapIcon::query(value.object()));native::check(bitmap.set_show_as_monochrome(false));native::check(bitmap.set_uri_source(media::uri(source)));return value.object();
+    }
+    let value=native::must::[ui::FontIcon](ui::FontIcon::new());let font=native::must::[ui::IFontIcon](ui::IFontIcon::query(value.object()));native::check(font.set_glyph(typography::glyph(media::named(source)).view()));native::check(font.set_font_family(typography::font("ms-appx:///MaterialSymbolsOutlined.ttf#Material Symbols Outlined")));native::check(font.set_font_size(20.0f64));return value.object();
+}
+fn apply(r: *record::View) {
+    let p: *props::MenuItemProps=item_props(r);let state=(*r).extra as *Delivery;let dirty=core::dirty_of((*r).node);
+    let toolbar=(*r).kind==props::K_TOOLBAR_ITEM;
+    if toolbar && (*core::node_data((*r).node)).common.accessibility_label.is_empty() {let automation=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());native::check(automation.set_name((*r).object,(*p).text.view()));}
+    if toolbar {let label=native::must::[ui::ITextBlock](ui::ITextBlock::query((*state).label));native::check(label.set_text((*p).text.view()));}
+    else {let item=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));native::check(item.set_text((*p).text.view()));}
+    let control=native::must::[ui::IControl](ui::IControl::query((*r).object));native::check(control.set_is_enabled((*core::node_data((*r).node)).common.is_enabled));
+    let destructive_bit=if toolbar {toolbar_item::P_IS_DESTRUCTIVE} else if (*r).kind==props::K_CONTEXT_MENU_ITEM {context_item::P_IS_DESTRUCTIVE} else if (*r).kind==props::K_SWIPE_ITEM {swipe_item::P_IS_DESTRUCTIVE} else {menu_item::P_IS_DESTRUCTIVE};
+    let icon_bit=if toolbar {toolbar_item::P_ICON} else if (*r).kind==props::K_CONTEXT_MENU_ITEM {context_item::P_ICON} else if (*r).kind==props::K_SWIPE_ITEM {swipe_item::P_ICON} else {menu_item::P_ICON};
+    if !(*state).applied || (dirty&destructive_bit)!=0 {
+        if (*p).is_destructive {native::check(control.set_foreground(style::brush(vocab::Color::danger())));}
+        else {let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());typography::clear((*r).object,native::must::[rt::Object](defaults.foreground_property()));}
+    }
+    if !(*state).applied || (dirty&icon_bit)!=0 {
+        let value=icon((*p).icon.view());
+        if toolbar {
+            let panel=native::must::[ui::IPanel](ui::IPanel::query((*state).panel));let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));
+            if (*state).has_icon {native::check(children.remove_at(0));}
+            if !value.is_null() {native::check(children.insert_at(0,value));};(*state).has_icon=!value.is_null();
+        } else {let item=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));native::check(item.set_icon(value));}
+    }
+    shortcuts::apply(r,clicked);(*state).applied=true;(*(*r).node).mark_content_changed();
+}
+fn clicked(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;if !(*core::node_data((*r).node)).common.is_enabled {return rt::Status {code:0};}
+    let state=(*r).extra as *Delivery;(*state).depth=(*state).depth+1;
+    let p: *props::MenuItemProps=item_props(r);
+    let call=(*p).on_clicked;let context=(*p).on_clicked_ctx;if call!=props::no_handler {call(ctx,context);}
+    // Unrelated mutations are safe; removing this action cancels its second event.
+    if (*state).record.is_not_null() && (*(*state).record).kind==props::K_SWIPE_ITEM {
+        let live=(*state).record;let current: *props::SwipeItemProps=(*core::node_data((*live).node)).props as *props::SwipeItemProps;
+        let invoked=(*current).on_invoked;let invoked_ctx=(*current).on_invoked_ctx;if invoked!=props::no_handler {invoked(live as *u8,invoked_ctx);}
+    }
+    (*state).depth=(*state).depth-1;if (*state).record.is_null() && (*state).depth==0 {drop_delivery(state);}return rt::Status {code:0};
+}
+fn attach(r: *record::View) {
+    let owner=match box::new::[Delivery](Delivery {record:r,depth:0,applied:false,label:rt::Object::empty(),panel:rt::Object::empty(),has_icon:false}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();
+    if (*r).kind==props::K_TOOLBAR_ITEM {
+        let panel=native::must::[ui::StackPanel](ui::StackPanel::new());let stack=native::must::[ui::IStackPanel](ui::IStackPanel::query(panel.object()));native::check(stack.set_orientation(ui::orientation_horizontal));native::check(stack.set_spacing(8.0f64));
+        let label=native::must::[ui::TextBlock](ui::TextBlock::new());let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](native::must::[ui::IPanel](ui::IPanel::query(panel.object())).children())));native::check(children.append(label.object()));
+        let content=native::must::[ui::IContentControl](ui::IContentControl::query((*r).object));native::check(content.set_content(panel.object()));let state=(*r).extra as *Delivery;(*state).label=label.object();(*state).panel=panel.object();
+    }
+    let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(clicked,r as *u8));if (*r).kind==props::K_TOOLBAR_ITEM {let button=native::must::[ui::IButtonBase](ui::IButtonBase::query((*r).object));(*r).token=native::must::[ui::EventRegistrationToken](button.add_click(handler.object()));}
+    else {let item=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));(*r).token=native::must::[ui::EventRegistrationToken](item.add_click(handler.object()));}LIVE=LIVE+1;
+}
+fn release(r: *record::View) {
+    shortcuts::release(r);
+    if (*r).kind==props::K_TOOLBAR_ITEM {let button=native::must::[ui::IButtonBase](ui::IButtonBase::query((*r).object));native::check(button.remove_click((*r).token));}
+    else {let item=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));native::check(item.remove_click((*r).token));}LIVE=LIVE-1;
+    let state=(*r).extra as *Delivery;(*r).extra=0 as *u8;(*state).record=0 as *record::View;if (*state).depth==0 {drop_delivery(state);}
+}

@@ -1,0 +1,55 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/date_picker" as date_picker;
+import "facet/time_picker" as time_picker;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "./texts" as texts;
+fn time_control() -> native::ITimePicker {return check::must::[native::ITimePicker](native::ITimePicker::query(check::object("time")));}
+fn time_part(name: str) -> text::Text {let label=check::must::[native::ITextBlock](native::ITextBlock::query(texts::named_part(check::object("time"),name)));return check::must::[text::Text](label.text());}
+fn picker() -> native::ICalendarDatePicker {return check::must::[native::ICalendarDatePicker](native::ICalendarDatePicker::query(check::object("date")));}
+fn props_ptr() -> *props::DatePickerProps {return (*core::node_data(check::node("date"))).props as *props::DatePickerProps;}
+fn format(index: u32) -> str {
+    if index==0 {return "yyyy-MM-dd";}if index==1 {return "dd/MM/yyyy";}if index==2 {return "MM/dd/yyyy";}if index==3 {return "d/M/yyyy";}
+    if index==4 {return "M/d/yyyy";}if index==5 {return "dd.MM.yyyy";}if index==6 {return "yyyy/MM/dd";}if index==7 {return "MM/dd/yy";}return "{day.integer} ~ {month.integer} ~ {year.full}";
+}
+fn expected(index: u32) -> str {
+    if index==0 {return "2026-10-01";}if index==1 {return "01/10/2026";}if index==2 {return "10/01/2026";}if index==3 {return "1/10/2026";}
+    if index==4 {return "10/1/2026";}if index==5 {return "01.10.2026";}if index==6 {return "2026/10/01";}if index==7 {return "10/01/26";}return "1 ~ 10 ~ 2026";
+}
+fn rendered() -> text::Text {let label=check::must::[native::ITextBlock](native::ITextBlock::query(texts::named_part(check::object("date"),"DateText")));let value=check::must::[text::Text](label.text());return value.replacing("‎","").replacing("‏","");}
+struct Probe {phase: u32,events: i32,default_clock: text::Text,default_format: text::Text,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn changed(ref this,sender: *u8) {this.events=this.events+1;}
+    fn build(ref this) -> core::Node {return @ui {column {date_picker(vocab::Date {year:2026,month:10,day:1},key:"date",on_date_selected:this.changed).height(48.0f64) time_picker(vocab::Duration {seconds:49500.0f64},key:"time",on_time_selected:this.changed).height(48.0f64)}.padding(20.0f64)};}
+    fn ready(ref this) {this.default_clock=check::must::[text::Text](time_control().clock_identifier());this.default_format=check::must::[text::Text](picker().date_format());this.update();}
+    fn update(ref this) {match date_picker::find("date") {option::Option::Some(v)=>{let set=v.set_format(format(this.phase));},option::Option::None=>{assert false;}}this.timer=services::after(0.15f64,this.check);}
+    fn check(ref this) {
+        let shown=rendered();check::log("FORMAT ${this.phase}: ${shown}");assert shown.view()==expected(this.phase);assert (*props_ptr()).format.view()==format(this.phase);assert this.events==0;
+        if this.phase<8 {this.phase=this.phase+1;this.update();return;}
+        let p=props_ptr();(*p).date.day=5;core::touch(check::node("date"),date_picker::P_DATE);this.timer=services::after(0.15f64,this.changed_date);
+    }
+    fn changed_date(ref this) {assert rendered()=="5 ~ 10 ~ 2026";assert this.events==0;match date_picker::find("date") {option::Option::Some(v)=>{let set=v.set_format("");},option::Option::None=>{assert false;}}this.timer=services::after(0.15f64,this.reset);}
+    fn reset(ref this) {assert check::must::[text::Text](picker().date_format())==this.default_format;assert this.events==0;check::log("PASS: numeric/native date formats, live date changes and default reset");
+        match time_picker::find("time") {option::Option::Some(v)=>{let set=v.set_format("HH:mm");},option::Option::None=>{assert false;}}this.timer=services::after(0.15f64,this.hour24);}
+    fn hour24(ref this) {assert check::must::[text::Text](time_control().clock_identifier())=="24HourClock";assert time_part("HourTextBlock")=="13";assert time_part("MinuteTextBlock")=="45";assert this.events==0;
+        match time_picker::find("time") {option::Option::Some(v)=>{let set=v.set_format("h:mm tt");},option::Option::None=>{assert false;}}this.timer=services::after(0.15f64,this.hour12);
+    }
+    fn hour12(ref this) {assert check::must::[text::Text](time_control().clock_identifier())=="12HourClock";let hour=time_part("HourTextBlock");assert hour=="1" || hour=="01";assert time_part("MinuteTextBlock")=="45";assert !time_part("PeriodTextBlock").is_empty();assert this.events==0;
+        match time_picker::find("time") {option::Option::Some(v)=>{let set=v.set_format("");},option::Option::None=>{assert false;}}this.timer=services::after(0.15f64,this.time_reset);
+    }
+    fn time_reset(ref this) {assert check::must::[text::Text](time_control().clock_identifier())==this.default_clock;assert check::must::[native::TimeSpan](time_control().time()).duration==495000000000i64;assert this.events==0;check::log("PASS: rendered 12/24-hour time format and native default restoration");
+        match date_picker::find("date") {option::Option::Some(v)=>{let set=v.set_format("{not-a-date-field}");},option::Option::None=>{assert false;}}
+        match time_picker::find("time") {option::Option::Some(v)=>{let set=v.set_format("HH:mm:ss");},option::Option::None=>{assert false;}}this.timer=services::after(0.15f64,this.invalid);
+    }
+    fn invalid(ref this) {assert check::must::[text::Text](picker().date_format())==this.default_format;assert (*props_ptr()).format=="{not-a-date-field}";assert check::must::[text::Text](time_control().clock_identifier())==this.default_clock;assert this.events==0;check::log("PASS: invalid date/unsupported time formats restore defaults safely");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI date formats",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: date format teardown");return 0;}

@@ -16,6 +16,8 @@ import "facet/theme" as theme;
 import "./style" as style;
 import "./presentation" as presentation;
 import "./agent_hooks" as agent_hooks;
+import "./browser" as browser;
+import "./refresh_retirement" as refresh_retirement;
 extern fn fflush(stream: *u8) -> i32;
 
 struct Host {
@@ -80,6 +82,7 @@ fn closed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
 }
 fn teardown(host: *Host) {
     presentation::begin_shutdown();
+    browser::begin_shutdown();
     if (*host).mounted {
         agent_hooks::closing();
         // WebView2 and composition resources must close on the UI thread
@@ -90,7 +93,7 @@ fn teardown(host: *Host) {
         let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(views::object(core::view_of(root))));
         native::check(element.remove_loaded((*host).loaded_token));mount::unmount(root);(*host).mounted=false;
     }
-    scheduler::shutdown();return;
+    refresh_retirement::shutdown();scheduler::shutdown();return;
 }
 fn loaded(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     schedule(0 as *u8);

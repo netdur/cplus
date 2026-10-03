@@ -16,6 +16,19 @@ struct Controls {
 impl Controls {
     fn new() -> Controls { return Controls { n: 0 }; }
 
+    fn style_choices(ref this, sender: *u8) {
+        this.n = 1 - this.n;
+        let accent = if this.n == 1 { vocab::Color::rgba(0.55f64, 0.18f64, 0.75f64, 1.0f64) } else { vocab::Color::clear() };
+        let thumb = if this.n == 1 { vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64) } else { vocab::Color::clear() };
+        if let option::Option::Some(t) = toggle::find("ctl:toggle") { let updated = t.set_off_color(accent).set_on_color(accent).set_thumb_color(thumb); }
+        if let option::Option::Some(c) = checkbox::find("ctl:check") { let updated = c.set_color(accent); }
+        let width = if this.n == 1 { 3.0f64 } else { 0.0f64 };
+        if let option::Option::Some(r) = radio::find("ctl:radio_a") { let updated = r.set_border_color(accent).set_border_width(width); }
+        if let option::Option::Some(r) = radio::find("ctl:radio_b") { let updated = r.set_border_color(accent).set_border_width(width); }
+        if let option::Option::Some(r) = radio::find("ctl:radio_c") { let updated = r.set_border_color(accent).set_border_width(width); }
+        if let option::Option::Some(l) = label::find("ctl:style_status") { let updated = l.set_text(if this.n == 1 {"Custom purple colors"} else {"Default theme colors"}); }
+    }
+
     fn on_toggled(ref this, sender: *u8) {
         var on: bool = false;
         match toggle::find("ctl:toggle") {
@@ -78,6 +91,9 @@ impl Controls {
 impl Controls: component::Component {
     fn build(ref this) -> core::Node {
         var body: core::Builder = core::Builder::new();
+
+        body.add(ui::button("Switch custom / theme colors", key: "ctl:style", on_click: this.style_choices));
+        body.add(ui::label("Default theme colors", key: "ctl:style_status"));
 
         body.add(shell::caption("Toggle  ·  Switch"));
         var trow: core::Builder = core::Builder::new();

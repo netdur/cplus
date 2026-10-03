@@ -3,6 +3,7 @@ import argparse
 import collections
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import uuid
@@ -44,6 +45,22 @@ for source, path in zip(manifest['sources'], [main] + refs):
 assert types['TypeName']['skipped']
 assert types['XmlnsDefinition']['skipped']
 assert types['RoutedEventHandler']['callback'] == 'emitted'
+# Independently derive IReference<PointerEventHandler> from the WinRT
+# parameterized-IID algorithm and the SDK's delegate IID. AddHandler needs
+# this inspectable box, not the delegate's IUnknown pointer.
+signature = ('pinterface({61c17706-2d65-11e0-9ae8-d48564015472};'
+             'delegate({a48a71e1-8bb4-5597-9e31-903a3f6a04fb}))')
+boxed_iid = uuid.uuid5(uuid.UUID('11f47ad5-7b73-42c0-abae-878b1e16adee'), signature)
+generated = (outputs[0] / 'src/winui.cplus').read_text()
+delegate = generated.split('impl PointerEventHandler {', 1)[1].split('\n}', 1)[0]
+boxed = re.search(r'fn boxed\(this\).*?rt::Guid \{(.*?)\}', delegate)[1]
+fields = list(map(int, re.findall(r'\b(\d+)(?:u32| as u16| as u8)', boxed)))
+actual_iid = uuid.UUID(fields=(*fields[:5], int.from_bytes(bytes(fields[5:]), 'big')))
+assert actual_iid == boxed_iid, 'Delegate box has the wrong IReference IID'
+for t in types.values():
+    if t.get('callback') == 'emitted':
+        body = generated.split('impl ' + t['name'] + ' {', 1)[1].split('\n}', 1)[0]
+        assert 'fn boxed(this)' in body, f"{t['name']}: missing delegate boxing"
 font_constructor = types['IFontFamilyFactory']['methods'][0]
 assert font_constructor['name'] == 'CreateInstanceWithName'
 assert font_constructor['status'] == 'emitted', 'Parameterized composition constructor lost'

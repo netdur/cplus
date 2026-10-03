@@ -1,5 +1,6 @@
 param(
     [switch]$Verify,
+    [ValidateSet("all","carousel","menus","tree-rows")][string]$VerifyMode="all",
     [switch]$Release,
     [switch]$SkipBuild,
     [string]$RuntimeDirectory = (Join-Path $PSScriptRoot 'out/runtime'),
@@ -22,7 +23,9 @@ if ($Verify) {
             $ready = (Get-Content -LiteralPath (Join-Path $logs 'run.log') -Raw) -match 'READY: facet_winui'
         } while (!$ready -and (Get-Date) -lt $deadline)
         if (!$ready) { throw 'Gallery did not load within 20 seconds' }
-        & python (Join-Path $PSScriptRoot 'verify_ui.py')
+        $verificationArguments = @()
+        if ($VerifyMode -ne 'all') {$verificationArguments += "--$VerifyMode-only"}
+        & python (Join-Path $PSScriptRoot 'verify_ui.py') @verificationArguments
         if ($LASTEXITCODE -ne 0) { throw 'Pointer/cleanup verification failed' }
         if (!$app.WaitForExit(10000)) { throw 'App did not exit after window close' }
         if ($app.ExitCode -ne 0) { throw "App exit code: $($app.ExitCode)" }

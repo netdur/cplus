@@ -1,0 +1,72 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/refreshable" as refreshable;
+import "facet/mount" as mount;
+import "facet/component" as component;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/refresh_retirement" as retirement;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn handle() -> refreshable::Refreshable {return match refreshable::find("refresh") {option::Option::Some(v)=>v,option::Option::None=>{assert false;#zero::[refreshable::Refreshable]()}};}
+fn container() -> native::IRefreshContainer {return check::must::[native::IRefreshContainer](native::IRefreshContainer::query(check::object("refresh")));}
+fn visual() -> rt::Object {return check::must::[rt::Object](container().visualizer());}
+fn refreshing() -> bool {let v=check::must::[native::IRefreshVisualizer](native::IRefreshVisualizer::query(visual()));let state=check::must::[i32](v.state());return state==native::refresh_visualizer_state_refreshing;}
+fn foreground() -> rt::Object {let c=check::must::[native::IControl](native::IControl::query(visual()));return check::must::[rt::Object](c.foreground());}
+fn menu_item() -> rt::Object {let root=check::must::[native::IUIElement](native::IUIElement::query(check::object("refresh")));let menu=check::must::[native::IMenuFlyout](native::IMenuFlyout::query(check::must::[rt::Object](root.context_flyout())));let items=check::must::[native::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase](native::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase::query(check::must::[rt::Object](menu.items())));return check::must::[rt::Object](items.get_at(0));}
+fn menu_enabled() -> bool {let control=check::must::[native::IControl](native::IControl::query(menu_item()));return check::must::[bool](control.is_enabled());}
+fn invoke_menu() {let factory=check::must::[native::IFrameworkElementAutomationPeerStatics](native::FrameworkElementAutomationPeer::i_framework_element_automation_peer_statics_factory());let peer=check::must::[native::IAutomationPeer](native::IAutomationPeer::query(check::must::[rt::Object](factory.create_peer_for_element(menu_item()))));let invoke=check::must::[native::IInvokeProvider](native::IInvokeProvider::query(check::must::[rt::Object](peer.get_pattern(native::pattern_interface_invoke))));assert invoke.invoke().is_ok();}
+struct Probe {events: i32,mode: i32,default_brush: rt::Object,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn requested(ref this,sender: *u8) {
+        assert component::key_of(sender)=="refresh";assert handle().is_refreshing();this.events=this.events+1;
+        if this.mode==1 {let updated=handle().set_refreshing(false);}
+        if this.mode==2 {let old=mount::replace("refresh",ui::label("Removed",key:"refresh"));}
+    }
+    fn make_host(ref this,initial: bool=false) -> core::Node {
+        var content=ui::scroll(key:"scroll").height(160.0f64);assert content.add_child(ui::button("Content stays enabled",key:"child").height(400.0f64)).is_ok();
+        var refresh=ui::refreshable(key:"refresh",refreshable:true,refreshing:initial,on_refreshing:this.requested).height(160.0f64);assert refresh.add_child(content).is_ok();return refresh;
+    }
+    fn build(ref this) -> core::Node {return @ui {column {this.make_host()}.padding(20.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.2f64,this.start);}
+    fn start(ref this) {
+        assert !refreshing();assert this.events==0;this.default_brush=foreground();let updated=handle().set_refresh_color(vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64)).set_refreshing(true);this.timer=services::after(0.2f64,this.running);
+    }
+    fn running(ref this) {
+        assert this.events==1;assert refreshing();assert !menu_enabled();assert handle().is_refreshing();let color=check::must::[native::ISolidColorBrush](native::ISolidColorBrush::query(foreground()));assert check::must::[native::Color](color.color()).r==255;
+        let updated=handle().set_refreshing(true);this.timer=services::after(0.2f64,this.still_running);
+    }
+    fn still_running(ref this) {assert this.events==1;assert refreshing();let updated=handle().set_refreshing(false).set_refresh_color(vocab::Color::clear());this.timer=services::after(0.2f64,this.ended);}
+    fn ended(ref this) {
+        assert !refreshing();assert !handle().is_refreshing();assert foreground().raw()==this.default_brush.raw();check::log("PASS: refresh deferral, repeat suppression, color and default reset");
+        assert menu_enabled();invoke_menu();this.timer=services::after(0.2f64,this.native_request);
+    }
+    fn native_request(ref this) {assert this.events==2;assert refreshing();assert !menu_enabled();assert handle().is_refreshing();let updated=handle().set_refreshing(false).set_refreshable(false);this.timer=services::after(0.2f64,this.disabled);}
+    fn disabled(ref this) {
+        assert !refreshing();assert !menu_enabled();let child=check::must::[native::IControl](native::IControl::query(check::object("child")));assert check::must::[bool](child.is_enabled());
+        assert container().request_refresh().is_ok();this.timer=services::after(0.2f64,this.blocked);
+    }
+    fn blocked(ref this) {
+        assert this.events==2;assert !handle().is_refreshing();assert !refreshing();check::log("PASS: native requests update state; disabled refresh leaves content enabled");
+        this.mode=1;let updated=handle().set_refreshing(true);this.timer=services::after(0.2f64,this.immediate_end);
+    }
+    fn immediate_end(ref this) {
+        assert this.events==3;assert !refreshing();assert !handle().is_refreshing();check::log("PASS: refresh can finish in its deferred application callback");
+        this.mode=2;let updated=handle().set_refreshable(true).set_refreshing(true);this.timer=services::after(0.2f64,this.removed);
+    }
+    fn removed(ref this) {
+        assert this.events==4;check::log("PASS: refresh host removed safely from its callback");this.mode=0;let old=mount::replace("refresh",this.make_host(true));this.timer=services::after(0.3f64,this.initial_refresh);
+    }
+    fn initial_refresh(ref this) {
+        assert this.events==5;assert refreshing();check::log("PASS: initial refreshing waits for native load");let updated=handle().set_refreshing(false);this.timer=services::after(0.2f64,this.cancel_pending);
+    }
+    fn cancel_pending(ref this) {assert !refreshing();assert container().request_refresh().is_ok();let old=mount::replace("refresh",ui::label("Cancelled",key:"refresh"));this.timer=services::after(0.8f64,this.finish);}
+    fn finish(ref this) {assert this.events==5;check::log("PASS: removing host cancels queued refresh delivery");assert retirement::subscriptions()==0;let old=mount::replace("refresh",this.make_host(true));this.timer=services::after(0.2f64,this.close_active);}
+    fn close_active(ref this) {assert this.events==6;assert refreshing();this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI refresh",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: refresh teardown");return 0;}

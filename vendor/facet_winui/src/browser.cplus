@@ -1,0 +1,105 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/web" as web;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./record" as record;
+import "./native" as native;
+
+struct State { pending: u64, applied: bool, ready: bool, source: rt::Object, default_agent: text::Text }
+static LIVE: i64=0;
+static SHUTTING_DOWN: bool=false;
+fn subscriptions() -> i64 {return LIVE;}
+fn begin_shutdown() {SHUTTING_DOWN=true;}
+fn flush(r: *record::View) {
+    let state: *State=(*r).extra as *State;
+    if !(*state).ready {return;}
+    let pending: u64=(*state).pending;(*state).pending=0;
+    let p: *props::WebProps=(*core::node_data((*r).node)).props as *props::WebProps;
+    let view: ui::IWebView2=native::must::[ui::IWebView2](ui::IWebView2::query((*r).object));
+    let engine: ui::ICoreWebView2=native::must::[ui::ICoreWebView2](ui::ICoreWebView2::query(native::must::[rt::Object](view.core_web_view2())));
+    if (pending&web::P_USER_AGENT)!=0 {
+        let settings: ui::ICoreWebView2Settings2=native::must::[ui::ICoreWebView2Settings2](ui::ICoreWebView2Settings2::query(native::must::[rt::Object](engine.settings())));
+        native::check(settings.set_user_agent(if (*p).user_agent.is_empty() {(*state).default_agent.view()} else {(*p).user_agent.view()}));
+    }
+    if (pending&web::P_SOURCE)!=0 {
+        if (*state).source.is_null() {native::check(view.navigate_to_string(""));}
+        else {native::check(view.set_source((*state).source));}
+    }
+    if (pending&web::P_GO_BACK)!=0 && native::must::[bool](view.can_go_back()) {native::check(view.go_back());}
+    if (pending&web::P_GO_FORWARD)!=0 && native::must::[bool](view.can_go_forward()) {native::check(view.go_forward());}
+    if (pending&web::P_RELOAD)!=0 {native::check(view.reload());}
+    if (pending&web::P_EVAL)!=0 {let operation: rt::Object=native::must::[rt::Object](view.execute_script_async((*p).eval_script.view()));}
+}
+fn apply(r: *record::View,source: rt::Object) {
+    let state: *State=(*r).extra as *State;
+    let dirty: u64=core::dirty_of((*r).node);
+    let mask: u64=web::P_SOURCE|web::P_USER_AGENT|web::P_EVAL|web::P_GO_BACK|web::P_GO_FORWARD|web::P_RELOAD;
+    if !(*state).applied {(*state).pending=web::P_SOURCE|web::P_USER_AGENT;}
+    else {(*state).pending=(*state).pending|(dirty&mask);}
+    if (dirty&web::P_SOURCE)!=0 || !(*state).applied {(*state).source=source.clone();}
+    let first: bool=!(*state).applied;(*state).applied=true;
+    if first {
+        let view: ui::IWebView2=native::must::[ui::IWebView2](ui::IWebView2::query((*r).object));
+        let operation: rt::Object=native::must::[rt::Object](view.ensure_core_web_view2_async());
+    }
+    flush(r);
+}
+fn initialized(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View;let state: *State=(*r).extra as *State;
+    let view: ui::IWebView2=native::must::[ui::IWebView2](ui::IWebView2::query(sender));
+    let object: rt::Object=native::must::[rt::Object](view.core_web_view2());
+    if object.is_null() {return rt::Status {code:0};}
+    let engine: ui::ICoreWebView2=native::must::[ui::ICoreWebView2](ui::ICoreWebView2::query(object));
+    let settings: ui::ICoreWebView2Settings2=native::must::[ui::ICoreWebView2Settings2](ui::ICoreWebView2Settings2::query(native::must::[rt::Object](engine.settings())));
+    (*state).default_agent=native::must::[text::Text](settings.user_agent());(*state).ready=true;flush(r);return rt::Status {code:0};
+}
+fn starting(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View;let p: *props::WebProps=(*core::node_data((*r).node)).props as *props::WebProps;
+    let call: fn(*u8,*u8)=(*p).on_navigating;let ctx: *u8=(*p).on_navigating_ctx;
+    if call!=props::no_handler {call(context,ctx);}return rt::Status {code:0};
+}
+fn completed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View;let p: *props::WebProps=(*core::node_data((*r).node)).props as *props::WebProps;
+    let view: ui::IWebView2=native::must::[ui::IWebView2](ui::IWebView2::query(sender));
+    (*p).can_go_back=native::must::[bool](view.can_go_back());(*p).can_go_forward=native::must::[bool](view.can_go_forward());
+    // Preserve a pending application write when an earlier navigation finishes.
+    if (core::dirty_of((*r).node)&web::P_SOURCE)==0 {
+        let engine: ui::ICoreWebView2=native::must::[ui::ICoreWebView2](ui::ICoreWebView2::query(native::must::[rt::Object](view.core_web_view2())));
+        (*p).source=native::must::[text::Text](engine.source());
+    }
+    let call: fn(*u8,*u8)=(*p).on_navigated;let ctx: *u8=(*p).on_navigated_ctx;
+    if call!=props::no_handler {call(context,ctx);}return rt::Status {code:0};
+}
+fn failed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View;let p: *props::WebProps=(*core::node_data((*r).node)).props as *props::WebProps;
+    let call: fn(*u8,*u8)=(*p).on_process_terminated;let ctx: *u8=(*p).on_process_terminated_ctx;
+    if call!=props::no_handler {call(context,ctx);}return rt::Status {code:0};
+}
+fn attach(r: *record::View) {
+    let state: box::Box[State]=match box::new::[State](#zero::[State]()) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+    (*r).extra=state.into_raw();
+    let view: ui::IWebView2=native::must::[ui::IWebView2](ui::IWebView2::query((*r).object));
+    let a: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_UI_Xaml_Controls_CoreWebView2InitializedEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_UI_Xaml_Controls_CoreWebView2InitializedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_UI_Xaml_Controls_CoreWebView2InitializedEventArgs::new(initialized,r as *u8));
+    let b: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2NavigationStartingEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2NavigationStartingEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2NavigationStartingEventArgs::new(starting,r as *u8));
+    let c: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2NavigationCompletedEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2NavigationCompletedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2NavigationCompletedEventArgs::new(completed,r as *u8));
+    let d: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2ProcessFailedEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2ProcessFailedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2ProcessFailedEventArgs::new(failed,r as *u8));
+    (*r).token=native::must::[ui::EventRegistrationToken](view.add_core_web_view2_initialized(a.object()));
+    (*r).token2=native::must::[ui::EventRegistrationToken](view.add_navigation_starting(b.object()));
+    (*r).token3=native::must::[ui::EventRegistrationToken](view.add_navigation_completed(c.object()));
+    (*r).token4=native::must::[ui::EventRegistrationToken](view.add_core_process_failed(d.object()));LIVE=LIVE+4;
+}
+fn release(r: *record::View) {
+    let view: ui::IWebView2=native::must::[ui::IWebView2](ui::IWebView2::query((*r).object));
+    native::check(view.remove_core_web_view2_initialized((*r).token));native::check(view.remove_navigation_starting((*r).token2));
+    native::check(view.remove_navigation_completed((*r).token3));native::check(view.remove_core_process_failed((*r).token4));LIVE=LIVE-4;
+    let state: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;
+    // Window.Closed can arrive after WebView2 closed its controller. Measured
+    // on host shutdown: event removals succeed, repeated Close is E_UNEXPECTED.
+    // Navigation/removal while the window is live still requires successful Close.
+    let closed: rt::Status=view.close();
+    if !SHUTTING_DOWN || closed.code!=(0x8000ffff as i32) {native::check(closed);}
+}

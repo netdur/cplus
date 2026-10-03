@@ -51,6 +51,11 @@ properties, a generic collection, and event handlers. It also checks Size
 and Rect ABI calls and boolean property roundtrips. The callback context is
 borrowed; keep it alive until the handler is removed.
 
+For routed `AddHandler` subscriptions, pass the generated delegate's
+`boxed()` result and retain that box for `RemoveHandler`. A delegate's
+`object()` is for typed event subscriptions; it is not an `IInspectable`.
+Delegate boxing is generated and uses only `winrt`, without Facet.
+
 The caller holds the STA apartment until after `application::run` returns,
 event handlers are removed, and window/control references are released.
 The sample's error helpers terminate on failure; a reusable application

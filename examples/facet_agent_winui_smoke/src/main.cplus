@@ -19,6 +19,22 @@ import "agent_core/auth" as auth;
 import "agent_inapp/agent_inapp" as inapp;
 import "winrt/runtime" as rt;
 import "agent_mcp/agent_mcp" as mcp;
+import "./parity" as parity;
+import "./styles" as styles;
+import "./pointers" as pointers;
+import "./texts" as texts;
+import "./lifecycle" as lifecycle;
+import "./actions" as actions;
+import "./date_formats" as date_formats;
+import "./refresh" as refresh;
+import "./layout" as layout;
+import "./choice_colors" as choice_colors;
+import "./canvas_redraw" as canvas_redraw;
+import "./borders" as borders;
+import "./tabs" as tabs;
+import "./paging" as paging;
+import "./menus" as menus;
+import "./tree_rows" as tree_rows;
 extern fn fflush(p: *u8) -> i32;
 
 struct Probe { clicks: i32, edited: bool, passed: bool, timer: services::Cancellable }
@@ -84,6 +100,22 @@ impl Probe {
 }
 
 fn main() -> i32 {
+    if env::has_var("CPLUS_FACET_TREE_ROWS") {return tree_rows::run();}
+    if env::has_var("CPLUS_FACET_MENUS") {return menus::run();}
+    if env::has_var("CPLUS_FACET_PAGING") {return paging::run();}
+    if env::has_var("CPLUS_FACET_TABS") {return tabs::run();}
+    if env::has_var("CPLUS_FACET_BORDERS") {return borders::run();}
+    if env::has_var("CPLUS_FACET_CANVAS_REDRAW") {return canvas_redraw::run();}
+    if env::has_var("CPLUS_FACET_CHOICE_COLORS") {return choice_colors::run();}
+    if env::has_var("CPLUS_FACET_LAYOUT") {return layout::run();}
+    if env::has_var("CPLUS_FACET_REFRESH") {return refresh::run();}
+    if env::has_var("CPLUS_FACET_DATE_FORMATS") {return date_formats::run();}
+    if env::has_var("CPLUS_FACET_ACTIONS") {return actions::run();}
+    if env::has_var("CPLUS_FACET_LIFECYCLE") {return lifecycle::run();}
+    if env::has_var("CPLUS_FACET_TEXT") {return texts::run();}
+    if env::has_var("CPLUS_FACET_POINTER") {return pointers::run();}
+    if env::has_var("CPLUS_FACET_STYLES") {return styles::run();}
+    if env::has_var("CPLUS_FACET_PARITY") {return parity::run();}
     let owner: box::Box[Probe]=match box::new::[Probe](Probe {clicks:0,edited:false,passed:false,timer:#zero::[services::Cancellable]()}) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};
     let p: *Probe=owner.ptr(); connector::enable();
     let status: rt::Status=host::run((*p).build(),"Facet WinUI agent verification",on_ready:(*p).ready);

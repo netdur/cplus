@@ -1,0 +1,108 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/tree" as tree;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "stdlib/text" as text;
+import "facet/props" as props;
+import "facet/label" as label;
+import "facet/mount" as mount;
+import "facet/component" as component;
+import "facet_winui/record" as record;
+fn model() -> tree::TreeNode {
+    var root=tree::TreeNode::new("Root","root",true);var branch=tree::TreeNode::new("Branch","a",true);
+    assert branch.add_child(tree::TreeNode::new("Child","child")).is_ok();assert root.add_child(branch).is_ok();return root;
+}
+fn first(key: str="rows") -> rt::Object {let view=check::must::[native::ITreeView](native::ITreeView::query(check::object(key)));let nodes=check::must::[native::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode](native::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode::query(check::must::[rt::Object](view.root_nodes())));return check::must::[rt::Object](nodes.get_at(0));}
+fn container(node: rt::Object,key: str="rows") -> native::IFrameworkElement {let view=check::must::[native::ITreeView2](native::ITreeView2::query(check::object(key)));return check::must::[native::IFrameworkElement](native::IFrameworkElement::query(check::must::[rt::Object](view.container_from_node(node))));}
+fn height(key: str="rows") -> f64 {return check::must::[f64](container(first(key),key).actual_height());}
+fn sized(node: rt::Object,expected: f64) {let element=container(node);assert check::must::[f64](element.height())==expected;let actual=check::must::[f64](element.actual_height());assert actual>=expected-1.0f64 && actual<=expected+1.0f64;}
+struct Probe {builds: i32,binds: i32,generation: i32,alternate: bool,removed: bool,opaque branch: *core::Node,editor: rt::Object,baseline: f64,original: rt::Object,passed: bool,timer: services::Cancellable}
+// Tree's legacy bind signature places its context before the row.
+fn bind_adapter(model: *tree::TreeNode,ctx: *u8,row: *core::Node) {let p=ctx as *Probe;(*p).bind(model,row);}
+impl Probe {
+    fn row_id(ref this,model: *tree::TreeNode) -> text::Text {return text::from_str("named:${this.generation}:${(*model).id}");}
+    fn build(ref this) -> core::Node {return @ui {column {tree(model(),key:"rows",row_height:26,row_id:this.row_id).height(220.0f64) tree(model(),key:"default").height(100.0f64)}.padding(20.0f64)};}
+    fn ready(ref this) {if let option::Option::Some(v)=tree::find("rows") {let updated=v.select("a").expand("a");}this.timer=services::after(0.25f64,this.initial);}
+    fn initial(ref this) {
+        let names=check::must::[native::IAutomationPropertiesStatics](native::AutomationProperties::i_automation_properties_statics_factory());assert check::must::[text::Text](names.get_automation_id(container(first()).object()))=="named:0:a";
+        this.baseline=height("default");assert this.baseline>0.0f64;sized(first(),26.0f64);this.original=first();
+        if let option::Option::Some(v)=tree::find("rows") {let updated=v.set_row_height(52);}this.timer=services::after(0.2f64,this.tall);
+    }
+    fn tall(ref this) {
+        sized(first(),52.0f64);
+        assert check::must::[rt::Object](first().query(rt::unknown_iid())).raw()==check::must::[rt::Object](this.original.query(rt::unknown_iid())).raw();
+        if let option::Option::Some(v)=tree::find("rows") {assert v.selected()=="a";assert v.is_expanded("a");let updated=v.set_row_height(18);}this.timer=services::after(0.2f64,this.compact);
+    }
+    fn compact(ref this) {
+        sized(first(),18.0f64);let node=check::must::[native::ITreeViewNode](native::ITreeViewNode::query(first()));let children=check::must::[native::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode](native::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode::query(check::must::[rt::Object](node.children())));sized(check::must::[rt::Object](children.get_at(0)),18.0f64);
+        if let option::Option::Some(v)=tree::find("rows") {let updated=v.set_row_height(0);}this.timer=services::after(0.2f64,this.reset);
+    }
+    fn reset(ref this) {
+        assert height()==this.baseline;let view=check::must::[native::ITreeView2](native::ITreeView2::query(check::object("rows")));assert check::must::[rt::Object](view.item_container_style()).is_null();
+        check::log("PASS: tree initial/live/compact row heights, child rows, selection/expansion retention and native default reset");
+        if let option::Option::Some(v)=tree::find("rows") {let updated=v.set_row_height(44).set_root(model());}this.timer=services::after(0.2f64,this.rebuilt);
+    }
+    fn rebuilt(ref this) {sized(first(),44.0f64);check::log("PASS: replacement tree nodes inherit row height");this.original=rt::Object::empty();
+        if let option::Option::Some(v)=tree::find("rows") {let updated=v.set_row(this.custom).set_row_bind(bind_adapter,ctx:#addr_of(this) as *u8).set_row_kind(this.kind).set_row_height(52);}
+        this.timer=services::after(0.25f64,this.custom_ready);
+    }
+    fn custom(ref this,model: *tree::TreeNode) -> core::Node {
+        this.builds=this.builds+1;let id=(*model).id.view();
+        var row=@ui {row(key:"custom_${id}") {label("Unbound",key:"label_${id}").width(110.0f64) text_field("Draft",key:"edit_${id}").width(180.0f64) button("Remove tree",key:"remove_${id}",on_click:this.remove_tree)}.gap(8.0f64)};
+        if this.alternate && id=="a" {assert row.add_child(ui::label("Badge",key:"badge")).is_ok();}return row;
+    }
+    fn kind(ref this,model: *tree::TreeNode) -> usize {return if this.alternate && (*model).id.view()=="a" {1 as usize} else {0 as usize};}
+    fn bind(ref this,model: *tree::TreeNode,row: *core::Node) {
+        this.binds=this.binds+1;if (*model).id.view()=="a" {this.branch=row;}
+        let child=match core::child_of(row,0) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+        let p=(*core::node_data(child)).props as *props::LabelProps;(*p).text=text::from_str("Bound ${this.generation}");core::touch(child,label::P_TEXT);
+    }
+    fn child_object(ref this,index: usize) -> rt::Object {let n=match core::child_of(this.branch,index) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return rt::Object::empty();}};return (*(core::view_of(n) as *record::View)).object.clone();}
+    fn custom_ready(ref this) {
+        assert this.builds==2 && this.binds==2;let label=check::must::[native::ITextBlock](native::ITextBlock::query(this.child_object(0)));assert check::must::[text::Text](label.text())=="Bound 0";
+        this.editor=this.child_object(1);let editor=check::must::[native::ITextBox](native::ITextBox::query(this.editor));assert editor.set_text("Keep this edit").is_ok();
+        let size=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(this.editor));let width=check::must::[f64](size.actual_width());assert width>100.0f64;
+        this.generation=1;if let option::Option::Some(v)=tree::find("rows") {let updated=v.set_row_bind(bind_adapter,ctx:#addr_of(this) as *u8).set_row_id(this.row_id);}this.timer=services::after(0.2f64,this.rebound);
+    }
+    fn rebound(ref this) {
+        let names=check::must::[native::IAutomationPropertiesStatics](native::AutomationProperties::i_automation_properties_statics_factory());assert check::must::[text::Text](names.get_automation_id(container(first()).object()))=="named:1:a";
+        assert this.builds==2 && this.binds==4;assert check::must::[rt::Object](this.child_object(1).query(rt::unknown_iid())).raw()==check::must::[rt::Object](this.editor.query(rt::unknown_iid())).raw();
+        assert check::must::[text::Text](check::must::[native::ITextBox](native::ITextBox::query(this.editor)).text())=="Keep this edit";
+        assert check::must::[text::Text](check::must::[native::ITextBlock](native::ITextBlock::query(this.child_object(0))).text())=="Bound 1";
+        check::log("PASS: custom tree factories, binding updates, native geometry and retained editor state");
+        this.alternate=true;if let option::Option::Some(v)=tree::find("rows") {let updated=v.set_row_kind(this.kind);}this.timer=services::after(0.2f64,this.reshaped);
+    }
+    fn reshaped(ref this) {
+        assert this.builds==3 && this.binds==6;assert core::child_count_of(this.branch)==4;this.editor=rt::Object::empty();
+        check::log("PASS: changed row kind rebuilds only the affected subtree");
+        if let option::Option::Some(v)=tree::find("rows") {let updated=v.set_row_height(0);}this.timer=services::after(0.2f64,this.auto_sized);
+    }
+    fn auto_sized(ref this) {
+        assert height()>=28.0f64 && height()<100.0f64;
+        if let option::Option::Some(v)=tree::find("rows") {let updated=v.set_row(tree::no_row).set_row_id(tree::no_row_id);}this.timer=services::after(0.2f64,this.default_restored);
+    }
+    fn default_restored(ref this) {
+        let names=check::must::[native::IAutomationPropertiesStatics](native::AutomationProperties::i_automation_properties_statics_factory());assert check::must::[text::Text](names.get_automation_id(container(first()).object())).is_empty();
+        assert height()==this.baseline;let node=check::must::[native::ITreeViewNode](native::ITreeViewNode::query(first()));let value=check::must::[native::IPropertyValue](native::IPropertyValue::query(check::must::[rt::Object](node.content())));assert check::must::[text::Text](value.get_string())=="Branch";
+        check::log("PASS: custom auto sizing, live row automation IDs and restoration of the default label template");
+        if let option::Option::Some(v)=tree::find("rows") {let updated=v.set_row(this.custom);}this.timer=services::after(0.2f64,this.invoke_custom);
+    }
+    fn invoke_custom(ref this) {
+        assert this.builds==5;
+        let factory=check::must::[native::IFrameworkElementAutomationPeerStatics](native::FrameworkElementAutomationPeer::i_framework_element_automation_peer_statics_factory());let peer=check::must::[native::IAutomationPeer](native::IAutomationPeer::query(check::must::[rt::Object](factory.create_peer_for_element(this.child_object(2)))));let provider=check::must::[native::IInvokeProvider](native::IInvokeProvider::query(check::must::[rt::Object](peer.get_pattern(native::pattern_interface_invoke))));// Replace the model before the renderer has retired the previous rows.
+        var replacement=tree::TreeNode::new("Root","root",true);assert replacement.add_child(tree::TreeNode::new("Replacement","a")).is_ok();if let option::Option::Some(v)=tree::find("rows") {let updated=v.set_root(replacement);}
+        assert provider.invoke().is_ok();this.timer=services::after(0.2f64,this.finished);
+    }
+    fn remove_tree(ref this,sender: *u8) {let model=component::item_of(sender) as *tree::TreeNode;assert model.is_not_null();assert (*model).id.view()=="a";assert (*model).label.view()=="Replacement";this.branch=0 as *core::Node;this.removed=true;assert mount::remove("rows");}
+    fn finished(ref this) {assert this.removed;check::log("PASS: nested tree action resolves the replacement model and safely removes the host");
+        if let option::Option::Some(v)=tree::find("default") {let updated=v.set_row(this.custom);}this.timer=services::after(0.2f64,this.close_custom);
+    }
+    fn close_custom(ref this) {this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI tree rows",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: tree row teardown");return 0;}

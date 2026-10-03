@@ -1,0 +1,39 @@
+// WinUI refresh completion starts composition animations with native callbacks.
+// Retain the native tree until that batch and its queued completion callbacks
+// drain. Facet nodes and application callbacks are never retained here.
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./native" as native;
+import "./scheduler" as scheduler;
+struct Entry {id: u64,tree: rt::Object,batch: rt::Object,token: ui::EventRegistrationToken,timer: u64,subscribed: bool}
+static ENTRIES: vec::Vec[Entry]=#zero::[vec::Vec[Entry]]();
+static NEXT: u64=1;
+static SHUTTING_DOWN: bool=false;
+fn subscriptions() -> i64 {return ENTRIES.count() as i64;}
+fn remove(ctx: *u8) {let id=ctx as usize as u64;var i: usize=0;while i<ENTRIES.count() {match ENTRIES.at_ptr(i) {option::Option::Some(e)=>{if (*e).id==id {let old=ENTRIES.swap_remove(i);return;}},option::Option::None=>{}}i=i+1;}}
+fn completed(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+
+    let id=ctx as usize as u64;var i: usize=0;while i<ENTRIES.count() {match ENTRIES.at_ptr(i) {option::Option::Some(e)=>{if (*e).id==id {
+        let batch=native::must::[ui::ICompositionScopedBatch](ui::ICompositionScopedBatch::query((*e).batch));native::check(batch.remove_completed((*e).token));(*e).subscribed=false;(*e).timer=scheduler::after(0.0f64,remove,ctx);break;
+    }},option::Option::None=>{}}i=i+1;}return rt::Status {code:0};
+}
+fn complete(tree: rt::Object,deferral: rt::Object) {
+    if SHUTTING_DOWN {
+        // Node owners can drop after Application.run has returned. XAML has
+        // then discarded its thread state, so do not create composition work.
+        let pending=native::must::[ui::IDeferral](ui::IDeferral::query(deferral));
+        let status=pending.complete();
+        if status.code!=(0x8001010e as i32) {native::check(status);}return;
+    }
+    let preview=native::must::[ui::IElementCompositionPreviewStatics](ui::ElementCompositionPreview::i_element_composition_preview_statics_factory());let visual=native::must::[rt::Object](preview.get_element_visual(tree));let object=native::must::[ui::ICompositionObject](ui::ICompositionObject::query(visual));let compositor=native::must::[ui::ICompositor](ui::ICompositor::query(native::must::[rt::Object](object.compositor())));
+    let batch=native::must::[ui::ICompositionScopedBatch](ui::ICompositionScopedBatch::query(native::must::[rt::Object](compositor.create_scoped_batch(ui::composition_batch_types_animation))));
+    let id=NEXT;NEXT=NEXT+1;let callback=native::must::[ui::TypedEventHandler_Object_Microsoft_UI_Composition_CompositionBatchCompletedEventArgs](ui::TypedEventHandler_Object_Microsoft_UI_Composition_CompositionBatchCompletedEventArgs::new(completed,id as usize as *u8,agile:true));let token=native::must::[ui::EventRegistrationToken](batch.add_completed(callback.object()));
+    let added=ENTRIES.append(Entry {id:id,tree:tree.clone(),batch:batch.object(),token:token,timer:0,subscribed:true});assert added.is_ok();
+    let pending=native::must::[ui::IDeferral](ui::IDeferral::query(deferral));native::check(pending.complete());native::check(batch.end());
+}
+fn shutdown() {
+    SHUTTING_DOWN=true;
+    var i: usize=0;while i<ENTRIES.count() {match ENTRIES.at_ptr(i) {option::Option::Some(e)=>{scheduler::cancel((*e).timer);if (*e).subscribed {let batch=native::must::[ui::ICompositionScopedBatch](ui::ICompositionScopedBatch::query((*e).batch));native::check(batch.remove_completed((*e).token));}},option::Option::None=>{}}i=i+1;}ENTRIES.remove_all();
+}
