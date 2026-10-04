@@ -4,6 +4,7 @@ import "facet/elements" as ui;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/refreshable" as refreshable;
+import "facet/list" as list;
 import "facet/mount" as mount;
 import "facet/component" as component;
 import "facet/services" as services;
@@ -28,16 +29,21 @@ impl Probe {
         if this.mode==1 {let updated=handle().set_refreshing(false);}
         if this.mode==2 {let old=mount::replace("refresh",ui::label("Removed",key:"refresh"));}
     }
+    fn nested_row(ref this,index: usize) -> core::Node {return ui::label("Nested row ${index}");}
     fn make_host(ref this,initial: bool=false) -> core::Node {
-        var content=ui::scroll(key:"scroll").height(160.0f64);assert content.add_child(ui::button("Content stays enabled",key:"child").height(400.0f64)).is_ok();
+        var children=core::Builder::new();children.add(ui::button("Content stays enabled",key:"child").height(40.0f64));children.add(ui::list(key:"nested-list",count:3,row:this.nested_row).height(120.0f64));
+        var content=core::column(children).height(160.0f64);
         var refresh=ui::refreshable(key:"refresh",refreshable:true,refreshing:initial,on_refreshing:this.requested).height(160.0f64);assert refresh.add_child(content).is_ok();return refresh;
     }
     fn build(ref this) -> core::Node {return @ui {column {this.make_host()}.padding(20.0f64)};}
     fn ready(ref this) {this.timer=services::after(0.2f64,this.start);}
     fn start(ref this) {
+        if let option::Option::Some(v)=list::find("nested-list") {let changed=v.begin_refresh();}
         assert !refreshing();assert this.events==0;this.default_brush=foreground();let updated=handle().set_refresh_color(vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64)).set_refreshing(true);this.timer=services::after(0.2f64,this.running);
     }
     fn running(ref this) {
+        if let option::Option::Some(v)=list::find("nested-list") {assert v.is_refreshing();let changed=v.end_refresh();}else {assert false;}
+        check::log("PASS: nested list and wrapper refresh use independent interaction sources");
         assert this.events==1;assert refreshing();assert !menu_enabled();assert handle().is_refreshing();let color=check::must::[native::ISolidColorBrush](native::ISolidColorBrush::query(foreground()));assert check::must::[native::Color](color.color()).r==255;
         let updated=handle().set_refreshing(true);this.timer=services::after(0.2f64,this.still_running);
     }

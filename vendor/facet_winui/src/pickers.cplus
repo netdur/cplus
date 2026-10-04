@@ -14,15 +14,25 @@ import "./native" as native;
 import "./style" as style;
 import "./typography" as typography;
 import "./scheduler" as scheduler;
-struct Events {queue: vec::Vec[bool],next: usize,timer: u64}
+import "./popup_caption" as popup_caption;
+import "./time_popup" as time_popup;
+struct Events {queue: vec::Vec[bool],next: usize,timer: u64,captioned: bool,opaque time_popup: *u8}
+fn caption(r: *record::View) {
+    if (*r).kind!=props::K_POPUP || (*r).extra.is_null() {return;}
+    let p=(*core::node_data((*r).node)).props as *props::PopupProps;let state=(*r).extra as *Events;
+    if !(*p).label.is_empty() || (*state).captioned {if popup_caption::apply((*r).object,(*p).label.view(),if (*p).selected_index>=0 && ((*p).selected_index as usize)<(*p).items.count() {(*p).items.at((*p).selected_index as usize)} else {""},(*p).selected_index>=0) {(*state).captioned=!(*p).label.is_empty();}}
+}
+fn layout_updated(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {let r=context as *record::View;if !(*r).applying {caption(r);}return rt::Status {code:0};}
 fn deliver(context: *u8) {
     let r: *record::View=context as *record::View;let state: *Events=(*r).extra as *Events;
     let open: bool=match (*state).queue.at((*state).next) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
     (*state).next=(*state).next+1;(*state).timer=0;
     if (*state).next<(*state).queue.count() {(*state).timer=scheduler::after(0.0f64,deliver,context);} else {(*state).queue.remove_all();(*state).next=0;}
+    caption(r);
     let raw: *u8=(*core::node_data((*r).node)).props;var call: fn(*u8,*u8)=props::no_handler;var ctx: *u8=0 as *u8;
     if (*r).kind==props::K_POPUP {let p: *props::PopupProps=raw as *props::PopupProps;call=if open {(*p).on_opened} else {(*p).on_closed};ctx=if open {(*p).on_opened_ctx} else {(*p).on_closed_ctx};}
     if (*r).kind==props::K_DATE_PICKER {let p: *props::DatePickerProps=raw as *props::DatePickerProps;call=if open {(*p).on_opened} else {(*p).on_closed};ctx=if open {(*p).on_opened_ctx} else {(*p).on_closed_ctx};}
+    if (*r).kind==props::K_TIME_PICKER {let p: *props::TimePickerProps=raw as *props::TimePickerProps;call=if open {(*p).on_opened} else {(*p).on_closed};ctx=if open {(*p).on_opened_ctx} else {(*p).on_closed_ctx};}
     // Application callbacks may remove this control. No record access afterward.
     if call!=props::no_handler {call(context,ctx);}
 }
@@ -30,6 +40,7 @@ fn visibility(context: *u8,open: bool) -> rt::Status {
     let r: *record::View=context as *record::View;let raw: *u8=(*core::node_data((*r).node)).props;
     if (*r).kind==props::K_POPUP {let p: *props::PopupProps=raw as *props::PopupProps;if (*r).applying || (core::dirty_of((*r).node)&popup::P_IS_OPEN)==0 {(*p).is_open=open;}}
     if (*r).kind==props::K_DATE_PICKER {let p: *props::DatePickerProps=raw as *props::DatePickerProps;if (*r).applying || (core::dirty_of((*r).node)&date_picker::P_IS_OPEN)==0 {(*p).is_open=open;}}
+    if (*r).kind==props::K_TIME_PICKER {let p: *props::TimePickerProps=raw as *props::TimePickerProps;if (*r).applying || (core::dirty_of((*r).node)&time_picker::P_IS_OPEN)==0 {(*p).is_open=open;}}
     let state: *Events=(*r).extra as *Events;let added=(*state).queue.append(open);
     if (*state).timer==0 {(*state).timer=scheduler::after(0.0f64,deliver,context);}
     return rt::Status {code:0};
@@ -37,12 +48,12 @@ fn visibility(context: *u8,open: bool) -> rt::Status {
 fn opened(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {return visibility(context,true);}
 fn closed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {return visibility(context,false);}
 static LIVE: i64=0;
-fn subscriptions() -> i64 {return LIVE;}
+fn subscriptions() -> i64 {return LIVE+time_popup::subscriptions();}
 fn supports(k: u32) -> bool {return k==props::K_POPUP || k==props::K_DATE_PICKER || k==props::K_TIME_PICKER;}
 fn create(k: u32) -> rt::Object {
     if k==props::K_POPUP {let v: ui::ComboBox=native::must::[ui::ComboBox](ui::ComboBox::new());return v.object();}
     if k==props::K_DATE_PICKER {let v: ui::CalendarDatePicker=native::must::[ui::CalendarDatePicker](ui::CalendarDatePicker::new());return v.object();}
-    let v: ui::TimePicker=native::must::[ui::TimePicker](ui::TimePicker::new());return v.object();
+    return time_popup::create();
 }
 fn date_time(date: vocab::Date) -> ui::DateTime {
     let calendar: ui::Calendar=native::must::[ui::Calendar](ui::Calendar::new());
@@ -143,10 +154,16 @@ fn apply(r: *record::View) {
         if (*p).font_family.is_empty() {typography::clear(value,native::must::[rt::Object](defaults.font_family_property()));} else {native::check(control.set_font_family(typography::font((*p).font_family.view())));}
         if (*p).text_color.is_set() {native::check(control.set_foreground(style::brush((*p).text_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.foreground_property()));}
     }
+    if k==props::K_POPUP && (!(*r).subscribed || (core::dirty_of((*r).node)&(popup::P_LABEL|popup::P_SELECTED_INDEX|popup::P_ITEMS))!=0) {caption(r);}
+    if k==props::K_TIME_PICKER && (*r).extra.is_not_null() {time_popup::apply((*((*r).extra as *Events)).time_popup);}
     (*r).applying=false;(*(*r).node).mark_content_changed();return;
 }
 fn changed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     let r: *record::View=context as *record::View;if (*r).applying {return rt::Status {code:0};}
+    // An earlier native event must not overwrite a newer application write
+    // waiting for the next retained-tree sync.
+    let bit=if (*r).kind==props::K_POPUP {popup::P_SELECTED_INDEX} else if (*r).kind==props::K_DATE_PICKER {date_picker::P_DATE} else {time_picker::P_TIME};
+    if (core::dirty_of((*r).node)&bit)!=0 {return rt::Status {code:0};}
     let raw: *u8=(*core::node_data((*r).node)).props;let k: u32=(*r).kind;var call: fn(*u8,*u8)=props::no_handler;var ctx: *u8=0 as *u8;
     if k==props::K_POPUP {let p: *props::PopupProps=raw as *props::PopupProps;let selector: ui::ISelector=native::must::[ui::ISelector](ui::ISelector::query(sender));let selected: i64=native::must::[i32](selector.selected_index()) as i64;if selected==(*p).selected_index {return rt::Status {code:0};};(*p).selected_index=selected;call=(*p).on_selected_index_changed;ctx=(*p).on_selected_index_changed_ctx;}
     if k==props::K_DATE_PICKER {let p: *props::DatePickerProps=raw as *props::DatePickerProps;let picker: ui::ICalendarDatePicker=native::must::[ui::ICalendarDatePicker](ui::ICalendarDatePicker::query(sender));let value: rt::Object=native::must::[rt::Object](picker.date());if value.is_null() {
@@ -157,25 +174,27 @@ fn changed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
 }
 fn attach(r: *record::View) {
     let value: rt::Object=(*r).object.clone();let k: u32=(*r).kind;
-    if k!=props::K_TIME_PICKER {
-        let state: box::Box[Events]=match box::new::[Events](Events {queue:vec::new::[bool](),next:0,timer:0}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=state.into_raw();
+    {
+        let state: box::Box[Events]=match box::new::[Events](Events {queue:vec::new::[bool](),next:0,timer:0,captioned:false,time_popup:0 as *u8}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=state.into_raw();
         let a: ui::EventHandler_Object=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(opened,r as *u8));
         let b: ui::EventHandler_Object=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(closed,r as *u8));
         if k==props::K_POPUP {let v: ui::IComboBox=native::must::[ui::IComboBox](ui::IComboBox::query(value));(*r).token2=native::must::[ui::EventRegistrationToken](v.add_drop_down_opened(a.object()));(*r).token3=native::must::[ui::EventRegistrationToken](v.add_drop_down_closed(b.object()));}
         if k==props::K_DATE_PICKER {let v: ui::ICalendarDatePicker=native::must::[ui::ICalendarDatePicker](ui::ICalendarDatePicker::query(value));(*r).token2=native::must::[ui::EventRegistrationToken](v.add_opened(a.object()));(*r).token3=native::must::[ui::EventRegistrationToken](v.add_closed(b.object()));}
-        LIVE=LIVE+2;
+        if k==props::K_TIME_PICKER {(*((*r).extra as *Events)).time_popup=time_popup::attach(r,opened,closed);} else {LIVE=LIVE+2;}
     }
     if k==props::K_POPUP {let v: ui::ISelector=native::must::[ui::ISelector](ui::ISelector::query(value));let h: ui::SelectionChangedEventHandler=native::must::[ui::SelectionChangedEventHandler](ui::SelectionChangedEventHandler::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](v.add_selection_changed(h.object()));}
     if k==props::K_DATE_PICKER {let v: ui::ICalendarDatePicker=native::must::[ui::ICalendarDatePicker](ui::ICalendarDatePicker::query(value));let h: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_CalendarDatePicker_Microsoft_UI_Xaml_Controls_CalendarDatePickerDateChangedEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_CalendarDatePicker_Microsoft_UI_Xaml_Controls_CalendarDatePickerDateChangedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_CalendarDatePicker_Microsoft_UI_Xaml_Controls_CalendarDatePickerDateChangedEventArgs::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](v.add_date_changed(h.object()));}
     if k==props::K_TIME_PICKER {let v: ui::ITimePicker=native::must::[ui::ITimePicker](ui::ITimePicker::query(value));let h: ui::EventHandler_Microsoft_UI_Xaml_Controls_TimePickerValueChangedEventArgs=native::must::[ui::EventHandler_Microsoft_UI_Xaml_Controls_TimePickerValueChangedEventArgs](ui::EventHandler_Microsoft_UI_Xaml_Controls_TimePickerValueChangedEventArgs::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](v.add_time_changed(h.object()));}
+    if k==props::K_POPUP {let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));let callback=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(layout_updated,r as *u8));(*r).token4=native::must::[ui::EventRegistrationToken](element.add_layout_updated(callback.object()));LIVE=LIVE+1;}
     (*r).subscribed=true;LIVE=LIVE+1;return;
 }
 fn release(r: *record::View) {
+    if (*r).kind==props::K_POPUP {let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));native::check(element.remove_layout_updated((*r).token4));LIVE=LIVE-1;}
     let value: rt::Object=(*r).object.clone();let k: u32=(*r).kind;
-    if k!=props::K_TIME_PICKER {
+    {
         if k==props::K_POPUP {let v: ui::IComboBox=native::must::[ui::IComboBox](ui::IComboBox::query(value));native::check(v.remove_drop_down_opened((*r).token2));native::check(v.remove_drop_down_closed((*r).token3));}
         if k==props::K_DATE_PICKER {let v: ui::ICalendarDatePicker=native::must::[ui::ICalendarDatePicker](ui::ICalendarDatePicker::query(value));native::check(v.remove_opened((*r).token2));native::check(v.remove_closed((*r).token3));}
-        let state: box::Box[Events]=box::from_raw::[Events]((*r).extra);scheduler::cancel((*state.ptr()).timer);(*r).extra=0 as *u8;LIVE=LIVE-2;
+        let state: box::Box[Events]=box::from_raw::[Events]((*r).extra);scheduler::cancel((*state.ptr()).timer);if k==props::K_TIME_PICKER {time_popup::release((*state.ptr()).time_popup);} else {LIVE=LIVE-2;};(*r).extra=0 as *u8;
     }
     if k==props::K_POPUP {let v: ui::ISelector=native::must::[ui::ISelector](ui::ISelector::query(value));native::check(v.remove_selection_changed((*r).token));}
     if k==props::K_DATE_PICKER {let v: ui::ICalendarDatePicker=native::must::[ui::ICalendarDatePicker](ui::ICalendarDatePicker::query(value));native::check(v.remove_date_changed((*r).token));}

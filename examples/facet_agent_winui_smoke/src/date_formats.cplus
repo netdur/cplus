@@ -9,6 +9,7 @@ import "facet/time_picker" as time_picker;
 import "facet/vocabulary" as vocab;
 import "facet/services" as services;
 import "facet_winui/facet_winui" as host;
+import "facet_winui/pickers" as pickers;
 import "winui/winui" as native;
 import "winrt/runtime" as rt;
 import "./parity" as check;
@@ -50,6 +51,16 @@ impl Probe {
         match date_picker::find("date") {option::Option::Some(v)=>{let set=v.set_format("{not-a-date-field}");},option::Option::None=>{assert false;}}
         match time_picker::find("time") {option::Option::Some(v)=>{let set=v.set_format("HH:mm:ss");},option::Option::None=>{assert false;}}this.timer=services::after(0.15f64,this.invalid);
     }
-    fn invalid(ref this) {assert check::must::[text::Text](picker().date_format())==this.default_format;assert (*props_ptr()).format=="{not-a-date-field}";assert check::must::[text::Text](time_control().clock_identifier())==this.default_clock;assert this.events==0;check::log("PASS: invalid date/unsupported time formats restore defaults safely");this.passed=true;assert host::close().is_ok();}
+    fn invalid(ref this) {assert check::must::[text::Text](picker().date_format())==this.default_format;assert (*props_ptr()).format=="{not-a-date-field}";assert check::must::[text::Text](time_control().clock_identifier())==this.default_clock;assert this.events==0;check::log("PASS: invalid date/unsupported time formats restore defaults safely");this.pending();}
+    fn pending(ref this) {
+        if let option::Option::Some(v)=time_picker::find("time") {let set=v.set_time(vocab::Duration {seconds:3600.0f64});}
+        assert time_control().set_time(native::TimeSpan {duration:72000000000i64}).is_ok();
+        let p=props_ptr();(*p).date=vocab::Date {year:2026,month:10,day:6};core::touch(check::node("date"),date_picker::P_DATE);
+        let factory=check::must::[native::IPropertyValueStatics](native::PropertyValue::i_property_value_statics_factory());
+        let old=check::must::[rt::Object](factory.create_date_time(pickers::date_time(vocab::Date {year:2026,month:10,day:7})));assert picker().set_date(old).is_ok();
+        assert (*p).date.year==2026 && (*p).date.day==6;assert this.events==0;
+        this.timer=services::after(0.2f64,this.pending_applied);
+    }
+    fn pending_applied(ref this) {assert check::must::[native::TimeSpan](time_control().time()).duration==36000000000i64;assert (*props_ptr()).date.day==6;assert this.events==0;check::log("PASS: pending date/time writes survive older native events");this.passed=true;assert host::close().is_ok();}
 }
 fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI date formats",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: date format teardown");return 0;}

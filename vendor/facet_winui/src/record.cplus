@@ -3,7 +3,16 @@ import "winui/winui" as ui;
 import "facet/facet" as core;
 struct View {
     object: rt::Object,
+    wrapper: rt::Object,
+    opaque refresh: *u8,
+    opaque reorder: *u8,
     content: rt::Object,
+    slot: rt::Object,
+    slot_kind: u32,
+    click_attached: bool,
+    button_toggles: bool,
+    editor_secure: bool,
+    pending_focus: i32,
     opaque node: *core::Node,
     kind: u32,
     token: ui::EventRegistrationToken,
@@ -25,3 +34,6 @@ struct View {
     item_reader: fn(*u8)->*u8,
     opaque item_context: *u8,
 }
+
+// The native control stays addressable even when its presentation needs a wrapper.
+fn visual(r: *View) -> rt::Object {return if (*r).wrapper.is_null() {(*r).object.clone()} else {(*r).wrapper.clone()};}

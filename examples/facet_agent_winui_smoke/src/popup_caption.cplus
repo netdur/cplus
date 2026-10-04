@@ -1,0 +1,38 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/result" as result;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/popup" as popup;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "./texts" as texts;
+fn text_in(value: rt::Object) -> text::Text {
+    match native::ITextBlock::query(value) {result::Result::Ok(v)=>{return check::must::[text::Text](v.text());},result::Result::Err(e)=>{assert e.code==rt::no_interface();}}
+    let tree=check::must::[native::IVisualTreeHelperStatics](native::VisualTreeHelper::i_visual_tree_helper_statics_factory());let count=check::must::[i32](tree.get_children_count(value));var i: i32=0;
+    while i<count {let found=text_in(check::must::[rt::Object](tree.get_child(value,i)));if !found.is_empty() {return found;}i=i+1;}return text::new();
+}
+fn shown() -> text::Text {return text_in(texts::named_part(check::object("popup"),"ContentPresenter"));}
+fn selector() -> native::ISelector {return check::must::[native::ISelector](native::ISelector::query(check::object("popup")));}
+fn handle() -> popup::Popup {return match popup::find("popup") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[popup::Popup]();}};}
+struct Probe {events: usize,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn changed(ref this,sender: *u8) {this.events=this.events+1;}
+    fn build(ref this) -> core::Node {var items=vocab::TextList::new();let a=items.add("Red");let b=items.add("Green");var control=ui::popup("Choose",key:"popup",items:items,selected_index:0,on_selected_index_changed:this.changed);let p=(*core::node_data(#addr_of(control))).props as *props::PopupProps;(*p).label=text::from_str("Colours & more");return @ui {column {control}.padding(20.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.2f64,this.initial);}
+    fn initial(ref this) {assert shown()=="Colours & more";assert this.events==0;let set=handle().set_selected_index(1);this.timer=services::after(0.2f64,this.selected);}
+    fn selected(ref this) {assert shown()=="Colours & more";assert handle().selected_index()==1;assert this.events==0;let set=handle().set_label("École <Ω>").set_selected_index(-1);this.timer=services::after(0.2f64,this.empty);}
+    fn empty(ref this) {assert shown()=="École <Ω>";assert handle().selected_index()==-1;let placeholder=texts::named_part(check::object("popup"),"PlaceholderTextBlock");if !placeholder.is_null() {let element=check::must::[native::IUIElement](native::IUIElement::query(placeholder));assert check::must::[i32](element.visibility())==native::visibility_collapsed;}assert this.events==0;let set=handle().set_label("").set_selected_index(1);this.timer=services::after(0.2f64,this.restored);}
+    fn restored(ref this) {assert shown()=="Green";assert this.events==0;let set=handle().set_label("Pick a colour");this.timer=services::after(0.2f64,this.native_edit);}
+    fn native_edit(ref this) {assert shown()=="Pick a colour";let combo=check::must::[native::IComboBox](native::IComboBox::query(check::object("popup")));assert combo.set_is_drop_down_open(true).is_ok();assert selector().set_selected_index(0).is_ok();assert combo.set_is_drop_down_open(false).is_ok();this.timer=services::after(0.2f64,this.readback);}
+    fn readback(ref this) {assert shown()=="Pick a colour";assert handle().selected_index()==0;assert this.events==1;let set=handle().set_label("").set_selected_index(-1);this.timer=services::after(0.2f64,this.placeholder);}
+    fn placeholder(ref this) {let element=check::must::[native::IUIElement](native::IUIElement::query(texts::named_part(check::object("popup"),"PlaceholderTextBlock")));assert check::must::[i32](element.visibility())==native::visibility_visible;assert this.events==1;check::log("PASS: fixed popup captions, Unicode, selection readback and placeholder restoration");let set=handle().set_selected_index(1);assert selector().set_selected_index(0).is_ok();assert handle().selected_index()==1;assert this.events==1;this.timer=services::after(0.2f64,this.pending);}
+    fn pending(ref this) {assert shown()=="Green";assert handle().selected_index()==1;assert this.events==1;check::log("PASS: pending popup selection survives older native events");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI popup captions",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: popup caption teardown");return 0;}

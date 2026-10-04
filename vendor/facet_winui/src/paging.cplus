@@ -10,6 +10,7 @@ import "facet/carousel" as carousel;
 import "facet/vocabulary" as vocab;
 import "flex_layout/flex_layout" as flex;
 import "./native" as native;
+import "./native_slot" as native_slot;
 import "./record" as record;
 import "./scheduler" as scheduler;
 import "./style" as style;
@@ -100,7 +101,7 @@ fn prepare(r: *record::View) {
 fn insert(r: *record::View,child: *record::View,index: usize) {
     let s=state(r);let p: *props::CarouselProps=(*core::node_data((*r).node)).props as *props::CarouselProps;let count=(*s).pages.count();
     if (*s).active && count>0 && index as i64!=(*s).replaced_index {if (*p).items_view.scroll_anchor==vocab::ScrollAnchor::KeepItemsInView && index as i64<=(*p).position {(*p).position=(*p).position+1;}else if (*p).items_view.scroll_anchor==vocab::ScrollAnchor::KeepLastItemInView && (*p).position==count as i64-1 {(*p).position=count as i64;}}
-    (*r).applying=true;let item=native::must::[ui::FlipViewItem](ui::FlipViewItem::new());let content=native::must::[ui::IContentControl](ui::IContentControl::query(item.object()));native::check(content.set_content((*child).object));
+    (*r).applying=true;let item=native::must::[ui::FlipViewItem](ui::FlipViewItem::new());let content=native::must::[ui::IContentControl](ui::IContentControl::query(item.object()));native::check(content.set_content(record::visual(child)));native_slot::bind(child,item.object(),native_slot::CONTENT);
     assert (*s).pages.insert(Page {node:(*child).node,item:item.object(),original:(*(*child).node).style},index).is_ok();native::check(entries(r).insert_at(index as u32,item.object()));sync(r,false);
 }
 fn remove(r: *record::View,child: *record::View) {

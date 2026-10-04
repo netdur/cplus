@@ -7,9 +7,11 @@ implement three of a control's twenty verbs and still be a body.
 
 This answers below the kind level, in two dimensions — every declared write and
 command is a `P_*` bit in its module, and every declared handler is a `fn` field
-— and sorts each into one of six dispositions:
+— and sorts each into the following dispositions:
 
   LIVE           a dirty-bit/read path, or a native setter reachable from apply
+  REVIEWED-LIVE  an indirect live path reviewed in the manifest; requires a
+                 recognized read, but is not automatic or runtime proof
   HOST-RENDERED  the node has no view; its HOST re-applies (a `span` is a run
                  in its label's attributed string). Listed in the manifest.
   CREATE-ONLY    read when the view is built, never after — and listed in the
@@ -220,6 +222,17 @@ def reapplied_fields(backend_dir, roots=None):
                 scopes.pop()
         for decl in re.finditer(r'\b(\w+)\s*:\s*\*\s*\w+::(\w+Props)\b', code):
             declarations.append((decl.start(), decl[1], decl[2], scope_at[decl.start()]))
+        # C+ permits `let p = raw as *props::LabelProps`. Record that exact
+        # cast as a typed owner too. Unknown locals still shadow outer Props
+        # pointers; otherwise an unrelated local named p can earn false credit.
+        for local in re.finditer(r'\b(?:let|var)\s+(\w+)\b([^;{}]*)', code):
+            tail = local[2]
+            explicit = re.match(r'\s*:\s*\*\s*\w+::(\w+Props)\b', tail)
+            inferred = re.fullmatch(r'\s*=\s*[^;{}]+?\bas\s+\*\s*\w+::(\w+Props)\s*', tail)
+            owner = (explicit or inferred)
+            declarations.append((local.start(), local[1], owner[1] if owner else None,
+                                 scope_at[local.start()]))
+        declarations.sort(key=lambda declaration: declaration[0])
         for setter in re.finditer(r'\b\w+\.(?:set_[a-z_0-9]+|select)\s*\(', code):
             start = code.find('(', setter.start())
             end = closing(code, start, '(', ')')
@@ -323,7 +336,8 @@ def ledger(manifest, tag):
     """
     if not os.path.exists(manifest):
         return {}
-    block = re.search(r"^```" + tag + r"\n(.*?)^```", open(manifest, encoding="utf-8").read(), re.M | re.S)
+    with open(manifest, encoding="utf-8") as source:
+        block = re.search(r"^```" + re.escape(tag) + r"\n(.*?)^```", source.read(), re.M | re.S)
     if not block:
         return {}
     rows = {}
@@ -543,6 +557,7 @@ def report(name, show_list=False):
     by_arch = ledger(manifest, "by-architecture")
     derived = ledger(manifest, "derived")
     modifiers = ledger(manifest, "modifier")
+    reviewed = ledger(manifest, "reviewed-live")
     recorded = dict(decided)
     recorded.update(no_carrier)
     recorded.update(by_arch)
@@ -555,6 +570,9 @@ def report(name, show_list=False):
              + len(blocked) + len(architectural) + len(unread))
     print(f"facet_{name} verb coverage — {total} declared prop/command bits")
     print(f"  {len(live):>4}  live         dirty-bit path or native setter reachable from apply")
+    by_review = [e for e in create_only if e in reviewed]
+    create_only = [e for e in create_only if e not in reviewed]
+    print(f"  {len(by_review):>4}  reviewed-live  manifest source audit of indirect live paths; not runtime proof")
     by_host = [e for e in create_only if e in hosted]
     create_only = [e for e in create_only if e not in hosted]
     # A create-only verb nobody wrote down is DEBT, not a decision — the same
@@ -593,9 +611,9 @@ def report(name, show_list=False):
     print(f"  {len(h_ruled):>4}  decided      the manifest records why it does not fire")
     print(f"  {len(dead):>4}  never fire   neither wired nor decided — the debt")
     stale = [n for n in list(decided) + list(hosted) + list(no_carrier) + list(by_design)
-             + list(derived) + list(modifiers) + list(by_arch)
-             if n not in set(live + create_only + by_host + by_derivation + by_modification
-                             + blocked + architectural + absent + ruled_out
+             + list(derived) + list(modifiers) + list(by_arch) + list(reviewed)
+             if n not in set(live + by_review + create_only + by_host + by_derivation + by_modification
+                             + blocked + architectural + absent + ruled_out + unread
                              + wired + dead + h_ruled)]
     if stale:
         print(f"\nLEDGER NAMES {len(stale)} VERBS THAT DO NOT EXIST: {', '.join(sorted(stale))}")
@@ -610,9 +628,9 @@ def report(name, show_list=False):
     # and never reads `spacing` at all. A create-only credit needs SOME body to
     # read the field, so the verb lands in absent correctly; without this line
     # the contradicting row sits in the manifest reading true.
-    contradicted = sorted(set(absent) & (set(by_design) | set(hosted)
+    contradicted = sorted(set(absent + unread) & (set(by_design) | set(hosted)
                                          | set(derived) | set(modifiers)
-                                         | set(by_arch)))
+                                         | set(by_arch) | set(reviewed)))
     if contradicted:
         print(f"\n  LEDGER CONTRADICTED — recorded, and the field is never read:")
         for e in contradicted:
@@ -622,7 +640,8 @@ def report(name, show_list=False):
         for e in sorted(unread):
             print(f"    {e}")
     if show_list:
-        for bucket, rows in (("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host),
+        for bucket, rows in (("REVIEWED-LIVE", by_review),
+                             ("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host),
                              ("DERIVED", by_derivation), ("MODIFIER", by_modification),
                              ("NO CARRIER", blocked), ("ABSENT", absent),
                              ("BY DESIGN", architectural),
@@ -632,12 +651,12 @@ def report(name, show_list=False):
             for r in rows:
                 print(f"  {r}")
     return {
-        "live": len(live), "total": total,
+        "live": len(live), "reviewed_live": len(by_review), "total": total,
         "absent": absent, "dead": dead, "stale": stale, "unread": unread,
         "contradicted": contradicted,
         "handlers": len(wired) + len(dead) + len(h_ruled), "wired": len(wired),
         "ledgers": sum(map(len, (decided, hosted, no_carrier, by_design,
-                                 derived, modifiers, by_arch))),
+                                 derived, modifiers, by_arch, reviewed))),
         # The dispositions this backend has WRITTEN DOWN, for the cross-check
         # in `main`. A verb here is one somebody argued is not debt.
         "recorded": set(by_host) | set(create_only) | set(by_derivation)
@@ -685,7 +704,7 @@ def main():
         elsewhere = set()
         for name in names:
             elsewhere |= out[name]["recorded"]
-        print(f"\n{'':<10}{'live':>11}  {'handlers':>9}  {'ledger':>7}"
+        print(f"\n{'':<10}{'live':>11}  {'reviewed':>8}  {'handlers':>9}  {'ledger':>7}"
               f"{'debt':>7}{'argued elsewhere':>18}")
         for name in names:
             r = out[name]
@@ -694,7 +713,7 @@ def main():
             seen_ = len([e for e in r["absent"] if e in elsewhere
                          and e not in r["recorded"]])
             print(f"  {name:<8}{r['live']:>5} / {r['total']} {pct:>3}%  "
-                  f"{r['wired']:>4} / {r['handlers']}  {r['ledgers']:>7}"
+                  f"{r['reviewed_live']:>8}  {r['wired']:>4} / {r['handlers']}  {r['ledgers']:>7}"
                   f"{debt:>7}{seen_:>18}")
 
     # `--check` makes this a GATE rather than a report. The manifest has always

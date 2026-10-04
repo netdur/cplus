@@ -1,0 +1,153 @@
+// Desktop swipe-to-reveal: native buttons under an independently translated
+// content panel. Application transforms and the context menu remain independent.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./record" as record;
+import "./native" as native;
+import "./style" as style;
+import "./actions" as actions;
+import "./pointer" as pointer;
+import "./scheduler" as scheduler;
+struct State {
+    layer: rt::Object,strip: rt::Object,transform: rt::Object,clip: rt::Object,strip_clip: rt::Object,
+    handlers: [rt::Object;6],events: [rt::Object;6],key: ui::EventRegistrationToken,
+    queue: vec::Vec[u32],timer: u64,width: f64,height: f64,limit: f64,offset: f64,
+    visible: u32,down: bool,dragging: bool,opened: bool,id: u32,x: f64,y: f64,base: f64,
+}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn state(r: *record::View) -> *State {return (*r).extra as *State;}
+fn children(value: rt::Object) -> ui::IVector_Microsoft_UI_Xaml_UIElement {return native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](native::must::[ui::IPanel](ui::IPanel::query(value)).children())));}
+fn element(value: rt::Object) -> ui::IUIElement {return native::must::[ui::IUIElement](ui::IUIElement::query(value));}
+fn enabled(r: *record::View) -> bool {let c=core::node_data((*r).node);return (*c).common.is_enabled && !(*c).common.input_transparent && (*c).common.is_visible;}
+fn draw(r: *record::View) {
+    let s=state(r);let transform=native::must::[ui::ITranslateTransform](ui::ITranslateTransform::query((*s).transform));native::check(transform.set_x(-(*s).offset));
+    let clip=native::must::[ui::IRectangleGeometry](ui::IRectangleGeometry::query((*s).strip_clip));native::check(clip.set_rect(ui::Rect {x:((*s).width-(*s).offset) as f32,y:0.0f32,width:(*s).offset as f32,height:(*s).height as f32}));
+    native::check(element((*s).strip).set_visibility(if (*s).offset>0.0f64 {ui::visibility_visible} else {ui::visibility_collapsed}));
+    native::check(element((*s).strip).set_is_hit_test_visible((*s).opened && !(*s).dragging && enabled(r)));
+}
+// One callback per dispatcher turn; schedule the next BEFORE application code.
+// Removal cancels that timer, and this function never accesses the freed host.
+fn deliver(ctx: *u8) {
+    let r=ctx as *record::View;let s=state(r);(*s).timer=0;
+    if let option::Option::Some(kind)=(*s).queue.remove(0) {
+        if (*s).queue.count()>0 {(*s).timer=scheduler::after(0.0f64,deliver,ctx);}
+        let p: *props::SwipeableProps=(*core::node_data((*r).node)).props as *props::SwipeableProps;
+        let call=if kind==0 {(*p).on_swipe_started} else if kind==1 {(*p).observe_swipe_changing} else if kind==2 {(*p).on_open_requested} else if kind==3 {(*p).on_close_requested} else {(*p).on_swipe_ended};
+        let context=if kind==0 {(*p).on_swipe_started_ctx} else if kind==1 {(*p).observe_swipe_changing_ctx} else if kind==2 {(*p).on_open_requested_ctx} else if kind==3 {(*p).on_close_requested_ctx} else {(*p).on_swipe_ended_ctx};
+        if call!=props::no_handler {call(ctx,context);}
+    }
+}
+fn emit(r: *record::View,kind: u32) {
+    let s=state(r);
+    if kind==1 && (*s).queue.count()>0 {if let option::Option::Some(last)=(*s).queue.at_ptr((*s).queue.count()-1) {if *last==1 {return;}}}
+    assert (*s).queue.append(kind).is_ok();if (*s).timer==0 {(*s).timer=scheduler::after(0.0f64,deliver,r as *u8);}
+}
+fn threshold(r: *record::View) -> f64 {
+    let p: *props::SwipeableProps=(*core::node_data((*r).node)).props as *props::SwipeableProps;let limit=(*state(r)).limit;var value=(*p).reveal_threshold;
+    if !(value>0.0f64) {value=limit/2.0f64;}if value>limit {value=limit;}return value;
+}
+fn settle(r: *record::View,open: bool,notify: bool) {
+    let s=state(r);(*s).opened=open && (*s).limit>0.0f64;(*s).offset=if (*s).opened {(*s).limit} else {0.0f64};draw(r);
+    // Matches Facet's desktop backends: requested callbacks describe landing.
+    if notify {emit(r,if (*s).opened {2u32} else {3u32});}
+}
+fn begin(r: *record::View,x: f64,y: f64,id: u32) -> bool {
+    let s=state(r);if !enabled(r) || (*s).down || (*s).limit<=0.0f64 || x>=(*s).width-(*s).offset {return false;}
+    (*s).down=true;(*s).dragging=false;(*s).id=id;(*s).x=x;(*s).y=y;(*s).base=(*s).offset;return true;
+}
+fn drag(r: *record::View,x: f64,y: f64) -> bool {
+    let s=state(r);if !(*s).down {return false;}if !enabled(r) {cancel(r);return false;}
+    let dx=(*s).x-x;let dy=(*s).y-y;let ax=if dx<0.0f64 {-dx} else {dx};let ay=if dy<0.0f64 {-dy} else {dy};
+    if !(*s).dragging {
+        if ay>=8.0f64 && ay>=ax {(*s).down=false;return false;}if ax<8.0f64 {return false;}
+        if !(*s).opened && dx<=0.0f64 {(*s).down=false;return false;}
+        (*s).dragging=true;emit(r,0);
+    }
+    var next=(*s).base+dx;if next<0.0f64 {next=0.0f64;}if next>(*s).limit {next=(*s).limit;}
+    if next!=(*s).offset {(*s).offset=next;draw(r);emit(r,1);}return true;
+}
+fn finish(r: *record::View) -> bool {
+    let s=state(r);let dragged=(*s).dragging;(*s).down=false;(*s).dragging=false;
+    if dragged {settle(r,enabled(r) && (*s).offset>=threshold(r),true);emit(r,4);}return dragged;
+}
+fn cancel(r: *record::View) {
+    let s=state(r);let dragged=(*s).dragging;(*s).down=false;(*s).dragging=false;settle(r,(*s).opened && enabled(r),false);
+    native::check(element((*r).object).release_pointer_captures());if dragged {emit(r,4);}
+}
+fn pressed(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;let point=pointer::point(r,args);let p=native::must::[ui::IPointerPointProperties](ui::IPointerPointProperties::query(native::must::[rt::Object](point.properties())));
+    if !native::must::[bool](p.is_primary()) {return rt::Status {code:0};}
+    if native::must::[i32](point.pointer_device_type())==ui::pointer_device_type_mouse && !native::must::[bool](p.is_left_button_pressed()) {return rt::Status {code:0};}
+    let position=native::must::[ui::Point](point.position());let started=begin(r,position.x as f64,position.y as f64,native::must::[u32](point.pointer_id()));return rt::Status {code:0};
+}
+fn moved(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;let s=state(r);if !(*s).down {return rt::Status {code:0};}let point=pointer::point(r,args);if native::must::[u32](point.pointer_id())!=(*s).id {return rt::Status {code:0};}
+    let properties=native::must::[ui::IPointerPointProperties](ui::IPointerPointProperties::query(native::must::[rt::Object](point.properties())));
+    if native::must::[i32](point.pointer_device_type())==ui::pointer_device_type_mouse && !native::must::[bool](properties.is_left_button_pressed()) {cancel(r);return rt::Status {code:0};}
+    let position=native::must::[ui::Point](point.position());let was=(*s).dragging;
+    if drag(r,position.x as f64,position.y as f64) {
+        let event=native::must::[ui::IPointerRoutedEventArgs](ui::IPointerRoutedEventArgs::query(args));
+        if !was {if !native::must::[bool](element((*r).object).capture_pointer(native::must::[rt::Object](event.pointer()))) {cancel(r);return rt::Status {code:0};}let focused=native::must::[bool](element((*r).object).focus(ui::focus_state_pointer));}
+        native::check(event.set_handled(true));
+    }return rt::Status {code:0};
+}
+fn released(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;let s=state(r);if !(*s).down {return rt::Status {code:0};}if native::must::[u32](pointer::point(r,args).pointer_id())!=(*s).id {return rt::Status {code:0};}
+    if finish(r) {native::check(native::must::[ui::IPointerRoutedEventArgs](ui::IPointerRoutedEventArgs::query(args)).set_handled(true));native::check(element((*r).object).release_pointer_captures());}return rt::Status {code:0};
+}
+fn exited(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {let s=state(ctx as *record::View);if !(*s).dragging {(*s).down=false;}return rt::Status {code:0};}
+fn cancelled(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {let r=ctx as *record::View;if (*state(r)).down {cancel(r);}return rt::Status {code:0};}
+fn keyed(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let event=native::must::[ui::IKeyRoutedEventArgs](ui::IKeyRoutedEventArgs::query(args));let r=ctx as *record::View;
+    if native::must::[i32](event.key())==27 && ((*state(r)).down || (*state(r)).opened) {if (*state(r)).down {cancel(r);}else {settle(r,false,true);}native::check(event.set_handled(true));}return rt::Status {code:0};
+}
+fn invoke(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;let host=(*r).parent as *record::View;if host.is_null() || !enabled(host) || !(*core::node_data((*r).node)).common.is_enabled {return rt::Status {code:0};}
+    settle(host,false,true);return actions::clicked(sender,args,ctx);
+}
+fn insert(r: *record::View,child: *record::View,index: usize) {cancel(r);settle(r,false,false);native::check(children((*state(r)).strip).insert_at(index as u32,actions::make_reveal(child,invoke)));}
+fn remove(r: *record::View,child: *record::View) {
+    cancel(r);settle(r,false,false);let list=children((*state(r)).strip);let target=native::must::[rt::Object](actions::reveal(child).query(rt::unknown_iid()));var i=0u32;
+    while i<native::must::[u32](list.size()) {let item=native::must::[rt::Object](list.get_at(i));let identity=native::must::[rt::Object](item.query(rt::unknown_iid()));if identity.raw()==target.raw() {native::check(list.remove_at(i));return;}i=i+1;}
+}
+fn attach(r: *record::View) {
+    let owner=match box::new::[State](#zero::[State]()) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();let s=state(r);
+    (*s).layer=native::must::[ui::Canvas](ui::Canvas::new()).object();(*s).strip=native::must::[ui::Canvas](ui::Canvas::new()).object();(*s).transform=native::must::[ui::TranslateTransform](ui::TranslateTransform::new()).object();
+    (*s).clip=native::must::[ui::RectangleGeometry](ui::RectangleGeometry::new()).object();(*s).strip_clip=native::must::[ui::RectangleGeometry](ui::RectangleGeometry::new()).object();
+    native::check(native::must::[ui::IBorder](ui::IBorder::query((*r).object)).set_child((*s).layer));native::check(children((*s).layer).append((*s).strip));native::check(children((*s).layer).append((*r).content));
+    native::check(element((*s).layer).set_clip((*s).clip));native::check(element((*s).strip).set_clip((*s).strip_clip));native::check(element((*r).content).set_render_transform((*s).transform));
+    native::check(native::must::[ui::IPanel](ui::IPanel::query((*r).content)).set_background(style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.0f64))));native::check(element((*r).object).set_is_tab_stop(true));
+    var i: usize=0;while i<6 {
+        let which=if i==0 {0 as usize} else if i==1 {4 as usize} else if i==2 {1 as usize} else if i==3 {5 as usize} else if i==4 {6 as usize} else {3 as usize};
+        (*s).events[i]=pointer::event(which);var callback: fn(rt::Object,rt::Object,*u8)->rt::Status=cancelled;if i==0 {callback=pressed;}if i==1 {callback=moved;}if i==2 {callback=released;}if i==5 {callback=exited;}let handler=native::must::[ui::PointerEventHandler](ui::PointerEventHandler::new(callback,r as *u8));(*s).handlers[i]=native::must::[rt::Object](handler.boxed());
+        native::check(element((*r).object).add_handler((*s).events[i],(*s).handlers[i],i!=0));i=i+1;
+    }
+    let key=native::must::[ui::KeyEventHandler](ui::KeyEventHandler::new(keyed,r as *u8));(*s).key=native::must::[ui::EventRegistrationToken](element((*r).object).add_key_down(key.object()));LIVE=LIVE+7;draw(r);
+}
+fn apply(r: *record::View) {if !enabled(r) {cancel(r);settle(r,false,false);}draw(r);}
+fn size(value: rt::Object,width: f64,height: f64) {let frame=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));native::check(frame.set_min_width(0.0f64));native::check(frame.set_min_height(0.0f64));native::check(frame.set_width(width));native::check(frame.set_height(height));}
+fn place(r: *record::View,width: f64,height: f64) {
+    let s=state(r);let resized=(*s).width!=width || (*s).height!=height;if resized {cancel(r);};(*s).width=width;(*s).height=height;
+    size((*s).layer,width,height);size((*s).strip,width,height);size((*r).content,width,height);
+    native::check(native::must::[ui::IRectangleGeometry](ui::IRectangleGeometry::query((*s).clip)).set_rect(ui::Rect {x:0.0f32,y:0.0f32,width:width as f32,height:height as f32}));
+    let list=children((*s).strip);let count=native::must::[u32](list.size());var visible=0u32;var i=0u32;
+    while i<count {if native::must::[i32](element(native::must::[rt::Object](list.get_at(i))).visibility())==ui::visibility_visible {visible=visible+1;}i=i+1;}
+    if visible!=(*s).visible {cancel(r);settle(r,false,false);};(*s).visible=visible;
+    var action_width=88.0f64;if visible>0 && action_width*(visible as f64)>width {action_width=width/(visible as f64);};(*s).limit=action_width*(visible as f64);
+    let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());i=0;var slot=0u32;
+    while i<count {let value=native::must::[rt::Object](list.get_at(i));if native::must::[i32](element(value).visibility())==ui::visibility_visible {size(value,action_width,height);native::check(canvas.set_left(value,width-(*s).limit+(slot as f64)*action_width));native::check(canvas.set_top(value,0.0f64));slot=slot+1;}i=i+1;}
+    if !(*s).dragging {(*s).offset=if (*s).opened {(*s).limit} else {0.0f64};}draw(r);
+}
+fn release(r: *record::View) {
+    let s=state(r);scheduler::cancel((*s).timer);(*s).down=false;(*s).dragging=false;
+    var i: usize=0;while i<6 {native::check(element((*r).object).remove_handler((*s).events[i],(*s).handlers[i]));i=i+1;}
+    native::check(element((*r).object).remove_key_down((*s).key));native::check(element((*r).object).release_pointer_captures());LIVE=LIVE-7;
+    let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;
+}

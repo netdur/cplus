@@ -53,8 +53,12 @@ fn _apply(object: rt::Object,node: *core::Node) {
     }
     assert _SURFACE.update(object,key,_policy((*data).common.agent)).is_ok();
 }
+fn _alias(object: rt::Object,node: *core::Node,key: str) {
+    if !_ACTIVE {return;}let data=core::node_data(node);
+    assert _SURFACE.update(object,key,_policy((*data).common.agent)).is_ok();
+}
 fn _release(object: rt::Object) { if _ACTIVE { let removed: bool=_SURFACE.unpin(object); } }
-fn enable(mcp_id: str="") { _ID=text::from_str(mcp_id); hooks::install(hooks::Hooks {opened:_opened,closing:_closing,apply:_apply,release:_release}); }
+fn enable(mcp_id: str="") { _ID=text::from_str(mcp_id); hooks::install(hooks::Hooks {opened:_opened,closing:_closing,apply:_apply,alias:_alias,release:_release}); }
 fn disable() { _closing(); hooks::install(#zero::[hooks::Hooks]()); }
 fn surface_ptr() -> *u8 { assert _ACTIVE; return #addr_of(_SURFACE) as *u8; }
 fn mcp_backend() -> backend::Backend { return agent::mcp_backend(); }

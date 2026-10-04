@@ -6,20 +6,24 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/collection" as collection;
+import "stdlib/text" as text;
 import "facet/vocabulary" as vocab;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "facet/label" as label;
 import "../shell" as shell;
 
 struct Collections {
-    n: i32,
+    n: i32, grouped: bool,can_reorder: bool,mix: bool,order: vec::Vec[usize],
 }
 
-fn cell(index: usize, ctx: *u8) -> core::Node {
-    let n: i32 = (index as i32) +% 1;
+impl Collections {
+fn cell(ref this,index: usize) -> core::Node {
+    let n=match this.order.at(index) {option::Option::Some(v)=>v+1,option::Option::None=>index+1};
     var b: core::Builder = core::Builder::new();
     b.add(ui::label(
         "Cell ${n}",
-        key: "cell:t",
+        key: "col:cell:${index}",
         font_size: 13.0,
         font_weight: vocab::FontWeight::Medium,
         text_color: vocab::Color::ink(),
@@ -32,17 +36,29 @@ fn cell(index: usize, ctx: *u8) -> core::Node {
     card.set_corner_radius(vocab::Corners::all(8.0));
     return card;
 }
+}
 
 impl Collections {
-    fn new() -> Collections { return Collections { n: 0 }; }
+    fn group_size(ref this,index: usize) -> usize {return if index==0 {0 as usize} else if index==1 {5 as usize} else {7 as usize};}
+    fn group_header(ref this,index: usize) -> core::Node {return ui::label(if index==0 {text::from_str("Empty group")} else {"Group ${index}"},key:"col:group:${index}",font_weight:vocab::FontWeight::Bold).padding(8.0f64);}
+    fn toggle_groups(ref this,sender: *u8) {this.grouped=!this.grouped;if let option::Option::Some(c)=collection::find("col:grid") {let updated=c.set_grouped(this.grouped);}}
+    fn toggle_reorder(ref this,sender: *u8) {this.can_reorder=!this.can_reorder;if let option::Option::Some(c)=collection::find("col:grid") {let changed=c.set_reorder_items(this.can_reorder);}if let option::Option::Some(l)=label::find("col:reorder-state") {let changed=l.set_text(if this.can_reorder {"Drag enabled"} else {"Drag disabled"});}}
+    fn toggle_mix(ref this,sender: *u8) {this.mix=!this.mix;if let option::Option::Some(c)=collection::find("col:grid") {let changed=c.set_mix_groups(this.mix);}if let option::Option::Some(l)=label::find("col:mix-state") {let changed=l.set_text(if this.mix {"Cross-group moves allowed"} else {"Moves stay in their group"});}}
+    fn moved(ref this,sender: *u8) {
+        if let option::Option::Some(c)=collection::find("col:grid") {let from=c.reorder_from();let to=c.reorder_to();if from<0 || to<0 {return;}
+            if let option::Option::Some(value)=this.order.remove(from as usize) {assert this.order.insert(value,to as usize).is_ok();this.n=this.n+1;let changed=c.set_row(this.cell);if let option::Option::Some(l)=label::find("col:move-status") {let updated=l.set_text("Moves: ${this.n}");}}
+        }
+    }
+    fn new() -> Collections { return Collections { n:0,grouped:false,can_reorder:true,mix:false,order:vec::new::[usize]() }; }
 }
 
 impl Collections: component::Component {
     fn build(ref this) -> core::Node {
+        this.n=0;this.grouped=false;this.can_reorder=true;this.mix=false;this.order.remove_all();var index: usize=0;while index<12 {assert this.order.append(index).is_ok();index=index+1;}
         var body: core::Builder = core::Builder::new();
         body.add(shell::caption("collection  ·  multi-column grid"));
         body.add(ui::label(
-            "Same count + row factory as list, plus columns. Good for tile grids and media pickers.",
+            "Drag a cell onto another cell to move it. Grouping keeps moves inside a group unless cross-group moves are allowed.",
             key: "col:note",
             font_size: 13.0,
             text_color: vocab::Color::ink(0.65),
@@ -50,16 +66,18 @@ impl Collections: component::Component {
             line_break: vocab::LineBreak::WordWrap,
         ));
 
-        var host: core::Node = ui::collection(key: "col:grid", columns: 3)
+        var host: core::Node = ui::collection(key: "col:grid", columns: 3,scroll_anchor:vocab::ScrollAnchor::KeepScrollOffset,reorder_items:true,on_reorder_completed:this.moved)
             .height(260.0)
             .grow(1.0);
         match collection::find("col:grid", within: #addr_of(host)) {
             option::Option[collection::Collection]::Some(c) => {
                 let _n: collection::Collection = c.set_count(12);
-                let _r: collection::Collection = c.set_row(cell);
+                let _r: collection::Collection = c.set_row(this.cell).set_group_count(3).set_group_size(this.group_size).set_group_header(this.group_header);
             }
             option::Option::None => { }
         }
+        body.add(@ui {row {button("Toggle groups",key:"col:groups",on_click:this.toggle_groups) button("Toggle dragging",key:"col:reorder",on_click:this.toggle_reorder) button("Cross-group moves",key:"col:mix",on_click:this.toggle_mix)}.gap(10.0f64)});
+        body.add(@ui {row {label("Drag enabled",key:"col:reorder-state") label("Moves stay in their group",key:"col:mix-state") label("Moves: 0",key:"col:move-status")}.gap(16.0f64)});
         body.add(host);
 
         return shell::panel(

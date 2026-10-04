@@ -13,3 +13,6 @@ flex_layout = "*"
 events = "*"
 winrt = "*"
 winui = "*"
+
+[link]
+libs = ["shcore"]

@@ -3,6 +3,7 @@ import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/label" as label;
 import "facet/popup" as popup;
+import "facet/time_picker" as time_picker;
 import "facet/vocabulary" as vocab;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
@@ -10,10 +11,25 @@ import "../shell" as shell;
 
 struct Pickers {
     n: i32,
+    opens: i32,
+    closes: i32,
+    selections: i32,
 }
 
 impl Pickers {
-    fn new() -> Pickers { return Pickers { n: 0 }; }
+    fn new() -> Pickers { return Pickers { n: 0,opens:0,closes:0,selections:0 }; }
+
+    fn time_status(ref this) {if let option::Option::Some(l)=label::find("pk:time-status") {let updated=l.set_text("Opened ${this.opens}, closed ${this.closes}, selected ${this.selections}");}}
+    fn time_open(ref this,sender: *u8) {if let option::Option::Some(p)=time_picker::find("pk:time") {let updated=p.set_open(true);}}
+    fn time_opened(ref this,sender: *u8) {this.opens=this.opens+1;this.time_status();}
+    fn time_closed(ref this,sender: *u8) {this.closes=this.closes+1;this.time_status();}
+    fn time_selected(ref this,sender: *u8) {this.selections=this.selections+1;this.time_status();}
+
+    fn caption(ref this,sender: *u8) {
+        this.n=1-this.n;
+        if let option::Option::Some(p)=popup::find("pk:popup") {let changed=p.set_label(if this.n==1 {"Choose a colour"} else {""});}
+        if let option::Option::Some(l)=label::find("pk:caption-status") {let changed=l.set_text(if this.n==1 {"Fixed caption"} else {"Selected item caption"});}
+    }
 
     fn on_popup(ref this, sender: *u8) {
         match popup::find("pk:popup") {
@@ -33,6 +49,7 @@ impl Pickers {
 
 impl Pickers: component::Component {
     fn build(ref this) -> core::Node {
+        this.n=0;this.opens=0;this.closes=0;this.selections=0;
         var body: core::Builder = core::Builder::new();
 
         body.add(shell::caption("Popup  ·  MAUI Picker"));
@@ -50,6 +67,7 @@ impl Pickers: component::Component {
         ));
         body.add(ui::label("Selected index: 0", key: "pk:popup_status",
             font_size: 14.0, text_color: vocab::Color::ink(0.7)));
+        body.add(@ui {row {button("Toggle fixed caption",key:"pk:caption",on_click:this.caption) label("Selected item caption",key:"pk:caption-status")}.gap(12.0f64)});
 
         body.add(shell::caption("Date picker"));
         body.add(ui::date_picker(
@@ -60,8 +78,10 @@ impl Pickers: component::Component {
         body.add(shell::caption("Time picker"));
         body.add(ui::time_picker(
             vocab::Duration { seconds: 3600.0 * 14.0 + 30.0 * 60.0 },
-            key: "pk:time",
+            key: "pk:time",on_opened:this.time_opened,on_closed:this.time_closed,on_time_selected:this.time_selected,
         ));
+
+        body.add(@ui {row {button("Open time picker",key:"pk:time-open",on_click:this.time_open) label("Opened 0, closed 0, selected 0",key:"pk:time-status")}.gap(12.0f64)});
 
         return shell::panel(
             "Pickers",

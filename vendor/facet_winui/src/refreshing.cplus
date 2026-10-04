@@ -5,63 +5,93 @@ import "winrt/runtime" as rt;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/refreshable" as refreshable;
+import "facet/list" as list;
+import "facet/vocabulary" as vocab;
 import "./record" as record;
 import "./native" as native;
 import "./scheduler" as scheduler;
 import "./style" as style;
 import "./typography" as typography;
 import "./refresh_retirement" as retirement;
-struct State {action: rt::Object,visualizer: rt::Object,deferral: rt::Object,timer: u64,loaded: bool,requesting: bool}
+struct State {action: rt::Object,visualizer: rt::Object,deferral: rt::Object,timer: u64,loaded: bool,requesting: bool,requested_token: ui::EventRegistrationToken,loaded_token: ui::EventRegistrationToken,click_token: ui::EventRegistrationToken}
 static LIVE: i64=0;
 fn subscriptions() -> i64 {return LIVE+retirement::subscriptions();}
-fn state(r: *record::View) -> *State {return (*r).extra as *State;}
-fn properties(r: *record::View) -> *props::RefreshableProps {return (*core::node_data((*r).node)).props as *props::RefreshableProps;}
+fn state(r: *record::View) -> *State {return (*r).refresh as *State;}
+fn enabled(r: *record::View) -> bool {
+    let raw=(*core::node_data((*r).node)).props;
+    if (*r).kind==props::K_LIST {let p=raw as *props::ListProps;return (*p).is_refreshable && (*p).can_refresh;}
+    let p=raw as *props::RefreshableProps;return (*p).is_refreshable;
+}
+fn visible(r: *record::View) -> bool {
+    let raw=(*core::node_data((*r).node)).props;
+    if (*r).kind==props::K_LIST {let p=raw as *props::ListProps;return (*p).is_refreshable;}
+    let p=raw as *props::RefreshableProps;return (*p).is_refreshable;
+}
+fn running(r: *record::View) -> bool {
+    let raw=(*core::node_data((*r).node)).props;
+    if (*r).kind==props::K_LIST {let p=raw as *props::ListProps;return (*p).is_refreshing;}
+    let p=raw as *props::RefreshableProps;return (*p).is_refreshing;
+}
+fn color(r: *record::View) -> vocab::Color {
+    let raw=(*core::node_data((*r).node)).props;
+    if (*r).kind==props::K_LIST {let p=raw as *props::ListProps;return (*p).refresh_color;}
+    let p=raw as *props::RefreshableProps;return (*p).refresh_color;
+}
+fn set_running(r: *record::View) {
+    let raw=(*core::node_data((*r).node)).props;
+    if (*r).kind==props::K_LIST {let p=raw as *props::ListProps;(*p).is_refreshing=true;core::touch((*r).node,list::P_IS_REFRESHING);}
+    else {let p=raw as *props::RefreshableProps;(*p).is_refreshing=true;core::touch((*r).node,refreshable::P_IS_REFRESHING);}
+}
 fn finish(r: *record::View) {
     let s=state(r);scheduler::cancel((*s).timer);(*s).timer=0;
-    if !(*s).deferral.is_null() {let pending=(*s).deferral.clone();(*s).deferral=rt::Object::empty();retirement::complete((*r).object,pending);}
+    if !(*s).deferral.is_null() {let pending=(*s).deferral.clone();(*s).deferral=rt::Object::empty();retirement::complete(record::visual(r),pending);}
 }
 fn deliver(ctx: *u8) {
-    let r=ctx as *record::View;(*state(r)).timer=0;let p: *props::RefreshableProps=properties(r);
-    if !(*p).is_refreshing {finish(r);return;}
-    let call=(*p).on_refreshing;let context=(*p).on_refreshing_ctx;if call!=props::no_handler {call(ctx,context);}
+    let r=ctx as *record::View;(*state(r)).timer=0;
+    if !running(r) {finish(r);return;}
+    let raw=(*core::node_data((*r).node)).props;var call: fn(*u8,*u8)=props::no_handler;var context: *u8=0 as *u8;
+    if (*r).kind==props::K_LIST {let p=raw as *props::ListProps;call=(*p).on_refreshing;context=(*p).on_refreshing_ctx;}
+    else {let p=raw as *props::RefreshableProps;call=(*p).on_refreshing;context=(*p).on_refreshing_ctx;}
+    // The callback may end the refresh, change rows, or remove this host.
+    if call!=props::no_handler {call(ctx,context);}
 }
 fn requested(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
-    let r=ctx as *record::View;let s=state(r);let p: *props::RefreshableProps=properties(r);
-    if ((!(*p).is_refreshable || !(*core::node_data((*r).node)).common.is_enabled) && !(*s).requesting) || !(*s).deferral.is_null() {return rt::Status {code:0};}
-    let event=native::must::[ui::IRefreshRequestedEventArgs](ui::IRefreshRequestedEventArgs::query(args));(*s).deferral=native::must::[rt::Object](event.get_deferral());(*p).is_refreshing=true;core::touch((*r).node,refreshable::P_IS_REFRESHING);
+    let r=ctx as *record::View;let s=state(r);
+    if ((!enabled(r) || !(*core::node_data((*r).node)).common.is_enabled) && !(*s).requesting) || !(*s).deferral.is_null() {return rt::Status {code:0};}
+    let event=native::must::[ui::IRefreshRequestedEventArgs](ui::IRefreshRequestedEventArgs::query(args));(*s).deferral=native::must::[rt::Object](event.get_deferral());set_running(r);
     (*s).timer=scheduler::after(0.0f64,deliver,ctx);return rt::Status {code:0};
 }
 fn activate(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
-    let r=ctx as *record::View;let p: *props::RefreshableProps=properties(r);
-    if (*p).is_refreshable && !(*p).is_refreshing && (*core::node_data((*r).node)).common.is_enabled {let container=native::must::[ui::IRefreshContainer](ui::IRefreshContainer::query((*r).object));native::check(container.request_refresh());}return rt::Status {code:0};
+    let r=ctx as *record::View;
+    if enabled(r) && !running(r) && (*core::node_data((*r).node)).common.is_enabled {let container=native::must::[ui::IRefreshContainer](ui::IRefreshContainer::query(record::visual(r)));native::check(container.request_refresh());}return rt::Status {code:0};
 }
 fn apply(r: *record::View) {
-    let s=state(r);if !(*s).loaded {return;}let p: *props::RefreshableProps=properties(r);let action=native::must::[ui::IControl](ui::IControl::query((*s).action));native::check(action.set_is_enabled((*p).is_refreshable && !(*p).is_refreshing && (*core::node_data((*r).node)).common.is_enabled));let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*s).visualizer));
-    native::check(visual.set_visibility(if (*p).is_refreshable || (*p).is_refreshing {ui::visibility_visible} else {ui::visibility_collapsed}));
+    let s=state(r);if !(*s).loaded {return;}let action=native::must::[ui::IControl](ui::IControl::query((*s).action));native::check(action.set_is_enabled(enabled(r) && !running(r) && (*core::node_data((*r).node)).common.is_enabled));let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*s).visualizer));
+    native::check(visual.set_visibility(if visible(r) || running(r) {ui::visibility_visible} else {ui::visibility_collapsed}));
     let control=native::must::[ui::IControl](ui::IControl::query((*s).visualizer));
-    if (*p).refresh_color.is_set() {native::check(control.set_foreground(style::brush((*p).refresh_color)));} else {let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());typography::clear((*s).visualizer,native::must::[rt::Object](defaults.foreground_property()));}
-    if !(*p).is_refreshing {finish(r);}
+    if color(r).is_set() {native::check(control.set_foreground(style::brush(color(r))));} else {let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());typography::clear((*s).visualizer,native::must::[rt::Object](defaults.foreground_property()));}
+    if !running(r) {finish(r);}
     else if (*s).loaded && (*s).deferral.is_null() {
-        (*s).requesting=true;let container=native::must::[ui::IRefreshContainer](ui::IRefreshContainer::query((*r).object));native::check(container.request_refresh());(*s).requesting=false;
+        (*s).requesting=true;let container=native::must::[ui::IRefreshContainer](ui::IRefreshContainer::query(record::visual(r)));native::check(container.request_refresh());(*s).requesting=false;
     }
 }
 fn loaded(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
-    let r=ctx as *record::View;let container=native::must::[ui::IRefreshContainer](ui::IRefreshContainer::query((*r).object));
+    let r=ctx as *record::View;let container=native::must::[ui::IRefreshContainer](ui::IRefreshContainer::query(record::visual(r)));
     // Use the template-created visualizer. Installing a custom one before
     // OnApplyTemplate can register the native forwarding handler twice.
     (*state(r)).visualizer=native::must::[rt::Object](container.visualizer());(*state(r)).loaded=true;apply(r);return rt::Status {code:0};
 }
 fn attach(r: *record::View) {
-    let owner=match box::new::[State](State {action:rt::Object::empty(),visualizer:rt::Object::empty(),deferral:rt::Object::empty(),timer:0,loaded:false,requesting:false}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();
+    let owner=match box::new::[State](State {action:rt::Object::empty(),visualizer:rt::Object::empty(),deferral:rt::Object::empty(),timer:0,loaded:false,requesting:false,requested_token:#zero::[ui::EventRegistrationToken](),loaded_token:#zero::[ui::EventRegistrationToken](),click_token:#zero::[ui::EventRegistrationToken]()}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).refresh=owner.into_raw();
     let menu=native::must::[ui::MenuFlyout](ui::MenuFlyout::new());let item=native::must::[ui::MenuFlyoutItem](ui::MenuFlyoutItem::new());(*state(r)).action=item.object();let command=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query(item.object()));native::check(command.set_text("Refresh"));
     let automation=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());native::check(automation.set_automation_id(item.object(),"facet:refresh"));
-    let contents=native::must::[ui::IMenuFlyout](ui::IMenuFlyout::query(menu.object()));let entries=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase](ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase::query(native::must::[rt::Object](contents.items())));native::check(entries.append(item.object()));let host=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(host.set_context_flyout(menu.object()));
-    let click=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(activate,r as *u8));(*r).token3=native::must::[ui::EventRegistrationToken](command.add_click(click.object()));
-    let container=native::must::[ui::IRefreshContainer](ui::IRefreshContainer::query((*r).object));
-    let handler=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_RefreshContainer_Microsoft_UI_Xaml_Controls_RefreshRequestedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_RefreshContainer_Microsoft_UI_Xaml_Controls_RefreshRequestedEventArgs::new(requested,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](container.add_refresh_requested(handler.object()));
-    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));let ready=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(loaded,r as *u8));(*r).token2=native::must::[ui::EventRegistrationToken](element.add_loaded(ready.object()));LIVE=LIVE+3;
+    let contents=native::must::[ui::IMenuFlyout](ui::IMenuFlyout::query(menu.object()));let entries=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase](ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase::query(native::must::[rt::Object](contents.items())));native::check(entries.append(item.object()));let host=native::must::[ui::IUIElement](ui::IUIElement::query(record::visual(r)));native::check(host.set_context_flyout(menu.object()));
+    let click=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(activate,r as *u8));(*state(r)).click_token=native::must::[ui::EventRegistrationToken](command.add_click(click.object()));
+    let container=native::must::[ui::IRefreshContainer](ui::IRefreshContainer::query(record::visual(r)));
+    let handler=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_RefreshContainer_Microsoft_UI_Xaml_Controls_RefreshRequestedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_RefreshContainer_Microsoft_UI_Xaml_Controls_RefreshRequestedEventArgs::new(requested,r as *u8));(*state(r)).requested_token=native::must::[ui::EventRegistrationToken](container.add_refresh_requested(handler.object()));
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(record::visual(r)));let ready=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(loaded,r as *u8));(*state(r)).loaded_token=native::must::[ui::EventRegistrationToken](element.add_loaded(ready.object()));LIVE=LIVE+3;
 }
 fn release(r: *record::View) {
-    let container=native::must::[ui::IRefreshContainer](ui::IRefreshContainer::query((*r).object));native::check(container.remove_refresh_requested((*r).token));let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));native::check(element.remove_loaded((*r).token2));let action=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*state(r)).action));native::check(action.remove_click((*r).token3));LIVE=LIVE-3;finish(r);
-    let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;
+    let container=native::must::[ui::IRefreshContainer](ui::IRefreshContainer::query(record::visual(r)));native::check(container.remove_refresh_requested((*state(r)).requested_token));let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(record::visual(r)));native::check(element.remove_loaded((*state(r)).loaded_token));let action=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*state(r)).action));native::check(action.remove_click((*state(r)).click_token));LIVE=LIVE-3;finish(r);
+    let owner: box::Box[State]=box::from_raw::[State]((*r).refresh);(*r).refresh=0 as *u8;
 }

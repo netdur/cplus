@@ -1,0 +1,31 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/env" as env;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/text_field" as field;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn handle() -> field::TextField {return match field::find("field") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[field::TextField]();}};}
+fn plain(value: rt::Object) -> native::ITextBox {return check::must::[native::ITextBox](native::ITextBox::query(value));}
+fn secret(value: rt::Object) -> native::IPasswordBox {return check::must::[native::IPasswordBox](native::IPasswordBox::query(value));}
+fn focused() {let visual=check::must::[native::IUIElement](native::IUIElement::query(check::object("field")));assert check::must::[i32](visual.focus_state())!=native::focus_state_unfocused;}
+struct Probe {changes: usize,passed: bool,old: rt::Object,timer: services::Cancellable}
+impl Probe {
+    fn changed(ref this,sender: *u8) {this.changes=this.changes+1;}
+    fn build(ref this) -> core::Node {return @ui {column {text_field("MixedCase",key:"field",on_text_changed:this.changed).width(400.0f64)}.padding(20.0f64)};}
+    fn ready(ref this) {let visual=check::must::[native::IUIElement](native::IUIElement::query(check::object("field")));assert check::must::[bool](visual.focus(native::focus_state_programmatic));let set=handle().set_text_transform(vocab::TextTransform::Uppercase).set_cursor_position(2).set_selection_length(3);this.timer=services::after(0.2f64,this.mask);}
+    fn mask(ref this) {assert check::must::[text::Text](plain(check::object("field")).text()).view()=="MIXEDCASE";this.old=check::object("field");let set=handle().set_secure(true);assert plain(this.old).set_text("stale").is_ok();this.timer=services::after(0.2f64,this.masked);}
+    fn masked(ref this) {focused();assert handle().text()=="MixedCase";assert check::must::[text::Text](secret(check::object("field")).password()).view()=="MixedCase";assert this.changes==0;assert plain(this.old).set_text("detached").is_ok();assert secret(check::object("field")).set_password("Edited").is_ok();this.timer=services::after(0.2f64,this.reveal);}
+    fn reveal(ref this) {assert this.changes==1;assert handle().text()=="Edited";this.old=check::object("field");let set=handle().set_secure(false).set_text("NextValue").set_cursor_position(1).set_selection_length(2);assert secret(this.old).set_password("stale").is_ok();this.timer=services::after(0.2f64,this.revealed);}
+    fn revealed(ref this) {focused();assert handle().text()=="NextValue";let edit=plain(check::object("field"));assert check::must::[text::Text](edit.text()).view()=="NEXTVALUE";assert check::must::[i32](edit.selection_start())==1;assert check::must::[i32](edit.selection_length())==2;assert this.changes==1;assert secret(this.old).set_password("detached").is_ok();assert edit.set_text("TYPED").is_ok();this.timer=services::after(0.2f64,this.finish);}
+    fn finish(ref this) {assert this.changes==2;assert handle().text()=="TYPED";if env::has_var("CPLUS_SECURE_CLOSE_PASSWORD") {let set=handle().set_secure(true);this.timer=services::after(0.2f64,this.close_password);return;}let set=handle().set_secure(true);this.close();}
+    fn close_password(ref this) {let edit=secret(check::object("field"));assert check::must::[text::Text](edit.password()).view()=="TYPED";let set=handle().set_secure(false);this.close();}
+    fn close(ref this) {this.old=rt::Object::empty();check::log("PASS: secure mode switching, source text, selection, focus, callbacks and stale events");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI secure modes",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: secure pending-mode teardown");return 0;}

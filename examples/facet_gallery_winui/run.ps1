@@ -1,6 +1,6 @@
 param(
     [switch]$Verify,
-    [ValidateSet("all","carousel","menus","tree-rows")][string]$VerifyMode="all",
+    [ValidateSet("all","carousel","menus","tree-rows","row-retention","input-transform","popup-caption","clear-button","button-modes","secure-modes","time-open","list-refresh","grouped-items","refresh-host","reordering","hybrid","swiping")][string]$VerifyMode="all",
     [switch]$Release,
     [switch]$SkipBuild,
     [string]$RuntimeDirectory = (Join-Path $PSScriptRoot 'out/runtime'),

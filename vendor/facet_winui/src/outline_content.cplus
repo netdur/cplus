@@ -10,6 +10,7 @@ import "winui/winui" as ui;
 import "winrt/runtime" as rt;
 import "./record" as record;
 import "./native" as native;
+import "./native_slot" as native_slot;
 struct Row {node: core::Node,canvas: rt::Object,token: ui::EventRegistrationToken,opaque host: *record::View,id: text::Text,kind: usize,depth: usize,height: f64}
 static LIVE: i64=0;
 fn subscriptions() -> i64 {return LIVE;}
@@ -25,7 +26,7 @@ fn realise(row: *Row,model: *tree::TreeNode,p: *tree::TreeProps) {
     let n=#addr_of((*row).node);
     if (*p).bind!=tree::no_bind {(*p).bind(model,context((*p).bind_ctx,(*p).ctx),n);}
     let view=mount::realise(n) as *record::View;assert view.is_not_null();(*view).parent=(*row).host as *u8;(*view).item_reader=item;(*view).item_context=row as *u8;
-    native::check(children(row).append((*view).object));
+    native::check(children(row).append(record::visual(view)));native_slot::bind(view,(*row).canvas,native_slot::PANEL);
 }
 fn create(host: *record::View,model: *tree::TreeNode,p: *tree::TreeProps,depth: usize) -> *Row {
     let canvas=native::must::[ui::Canvas](ui::Canvas::new());

@@ -1,0 +1,83 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/list" as list;
+import "facet/collection" as collection;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/record" as record;
+import "facet_winui/items" as items;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn state() -> *items::State {return items::state(core::view_of(check::node("rows")) as *record::View);}
+fn row(data: i64) -> *items::Row {let s=state();var i: usize=0;while i<(*s).rows.count() {if let option::Option::Some(r)=(*s).rows.at_ptr(i) {if (*r).data==data {return r;}}i=i+1;}assert false;return 0 as *items::Row;}
+fn top(data: i64) -> f64 {let canvas=check::must::[native::ICanvasStatics](native::Canvas::i_canvas_statics_factory());return check::must::[f64](canvas.get_top((*row(data)).visual));}
+fn width(data: i64) -> f64 {return check::must::[f64](check::must::[native::IFrameworkElement](native::IFrameworkElement::query((*row(data)).visual)).width());}
+fn scroll() -> native::IScrollViewer {return check::must::[native::IScrollViewer](native::IScrollViewer::query(check::object("rows")));}
+fn near(a: f64,b: f64) -> bool {return a>b-1.0f64 && a<b+1.0f64;}
+struct Probe {grid: bool,changed: bool,appeared: usize,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn size(ref this,index: usize) -> usize {assert index<3;return if index==0 {0 as usize} else if index==1 {if this.changed {4 as usize} else {3 as usize}} else {if this.changed {16 as usize} else {17 as usize}};}
+    fn header(ref this,index: usize) -> core::Node {assert index<3;return ui::label("Group ${index}",key:"header-${index}");}
+    fn alternate_header(ref this,index: usize) -> core::Node {return ui::label("Updated ${index}",key:"header-${index}");}
+    fn item(ref this,index: usize) -> core::Node {assert index<20;return ui::label("Item ${index}",key:"item-${index}");}
+    fn bind(ref this,index: usize,node: *core::Node) {assert index<20;}
+    fn height(ref this,index: usize) -> f64 {assert index<20;return 40.0f64;}
+    fn appearing(ref this,sender: *u8) {let i=match component::item_index_of(sender) {option::Option::Some(v)=>v,option::Option::None=>{assert false;0 as usize}};assert i<20;assert component::key_of(sender)=="item-${i}";this.appeared=this.appeared+1;}
+    fn make(ref this) -> core::Node {
+        var node=if this.grid {ui::collection(key:"rows",grouped:true,columns:2,count:20,row:this.item,bind:this.bind,selection_mode:vocab::SelectionMode::Single).height(200.0f64)} else {ui::list(key:"rows",grouped:true,count:20,row:this.item,bind:this.bind,row_height:40,selection_mode:vocab::SelectionMode::Single,on_item_appearing:this.appearing).height(200.0f64)};
+        if this.grid {if let option::Option::Some(v)=collection::find("rows",within:#addr_of(node)) {let changed=v.set_group_count(3).set_group_size(this.size).set_group_header(this.header).set_row_height_of(this.height);}}
+        else {if let option::Option::Some(v)=list::find("rows",within:#addr_of(node)) {let changed=v.set_group_count(3).set_group_size(this.size).set_group_header(this.header);}}return node;
+    }
+    fn build(ref this) -> core::Node {return @ui {column {this.make()}.padding(20.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.3f64,this.initial);}
+    fn initial(ref this) {
+        check::log("GROUPS: initial grid=${this.grid}, total=${(*state()).groups.total}, slots=${(*state()).groups.slots.count()}");
+        let offset=check::must::[f64](scroll().vertical_offset());check::log("GROUPS: initial offset ${offset}, rows ${(*state()).rows.count()}");
+        assert (*state()).groups.total==20;assert (*state()).groups.slots.count()==23;
+        assert !(*row(-1)).subscribed && !(*row(-2)).subscribed;assert (*row(0)).subscribed;
+        assert near(top(-1),0.0f64);assert near(top(-2),if this.grid {80.0f64} else {40.0f64});assert near(top(0),if this.grid {160.0f64} else {80.0f64});
+        if this.grid {assert near(width(-1),width(0)*2.0f64);assert near(top(0),top(1));}else {assert this.appeared>0;}
+        let extent=check::must::[f64](scroll().extent_height());check::log("GROUPS: extent ${extent}");
+        assert near(check::must::[f64](scroll().extent_height()),if this.grid {680.0f64} else {920.0f64});
+        if this.grid {if let option::Option::Some(v)=collection::find("rows") {let changed=v.scroll_to(12).set_selected_index(12);}}
+        else {if let option::Option::Some(v)=list::find("rows") {let changed=v.scroll_to(12).set_selected_index(12);}}
+        this.timer=services::after(0.3f64,this.scrolled);
+    }
+    fn scrolled(ref this) {
+        let offset=check::must::[f64](scroll().vertical_offset());check::log("GROUPS: scrolled ${offset}");
+        let target=if this.grid {480.0f64} else {600.0f64};let limit=check::must::[f64](scroll().extent_height())-check::must::[f64](scroll().viewport_height());assert near(top(12),target);assert near(offset,if target<limit {target} else {limit});assert (*row(12)).data==12;
+        let sender=core::view_of((*row(12)).node.ptr());assert match component::item_index_of(sender) {option::Option::Some(v)=>v==12,option::Option::None=>false};
+        this.changed=true;
+        if this.grid {if let option::Option::Some(v)=collection::find("rows") {let changed=v.set_group_size(this.size).set_group_header(this.alternate_header).scroll_to(0);}}
+        else {if let option::Option::Some(v)=list::find("rows") {let changed=v.set_group_size(this.size).set_group_header(this.alternate_header).scroll_to(0);}}
+        this.timer=services::after(0.3f64,this.regrouped);
+    }
+    fn regrouped(ref this) {
+        check::log("GROUPS: regrouped");
+        assert near(top(3),200.0f64);let object=(*(core::view_of((*row(-2)).node.ptr()) as *record::View)).object.clone();assert check::must::[text::Text](check::must::[native::ITextBlock](native::ITextBlock::query(object)).text())=="Updated 1";
+        if this.grid {if let option::Option::Some(v)=collection::find("rows") {let changed=v.set_grouped(false).scroll_to(0);}}
+        else {if let option::Option::Some(v)=list::find("rows") {let changed=v.set_grouped(false).scroll_to(0);}}
+        this.timer=services::after(0.3f64,this.ungrouped);
+    }
+    fn ungrouped(ref this) {
+        check::log("GROUPS: ungrouped");
+        assert (*state()).groups.slots.count()==0;assert near(top(0),0.0f64);assert near(check::must::[f64](scroll().extent_height()),if this.grid {400.0f64} else {800.0f64});
+        if this.grid {if let option::Option::Some(v)=collection::find("rows") {let changed=v.set_grouped(true).set_group_count(1);}}
+        else {if let option::Option::Some(v)=list::find("rows") {let changed=v.set_grouped(true).set_group_count(1);}}
+        this.timer=services::after(0.3f64,this.empty_group);
+    }
+    fn empty_group(ref this) {
+        check::log("GROUPS: empty");
+        assert (*state()).groups.slots.count()==1 && (*state()).groups.total==0;assert (*state()).rows.count()==1;assert !(*row(-1)).subscribed;
+        if !this.grid {check::log("PASS: grouped list empty headers, flat indexes, scrolling, live headers/sizes and ungrouping");this.grid=true;this.changed=false;let old=mount::replace("rows",this.make());this.timer=services::after(0.3f64,this.initial);}
+        else {check::log("PASS: grouped collection full-width headers, partial grid lines, flat indexes and live regrouping");this.passed=true;assert host::close().is_ok();}
+    }
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI groups",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0 && host::live_subscriptions()==0;check::log("PASS: grouped items teardown");return 0;}

@@ -1,0 +1,32 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/text_field" as field;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn handle() -> field::TextField {return match field::find("field") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[field::TextField]();}};}
+fn clear_part() -> rt::Object {let control=check::must::[native::IControlProtected](native::IControlProtected::query(check::object("field")));return check::must::[rt::Object](control.get_template_child("DeleteButton"));}
+fn width() -> f64 {let element=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(clear_part()));return check::must::[f64](element.actual_width());}
+fn visual() -> native::IUIElement {return check::must::[native::IUIElement](native::IUIElement::query(clear_part()));}
+fn focus() {let element=check::must::[native::IUIElement](native::IUIElement::query(check::object("field")));assert check::must::[bool](element.focus(native::focus_state_programmatic));}
+struct Probe {changes: usize,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn changed(ref this,sender: *u8) {this.changes=this.changes+1;}
+    fn build(ref this) -> core::Node {return @ui {column {text_field("Clear this",key:"field",on_text_changed:this.changed).width(400.0f64) button("Other focus",key:"other")}.padding(20.0f64).gap(12.0f64)};}
+    fn ready(ref this) {focus();this.timer=services::after(0.2f64,this.never);}
+    fn never(ref this) {assert width()==0.0f64;assert !check::must::[bool](visual().is_hit_test_visible());assert this.changes==0;let set=handle().set_clear_button(vocab::ClearButton::WhileEditing);this.timer=services::after(0.2f64,this.allowed);}
+    fn allowed(ref this) {
+        assert width()>0.0f64;assert check::must::[bool](visual().is_hit_test_visible());assert check::must::[i32](visual().visibility())==native::visibility_visible;assert this.changes==0;
+        let factory=check::must::[native::IFrameworkElementAutomationPeerStatics](native::FrameworkElementAutomationPeer::i_framework_element_automation_peer_statics_factory());let peer=check::must::[native::IAutomationPeer](native::IAutomationPeer::query(check::must::[rt::Object](factory.create_peer_for_element(clear_part()))));let provider=check::must::[native::IInvokeProvider](native::IInvokeProvider::query(check::must::[rt::Object](peer.get_pattern(native::pattern_interface_invoke))));assert provider.invoke().is_ok();this.timer=services::after(0.2f64,this.cleared);
+    }
+    fn cleared(ref this) {assert handle().text().is_empty();assert this.changes==1;assert check::must::[i32](visual().visibility())==native::visibility_collapsed;let set=handle().set_text("Keep this").set_clear_button(vocab::ClearButton::Never);focus();this.timer=services::after(0.2f64,this.reset);}
+    fn reset(ref this) {assert handle().text()=="Keep this";assert width()==0.0f64;assert !check::must::[bool](visual().is_hit_test_visible());assert this.changes==1;let set=handle().set_clear_button(vocab::ClearButton::WhileEditing).set_read_only(true);this.timer=services::after(0.2f64,this.read_only);}
+    fn read_only(ref this) {assert check::must::[i32](visual().visibility())==native::visibility_collapsed;assert handle().text()=="Keep this";assert this.changes==1;let set=handle().set_read_only(false);focus();this.timer=services::after(0.2f64,this.restored);}
+    fn restored(ref this) {assert width()>0.0f64;assert check::must::[i32](visual().visibility())==native::visibility_visible;assert this.changes==1;check::log("PASS: clear-button default, live visibility, native clearing, callback, read-only and reset");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI clear button",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: clear-button teardown");return 0;}

@@ -97,6 +97,10 @@ fn release(r: *record::View) {
     native::check(view.remove_core_web_view2_initialized((*r).token));native::check(view.remove_navigation_starting((*r).token2));
     native::check(view.remove_navigation_completed((*r).token3));native::check(view.remove_core_process_failed((*r).token4));LIVE=LIVE-4;
     let state: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;
+    close_view(r);
+}
+fn close_view(r: *record::View) {
+    let view=native::must::[ui::IWebView2](ui::IWebView2::query((*r).object));
     // Window.Closed can arrive after WebView2 closed its controller. Measured
     // on host shutdown: event removals succeed, repeated Close is E_UNEXPECTED.
     // Navigation/removal while the window is live still requires successful Close.

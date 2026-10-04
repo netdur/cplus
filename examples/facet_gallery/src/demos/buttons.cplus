@@ -2,16 +2,27 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/label" as label;
+import "facet/button" as button;
+import "facet/icon_button" as icon_button;
+import "facet/text_button" as text_button;
 import "facet/vocabulary" as vocab;
 import "stdlib/option" as option;
 import "../shell" as shell;
 
 struct Buttons {
     clicks: i32,
+    live_mode: bool,
 }
 
 impl Buttons {
-    fn new() -> Buttons { return Buttons { clicks: 0 }; }
+    fn new() -> Buttons { return Buttons { clicks: 0, live_mode: false }; }
+    fn switch_mode(ref this,sender: *u8) {
+        this.live_mode=!this.live_mode;
+        match button::find("btn:mode-button") {option::Option::Some(v)=>{let set=v.set_toggles(this.live_mode);},option::Option::None=>{}}
+        match icon_button::find("btn:mode-icon") {option::Option::Some(v)=>{let set=v.set_toggles(this.live_mode);},option::Option::None=>{}}
+        match text_button::find("btn:mode-text") {option::Option::Some(v)=>{let set=v.set_toggles(this.live_mode);},option::Option::None=>{}}
+        match label::find("btn:mode-status") {option::Option::Some(v)=>{let set=v.set_text(if this.live_mode {"Mode: toggle"} else {"Mode: ordinary"});},option::Option::None=>{}}
+    }
 
     fn on_click(ref this, sender: *u8) {
         this.clicks = this.clicks +% 1;
@@ -66,6 +77,15 @@ impl Buttons: component::Component {
             font_size: 15.0,
             font_weight: vocab::FontWeight::Semibold,
         ));
+
+        body.add(shell::caption("Live button mode"));
+        var modes: core::Builder=core::Builder::new();
+        modes.add(ui::button("Switch mode",key:"btn:switch-mode",on_click:this.switch_mode));
+        modes.add(ui::button("Action",key:"btn:mode-button",on_click:this.on_click));
+        modes.add(ui::icon_button("star",key:"btn:mode-icon",on_clicked:this.on_click));
+        modes.add(ui::text_button("Text action",key:"btn:mode-text",on_click:this.on_click));
+        modes.add(ui::label("Mode: ordinary",key:"btn:mode-status"));
+        body.add(core::row(modes).gap(8.0));
 
         return shell::panel(
             "Button",

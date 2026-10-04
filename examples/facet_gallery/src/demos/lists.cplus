@@ -2,44 +2,46 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/list" as list;
+import "facet/props" as props;
+import "facet/label" as label;
+import "stdlib/text" as text;
 import "facet/vocabulary" as vocab;
 import "stdlib/option" as option;
 import "../shell" as shell;
 
 struct Lists {
-    n: i32,
-}
-
-fn list_row(index: usize, ctx: *u8) -> core::Node {
-    let n: i32 = (index as i32) +% 1;
-    var b: core::Builder = core::Builder::new();
-    b.add(ui::label(
-        "Item ${n}",
-        key: "row:title",
-        font_size: 14.0,
-        font_weight: vocab::FontWeight::Medium,
-        text_color: vocab::Color::ink(),
-    ));
-    b.add(ui::label(
-        "Secondary line for row ${n}",
-        key: "row:sub",
-        font_size: 12.0,
-        text_color: vocab::Color::ink(0.55),
-    ));
-    var row: core::Node = core::column(b).padding(10.0).gap(2.0);
-    return row;
+    n: i32, grouped: bool, alternate: bool, refreshes: i32, allow_refresh: bool,
 }
 
 impl Lists {
-    fn new() -> Lists { return Lists { n: 0 }; }
+    fn new() -> Lists { return Lists { n: 0, grouped:false, alternate: false,refreshes:0,allow_refresh:true }; }
+    fn refresh_started(ref this,sender: *u8) {this.refreshes=this.refreshes+1;if let option::Option::Some(l)=label::find("lst:refresh-status") {let updated=l.set_text("Refreshing: ${this.refreshes}");}}
+    fn begin_refresh(ref this,sender: *u8) {if let option::Option::Some(l)=list::find("lst:list") {let updated=l.begin_refresh();}}
+    fn end_refresh(ref this,sender: *u8) {if let option::Option::Some(l)=list::find("lst:list") {let updated=l.end_refresh();}if let option::Option::Some(l)=label::find("lst:refresh-status") {let updated=l.set_text("Idle: ${this.refreshes}");}}
+    fn toggle_refresh(ref this,sender: *u8) {this.allow_refresh=!this.allow_refresh;if let option::Option::Some(l)=list::find("lst:list") {let updated=l.set_refresh(this.allow_refresh);}if let option::Option::Some(l)=label::find("lst:refresh-availability") {let updated=l.set_text(if this.allow_refresh {"Refresh allowed"} else {"Refresh disabled"});}}
+    fn group_size(ref this,index: usize) -> usize {return if index==0 {0 as usize} else if index==1 {5 as usize} else {19 as usize};}
+    fn group_header(ref this,index: usize) -> core::Node {return ui::label(if index==0 {text::from_str("Empty group")} else {"Group ${index}"},key:"lst:group:${index}",font_weight:vocab::FontWeight::Bold).padding(8.0f64);}
+    fn toggle_groups(ref this,sender: *u8) {this.grouped=!this.grouped;if let option::Option::Some(l)=list::find("lst:list") {let updated=l.set_grouped(this.grouped);}}
+    fn kind(ref this,index: usize) -> usize {return if this.alternate && index==0 {1 as usize} else {0 as usize};}
+    fn row(ref this,index: usize) -> core::Node {
+        var row=@ui {row(key:"lst:row:${index}") {label("",key:"lst:label:${index}").width(160.0f64) text_field("Draft",key:"lst:edit:${index}").width(180.0f64)}.gap(12.0f64).padding(8.0f64)};
+        if this.kind(index)==1 {assert row.add_child(ui::label("Changed shape",key:"lst:badge")).is_ok();}return row;
+    }
+    fn bind(ref this,index: usize,row: *core::Node) {
+        if let option::Option::Some(child)=core::child_of(row,0) {let p=(*core::node_data(child)).props as *props::LabelProps;(*p).text=text::from_str("Item ${index+1} - update ${this.n}");core::touch(child,label::P_TEXT);}
+    }
+    fn rebind(ref this,sender: *u8) {this.n=this.n+1;if let option::Option::Some(l)=list::find("lst:list") {let updated=l.set_row_bind(this.bind);}}
+    fn reshape(ref this,sender: *u8) {this.alternate=!this.alternate;if let option::Option::Some(l)=list::find("lst:list") {let updated=l.set_row_kind(this.kind);}}
+
 }
 
 impl Lists: component::Component {
     fn build(ref this) -> core::Node {
+        this.n=0;this.grouped=false;this.alternate=false;this.refreshes=0;this.allow_refresh=true;
         var body: core::Builder = core::Builder::new();
         body.add(shell::caption("List  ·  set_count + set_row"));
         body.add(ui::label(
-            "Rows are produced by a row factory — the portable half of a recycling list.",
+            "Edit a draft, then rebind labels or scroll a little. Retained rows keep their edits. Changing the first row shape replaces only that row.",
             key: "lst:note",
             font_size: 13.0,
             text_color: vocab::Color::ink(0.65),
@@ -47,16 +49,18 @@ impl Lists: component::Component {
             line_break: vocab::LineBreak::WordWrap,
         ));
 
-        var host: core::Node = ui::list(key: "lst:list", row_height: 56)
+        var host: core::Node = ui::list(key: "lst:list", row_height: 56,refreshable:true,on_refreshing:this.refresh_started)
             .height(320.0)
             .grow(1.0);
         match list::find("lst:list", within: #addr_of(host)) {
             option::Option[list::List]::Some(l) => {
                 let _c: list::List = l.set_count(24);
-                let _r: list::List = l.set_row(list_row);
+                let _r: list::List = l.set_row(this.row).set_row_bind(this.bind).set_row_kind(this.kind).set_group_count(3).set_group_size(this.group_size).set_group_header(this.group_header);
             }
             option::Option::None => { }
         }
+        body.add(@ui {row {button("Rebind row labels",key:"lst:rebind",on_click:this.rebind) button("Change first row shape",key:"lst:reshape",on_click:this.reshape) button("Toggle groups",key:"lst:groups",on_click:this.toggle_groups)}.gap(12.0f64)});
+        body.add(@ui {row {button("Begin refresh",key:"lst:refresh-start",on_click:this.begin_refresh) button("End refresh",key:"lst:refresh-end",on_click:this.end_refresh) button("Toggle availability",key:"lst:refresh-allow",on_click:this.toggle_refresh) label("Idle: 0",key:"lst:refresh-status") label("Refresh allowed",key:"lst:refresh-availability")}.gap(10.0f64)});
         body.add(host);
 
         return shell::panel(

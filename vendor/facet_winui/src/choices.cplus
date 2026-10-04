@@ -13,9 +13,21 @@ import "./progressing" as progressing;
 import "./choice_colors" as choice_colors;
 static LIVE: i64=0;
 fn subscriptions() -> i64 {return LIVE+sliding::subscriptions()+progressing::subscriptions();}
+fn button_mode(r: *record::View) -> bool {
+    let raw=(*core::node_data((*r).node)).props;
+    if (*r).kind==props::K_BUTTON {return (*(raw as *props::ButtonProps)).toggles;}
+    if (*r).kind==props::K_ICON_BUTTON {return (*(raw as *props::IconButtonProps)).toggles;}
+    if (*r).kind==text_button::K_TEXT_BUTTON {return (*(raw as *text_button::TextButtonProps)).toggles;}
+    return false;
+}
 fn supports(k: u32) -> bool {return k==props::K_CHECKBOX || k==props::K_TOGGLE || k==props::K_RADIO || k==props::K_SLIDER || k==props::K_STEPPER || k==props::K_PROGRESS || k==props::K_SPINNER || k==text_button::K_TEXT_BUTTON;}
 fn create(k: u32,n: *core::Node) -> rt::Object {
-    if k==props::K_CHECKBOX {let v: ui::CheckBox=native::must::[ui::CheckBox](ui::CheckBox::new());return v.object();}
+    if k==props::K_CHECKBOX {
+        let v: ui::CheckBox=native::must::[ui::CheckBox](ui::CheckBox::new());
+        // Facet checkboxes have no built-in caption. WinUI's 120-DIP minimum
+        // otherwise reserves empty caption space before a separate Facet label.
+        let frame=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(v.object()));native::check(frame.set_min_width(0.0f64));return v.object();
+    }
     if k==props::K_TOGGLE {let v: ui::ToggleSwitch=native::must::[ui::ToggleSwitch](ui::ToggleSwitch::new());return v.object();}
     if k==props::K_RADIO {let v: ui::RadioButton=native::must::[ui::RadioButton](ui::RadioButton::new());return v.object();}
     if k==props::K_SLIDER {let v: ui::Slider=native::must::[ui::Slider](ui::Slider::new());return v.object();}
@@ -35,12 +47,16 @@ fn is_checked(value: rt::Object) -> bool {
 // its state events for toggles, and suppress renderer-authored writes in the
 // caller's handler. This gives pointer, keyboard and automation one callback.
 fn click_attach(r: *record::View,toggles: bool,callback: fn(rt::Object,rt::Object,*u8)->rt::Status) {
+    (*r).button_toggles=toggles;(*r).click_attached=true;
     let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(callback,r as *u8));
     if toggles {let v=native::must::[ui::IToggleButton](ui::IToggleButton::query((*r).object));(*r).token=native::must::[ui::EventRegistrationToken](v.add_checked(handler.object()));(*r).token2=native::must::[ui::EventRegistrationToken](v.add_unchecked(handler.object()));LIVE=LIVE+2;}
     else {let v=native::must::[ui::IButtonBase](ui::IButtonBase::query((*r).object));(*r).token=native::must::[ui::EventRegistrationToken](v.add_click(handler.object()));LIVE=LIVE+1;}
 }
-fn click_release(r: *record::View,toggles: bool) {
-    if toggles {let v=native::must::[ui::IToggleButton](ui::IToggleButton::query((*r).object));native::check(v.remove_checked((*r).token));native::check(v.remove_unchecked((*r).token2));LIVE=LIVE-2;}
+fn click_release(r: *record::View) {
+    // Props may already describe the next native class, including at teardown.
+    if !(*r).click_attached {return;}
+    let actual=(*r).button_toggles;(*r).click_attached=false;
+    if actual {let v=native::must::[ui::IToggleButton](ui::IToggleButton::query((*r).object));native::check(v.remove_checked((*r).token));native::check(v.remove_unchecked((*r).token2));LIVE=LIVE-2;}
     else {let v=native::must::[ui::IButtonBase](ui::IButtonBase::query((*r).object));native::check(v.remove_click((*r).token));LIVE=LIVE-1;}
 }
 fn content(value: rt::Object,title: str) {
@@ -114,6 +130,7 @@ fn apply(r: *record::View) {
 }
 fn changed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     let r: *record::View=context as *record::View;if (*r).applying {return rt::Status {code:0};}
+    if (*r).click_attached && button_mode(r)!=(*r).button_toggles {return rt::Status {code:0};}
     let d: *core::Data=core::node_data((*r).node);let raw: *u8=(*d).props;let k: u32=(*r).kind;
     var call: fn(*u8,*u8)=props::no_handler;var ctx: *u8=0 as *u8;
     if k==props::K_CHECKBOX || k==props::K_RADIO {
@@ -147,7 +164,7 @@ fn release(r: *record::View) {
     let k: u32=(*r).kind;let value: rt::Object=(*r).object.clone();
     if k==props::K_CHECKBOX || k==props::K_RADIO {let v: ui::IToggleButton=native::must::[ui::IToggleButton](ui::IToggleButton::query(value));native::check(v.remove_checked((*r).token));native::check(v.remove_unchecked((*r).token2));LIVE=LIVE-2;}
     if k==props::K_TOGGLE {let v: ui::IToggleSwitch=native::must::[ui::IToggleSwitch](ui::IToggleSwitch::query(value));native::check(v.remove_toggled((*r).token));LIVE=LIVE-1;}
-    if k==text_button::K_TEXT_BUTTON {let p: *text_button::TextButtonProps=(*core::node_data((*r).node)).props as *text_button::TextButtonProps;click_release(r,(*p).toggles); }
+    if k==text_button::K_TEXT_BUTTON {let p: *text_button::TextButtonProps=(*core::node_data((*r).node)).props as *text_button::TextButtonProps;click_release(r); }
     if k==props::K_SLIDER {sliding::release(r);let v: ui::IRangeBase=native::must::[ui::IRangeBase](ui::IRangeBase::query(value));native::check(v.remove_value_changed((*r).token));LIVE=LIVE-1;}
     if k==props::K_STEPPER {let v: ui::INumberBox=native::must::[ui::INumberBox](ui::INumberBox::query(value));native::check(v.remove_value_changed((*r).token));LIVE=LIVE-1;}
     return;

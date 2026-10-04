@@ -6,7 +6,7 @@ import json
 import subprocess
 import sys
 import time
-from PIL import ImageGrab, ImageStat
+from PIL import ImageGrab, ImageStat, ImageChops
 
 root = Path(__file__).resolve().parent
 out = root / 'out'
@@ -58,6 +58,24 @@ def click(bounds):
     u.mouse_event(4, 0, 0, 0, 0)
     time.sleep(.25)
 
+def verify_button_modes():
+    nodes = inspect('navigate', 'Button')
+    click(node(nodes, 'btn:reset')['bounds'])
+    targets = ('btn:mode-button', 'btn:mode-icon', 'btn:mode-text')
+    for mode, count in (('toggle', 3), ('ordinary', 6), ('toggle', 9), ('ordinary', 12)):
+        click(node(inspect(), 'btn:switch-mode')['bounds'])
+        nodes = inspect()
+        assert node(nodes, 'btn:mode-status')['name'] == f'Mode: {mode}'
+        for key in targets:
+            value = node(nodes, key)
+            assert (value['toggle'] is not None) == (mode == 'toggle'), value
+            click(value['bounds'])
+            nodes = inspect()
+        assert node(nodes, 'btn:count')['name'] == f'Clicked {count} time(s)'
+    screenshot('verified-button-modes.png')
+    print('PASS: real clicks across live ordinary/toggle changes for all three button kinds', flush=True)
+
+
 def screenshot(name):
     rect = w.RECT(); assert u.GetWindowRect(hwnd, c.byref(rect))
     image = ImageGrab.grab(bbox=(rect.left, rect.top, rect.right, rect.bottom))
@@ -78,6 +96,426 @@ def type_text(text):
             event = Input(type=1, data=Union(key=Key(scan=ord(char), flags=flags)))
             assert u.SendInput(1, c.byref(event), c.sizeof(event)) == 1
         time.sleep(.035)
+
+def verify_popup_caption():
+    inspect('navigate', 'Pickers')
+    click(node(inspect(), 'pk:caption')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 'pk:caption-status')['name'] == 'Fixed caption'
+    x, y, width, height = node(nodes, 'pk:popup')['bounds']
+    caption_box = (round(x + 12), round(y + 10), round(x + min(width - 45, 260)), round(y + height - 10))
+    def caption_pixels():
+        return ImageGrab.grab(bbox=caption_box).convert('L').point(lambda p: 255 if p > 160 else 0)
+    fixed_pixels = caption_pixels()
+    click(node(nodes, 'pk:popup')['bounds'])
+    # Pick Green from the actual native dropdown, then verify its fixed caption.
+    nodes = inspect()
+    click(next(n for n in nodes if n['name'] == 'Green')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 'pk:popup_status')['name'] == 'Selected index: 1'
+    difference = ImageStat.Stat(ImageChops.difference(fixed_pixels, caption_pixels())).mean[0] / 255
+    assert difference < .02, f'Fixed caption changed after native selection ({difference:.1%} text pixels)'
+    screenshot('verified-popup-caption.png')
+    # The caption override must not change the dropdown's actual item text.
+    click(node(nodes, 'pk:popup')['bounds'])
+    choices = inspect()
+    assert any(n['name'] == 'Red' for n in choices)
+    assert any(n['name'] == 'Green' for n in choices)
+    u.keybd_event(27, 0, 0, 0); u.keybd_event(27, 0, 2, 0)
+    time.sleep(.25)
+    click(node(nodes, 'pk:caption')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 'pk:caption-status')['name'] == 'Selected item caption'
+    # WinUI's ComboBox peer hides its closed presenter text. The native
+    # caption probe checks that text; capture the rendered result here.
+    screenshot('verified-popup-caption-restored.png')
+    print('PASS: native popup selection, fixed caption and selected caption restoration', flush=True)
+
+
+def verify_hybrid():
+    nodes = inspect('navigate', 'Web')
+    click(node(nodes, 'web:local')['bounds'])
+    deadline = time.time() + 20
+    while True:
+        nodes = inspect()
+        if node(nodes, 'web:lifecycle')['name'] == 'Starting: 1 / Ready: 1':
+            x, y, width, height = node(nodes, 'web:view')['bounds']
+            pixels = ImageGrab.grab(bbox=tuple(round(v) for v in (x, y, x+width, y+height))).convert('RGB')
+            # WinUI's WebView2 peer does not expose this Chromium subtree in
+            # the XAML UIA traversal. Locate the rendered demo button instead.
+            points = [(i % pixels.width, i // pixels.width) for i, (r, g, b) in enumerate(pixels.getdata())
+                      if abs(r-181) < 3 and abs(g-225) < 3 and abs(b-240) < 3]
+            if len(points) > 100:
+                left, right = min(p[0] for p in points), max(p[0] for p in points)
+                top, bottom = min(p[1] for p in points), max(p[1] for p in points)
+                page_button = [x+left, y+top, right-left, bottom-top]
+                break
+        if time.time() >= deadline:
+            screenshot('hybrid-load-failure.png')
+            raise AssertionError('Local hybrid page did not load: ' + repr([n for n in nodes if n['id'].startswith('web:') or n['name'] == 'Send to native']))
+        time.sleep(.2)
+    assert int(node(nodes, 'web:resources')['name'].split(': ')[1]) >= 3
+    click(page_button)
+    assert node(inspect(), 'web:messages')['name'] == 'Page messages: 1'
+    message_box = tuple(round(v) for v in (x, y+bottom+8, x+width, y+height))
+    before_message = ImageGrab.grab(bbox=message_box).convert('RGB')
+    click(node(inspect(), 'web:send')['bounds'])
+    deadline = time.time() + 5
+    while node(inspect(), 'web:messages')['name'] != 'Page messages: 2':
+        assert time.time() < deadline, 'Page did not acknowledge native message'
+        time.sleep(.1)
+    nodes = inspect()
+    updated = ImageGrab.grab(bbox=message_box).convert('RGB')
+    assert ImageChops.difference(before_message, updated).getbbox(), 'Page did not repaint the received-message region'
+    screenshot('verified-hybrid.png')
+    # Replace an active browser, then leave while its replacement initializes.
+    click(node(nodes, 'web:local')['bounds'])
+    inspect('navigate', 'Overview')
+    time.sleep(.3)
+    print('PASS: local hybrid assets, real web/native button messages, displayed payload and navigation during initialization', flush=True)
+
+
+def verify_swiping():
+    nodes = inspect('navigate', 'Swipe')
+    original_x = node(nodes, 'sw:title')['bounds'][0]
+    scale = u.GetDpiForWindow(hwnd) / 96
+
+    def drag(distance, cancel=False, vertical=0):
+        bounds = node(inspect(), 'sw:title')['bounds']
+        start = (bounds[0] + min(bounds[2] / 2, 300 * scale), bounds[1] + bounds[3] / 2)
+        def move(x, y):
+            u.mouse_event(0x8001, round(x*65535/(u.GetSystemMetrics(0)-1)),
+                          round(y*65535/(u.GetSystemMetrics(1)-1)), 0, 0)
+        move(*start); time.sleep(.15)
+        u.mouse_event(2, 0, 0, 0, 0)
+        try:
+            for i in range(1, 21):
+                move(start[0] - distance * scale * i / 20, start[1] + vertical * scale * i / 20)
+                time.sleep(.025)
+            if cancel:
+                u.keybd_event(27, 0, 0, 0); time.sleep(.2)
+                u.keybd_event(27, 0, 2, 0); time.sleep(.15)
+        finally:
+            u.mouse_event(4, 0, 0, 0, 0)
+        time.sleep(.35)
+
+    def events(expected):
+        actual = node(inspect(), 'sw:events')['name']
+        assert actual == expected, actual
+
+    drag(2)
+    events('Started 0 / ended 0 / opened 0 / closed 0')
+    drag(120)
+    events('Started 1 / ended 1 / opened 1 / closed 0')
+    nodes = inspect()
+    # UIA clips translated content bounds to the row; measure the revealed buttons.
+    assert not node(nodes, 'sw:archive:reveal')['offscreen']
+    assert abs(node(nodes, 'sw:archive:reveal')['bounds'][2] - 88 * scale) < 3
+    assert int(node(nodes, 'sw:changes')['name'].split(': ')[1]) > 0
+    screenshot('verified-swipe-reveal.png')
+    click(node(nodes, 'sw:archive:reveal')['bounds'])
+    assert node(inspect(), 'sw:status')['name'] == 'last action: Archive'
+    events('Started 1 / ended 1 / opened 1 / closed 1')
+    click(node(inspect(), 'sw:threshold')['bounds'])
+    drag(120)
+    events('Started 2 / ended 2 / opened 1 / closed 2')
+    assert abs(node(inspect(), 'sw:title')['bounds'][0] - original_x) < 3
+    drag(175, cancel=True)
+    events('Started 3 / ended 3 / opened 1 / closed 2')
+    assert abs(node(inspect(), 'sw:title')['bounds'][0] - original_x) < 3
+    click(node(inspect(), 'sw:enable')['bounds'])
+    drag(175)
+    events('Started 3 / ended 3 / opened 1 / closed 2')
+    click(node(inspect(), 'sw:enable')['bounds'])
+    drag(175)
+    events('Started 4 / ended 4 / opened 2 / closed 2')
+    click(node(inspect(), 'sw:delete:reveal')['bounds'])
+    assert node(inspect(), 'sw:status')['name'] == 'last action: Delete'
+    events('Started 4 / ended 4 / opened 2 / closed 3')
+    drag(175)
+    events('Started 5 / ended 5 / opened 3 / closed 3')
+    drag(-175)
+    events('Started 6 / ended 6 / opened 3 / closed 4')
+    assert abs(node(inspect(), 'sw:title')['bounds'][0] - original_x) < 3
+    screenshot('verified-swipe-actions.png')
+    inspect('navigate', 'Overview')
+    print('PASS: real swipe reveal, action buttons, threshold changes, Escape, disabled gestures and callbacks', flush=True)
+
+
+def verify_reordering():
+    inspect('navigate', 'Collection')
+
+    def drag(cancel=False, source_id='col:cell:0', destination_id='col:cell:2'):
+        nodes = inspect()
+        source_node, destination_node = node(nodes, source_id), node(nodes, destination_id)
+        assert not source_node['offscreen'] and not destination_node['offscreen']
+        source, destination = source_node['bounds'], destination_node['bounds']
+        start = (source[0] + source[2]/2, source[1] + source[3]/2)
+        end = (destination[0] + destination[2]/2, destination[1] + destination[3]/2)
+        def move(x, y):
+            u.mouse_event(0x8001, round(x*65535/(u.GetSystemMetrics(0)-1)),
+                          round(y*65535/(u.GetSystemMetrics(1)-1)), 0, 0)
+        move(*start)
+        time.sleep(.15)
+        u.mouse_event(2, 0, 0, 0, 0)
+        try:
+            time.sleep(.2)
+            for i in range(1, 31):
+                move(start[0] + (end[0]-start[0])*i/30,
+                     start[1] + (end[1]-start[1])*i/30)
+                time.sleep(.035)
+            time.sleep(.2)
+            if cancel:
+                u.keybd_event(27, 0, 0, 0)
+                time.sleep(.2)
+                u.keybd_event(27, 0, 2, 0)
+                time.sleep(.2)
+        finally:
+            u.mouse_event(4, 0, 0, 0, 0)
+        time.sleep(.4)
+
+    drag()
+    nodes = inspect()
+    screenshot('reordering-first-drop.png')
+    assert node(nodes, 'col:move-status')['name'] == 'Moves: 1', [n for n in nodes if n['id'].startswith('col:')]
+    assert [node(nodes, f'col:cell:{i}')['name'] for i in range(3)] == ['Cell 2', 'Cell 3', 'Cell 1']
+    click(node(nodes, 'col:reorder')['bounds'])
+    drag()
+    assert node(inspect(), 'col:move-status')['name'] == 'Moves: 1'
+    click(node(inspect(), 'col:reorder')['bounds'])
+    drag(cancel=True)
+    assert node(inspect(), 'col:move-status')['name'] == 'Moves: 1'
+    drag()
+    assert node(inspect(), 'col:move-status')['name'] == 'Moves: 2'
+    screenshot('verified-reordering.png')
+    click(node(inspect(), 'col:groups')['bounds'])
+    inspect('scroll', 'col:grid', 55)
+    drag(source_id='col:cell:4', destination_id='col:cell:5')
+    assert node(inspect(), 'col:move-status')['name'] == 'Moves: 2'
+    click(node(inspect(), 'col:mix')['bounds'])
+    drag(source_id='col:cell:4', destination_id='col:group:2')
+    assert node(inspect(), 'col:move-status')['name'] == 'Moves: 2'
+    drag(source_id='col:cell:4', destination_id='col:cell:5')
+    assert node(inspect(), 'col:move-status')['name'] == 'Moves: 3'
+    screenshot('verified-reordering-groups.png')
+    print('PASS: real collection drag, application order, disabled dragging, Escape, headers and cross-group policy', flush=True)
+
+
+def verify_grouped_items():
+    for page, prefix, first in (('List', 'lst', 'lst:label:0'), ('Collection', 'col', 'col:cell:0')):
+        nodes = inspect('navigate', page)
+        click(node(nodes, prefix + ':groups')['bounds'])
+        nodes = inspect()
+        empty = node(nodes, prefix + ':group:0')
+        header = node(nodes, prefix + ':group:1')
+        item = node(nodes, first)
+        assert empty['name'] == 'Empty group'
+        assert header['name'] == 'Group 1'
+        assert empty['bounds'][1] < header['bounds'][1] < item['bounds'][1]
+        if page == 'Collection':
+            second = node(nodes, 'col:cell:1')
+            assert abs(item['bounds'][1] - second['bounds'][1]) < 2
+            assert second['bounds'][0] > item['bounds'][0]
+        screenshot('verified-grouped-' + prefix + '.png')
+        click(node(nodes, prefix + ':groups')['bounds'])
+        nodes = inspect()
+        assert not any(n['id'].startswith(prefix + ':group:') for n in nodes)
+        assert node(nodes, first)['name'] == item['name']
+    print('PASS: real grouping toggles, empty groups, list headers and collection grid geometry', flush=True)
+
+
+def verify_refresh_host():
+    inspect('navigate', 'Refresh')
+    inspect('invoke', 'rf:btn')
+    assert node(inspect(), 'rf:status')['name'] == 'refreshed 1 time(s)'
+    time.sleep(1)
+    inspect('invoke', 'rf:btn')
+    assert node(inspect(), 'rf:status')['name'] == 'refreshed 2 time(s)'
+    screenshot('verified-refresh.png')
+    # Detaching cancels the sample timer and completes the native deferral.
+    inspect('navigate', 'Overview'); time.sleep(1)
+    inspect('navigate', 'Refresh')
+    assert node(inspect(), 'rf:status')['name'] == 'refreshed 0 time(s)'
+    print('PASS: timed refresh, repeat request and navigation during refresh', flush=True)
+
+
+def verify_list_refresh():
+    nodes = inspect('navigate', 'List')
+    click(node(nodes, 'lst:edit:0')['bounds'])
+    u.keybd_event(17, 0, 0, 0); u.keybd_event(65, 0, 0, 0)
+    u.keybd_event(65, 0, 2, 0); u.keybd_event(17, 0, 2, 0)
+    type_text('Retained refresh draft')
+    click(node(inspect(), 'lst:refresh-start')['bounds'])
+    assert node(inspect(), 'lst:refresh-status')['name'] == 'Refreshing: 1'
+    click(node(inspect(), 'lst:refresh-start')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 'lst:refresh-status')['name'] == 'Refreshing: 1'
+    assert node(nodes, 'lst:edit:0')['value'] == 'Retained refresh draft'
+    screenshot('verified-list-refresh.png')
+    click(node(nodes, 'lst:refresh-end')['bounds'])
+    assert node(inspect(), 'lst:refresh-status')['name'] == 'Idle: 1'
+    click(node(inspect(), 'lst:refresh-allow')['bounds'])
+    def open_refresh_menu():
+        bounds = node(inspect(), 'lst:label:0')['bounds']
+        click(bounds)
+        u.mouse_event(8, 0, 0, 0, 0); u.mouse_event(16, 0, 0, 0, 0)
+        time.sleep(.3)
+    open_refresh_menu()
+    assert not node(inspect(), 'facet:refresh')['enabled']
+    u.keybd_event(27, 0, 0, 0); u.keybd_event(27, 0, 2, 0)
+    click(node(inspect(), 'lst:refresh-allow')['bounds'])
+    open_refresh_menu()
+    nodes = inspect()
+    assert node(nodes, 'facet:refresh')['enabled']
+    click(node(nodes, 'facet:refresh')['bounds'])
+    assert node(inspect(), 'lst:refresh-status')['name'] == 'Refreshing: 2'
+    click(node(inspect(), 'lst:refresh-end')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 'lst:refresh-status')['name'] == 'Idle: 2'
+    assert node(nodes, 'lst:edit:0')['value'] == 'Retained refresh draft'
+    print('PASS: list begin/end refresh, repeat suppression, retained edits and native refresh menu availability', flush=True)
+
+
+def verify_time_open():
+    nodes = inspect('navigate', 'Pickers')
+    assert node(nodes, 'FacetTimeButton')['name'], 'Time trigger lost its accessible caption'
+    click(node(nodes, 'pk:time')['bounds'])
+    assert node(inspect(), 'pk:time-status')['name'] == 'Opened 1, closed 0, selected 0'
+    screenshot('verified-time-open.png')
+    u.keybd_event(40, 0, 0, 0); u.keybd_event(40, 0, 2, 0)
+    time.sleep(.4)
+    u.keybd_event(13, 0, 0, 0); u.keybd_event(13, 0, 2, 0)
+    time.sleep(.4)
+    assert node(inspect(), 'pk:time-status')['name'] == 'Opened 1, closed 1, selected 1', node(inspect(), 'pk:time-status')
+    click(node(inspect(), 'pk:time-open')['bounds'])
+    assert node(inspect(), 'pk:time-status')['name'] == 'Opened 2, closed 1, selected 1'
+    u.keybd_event(27, 0, 0, 0); u.keybd_event(27, 0, 2, 0)
+    time.sleep(.4)
+    assert node(inspect(), 'pk:time-status')['name'] == 'Opened 2, closed 2, selected 1'
+    # Programmatic opening restores the launcher; focus the picker for Alt+Down.
+    inspect('focus', 'FacetTimeButton')
+    u.keybd_event(18, 0, 0, 0); u.keybd_event(40, 0, 0, 0)
+    u.keybd_event(40, 0, 2, 0); u.keybd_event(18, 0, 2, 0)
+    time.sleep(.4)
+    assert node(inspect(), 'pk:time-status')['name'] == 'Opened 3, closed 2, selected 1', node(inspect(), 'pk:time-status')
+    u.keybd_event(27, 0, 0, 0); u.keybd_event(27, 0, 2, 0)
+    time.sleep(.4)
+    assert node(inspect(), 'pk:time-status')['name'] == 'Opened 3, closed 3, selected 1'
+    print('PASS: time picker mouse/Alt+Down opening, native selection, Escape and programmatic opening', flush=True)
+
+
+def verify_secure_modes():
+    nodes = inspect('navigate', 'Inputs')
+    click(node(nodes, 'in:secret')['bounds'])
+    type_text('MixedCase')
+    assert node(inspect(), 'in:secret')['password']
+    click(node(inspect(), 'in:reveal')['bounds'])
+    value = node(inspect(), 'in:secret')
+    assert not value['password'] and value['value'] == 'MixedCase', value
+    inspect('focus', 'in:secret')
+    u.keybd_event(35, 0, 0, 0); u.keybd_event(35, 0, 2, 0)
+    type_text('More')
+    assert node(inspect(), 'in:secret')['value'] == 'MixedCaseMore'
+    click(node(inspect(), 'in:reveal')['bounds'])
+    assert node(inspect(), 'in:secret')['password']
+    inspect('focus', 'in:secret')
+    u.keybd_event(35, 0, 0, 0); u.keybd_event(35, 0, 2, 0)
+    type_text('Again')
+    click(node(inspect(), 'in:reveal')['bounds'])
+    value = node(inspect(), 'in:secret')
+    assert not value['password'] and value['value'] == 'MixedCaseMoreAgain', value
+    click(node(inspect(), 'in:reveal')['bounds'])
+    assert node(inspect(), 'in:secret')['password']
+    screenshot('verified-secure-modes.png')
+    print('PASS: real typing across secure/plain switches and native password masking', flush=True)
+
+
+def verify_clear_button():
+    inspect('navigate', 'Inputs')
+    click(node(inspect(), 'in:name')['bounds'])
+    type_text('Clear me')
+    def click_clear_position():
+        x, y, width, height = node(inspect(), 'in:name')['bounds']
+        scale = u.GetDpiForWindow(hwnd) / 96
+        click([x + width - 15 * scale - 2, y + height / 2 - 2, 4, 4])
+    click_clear_position()
+    assert node(inspect(), 'in:name')['value'] == 'Clear me', 'Never still allowed clearing'
+    click(node(inspect(), 'in:clear')['bounds'])
+    inspect('focus', 'in:name')
+    nodes = inspect()
+    assert node(nodes, 'in:clear-label')['name'] == 'Clear: while editing'
+    assert node(nodes, 'in:name_echo')['name'] == 'Hello, Clear me'
+    screenshot('verified-clear-button.png')
+    click_clear_position()
+    nodes = inspect()
+    assert node(nodes, 'in:name')['value'] == ''
+    assert node(nodes, 'in:name_echo')['name'] == 'Hello, stranger'
+    inspect('focus', 'in:name')
+    type_text('Keep me')
+    click(node(inspect(), 'in:clear')['bounds'])
+    inspect('focus', 'in:name')
+    click_clear_position()
+    nodes = inspect()
+    assert node(nodes, 'in:clear-label')['name'] == 'Clear: never'
+    assert node(nodes, 'in:name')['value'] == 'Keep me'
+    assert node(nodes, 'in:name_echo')['name'] == 'Hello, Keep me'
+    screenshot('verified-clear-button-never.png')
+    print('PASS: real clear-button click, callback and live Never/WhileEditing switching', flush=True)
+
+
+def verify_input_transform():
+    inspect('navigate', 'Inputs')
+    click(node(inspect(), 'in:name')['bounds'])
+    type_text('AbC')
+    assert node(inspect(), 'in:name_echo')['name'] == 'Hello, AbC'
+    click(node(inspect(), 'in:case')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 'in:name')['value'] == 'ABC'
+    assert node(nodes, 'in:name_echo')['name'] == 'Hello, AbC', 'Display casing fired a text callback'
+    inspect('focus', 'in:name')
+    type_text('xy')
+    nodes = inspect()
+    typed = node(nodes, 'in:name')['value']
+    assert typed == typed.upper() and 'XY' in typed
+    assert node(nodes, 'in:name_echo')['name'] == 'Hello, ' + typed
+    click(node(nodes, 'in:case')['bounds'])
+    inspect('focus', 'in:search')
+    type_text('MiXeD')
+    nodes = inspect()
+    assert node(nodes, 'in:search')['value'] == 'mixed'
+    assert node(nodes, 'in:search_echo')['name'] == 'Query: mixed'
+    click(node(nodes, 'in:case')['bounds'])
+    inspect('focus', 'in:name')
+    type_text('zZ')
+    assert 'zZ' in node(inspect(), 'in:name')['value']
+    screenshot('verified-input-casing.png')
+    print('PASS: real upper/lowercase typing, model readback, silent display transform and default reset', flush=True)
+
+
+def verify_row_retention():
+    inspect('navigate', 'List')
+    click(node(inspect(), 'lst:edit:1')['bounds'])
+    type_text(' retained')
+    draft = node(inspect(), 'lst:edit:1')['value']
+    assert 'retained' in draft
+    click(node(inspect(), 'lst:rebind')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 'lst:edit:1')['value'] == draft
+    assert node(nodes, 'lst:label:1')['name'].endswith('update 1')
+    click(node(nodes, 'lst:reshape')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 'lst:badge')['name'] == 'Changed shape'
+    assert node(nodes, 'lst:edit:1')['value'] == draft
+    # Wheel down and back without discarding the nearby edited row.
+    click(node(nodes, 'lst:edit:1')['bounds'])
+    u.mouse_event(0x0800, 0, 0, (-120) & 0xffffffff, 0)
+    time.sleep(.4)
+    u.mouse_event(0x0800, 0, 0, 120, 0)
+    time.sleep(.4)
+    assert node(inspect(), 'lst:edit:1')['value'] == draft
+    screenshot('verified-list-retention.png')
+    print('PASS: list typing, retained edits, binding refresh and selective row-kind replacement', flush=True)
+
 
 def verify_tree_rows():
     nodes = inspect('navigate', 'Tree')
@@ -233,6 +671,54 @@ try:
     initial = w.RECT(); assert u.GetWindowRect(hwnd, c.byref(initial))
     click([initial.left + 220, initial.top + 6, 120, 20])
     time.sleep(.4)
+    if '--swiping-only' in sys.argv:
+        verify_swiping()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--hybrid-only' in sys.argv:
+        verify_hybrid()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--reordering-only' in sys.argv:
+        verify_reordering()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--refresh-host-only' in sys.argv:
+        verify_refresh_host()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--grouped-items-only' in sys.argv:
+        verify_grouped_items()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--list-refresh-only' in sys.argv:
+        verify_list_refresh()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--time-open-only' in sys.argv:
+        verify_time_open()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--secure-modes-only' in sys.argv:
+        verify_secure_modes()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--clear-button-only' in sys.argv:
+        verify_clear_button()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--popup-caption-only' in sys.argv:
+        verify_popup_caption()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--input-transform-only' in sys.argv:
+        verify_input_transform()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
+    if '--row-retention-only' in sys.argv:
+        verify_row_retention()
+        u.PostMessageW(hwnd, 0x0010, 0, 0)
+        sys.exit(0)
     if '--tree-rows-only' in sys.argv:
         verify_tree_rows()
         assert u.PostMessageW(hwnd, 0x10, 0, 0)
@@ -243,6 +729,10 @@ try:
         sys.exit(0)
     if '--carousel-only' in sys.argv:
         verify_carousel()
+        assert u.PostMessageW(hwnd, 0x10, 0, 0)
+        sys.exit(0)
+    if '--button-modes-only' in sys.argv:
+        verify_button_modes()
         assert u.PostMessageW(hwnd, 0x10, 0, 0)
         sys.exit(0)
     nodes = inspect()
@@ -267,6 +757,7 @@ try:
     inspect('toggle', 'btn:toggle')
     screenshot('verified-buttons.png')
     print('PASS: real button click, callback, disabled and toggle controls', flush=True)
+    verify_button_modes()
 
     nodes = inspect('navigate', 'Inputs')
     click(node(nodes, 'in:name')['bounds']); type_text('WinUI gallery')
@@ -430,19 +921,19 @@ try:
     verify_carousel()
     verify_menus()
     verify_tree_rows()
+    verify_row_retention()
+    verify_input_transform()
+    verify_popup_caption()
+    verify_grouped_items()
+    verify_reordering()
+    verify_hybrid()
+    verify_swiping()
+    verify_list_refresh()
+    verify_time_open()
+    verify_secure_modes()
+    verify_clear_button()
 
-    inspect('navigate', 'Refresh')
-    inspect('invoke', 'rf:btn')
-    assert node(inspect(), 'rf:status')['name'] == 'refreshed 1 time(s)'
-    time.sleep(1)
-    inspect('invoke', 'rf:btn')
-    assert node(inspect(), 'rf:status')['name'] == 'refreshed 2 time(s)'
-    screenshot('verified-refresh.png')
-    # Detaching cancels the sample timer and completes the native deferral.
-    inspect('navigate', 'Overview'); time.sleep(1)
-    inspect('navigate', 'Refresh')
-    assert node(inspect(), 'rf:status')['name'] == 'refreshed 0 time(s)'
-    print('PASS: timed refresh, repeat request and navigation during refresh', flush=True)
+    verify_refresh_host()
 
     rect = w.RECT(); assert u.GetWindowRect(hwnd, c.byref(rect))
     assert u.SetWindowPos(hwnd, None, rect.left, rect.top, 1100, 760, 0x14)

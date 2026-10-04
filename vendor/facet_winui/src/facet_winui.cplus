@@ -10,11 +10,14 @@ import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/component" as component;
 import "./views" as views;
+import "./record" as record;
 import "./native" as native;
+import "./native_slot" as native_slot;
 import "./scheduler" as scheduler;
 import "facet/theme" as theme;
 import "./style" as style;
 import "./presentation" as presentation;
+import "./time_popup" as time_popup;
 import "./agent_hooks" as agent_hooks;
 import "./browser" as browser;
 import "./refresh_retirement" as refresh_retirement;
@@ -28,6 +31,7 @@ struct Host {
     size_token: ui::EventRegistrationToken,
     close_token: ui::EventRegistrationToken,
     loaded_token: ui::EventRegistrationToken,
+    loaded_object: rt::Object,
     mounted: bool,
     closing: bool,
     pending: bool,
@@ -82,6 +86,7 @@ fn closed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
 }
 fn teardown(host: *Host) {
     presentation::begin_shutdown();
+    time_popup::begin_shutdown();
     browser::begin_shutdown();
     if (*host).mounted {
         agent_hooks::closing();
@@ -90,8 +95,8 @@ fn teardown(host: *Host) {
         let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*host).window));
         native::check(window.remove_size_changed((*host).size_token));native::check(window.remove_closed((*host).close_token));
         let root: *core::Node=#addr_of((*host).root);
-        let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(views::object(core::view_of(root))));
-        native::check(element.remove_loaded((*host).loaded_token));mount::unmount(root);(*host).mounted=false;
+        let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*host).loaded_object));
+        native::check(element.remove_loaded((*host).loaded_token));(*host).loaded_object=rt::Object::empty();mount::unmount(root);(*host).mounted=false;
     }
     refresh_retirement::shutdown();scheduler::shutdown();return;
 }
@@ -123,6 +128,8 @@ fn launched(app: rt::Object, context: *u8) -> rt::Status {
     let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(views::object(core::view_of(root))));
     let loaded_handler: ui::RoutedEventHandler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(loaded));
     (*host).loaded_token=native::must::[ui::EventRegistrationToken](element.add_loaded(loaded_handler.object()));
+    (*host).loaded_object=views::object(core::view_of(root));
+    native_slot::bind(core::view_of(root) as *record::View,window.object(),native_slot::WINDOW);
     native::check(window.set_content(views::object(core::view_of(root))));
     let bounds: ui::Rect=native::must::[ui::Rect](window.bounds());
     (*host).width=bounds.width as f64; (*host).height=bounds.height as f64;
@@ -139,7 +146,7 @@ fn run(take tree: core::Node, title: str="Facet / WinUI",on_ready: fn(*u8)=0 as 
     var status: rt::Status=rt::Status {code:0};
     {
         let owner: box::Box[Host]=match box::new::[Host](Host {root:tree,title:text::from_str(title),window:rt::Object::empty(),queue:rt::Object::empty(),
-            size_token:#zero::[ui::EventRegistrationToken](),close_token:#zero::[ui::EventRegistrationToken](),loaded_token:#zero::[ui::EventRegistrationToken](),mounted:false,closing:false,pending:false,width:900.0f64,height:600.0f64,on_ready:on_ready,on_ready_ctx:on_ready_ctx}) {
+            size_token:#zero::[ui::EventRegistrationToken](),close_token:#zero::[ui::EventRegistrationToken](),loaded_token:#zero::[ui::EventRegistrationToken](),loaded_object:rt::Object::empty(),mounted:false,closing:false,pending:false,width:900.0f64,height:600.0f64,on_ready:on_ready,on_ready_ctx:on_ready_ctx}) {
             option::Option::Some(v)=>{v}, option::Option::None=>{return rt::Status {code:rt::out_of_memory()};}
         };
         CURRENT=owner.ptr(); let host: *Host=CURRENT;

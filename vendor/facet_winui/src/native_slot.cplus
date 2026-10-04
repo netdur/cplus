@@ -1,0 +1,20 @@
+// The actual native owner, including roots of independently realised rows.
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./record" as record;
+import "./native" as native;
+const PANEL: u32=1;
+const BORDER: u32=2;
+const CONTENT: u32=3;
+const WINDOW: u32=4;
+fn bind(r: *record::View,owner: rt::Object,kind: u32) {(*r).slot=owner.clone();(*r).slot_kind=kind;}
+fn replace(r: *record::View,old: rt::Object) {
+    if (*r).slot_kind==0 {return;}
+    if (*r).slot_kind==BORDER {let host=native::must::[ui::IBorder](ui::IBorder::query((*r).slot));native::check(host.set_child((*r).object));return;}
+    if (*r).slot_kind==CONTENT {let host=native::must::[ui::IContentControl](ui::IContentControl::query((*r).slot));native::check(host.set_content((*r).object));return;}
+    if (*r).slot_kind==WINDOW {let host=native::must::[ui::IWindow](ui::IWindow::query((*r).slot));native::check(host.set_content((*r).object));return;}
+    let panel=native::must::[ui::IPanel](ui::IPanel::query((*r).slot));let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));
+    let target=native::must::[rt::Object](old.query(rt::unknown_iid()));var i: u32=0;
+    while i<native::must::[u32](children.size()) {let child=native::must::[rt::Object](children.get_at(i));let identity=native::must::[rt::Object](child.query(rt::unknown_iid()));if identity.raw()==target.raw() {native::check(children.set_at(i,(*r).object));return;}i=i+1;}
+    assert false;
+}

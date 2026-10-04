@@ -11,14 +11,15 @@ import "./style" as style;
 import "./typography" as typography;
 import "./record" as record;
 import "./browser" as browser;
+import "./hybrid" as hybrid;
 import "./choices" as choices;
 import "./imaging" as imaging;
 static LIVE: i64=0;
-fn subscriptions() -> i64 {return LIVE+browser::subscriptions();}
-fn supports(k: u32) -> bool {return k==props::K_PAGE_DOTS || k==props::K_WEB || k==props::K_ICON_BUTTON || k==props::K_IMAGE || k==props::K_SPAN || k==symbol::K_SYMBOL;}
+fn subscriptions() -> i64 {return LIVE+browser::subscriptions()+hybrid::subscriptions();}
+fn supports(k: u32) -> bool {return k==props::K_PAGE_DOTS || k==props::K_WEB || k==props::K_HYBRID_WEB || k==props::K_ICON_BUTTON || k==props::K_IMAGE || k==props::K_SPAN || k==symbol::K_SYMBOL;}
 fn create(k: u32,n: *core::Node) -> rt::Object {
     if k==props::K_PAGE_DOTS {let v: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new());return v.object();}
-    if k==props::K_WEB {let v: ui::WebView2=native::must::[ui::WebView2](ui::WebView2::new());return v.object();}
+    if k==props::K_WEB || k==props::K_HYBRID_WEB {let v: ui::WebView2=native::must::[ui::WebView2](ui::WebView2::new());return v.object();}
     if k==props::K_ICON_BUTTON {let p: *props::IconButtonProps=(*core::node_data(n)).props as *props::IconButtonProps;if (*p).toggles {let v=native::must::[ui::ToggleButton](ui::ToggleButton::new());return v.object();}let v: ui::Button=native::must::[ui::Button](ui::Button::new());return v.object();}
     if k==props::K_IMAGE {let v: ui::Border=native::must::[ui::Border](ui::Border::new());return v.object();}
     let v: ui::TextBlock=native::must::[ui::TextBlock](ui::TextBlock::new());return v.object();
@@ -69,6 +70,7 @@ fn apply(r: *record::View) {
         let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));native::check(element.set_min_width((count as f64)*(size+8.0f64)));native::check(element.set_min_height(size));
     }
     if k==props::K_WEB {let p: *props::WebProps=raw as *props::WebProps;browser::apply(r,if (*p).source.is_empty() {rt::Object::empty()} else {uri((*p).source.view())});}
+    if k==props::K_HYBRID_WEB {hybrid::apply(r);}
     if k==symbol::K_SYMBOL {let p: *symbol::SymbolProps=raw as *symbol::SymbolProps;let label: ui::ITextBlock=native::must::[ui::ITextBlock](ui::ITextBlock::query(value));icon(label,if (*p).icon!=0 {(*p).icon} else {named((*p).name.view())},(*p).size,(*p).color,(*p).font.view());}
     if k==props::K_ICON_BUTTON {
         (*r).applying=true;        let p: *props::IconButtonProps=raw as *props::IconButtonProps;
@@ -113,8 +115,9 @@ fn apply(r: *record::View) {
 fn clicked(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     if (*(context as *record::View)).applying {return rt::Status {code:0};}
     let r: *record::View=context as *record::View;let p: *props::IconButtonProps=(*core::node_data((*r).node)).props as *props::IconButtonProps;
+    if (*p).toggles!=(*r).button_toggles {return rt::Status {code:0};}
     if (*p).toggles {(*p).on=choices::is_checked(sender);}let call: fn(*u8,*u8)=(*p).on_clicked;let ctx: *u8=(*p).on_clicked_ctx;
     if call!=props::no_handler {call(context,ctx);}return rt::Status {code:0};
 }
 fn attach(r: *record::View) {if (*r).kind==props::K_ICON_BUTTON {let p: *props::IconButtonProps=(*core::node_data((*r).node)).props as *props::IconButtonProps;choices::click_attach(r,(*p).toggles,clicked);}return;}
-fn release(r: *record::View) {if (*r).kind==props::K_IMAGE {imaging::release(r);}if (*r).kind==props::K_WEB {browser::release(r);}if (*r).kind==props::K_ICON_BUTTON {let p: *props::IconButtonProps=(*core::node_data((*r).node)).props as *props::IconButtonProps;choices::click_release(r,(*p).toggles);}return;}
+fn release(r: *record::View) {if (*r).kind==props::K_IMAGE {imaging::release(r);}if (*r).kind==props::K_WEB {browser::release(r);}if (*r).kind==props::K_HYBRID_WEB {hybrid::release(r);}if (*r).kind==props::K_ICON_BUTTON {let p: *props::IconButtonProps=(*core::node_data((*r).node)).props as *props::IconButtonProps;choices::click_release(r);}return;}

@@ -66,7 +66,7 @@ fn ease(t: f64,e: vocab::Easing) -> f64 {
     return t;
 }
 fn output(r: *record::View) {
-    let s: *State=state(r);let v: Values=(*s).current;let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(element.set_opacity(if v.opacity<0.0f64 {0.0f64} else if v.opacity>1.0f64 {1.0f64} else {v.opacity}));
+    let s: *State=state(r);let v: Values=(*s).current;let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(record::visual(r)));native::check(element.set_opacity(if v.opacity<0.0f64 {0.0f64} else if v.opacity>1.0f64 {1.0f64} else {v.opacity}));
     if !(*s).shadow_host.is_null() {let shadow: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*s).shadow_host));native::check(shadow.set_opacity(if v.opacity<0.0f64 {0.0f64} else if v.opacity>1.0f64 {1.0f64} else {v.opacity}));}
     let tr: ui::ICompositeTransform=native::must::[ui::ICompositeTransform](ui::ICompositeTransform::query((*s).transform));native::check(tr.set_scale_x(v.sx));native::check(tr.set_scale_y(v.sy));native::check(tr.set_rotation(v.rotation));native::check(tr.set_translate_x(v.x));native::check(tr.set_translate_y(v.y));return;
 }
@@ -86,7 +86,7 @@ fn tick(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
 }
 fn apply(r: *record::View) {
     if UI_THREAD==0 {UI_THREAD=GetCurrentThreadId();}
-    let p: *props::CommonProps=#addr_of((*core::node_data((*r).node)).common);let target: Values=values(p);let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));
+    let p: *props::CommonProps=#addr_of((*core::node_data((*r).node)).common);let target: Values=values(p);let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(record::visual(r)));
     if (*r).presentation.is_null() {
         let tr: ui::CompositeTransform=native::must::[ui::CompositeTransform](ui::CompositeTransform::new());native::check(element.set_render_transform(tr.object()));
         let owner: box::Box[State]=match box::new::[State](State {current:target,from:target,target:target,transform:tr.object(),render_token:#zero::[ui::EventRegistrationToken](),render_factory:rt::Object::empty(),animating:false,frames:0,started:0.0f64,duration:0.0f64,easing:vocab::Easing::Linear,clipped:false,shadowed:false,shadow_host:rt::Object::empty(),shadow_entries:rt::Object::empty()}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};(*r).presentation=owner.into_raw();
@@ -114,7 +114,7 @@ fn place(r: *record::View,width: f64,height: f64) {
     let s: *State=state(r);if s.is_null() {return;}let p: *props::CommonProps=#addr_of((*core::node_data((*r).node)).common);
     if (*p).clip.kind==0 && (*p).shadow.opacity<=0.0f64 && !(*s).clipped && !(*s).shadowed {return;}
     let preview: ui::IElementCompositionPreviewStatics=native::must::[ui::IElementCompositionPreviewStatics](ui::ElementCompositionPreview::i_element_composition_preview_statics_factory());
-    let visual: rt::Object=native::must::[rt::Object](preview.get_element_visual((*r).object));let view: ui::IVisual=native::must::[ui::IVisual](ui::IVisual::query(visual));let object: ui::ICompositionObject=native::must::[ui::ICompositionObject](ui::ICompositionObject::query(visual));let compositor: rt::Object=native::must::[rt::Object](object.compositor());
+    let visual: rt::Object=native::must::[rt::Object](preview.get_element_visual(record::visual(r)));let view: ui::IVisual=native::must::[ui::IVisual](ui::IVisual::query(visual));let object: ui::ICompositionObject=native::must::[ui::ICompositionObject](ui::ICompositionObject::query(visual));let compositor: rt::Object=native::must::[rt::Object](object.compositor());
     if (*p).clip.kind!=0 {
         let factory: ui::ICompositor5=native::must::[ui::ICompositor5](ui::ICompositor5::query(compositor));var geometry: rt::Object=rt::Object::empty();
         if (*p).clip.kind==3 {geometry=native::must::[rt::Object](factory.create_ellipse_geometry());let ellipse: ui::ICompositionEllipseGeometry=native::must::[ui::ICompositionEllipseGeometry](ui::ICompositionEllipseGeometry::query(geometry));let radius: ui::Vector2=ui::Vector2 {x:(width*0.5f64) as f32,y:(height*0.5f64) as f32};native::check(ellipse.set_center(radius));native::check(ellipse.set_radius(radius));}

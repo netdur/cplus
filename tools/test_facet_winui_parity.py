@@ -184,6 +184,108 @@ def run_refresh():
     assert 'PASS: refresh teardown' in result.stdout
 
 
+def run_hybrid():
+    for identity in ('a', 'b'):
+        directory = OUT / ('hybrid-' + identity)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / 'style.css').write_text('body { background-color: rgb(20, 30, 40); }', encoding='utf-8')
+        for page in ('index', 'alternate'):
+            (directory / (page + '.html')).write_text(
+                '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="style.css">'
+                f'<body data-page="{page}"><h1>Hybrid {identity.upper()}</h1>'
+                '<script src="bridge%20%CE%B1.js"></script></body>', encoding='utf-8')
+        (directory / 'bridge α.js').write_text(
+            "window.facet.onmessage = body => window.facet.postMessage('echo:' + body);\n"
+            "window.addEventListener('load', async () => {\n"
+            "if (getComputedStyle(document.body).backgroundColor !== 'rgb(20, 30, 40)') throw Error('CSS missing');\n"
+            f"window.facet.postMessage('ready:{identity.upper()}:' + document.body.dataset.page);\n"
+            "window.facet.postMessage('missing:' + (await fetch('missing.txt')).status);\n"
+            "window.facet.postMessage('override:' + (await fetch('override.txt')).status);\n"
+            "});", encoding='utf-8')
+    for removal in ('', 'START', 'READY', 'RESOURCE', 'MESSAGE'):
+        environment = {**os.environ, 'CPLUS_FACET_HYBRID': '1'}
+        if removal:
+            environment['CPLUS_HYBRID_REMOVE_' + removal] = '1'
+        result = subprocess.run([str(OUT / 'runtime/facet_agent_winui_smoke.exe')], cwd=EXAMPLE,
+            env=environment, capture_output=True, text=True, encoding='utf-8', timeout=40,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        print(result.stdout, flush=True)
+        assert result.returncode == 0, f"hybrid removal={removal}, exit={result.returncode}\n{result.stdout}{result.stderr}"
+        assert 'PASS: hybrid callback removal and teardown' in result.stdout
+
+
+def run_reordering():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_REORDERING': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: reorder teardown' in result.stdout
+
+
+def run_grouped_items():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_GROUPED_ITEMS': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: grouped items teardown' in result.stdout
+
+
+def run_list_refresh():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_LIST_REFRESH': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: list refresh teardown' in result.stdout
+
+
+def run_time_open():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_TIME_OPEN': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: time flyout open-window teardown' in result.stdout
+
+
+def run_secure_modes():
+    runtime = OUT / 'runtime'
+    for extra in ({}, {'CPLUS_SECURE_CLOSE_PASSWORD': '1'}):
+        result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+            env={**os.environ, 'CPLUS_FACET_SECURE_MODES': '1', **extra}, capture_output=True,
+            text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+        print(result.stdout)
+        assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+        assert 'pending-mode teardown' in result.stdout
+
+
+def run_button_modes():
+    runtime = OUT / 'runtime'
+    for extra in ({}, {'CPLUS_BUTTON_ROOT': '1'}, {'CPLUS_BUTTON_CLOSE_TOGGLE': '1'}):
+        result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+            env={**os.environ, 'CPLUS_FACET_BUTTON_MODES': '1', **extra}, capture_output=True,
+            text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+        print(result.stdout)
+        assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+        assert 'pending-mode teardown' in result.stdout
+
+
+def run_splits():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_SPLITS': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: split teardown' in result.stdout
+
+
 def run_layout():
     runtime = OUT / 'runtime'
     result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
@@ -222,6 +324,46 @@ def run_borders():
     print(result.stdout)
     assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
     assert 'PASS: border teardown' in result.stdout
+
+
+def run_clear_button():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_CLEAR_BUTTON': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: clear-button teardown' in result.stdout
+
+
+def run_popup_caption():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_POPUP_CAPTION': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: popup caption teardown' in result.stdout
+
+
+def run_input_transform():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_INPUT_TRANSFORM': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: input casing readback and teardown' in result.stdout
+
+
+def run_row_retention():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_ROW_RETENTION': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: row retention teardown' in result.stdout
 
 
 def run_tree_rows():
@@ -265,7 +407,60 @@ def run_paging():
         assert 'PASS: carousel teardown' in result.stdout
 
 
+def run_swiping():
+    runtime = OUT / 'runtime'
+    for removal in ('', 'START', 'CHANGE', 'OPEN', 'CLOSE', 'END'):
+        environment = {**os.environ, 'CPLUS_FACET_SWIPING': '1'}
+        if removal:
+            environment['CPLUS_SWIPE_REMOVE_' + removal] = '1'
+        result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+            env=environment, capture_output=True, text=True, encoding='utf-8',
+            timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+        print(result.stdout)
+        assert result.returncode == 0, f"{removal}: exit={result.returncode}\n{result.stdout}{result.stderr}"
+        assert 'PASS: swipe teardown' in result.stdout
+
+
 if __name__ == '__main__':
+    if '--swiping-only' in sys.argv:
+        run_swiping()
+        sys.exit(0)
+    if '--hybrid-only' in sys.argv:
+        run_hybrid()
+        sys.exit(0)
+    if '--reordering-only' in sys.argv:
+        run_reordering()
+        sys.exit(0)
+    if '--grouped-items-only' in sys.argv:
+        run_grouped_items()
+        sys.exit(0)
+    if '--list-refresh-only' in sys.argv:
+        run_list_refresh()
+        sys.exit(0)
+    if '--time-open-only' in sys.argv:
+        run_time_open()
+        sys.exit(0)
+    if '--secure-modes-only' in sys.argv:
+        run_secure_modes()
+        sys.exit(0)
+    if '--button-modes-only' in sys.argv:
+        run_button_modes()
+        sys.exit(0)
+    if '--splits-only' in sys.argv:
+        run_splits()
+        sys.exit(0)
+    if '--clear-button-only' in sys.argv:
+        run_clear_button()
+        sys.exit(0)
+    if '--popup-caption-only' in sys.argv:
+        run_popup_caption()
+        sys.exit(0)
+    if '--input-transform-only' in sys.argv:
+        run_input_transform()
+        sys.exit(0)
+    if '--row-retention-only' in sys.argv:
+        run_row_retention()
+        sys.exit(0)
     if '--tree-rows-only' in sys.argv:
         run_tree_rows()
         sys.exit(0)
@@ -313,6 +508,7 @@ if __name__ == '__main__':
         run_date_formats()
         run_refresh()
         run_layout()
+        run_splits()
         run_choice_colors()
         run_canvas_redraw()
         run_borders()
@@ -324,3 +520,29 @@ if __name__ == '__main__':
         run_menus()
 
         run_tree_rows()
+
+        run_row_retention()
+
+        run_input_transform()
+        run_popup_caption()
+        run_clear_button()
+
+    if len(sys.argv) == 1:
+        run_button_modes()
+
+    if len(sys.argv) == 1:
+        run_secure_modes()
+
+    if len(sys.argv) == 1:
+        run_time_open()
+
+    if len(sys.argv) == 1:
+        run_list_refresh()
+
+    if len(sys.argv) == 1:
+        run_grouped_items()
+
+    if len(sys.argv) == 1:
+        run_reordering()
+        run_hybrid()
+        run_swiping()

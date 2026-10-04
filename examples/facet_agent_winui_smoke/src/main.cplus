@@ -35,6 +35,19 @@ import "./tabs" as tabs;
 import "./paging" as paging;
 import "./menus" as menus;
 import "./tree_rows" as tree_rows;
+import "./row_retention" as row_retention;
+import "./input_transform" as input_transform;
+import "./popup_caption" as popup_caption;
+import "./clear_button" as clear_button;
+import "./splits" as splits;
+import "./button_modes" as button_modes;
+import "./secure_modes" as secure_modes;
+import "./time_open" as time_open;
+import "./list_refresh" as list_refresh;
+import "./grouped_items" as grouped_items;
+import "./reordering" as reordering;
+import "./hybrid_web" as hybrid_web;
+import "./swiping" as swiping;
 extern fn fflush(p: *u8) -> i32;
 
 struct Probe { clicks: i32, edited: bool, passed: bool, timer: services::Cancellable }
@@ -100,6 +113,12 @@ impl Probe {
 }
 
 fn main() -> i32 {
+    if env::has_var("CPLUS_FACET_SWIPING") {return swiping::run();}
+    if env::has_var("CPLUS_FACET_HYBRID") {return hybrid_web::run();}
+    if env::has_var("CPLUS_FACET_CLEAR_BUTTON") {return clear_button::run();}
+    if env::has_var("CPLUS_FACET_POPUP_CAPTION") {return popup_caption::run();}
+    if env::has_var("CPLUS_FACET_INPUT_TRANSFORM") {return input_transform::run();}
+    if env::has_var("CPLUS_FACET_ROW_RETENTION") {return row_retention::run();}
     if env::has_var("CPLUS_FACET_TREE_ROWS") {return tree_rows::run();}
     if env::has_var("CPLUS_FACET_MENUS") {return menus::run();}
     if env::has_var("CPLUS_FACET_PAGING") {return paging::run();}
@@ -108,6 +127,13 @@ fn main() -> i32 {
     if env::has_var("CPLUS_FACET_CANVAS_REDRAW") {return canvas_redraw::run();}
     if env::has_var("CPLUS_FACET_CHOICE_COLORS") {return choice_colors::run();}
     if env::has_var("CPLUS_FACET_LAYOUT") {return layout::run();}
+    if env::has_var("CPLUS_FACET_REORDERING") {return reordering::run();}
+    if env::has_var("CPLUS_FACET_GROUPED_ITEMS") {return grouped_items::run();}
+    if env::has_var("CPLUS_FACET_LIST_REFRESH") {return list_refresh::run();}
+    if env::has_var("CPLUS_FACET_TIME_OPEN") {return time_open::run();}
+    if env::has_var("CPLUS_FACET_SECURE_MODES") {return secure_modes::run();}
+    if env::has_var("CPLUS_FACET_BUTTON_MODES") {return button_modes::run();}
+    if env::has_var("CPLUS_FACET_SPLITS") {return splits::run();}
     if env::has_var("CPLUS_FACET_REFRESH") {return refresh::run();}
     if env::has_var("CPLUS_FACET_DATE_FORMATS") {return date_formats::run();}
     if env::has_var("CPLUS_FACET_ACTIONS") {return actions::run();}

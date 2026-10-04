@@ -1,4 +1,6 @@
 import "stdlib/text" as text;
+import "stdlib/box" as box;
+import "stdlib/option" as option;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/text_field" as field;
@@ -13,8 +15,21 @@ import "./style" as style;
 import "./typography" as typography;
 extern fn GetKeyState(key: i32) -> i16;
 extern fn WindowsGetStringLen(value: usize) -> u32;
+struct State {shown: text::Text}
 static LIVE: i64=0;
 fn subscriptions() -> i64 {return LIVE;}
+fn clear_button(r: *record::View) {
+    if (*r).kind!=props::K_TEXT_FIELD || (*r).editor_secure {return;}
+    let p=(*core::node_data((*r).node)).props as *props::TextFieldProps;
+    let control=native::must::[ui::IControlProtected](ui::IControlProtected::query((*r).object));let button=native::must::[rt::Object](control.get_template_child("DeleteButton"));if button.is_null() {return;}
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(button));let visual=native::must::[ui::IUIElement](ui::IUIElement::query(button));let allow=(*p).clear_button==vocab::ClearButton::WhileEditing;
+    // Visibility is animated by TextBox's native visual states. Constrain the
+    // button instead so focus/text transitions cannot re-show a Never button.
+    if !allow {if native::must::[f64](element.max_width())!=0.0f64 {native::check(element.set_max_width(0.0f64));}}
+    else if native::must::[f64](element.max_width())==0.0f64 {let defaults=native::must::[ui::IFrameworkElementStatics](ui::FrameworkElement::i_framework_element_statics_factory());typography::clear(button,native::must::[rt::Object](defaults.max_width_property()));}
+    if native::must::[bool](visual.is_hit_test_visible())!=allow {native::check(visual.set_is_hit_test_visible(allow));}
+}
+fn layout_updated(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {let r=context as *record::View;if !(*r).applying {clear_button(r);}return rt::Status {code:0};}
 fn supports(k: u32) -> bool {return k==props::K_TEXT_FIELD || k==props::K_TEXT_AREA || k==props::K_SEARCH_FIELD;}
 fn input(n: *core::Node) -> *props::InputViewProps {
     let raw: *u8=(*core::node_data(n)).props;let k: u32=core::kind_of(n);
@@ -28,6 +43,8 @@ fn selection_bits(k: u32) -> u64 {
     if k==props::K_TEXT_AREA {return area::P_CURSOR_POSITION|area::P_SELECTION_LENGTH;}
     return search::P_CURSOR_POSITION|search::P_SELECTION_LENGTH;
 }
+fn transform_bits(k: u32) -> u64 {return if k==props::K_TEXT_FIELD {field::P_TEXT_TRANSFORM} else if k==props::K_TEXT_AREA {area::P_TEXT_TRANSFORM} else {search::P_TEXT_TRANSFORM};}
+fn casing(mode: vocab::TextTransform) -> i32 {return if mode==vocab::TextTransform::Uppercase {ui::character_casing_upper} else if mode==vocab::TextTransform::Lowercase {ui::character_casing_lower} else {ui::character_casing_normal};}
 fn keyboard_bits(k: u32) -> u64 {return if k==props::K_TEXT_FIELD {field::P_KEYBOARD} else if k==props::K_TEXT_AREA {area::P_KEYBOARD} else {search::P_KEYBOARD};}
 fn keyboard(value: vocab::Keyboard,password: bool,is_search: bool) -> rt::Object {
     var name: i32=ui::input_scope_name_value_default_value;
@@ -46,7 +63,7 @@ fn keyboard(value: vocab::Keyboard,password: bool,is_search: bool) -> rt::Object
 }
 fn selected(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     let r: *record::View=context as *record::View;
-    if (*r).applying || (core::dirty_of((*r).node)&selection_bits((*r).kind))!=0 {return rt::Status {code:0};}
+    if (*r).applying || secure((*r).node)!=(*r).editor_secure || (core::dirty_of((*r).node)&selection_bits((*r).kind))!=0 {return rt::Status {code:0};}
     let p: *props::InputViewProps=input((*r).node);
     let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query(sender));
     let start: i64=native::must::[i32](edit.selection_start()) as i64;
@@ -74,24 +91,32 @@ fn key_down(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     if call!=props::no_handler {native::check(event.set_handled(true));call(context,ctx);}
     return rt::Status {code:0};
 }
-fn secure(n: *core::Node) -> bool {return core::kind_of(n)==props::K_TEXT_FIELD && (*((*core::node_data(n)).props as *props::TextFieldProps)).is_secure;}
+fn secure(n: *core::Node) -> bool {
+    if core::kind_of(n)!=props::K_TEXT_FIELD {return false;}
+    let p: *props::TextFieldProps=(*core::node_data(n)).props as *props::TextFieldProps;
+    return (*p).is_secure;
+}
 fn create(n: *core::Node) -> rt::Object {
     if secure(n) {let v: ui::PasswordBox=native::must::[ui::PasswordBox](ui::PasswordBox::new());return v.object();}
     let v: ui::TextBox=native::must::[ui::TextBox](ui::TextBox::new());return v.object();
 }
 fn read(r: *record::View) -> text::Text {
-    if secure((*r).node) {let edit: ui::IPasswordBox=native::must::[ui::IPasswordBox](ui::IPasswordBox::query((*r).object));return native::must::[text::Text](edit.password());}
+    if (*r).editor_secure {let edit: ui::IPasswordBox=native::must::[ui::IPasswordBox](ui::IPasswordBox::query((*r).object));return native::must::[text::Text](edit.password());}
     let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));return native::must::[text::Text](edit.text());
 }
 fn changed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
-    let r: *record::View=context as *record::View;if (*r).applying {return rt::Status {code:0};}
+    let r: *record::View=context as *record::View;if (*r).applying || secure((*r).node)!=(*r).editor_secure {return rt::Status {code:0};}
     let n: *core::Node=(*r).node;
     let bit: u64=if (*r).kind==props::K_TEXT_FIELD {field::P_TEXT} else if (*r).kind==props::K_TEXT_AREA {area::P_TEXT} else {search::P_TEXT};
     if (core::dirty_of(n)&bit)!=0 {return rt::Status {code:0};}
     let p: *props::InputViewProps=input(n);let value: text::Text=read(r);
-    if value.view()==(*p).text.view() {return rt::Status {code:0};};
+    // TextChanged may be queued until after apply leaves its guard. Cache
+    // the actual native display, including newline/length normalization.
+    let state=(*r).extra as *State;assert state.is_not_null();
+    if value.view()==(*state).shown.view() {return rt::Status {code:0};}
+    (*state).shown=text::from_str(value.view());
     (*p).text=value;
-    if !secure(n) {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));(*p).cursor_position=native::must::[i32](edit.selection_start()) as i64;(*p).selection_length=native::must::[i32](edit.selection_length()) as i64;}
+    if !(*r).editor_secure {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));(*p).cursor_position=native::must::[i32](edit.selection_start()) as i64;(*p).selection_length=native::must::[i32](edit.selection_length()) as i64;}
     (*n).mark_content_changed();core::touch(n,0 as u64);
     let call: fn(*u8,*u8)=(*p).on_text_changed;let ctx: *u8=(*p).on_text_changed_ctx;
     if call!=props::no_handler {call(context,ctx);}return rt::Status {code:0};
@@ -100,7 +125,7 @@ fn apply(r: *record::View) {
     let n: *core::Node=(*r).node;let p: *props::InputViewProps=input(n);let d: *core::Data=core::node_data(n);(*r).applying=true;
     let limit: i64=(*p).max_length;let maximum: i32=if limit<0 {0} else if limit>2147483647 {2147483647} else {limit as i32};
     let current: text::Text=read(r);
-    if secure(n) {
+    if (*r).editor_secure {
         let edit: ui::IPasswordBox=native::must::[ui::IPasswordBox](ui::IPasswordBox::query((*r).object));
         if !(*r).subscribed || (core::dirty_of(n)&keyboard_bits((*r).kind))!=0 {native::check(edit.set_input_scope(keyboard((*p).keyboard,true,false)));}
         native::check(edit.set_max_length(maximum));native::check(edit.set_placeholder_text((*p).placeholder.view()));
@@ -111,9 +136,13 @@ fn apply(r: *record::View) {
         native::check(edit.set_placeholder_text((*p).placeholder.view()));native::check(edit.set_is_read_only((*p).is_read_only));native::check(edit.set_max_length(maximum));
         native::check(edit.set_is_spell_check_enabled((*p).checks_spelling));native::check(edit.set_is_text_prediction_enabled((*p).predicts_text));
         native::check(edit.set_accepts_return((*r).kind==props::K_TEXT_AREA));native::check(edit.set_text_wrapping(if (*r).kind==props::K_TEXT_AREA {ui::text_wrapping_wrap} else {ui::text_wrapping_no_wrap}));
-        if current.view()!=(*p).text.view() {native::check(edit.set_text((*p).text.view()));}
-        if !(*r).subscribed || (core::dirty_of(n)&selection_bits((*r).kind))!=0 {
-            let content: rt::HString=native::must::[rt::HString](rt::HString::new((*p).text.view()));
+        // Transform the displayed copy, preserving the text the application set.
+        // Native CharacterCasing also handles subsequent typed edits.
+        let shown=typography::transformed((*p).text.view(),(*p).text_transform);
+        native::check(edit.set_character_casing(casing((*p).text_transform)));
+        if native::must::[text::Text](edit.text()).view()!=shown.view() {native::check(edit.set_text(shown.view()));}
+        if !(*r).subscribed || (core::dirty_of(n)&(selection_bits((*r).kind)|transform_bits((*r).kind)))!=0 {
+            let content: rt::HString=native::must::[rt::HString](rt::HString::new(shown.view()));
             let size: i64=WindowsGetStringLen(content.raw()) as i64;
             let start: i64=if (*p).cursor_position<0 {0i64} else if (*p).cursor_position>size {size} else {(*p).cursor_position};
             let length: i64=if (*p).selection_length<0 {0i64} else if (*p).selection_length>size-start {size-start} else {(*p).selection_length};
@@ -125,8 +154,11 @@ fn apply(r: *record::View) {
             let defaults: ui::ITextBoxStatics=native::must::[ui::ITextBoxStatics](ui::TextBox::i_text_box_statics_factory());typography::clear((*r).object,native::must::[rt::Object](defaults.placeholder_foreground_property()));
         }
     }
-    (*p).text=read(r);let control: ui::IControl=native::must::[ui::IControl](ui::IControl::query((*r).object));
-    native::check(control.set_is_enabled((*d).common.is_enabled && (!secure(n) || !(*p).is_read_only)));
+    // Passwords retain their original contents. For transformed editors,
+    // only actual edit events write the displayed text back to the model.
+    if (*r).editor_secure || ((*p).text_transform!=vocab::TextTransform::Uppercase && (*p).text_transform!=vocab::TextTransform::Lowercase) {(*p).text=read(r);}
+    let control: ui::IControl=native::must::[ui::IControl](ui::IControl::query((*r).object));
+    native::check(control.set_is_enabled((*d).common.is_enabled && (!(*r).editor_secure || !(*p).is_read_only)));
     let defaults: ui::IControlStatics=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());
     if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));} else {typography::clear((*r).object,native::must::[rt::Object](defaults.font_size_property()));}
     if (*p).text_color.is_set() {native::check(control.set_foreground(style::brush((*p).text_color)));} else {typography::clear((*r).object,native::must::[rt::Object](defaults.foreground_property()));}
@@ -138,22 +170,26 @@ fn apply(r: *record::View) {
     if (*r).kind==props::K_TEXT_FIELD {
         let typed: *props::TextFieldProps=(*d).props as *props::TextFieldProps;
         native::check(control.set_vertical_content_alignment(typography::vertical((*typed).vertical_align)));
-        if !secure(n) {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));native::check(edit.set_text_alignment(typography::alignment((*typed).text_align)));}
+        if !(*r).editor_secure {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));native::check(edit.set_text_alignment(typography::alignment((*typed).text_align)));}
     }
     if (*r).kind==props::K_TEXT_AREA {
         let typed: *props::TextAreaProps=(*d).props as *props::TextAreaProps;
         native::check(control.set_vertical_content_alignment(typography::vertical((*typed).vertical_align)));
-        if !secure(n) {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));native::check(edit.set_text_alignment(typography::alignment((*typed).text_align)));}
+        if !(*r).editor_secure {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));native::check(edit.set_text_alignment(typography::alignment((*typed).text_align)));}
     }
     if (*r).kind==props::K_SEARCH_FIELD {
         let typed: *props::SearchFieldProps=(*d).props as *props::SearchFieldProps;
         native::check(control.set_vertical_content_alignment(typography::vertical((*typed).vertical_align)));
-        if !secure(n) {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));native::check(edit.set_text_alignment(typography::alignment((*typed).text_align)));}
+        if !(*r).editor_secure {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));native::check(edit.set_text_alignment(typography::alignment((*typed).text_align)));}
     }
+    if (*r).kind==props::K_TEXT_FIELD && (!(*r).subscribed || (core::dirty_of(n)&field::P_CLEAR_BUTTON)!=0) {clear_button(r);}
+    let displayed=read(r);
+    if (*r).extra.is_null() {let owner=match box::new::[State](State {shown:displayed}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();}
+    else {(*((*r).extra as *State)).shown=displayed;}
     (*r).applying=false;(*n).mark_content_changed();return;
 }
 fn attach(r: *record::View) {
-    if secure((*r).node) {
+    if (*r).editor_secure {
         let edit: ui::IPasswordBox=native::must::[ui::IPasswordBox](ui::IPasswordBox::query((*r).object));let callback: ui::RoutedEventHandler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](edit.add_password_changed(callback.object()));
     } else {
         let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));let callback: ui::TextChangedEventHandler=native::must::[ui::TextChangedEventHandler](ui::TextChangedEventHandler::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](edit.add_text_changed(callback.object()));
@@ -163,11 +199,14 @@ fn attach(r: *record::View) {
     let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));
     let key: ui::KeyEventHandler=native::must::[ui::KeyEventHandler](ui::KeyEventHandler::new(key_down,r as *u8));
     (*r).token3=native::must::[ui::EventRegistrationToken](element.add_preview_key_down(key.object()));LIVE=LIVE+1;
+    if (*r).kind==props::K_TEXT_FIELD && !(*r).editor_secure {let framework=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));let callback=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(layout_updated,r as *u8));(*r).token4=native::must::[ui::EventRegistrationToken](framework.add_layout_updated(callback.object()));LIVE=LIVE+1;}
     (*r).subscribed=true;LIVE=LIVE+1;return;
 }
 fn release(r: *record::View) {
-    if secure((*r).node) {let edit: ui::IPasswordBox=native::must::[ui::IPasswordBox](ui::IPasswordBox::query((*r).object));native::check(edit.remove_password_changed((*r).token));}
+    if (*r).kind==props::K_TEXT_FIELD && !(*r).editor_secure {let framework=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));native::check(framework.remove_layout_updated((*r).token4));LIVE=LIVE-1;}
+    if (*r).editor_secure {let edit: ui::IPasswordBox=native::must::[ui::IPasswordBox](ui::IPasswordBox::query((*r).object));native::check(edit.remove_password_changed((*r).token));}
     else {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));native::check(edit.remove_text_changed((*r).token));native::check(edit.remove_selection_changed((*r).token2));LIVE=LIVE-1;}
     let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(element.remove_preview_key_down((*r).token3));LIVE=LIVE-1;
+    let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;
     (*r).subscribed=false;LIVE=LIVE-1;return;
 }

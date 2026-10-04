@@ -54,6 +54,13 @@ This is a testable gallery, not full `facet_runtime` integration. See the
 Swipe actions use a desktop context menu; touch swipe actions remain work.
 The gallery does not start the optional Facet agent service.
 
+The List page includes Begin/End refresh and refresh availability controls.
+Its desktop check edits a row, refreshes twice, and checks that the draft stays
+intact. Both List and Collection have a Toggle groups button, including an
+empty group and headers above the existing data. Run these focused checks with
+`-VerifyMode list-refresh` or `-VerifyMode grouped-items` alongside
+`-Verify -Release -SkipBuild`.
+
 The Tabs page demonstrates native header selection and live colors. Desktop
 verification checks mouse selection, Ctrl+Tab, and checkbox state retained while
 switching panes, then navigates away to exercise tab cleanup.
@@ -86,3 +93,54 @@ The Tree page also offers **Toggle custom rows** and **Rebind labels**. Edit a
 row draft, rebind its label, and press **Use** to check nested action identity.
 The tree verification exercises these controls and saves
 `out/verified-tree-custom-rows.png`.
+
+The List page includes editable rows, **Rebind row labels**, and **Change first
+row shape**. Run `./run.ps1 -Verify -VerifyMode row-retention -Release -SkipBuild`
+for physical typing and scrolling checks. The screenshot is saved as
+`out/verified-list-retention.png`.
+
+The Inputs page's **Change casing** cycles default, uppercase and lowercase.
+`./run.ps1 -Verify -VerifyMode input-transform -Release -SkipBuild` checks real
+typing, callback readback, silent display changes and reset. It saves
+`out/verified-input-casing.png`.
+
+The Pickers page has a **Toggle fixed caption** button.
+`./examples/facet_gallery_winui/run.ps1 -Verify -VerifyMode popup-caption -Release -SkipBuild`
+checks the caption through a real native dropdown selection and restores it.
+
+Inputs includes **Toggle clear button** for the name field.
+`./examples/facet_gallery_winui/run.ps1 -Verify -VerifyMode clear-button -Release -SkipBuild`
+checks real typing and pointer clearing in both modes.
+# Live button modes
+
+The Button page includes **Switch mode**, which changes the adjacent ordinary,
+icon and text actions between ordinary and toggle behavior. Each click updates
+the existing click counter. Run `run.ps1 -Verify -VerifyMode button-modes -Release -SkipBuild` for the real-mouse regression after building.
+
+Inputs → **Show / hide** switches the same Facet text field between native
+PasswordBox and TextBox. `run.ps1 -Verify -Release -SkipBuild -VerifyMode secure-modes`
+checks real typing in both modes, preservation across repeated switches, and UIA
+password masking.
+
+Pickers now shows time-picker open/close/selection counters and an **Open time
+picker** button. `run.ps1 -Verify -SkipBuild -VerifyMode time-open` checks actual
+mouse opening, keyboard selection, programmatic opening, Escape, and Alt+Down.
+
+Collection supports dragging cells to reorder the demo data, **Toggle dragging**,
+**Toggle groups**, and **Cross-group moves**. Run
+`run.ps1 -Verify -VerifyMode reordering -Release -SkipBuild` for real mouse drags,
+displayed order checks, disabled dragging, Escape cancellation, header exclusion
+and cross-group restrictions. Screenshots are saved as `out/verified-reordering.png`
+and `out/verified-reordering-groups.png`. Edge auto-scrolling is not implemented.
+
+Web → **Open local demo** loads the bundled HTML, CSS and JavaScript. Use
+**Send to page** and the page's **Send to native** button to try both directions;
+the counters show resource requests and lifecycle callbacks. Run
+`run.ps1 -Verify -VerifyMode hybrid -Release -SkipBuild` for real pointer checks
+and `out/verified-hybrid.png`. The runner sets the working directory so the
+shared gallery's `assets/hybrid` directory resolves correctly.
+
+The Swipe page now exposes native action buttons by dragging left. Change the
+threshold or toggle enabled state to test live behavior. Run
+`./run.ps1 -Verify -Release -SkipBuild -VerifyMode swiping` for real mouse drags
+and action clicks, Escape cancellation, disabled gestures and gesture callbacks.

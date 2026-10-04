@@ -1,0 +1,99 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/time_picker" as picker;
+import "./record" as record;
+import "./native" as native;
+import "./scheduler" as scheduler;
+import "./time_template" as template;
+extern fn GetKeyState(key: i32) -> i16;
+struct State {opaque record: *record::View,flyout: rt::Object,button: rt::Object,operation: rt::Object,requested: bool,timer: u64,click: ui::EventRegistrationToken,key: ui::EventRegistrationToken,layout: ui::EventRegistrationToken,opened: ui::EventRegistrationToken,closed: ui::EventRegistrationToken,picked: ui::EventRegistrationToken}
+static LIVE: i64=0;
+static SHUTTING_DOWN: bool=false;
+fn begin_shutdown() {SHUTTING_DOWN=true;}
+fn subscriptions() -> i64 {return LIVE;}
+fn create() -> rt::Object {
+    let value=native::must::[ui::TimePicker](ui::TimePicker::new());
+    let reader=native::must::[ui::IXamlReaderStatics](ui::XamlReader::i_xaml_reader_statics_factory());
+    let control=native::must::[ui::IControl](ui::IControl::query(value.object()));
+    native::check(control.set_template(native::must::[rt::Object](reader.load(template::source()))));
+    return value.object();
+}
+fn base(s: *State) -> ui::IFlyoutBase {return native::must::[ui::IFlyoutBase](ui::IFlyoutBase::query((*s).flyout));}
+fn tick(context: *u8) {
+    let s=context as *State;(*s).timer=0;let r=(*s).record;
+    let p=(*core::node_data((*r).node)).props as *props::TimePickerProps;
+    let flyout=base(s);let opened=native::must::[bool](flyout.is_open());
+    if !(*p).is_open {(*s).requested=false;if opened {native::check(flyout.hide());}return;}
+    if (*s).button.is_null() {return;}
+    (*s).requested=false;if opened {return;}
+    let control=native::must::[ui::IControl](ui::IControl::query((*r).object));
+    if !native::must::[bool](control.is_enabled()) {(*p).is_open=false;return;}
+    let original=native::must::[ui::ITimePicker](ui::ITimePicker::query((*r).object));
+    let popup=native::must::[ui::ITimePickerFlyout](ui::ITimePickerFlyout::query((*s).flyout));
+    native::check(popup.set_time(native::must::[ui::TimeSpan](original.time())));
+    native::check(popup.set_clock_identifier(native::must::[text::Text](original.clock_identifier()).view()));
+    native::check(popup.set_minute_increment(native::must::[i32](original.minute_increment())));
+    (*s).operation=native::must::[rt::Object](popup.show_at_async((*s).button));
+}
+fn schedule(s: *State) {if (*s).timer==0 {(*s).timer=scheduler::after(0.0f64,tick,s as *u8);}}
+fn clicked(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let s=context as *State;let r=(*s).record;let p=(*core::node_data((*r).node)).props as *props::TimePickerProps;(*p).is_open=true;(*s).requested=true;schedule(s);return rt::Status {code:0};
+}
+fn key_down(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let event=native::must::[ui::IKeyRoutedEventArgs](ui::IKeyRoutedEventArgs::query(args));let key=native::must::[i32](event.key());
+    if (key==38 || key==40) && GetKeyState(18)<0 {native::check(event.set_handled(true));return clicked(sender,args,context);}
+    return rt::Status {code:0};
+}
+fn picked(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let s=context as *State;let r=(*s).record;
+    if (core::dirty_of((*r).node)&picker::P_TIME)!=0 {return rt::Status {code:0};}
+    let popup=native::must::[ui::ITimePickerFlyout](ui::ITimePickerFlyout::query(sender));let selected=native::must::[ui::TimeSpan](popup.time());
+    let original=native::must::[ui::ITimePicker](ui::ITimePicker::query((*r).object));
+    // This invokes the existing time-changed path; it may remove the record.
+    native::check(original.set_time(selected));return rt::Status {code:0};
+}
+fn layout(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let s=context as *State;let r=(*s).record;
+    if (*s).button.is_null() {
+        let framework=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));if !native::must::[bool](framework.is_loaded()) {return rt::Status {code:0};}
+        let control=native::must::[ui::IControlProtected](ui::IControlProtected::query((*r).object));let button=native::must::[rt::Object](control.get_template_child("FacetTimeButton"));if button.is_null() {return rt::Status {code:0};}
+        (*s).button=button.clone();let b=native::must::[ui::IButtonBase](ui::IButtonBase::query(button));let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(clicked,context));(*s).click=native::must::[ui::EventRegistrationToken](b.add_click(handler.object()));LIVE=LIVE+1;
+    }
+    let control=native::must::[ui::IControlProtected](ui::IControlProtected::query((*r).object));let original=native::must::[rt::Object](control.get_template_child("FlyoutButton"));
+    let automation=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());
+    let name=native::must::[text::Text](automation.get_name(original));
+    if native::must::[text::Text](automation.get_name((*s).button))!=name {native::check(automation.set_name((*s).button,name.view()));}
+    if (*s).requested {schedule(s);}
+    return rt::Status {code:0};
+}
+fn attach(r: *record::View,opened: fn(rt::Object,rt::Object,*u8)->rt::Status,closed: fn(rt::Object,rt::Object,*u8)->rt::Status) -> *u8 {
+    let owner=match box::new::[State](#zero::[State]()) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return 0 as *u8;}};let s=owner.ptr();(*s).record=r;(*s).requested=true;
+    let popup=native::must::[ui::TimePickerFlyout](ui::TimePickerFlyout::new());(*s).flyout=popup.object();let flyout=base(s);native::check(flyout.set_should_constrain_to_root_bounds(true));
+    let a=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(opened,r as *u8));let b=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(closed,r as *u8));
+    (*s).opened=native::must::[ui::EventRegistrationToken](flyout.add_opened(a.object()));(*s).closed=native::must::[ui::EventRegistrationToken](flyout.add_closed(b.object()));
+    let h=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TimePickerFlyout_Microsoft_UI_Xaml_Controls_TimePickedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TimePickerFlyout_Microsoft_UI_Xaml_Controls_TimePickedEventArgs::new(picked,s as *u8));(*s).picked=native::must::[ui::EventRegistrationToken](popup.add_time_picked(h.object()));
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));let key=native::must::[ui::KeyEventHandler](ui::KeyEventHandler::new(key_down,s as *u8));(*s).key=native::must::[ui::EventRegistrationToken](visual.add_preview_key_down(key.object()));
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));let loaded=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(layout,s as *u8));(*s).layout=native::must::[ui::EventRegistrationToken](element.add_layout_updated(loaded.object()));LIVE=LIVE+5;
+    return owner.into_raw();
+}
+fn apply(context: *u8) {
+    if context.is_null() {return;}
+    let s=context as *State;let r=(*s).record;let dirty=core::dirty_of((*r).node);
+    if (dirty&picker::P_IS_OPEN)!=0 {(*s).requested=true;schedule(s);}
+    if (dirty&(picker::P_TIME|picker::P_FORMAT))!=0 && native::must::[bool](base(s).is_open()) {
+        let original=native::must::[ui::ITimePicker](ui::ITimePicker::query((*r).object));let popup=native::must::[ui::ITimePickerFlyout](ui::ITimePickerFlyout::query((*s).flyout));
+        native::check(popup.set_time(native::must::[ui::TimeSpan](original.time())));native::check(popup.set_clock_identifier(native::must::[text::Text](original.clock_identifier()).view()));
+    }
+}
+fn release(context: *u8) {
+    let owner=box::from_raw::[State](context);let s=owner.ptr();let r=(*s).record;scheduler::cancel((*s).timer);
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));native::check(element.remove_layout_updated((*s).layout));let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(visual.remove_preview_key_down((*s).key));
+    if !(*s).button.is_null() {let button=native::must::[ui::IButtonBase](ui::IButtonBase::query((*s).button));native::check(button.remove_click((*s).click));LIVE=LIVE-1;}
+    let popup=native::must::[ui::ITimePickerFlyout](ui::ITimePickerFlyout::query((*s).flyout));native::check(popup.remove_time_picked((*s).picked));let flyout=base(s);native::check(flyout.remove_opened((*s).opened));native::check(flyout.remove_closed((*s).closed));// Window close already tears down popup roots; Hide then returns E_UNEXPECTED.
+    if !SHUTTING_DOWN {native::check(flyout.hide());}LIVE=LIVE-5;
+}

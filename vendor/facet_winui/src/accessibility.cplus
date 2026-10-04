@@ -6,19 +6,20 @@ import "facet/props" as props;
 import "./record" as record;
 import "./native" as native;
 import "./typography" as typography;
-fn apply(r: *record::View) {
-    let p: *props::CommonProps=#addr_of((*core::node_data((*r).node)).common);
+fn apply(r: *record::View) {apply_to((*r).node,(*r).object);}
+fn apply_to(node: *core::Node,value: rt::Object) {
+    let p: *props::CommonProps=#addr_of((*core::node_data(node)).common);
     let a=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());
-    native::check(a.set_automation_id((*r).object,(*(*r).node).key()));
-    if (*p).accessibility_label.count()>0 {native::check(a.set_name((*r).object,(*p).accessibility_label.view()));}
-    else {typography::clear((*r).object,native::must::[rt::Object](a.name_property()));}
-    if (*p).accessibility_hint.count()>0 {native::check(a.set_help_text((*r).object,(*p).accessibility_hint.view()));}
-    else {typography::clear((*r).object,native::must::[rt::Object](a.help_text_property()));}
-    native::check(a.set_heading_level((*r).object,if (*p).heading_level>=1 && (*p).heading_level<=9 {(*p).heading_level as i32} else {ui::automation_heading_level_none}));
+    native::check(a.set_automation_id(value,(*node).key()));
+    if (*p).accessibility_label.count()>0 {native::check(a.set_name(value,(*p).accessibility_label.view()));}
+    else {typography::clear(value,native::must::[rt::Object](a.name_property()));}
+    if (*p).accessibility_hint.count()>0 {native::check(a.set_help_text(value,(*p).accessibility_hint.view()));}
+    else {typography::clear(value,native::must::[rt::Object](a.help_text_property()));}
+    native::check(a.set_heading_level(value,if (*p).heading_level>=1 && (*p).heading_level<=9 {(*p).heading_level as i32} else {ui::automation_heading_level_none}));
     let tips=native::must::[ui::IToolTipServiceStatics](ui::ToolTipService::i_tool_tip_service_statics_factory());
-    let previous=native::must::[rt::Object](tips.get_tool_tip((*r).object));
+    let previous=native::must::[rt::Object](tips.get_tool_tip(value));
     if (*p).tooltip.count()==0 {
-        if !previous.is_null() {typography::clear((*r).object,native::must::[rt::Object](tips.tool_tip_property()));}return;
+        if !previous.is_null() {typography::clear(value,native::must::[rt::Object](tips.tool_tip_property()));}return;
     }
     // Preserve an open tooltip when another property of the node changes.
     if !previous.is_null() {match ui::IPropertyValue::query(previous) {
@@ -26,5 +27,5 @@ fn apply(r: *record::View) {
         result::Result::Err(e)=>{}
     }}
     let values=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());
-    native::check(tips.set_tool_tip((*r).object,native::must::[rt::Object](values.create_string((*p).tooltip.view()))));
+    native::check(tips.set_tool_tip(value,native::must::[rt::Object](values.create_string((*p).tooltip.view()))));
 }

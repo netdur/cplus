@@ -130,6 +130,19 @@
     "Microsoft.UI.Xaml.Media.DoubleCollection",
     "Microsoft.UI.Xaml.Controls.ToolTip",
     "Microsoft.UI.Xaml.Input.KeyboardAccelerator",
-    "Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs"
+    "Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs",
+    "Microsoft.UI.Xaml.Controls.TimePickerFlyout",
+    "Microsoft.UI.Xaml.DragStartingEventArgs",
+    "Microsoft.UI.Xaml.DragEventArgs",
+    "Microsoft.UI.Xaml.DropCompletedEventArgs",
+    "Windows.ApplicationModel.DataTransfer.DataPackage",
+    "Microsoft.Web.WebView2.Core.CoreWebView2Environment",
+    "Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs",
+    "Microsoft.Web.WebView2.Core.CoreWebView2WebResourceRequestedEventArgs",
+    "Microsoft.Web.WebView2.Core.CoreWebView2WebResourceRequest",
+    "Microsoft.Web.WebView2.Core.CoreWebView2WebResourceResponse",
+    "Windows.Storage.Streams.IRandomAccessStream",
+    "Windows.Foundation.IAsyncInfo",
+    "Windows.Foundation.Deferral"
   ]
 }

@@ -1,0 +1,57 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/text_field" as field;
+import "facet/search_field" as search;
+import "facet/text_area" as area;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/editing" as editing;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn edit(key: str) -> native::ITextBox {return check::must::[native::ITextBox](native::ITextBox::query(check::object(key)));}
+fn shown(key: str) -> text::Text {return check::must::[text::Text](edit(key).text());}
+fn source(key: str) -> str {return (*editing::input(check::node(key))).text.view();}
+struct Probe {changes: usize,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn changed(ref this,sender: *u8) {this.changes=this.changes+1;}
+    fn build(ref this) -> core::Node {return @ui {column {
+        text_field("MiXeD é",key:"field",text_transform:vocab::TextTransform::Uppercase,cursor_position:2,selection_length:2,on_text_changed:this.changed)
+        search_field("MiXeD É",key:"search",text_transform:vocab::TextTransform::Lowercase,on_text_changed:this.changed)
+        text_area("First\nsEcOnd",key:"area",text_transform:vocab::TextTransform::Uppercase,on_text_changed:this.changed).height(100.0f64)
+        text_field("MiXeD long",key:"limited",max_length:4,text_transform:vocab::TextTransform::Uppercase,on_text_changed:this.changed)
+        text_field("MiXeD",key:"secret",secure:true,text_transform:vocab::TextTransform::Uppercase)
+    }.padding(20.0f64).gap(12.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.25f64,this.initial);}
+    fn initial(ref this) {
+        assert shown("field")=="MIXED É";assert source("field")=="MiXeD é";assert shown("search")=="mixed é";assert source("search")=="MiXeD É";assert shown("area")=="FIRST\nSECOND" || shown("area")=="FIRST\rSECOND" || shown("area")=="FIRST\r\nSECOND";assert source("area")=="First\nsEcOnd";
+        assert check::must::[i32](edit("field").character_casing())==native::character_casing_upper;assert check::must::[i32](edit("search").character_casing())==native::character_casing_lower;
+        assert check::must::[i32](edit("field").selection_start())==2;assert check::must::[i32](edit("field").selection_length())==2;assert this.changes==0;assert source("limited")=="MiXeD long";
+        check::log("PASS: initial input display, source text and native selection");
+        let secret=check::must::[native::IPasswordBox](native::IPasswordBox::query(check::object("secret")));assert check::must::[text::Text](secret.password())=="MiXeD";
+        if let option::Option::Some(v)=field::find("field") {let updated=v.set_text_transform(vocab::TextTransform::Lowercase);}
+        if let option::Option::Some(v)=search::find("search") {let updated=v.set_text_transform(vocab::TextTransform::Uppercase);}
+        if let option::Option::Some(v)=area::find("area") {let updated=v.set_text_transform(vocab::TextTransform::None);}
+        this.timer=services::after(0.2f64,this.updated);
+    }
+    fn updated(ref this) {
+        assert shown("field")=="mixed é" && source("field")=="MiXeD é";assert shown("search")=="MIXED É" && source("search")=="MiXeD É";assert shown("area")=="First\nsEcOnd" || shown("area")=="First\rsEcOnd" || shown("area")=="First\r\nsEcOnd";assert this.changes==0;assert source("limited")=="MiXeD long";
+        assert check::must::[i32](edit("field").selection_start())==2;assert check::must::[i32](edit("field").selection_length())==2;
+        if let option::Option::Some(v)=field::find("field") {let updated=v.set_text("New ÅbC");}
+        if let option::Option::Some(v)=search::find("search") {let updated=v.set_text_transform(vocab::TextTransform::Default);}
+        if let option::Option::Some(v)=area::find("area") {let updated=v.set_text_transform(vocab::TextTransform::Uppercase).set_cursor_position(99).set_selection_length(99);}
+        check::log("PASS: live input case changes stay silent and retain selection");this.timer=services::after(0.2f64,this.reset);
+    }
+    fn reset(ref this) {
+        assert shown("field")=="new åbc" && source("field")=="New ÅbC";assert shown("search")=="MiXeD É";assert check::must::[i32](edit("search").character_casing())==native::character_casing_normal;assert this.changes==0;assert source("limited")=="MiXeD long";
+        let length=if shown("area")=="FIRST\r\nSECOND" {13} else {12};assert check::must::[i32](edit("area").selection_start())==length;assert check::must::[i32](edit("area").selection_length())==0;
+        check::log("PASS: input casing transforms Unicode display, preserves source and selection, resets live and leaves passwords unchanged");
+        assert edit("field").set_text("native edit").is_ok();this.timer=services::after(0.2f64,this.edited);
+    }
+    fn edited(ref this) {assert this.changes==1;assert source("field")==shown("field").view();this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI input casing",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: input casing readback and teardown");return 0;}

@@ -46,8 +46,17 @@ calendar text for numeric/native formats, live date changes, and default reset,
 plus rendered 12/24-hour time changes without spurious selection callbacks.
 It runs with the full parity script.
 
+`python tools/test_facet_winui_parity.py --grouped-items-only` checks grouped
+lists and collections, empty headers, flat item indexes, scroll targets,
+full-width grid headers, partial grid lines, live group changes and teardown.
+
+`python tools/test_facet_winui_parity.py --list-refresh-only` checks list-local
+begin/end refresh, native menu requests, availability, color/reset, retained
+editor drafts, duplicate suppression, callback removal and teardown.
+
 `python tools/test_facet_winui_parity.py --refresh-only` (from the repository root)
-checks native refresh requests, desktop menu activation, indicator color/reset,
+checks independent nested list/wrapper refresh, native refresh requests,
+desktop menu activation, indicator color/reset,
 duplicate suppression, completion and removal from the callback, initial refresh,
 cancellation before delivery, and closing while refresh is active. The style
 probe also checks accessibility name/help clearing, heading levels and Unicode
@@ -92,3 +101,74 @@ rows, selection/expansion and node-identity retention, default-height reset,
 replacement-node styling, custom-row binding and kind changes, retained editor
 state, initial/live/cleared automation row IDs, nested sender lookup after model replacement, callback removal and clean
 teardown. Rendered sizes allow pixel rounding.
+
+`--row-retention-only` checks list and collection binding refreshes, native
+editor identity and draft preservation across overlapping viewport changes,
+selective row-kind replacement, factory replacement, nested sender indexes,
+list appearance/disappearance counts and shutdown cleanup.
+
+`--input-transform-only` checks Unicode display casing, preserved programmatic
+source text, silent live transforms, native UTF-16 selection, default reset,
+limited input, unchanged passwords, native edit readback and teardown.
+
+`python tools/test_facet_winui_parity.py --popup-caption-only` checks fixed
+popup captions, live Unicode changes, selection readback and placeholder reset.
+The popup and date-format probes also exercise native events arriving while
+a newer application selection/date/time is waiting for synchronization.
+
+`python tools/test_facet_winui_parity.py --clear-button-only` verifies native
+clear-button visibility, clearing/readback, callback counts, live switching,
+read-only suppression and teardown.
+
+`python tools/test_facet_winui_parity.py --splits-only` checks initial and live
+pane bounds, resizing, conflicting constraints, collapse/restore on either
+side, axis changes, native divider size/placement, and zero-thickness hiding.
+It exercises the native drag handler's shared movement path and callback
+suppression at a bound; it does not synthesize a physical pointer drag.
+Shutdown must release every view and subscription.
+
+Validation caveat: desktop runs have intermittently timed out on the first list
+click. A combined run also exited with `0xC0000005` after the tree-row
+callback-removal assertion, before its teardown marker; the isolated tree probe
+then passed. Those failures remain undiagnosed. A successful retry is evidence
+for that run, not a fix for either intermittent failure.
+
+`python tools/test_facet_winui_parity.py --button-modes-only` exercises both
+directions of live Button/ToggleButton replacement for ordinary, icon and text
+buttons, including list rows, carousel pages, custom tree rows and a window
+root. It checks stable Facet records, native callbacks, stale-event suppression,
+stored checked state, focus, and closing with an unapplied mode change in either
+direction. Retained old native objects must no longer call application handlers.
+
+Secure/plain replacement: `python tools/test_facet_winui_parity.py --secure-modes-only`
+checks original mixed-case text, native edits, silent mode changes, focus,
+selection restoration, detached events and both pending-mode shutdown directions.
+The probe releases retained native objects before the WinUI apartment ends.
+
+`python tools/test_facet_winui_parity.py --time-open-only` checks initial/open/close
+requests, native dismissal, duplicate suppression, live time changes, removal in
+an opened callback, and closing the window with its flyout still open.
+
+`python tools/test_facet_winui_parity.py --reordering-only` checks native drag
+availability, flat source/destination readback, group restrictions, live policy
+changes, data invalidation and safe removal before/during callbacks. These checks
+exercise the move state directly; the gallery also tests actual mouse drags.
+
+`python tools/test_facet_winui_parity.py --hybrid-only` creates local HTML/CSS/JS
+fixtures, then checks Unicode and empty-message round trips, sends queued before
+loading, live file/root changes, clearing/restoring content, missing-file status,
+resource response overrides and removal from each of the four hybrid callbacks.
+Every process checks zero remaining native views and subscriptions.
+
+Swipe reveal: `python tools/test_facet_winui_parity.py --swiping-only` runs a
+native probe for threshold changes/clamping, drag slop, vertical rejection,
+cancellation, disabled state, action invocation, live replacement and removal
+from each of the five callbacks. It also checks subscription/view teardown.
+
+Swipe reveal: `python tools/test_facet_winui_parity.py --swiping-only` runs a
+native probe for threshold changes/clamping, drag slop, vertical rejection,
+cancellation, disabled state, action invocation, live replacement and removal
+from each of the five callbacks. It also checks subscription/view teardown.
+
+The swipe probe also checks auxiliary action identities, live private/open agent
+policy, identity cleanup, hidden-action compaction and accessible-name resets.

@@ -12,12 +12,14 @@ import "./style" as style;
 import "./typography" as typography;
 import "./media" as media;
 import "./shortcuts" as shortcuts;
+import "./agent_hooks" as agent_hooks;
+import "./accessibility" as accessibility;
 import "stdlib/box" as box;
 import "stdlib/option" as option;
 import "facet/vocabulary" as vocab;
 // A native Click can outlive its Facet record when application code removes it.
 // Active deliveries retain this small state until the outermost callback returns.
-struct Delivery {opaque record: *record::View,depth: u32,applied: bool,label: rt::Object,panel: rt::Object,has_icon: bool}
+struct Delivery {opaque record: *record::View,depth: u32,applied: bool,label: rt::Object,panel: rt::Object,has_icon: bool,reveal: rt::Object,reveal_token: ui::EventRegistrationToken}
 fn drop_delivery(p: *Delivery) {let owner: box::Box[Delivery]=box::from_raw::[Delivery](p as *u8);}
 static LIVE: i64=0;
 fn subscriptions() -> i64 {return LIVE;}
@@ -64,7 +66,30 @@ fn apply(r: *record::View) {
             if !value.is_null() {native::check(children.insert_at(0,value));};(*state).has_icon=!value.is_null();
         } else {let item=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));native::check(item.set_icon(value));}
     }
-    shortcuts::apply(r,clicked);(*state).applied=true;(*(*r).node).mark_content_changed();
+    apply_reveal(r);shortcuts::apply(r,clicked);(*state).applied=true;(*(*r).node).mark_content_changed();
+}
+fn reveal(r: *record::View) -> rt::Object {return (*((*r).extra as *Delivery)).reveal.clone();}
+fn apply_reveal(r: *record::View) {
+    let value=reveal(r);if value.is_null() {return;}let p=item_props(r);
+    // Register policy before changing text/content that an agent could inspect.
+    let key=(*(*r).node).key();let address=value.raw() as usize;
+    agent_hooks::alias(value,(*r).node,if key.is_empty() {"@swipe:${address}"} else {"@swipe:${key}"});
+    let panel=native::must::[ui::StackPanel](ui::StackPanel::new());let stack=native::must::[ui::IStackPanel](ui::IStackPanel::query(panel.object()));native::check(stack.set_spacing(4.0f64));
+    let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](native::must::[ui::IPanel](ui::IPanel::query(panel.object())).children())));
+    let image=icon((*p).icon.view());if !image.is_null() {native::check(children.append(image));}
+    let label=native::must::[ui::TextBlock](ui::TextBlock::new());native::check(native::must::[ui::ITextBlock](ui::ITextBlock::query(label.object())).set_text((*p).text.view()));native::check(children.append(label.object()));
+    native::check(native::must::[ui::IContentControl](ui::IContentControl::query(value)).set_content(panel.object()));
+    let control=native::must::[ui::IControl](ui::IControl::query(value));native::check(control.set_is_enabled((*core::node_data((*r).node)).common.is_enabled));
+    if (*p).is_destructive {native::check(control.set_foreground(style::brush(vocab::Color::danger())));}else {let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());typography::clear(value,native::must::[rt::Object](defaults.foreground_property()));}
+    let common: *props::CommonProps=#addr_of((*core::node_data((*r).node)).common);let element=native::must::[ui::IUIElement](ui::IUIElement::query(value));
+    native::check(element.set_visibility(if (*common).is_visible {ui::visibility_visible} else {ui::visibility_collapsed}));native::check(element.set_is_hit_test_visible(!(*common).input_transparent));native::check(element.set_opacity((*common).opacity));
+    accessibility::apply_to((*r).node,value);
+    let automation=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());if (*common).accessibility_label.is_empty() {native::check(automation.set_name(value,(*p).text.view()));}native::check(automation.set_automation_id(value,"${(*(*r).node).key()}:reveal"));
+}
+fn make_reveal(r: *record::View,callback: fn(rt::Object,rt::Object,*u8)->rt::Status) -> rt::Object {
+    let state=(*r).extra as *Delivery;if !(*state).reveal.is_null() {return (*state).reveal.clone();}
+    let button=native::must::[ui::Button](ui::Button::new());(*state).reveal=button.object();let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(callback,r as *u8));
+    (*state).reveal_token=native::must::[ui::EventRegistrationToken](native::must::[ui::IButtonBase](ui::IButtonBase::query(button.object())).add_click(handler.object()));LIVE=LIVE+1;apply_reveal(r);return button.object();
 }
 fn clicked(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
     let r=ctx as *record::View;if !(*core::node_data((*r).node)).common.is_enabled {return rt::Status {code:0};}
@@ -79,7 +104,7 @@ fn clicked(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
     (*state).depth=(*state).depth-1;if (*state).record.is_null() && (*state).depth==0 {drop_delivery(state);}return rt::Status {code:0};
 }
 fn attach(r: *record::View) {
-    let owner=match box::new::[Delivery](Delivery {record:r,depth:0,applied:false,label:rt::Object::empty(),panel:rt::Object::empty(),has_icon:false}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();
+    let owner=match box::new::[Delivery](Delivery {record:r,depth:0,applied:false,label:rt::Object::empty(),panel:rt::Object::empty(),has_icon:false,reveal:rt::Object::empty(),reveal_token:#zero::[ui::EventRegistrationToken]()}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();
     if (*r).kind==props::K_TOOLBAR_ITEM {
         let panel=native::must::[ui::StackPanel](ui::StackPanel::new());let stack=native::must::[ui::IStackPanel](ui::IStackPanel::query(panel.object()));native::check(stack.set_orientation(ui::orientation_horizontal));native::check(stack.set_spacing(8.0f64));
         let label=native::must::[ui::TextBlock](ui::TextBlock::new());let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](native::must::[ui::IPanel](ui::IPanel::query(panel.object())).children())));native::check(children.append(label.object()));
@@ -89,6 +114,8 @@ fn attach(r: *record::View) {
     else {let item=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));(*r).token=native::must::[ui::EventRegistrationToken](item.add_click(handler.object()));}LIVE=LIVE+1;
 }
 fn release(r: *record::View) {
+    let delivery=(*r).extra as *Delivery;
+    if !(*delivery).reveal.is_null() {agent_hooks::release((*delivery).reveal);native::check(native::must::[ui::IButtonBase](ui::IButtonBase::query((*delivery).reveal)).remove_click((*delivery).reveal_token));LIVE=LIVE-1;}
     shortcuts::release(r);
     if (*r).kind==props::K_TOOLBAR_ITEM {let button=native::must::[ui::IButtonBase](ui::IButtonBase::query((*r).object));native::check(button.remove_click((*r).token));}
     else {let item=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));native::check(item.remove_click((*r).token));}LIVE=LIVE-1;
