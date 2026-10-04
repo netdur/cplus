@@ -1,4 +1,5 @@
 import "facet/facet" as core;
+import "flex_layout/flex_layout" as flex;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/label" as label;
@@ -107,7 +108,7 @@ impl Controls: component::Component {
         crow.add(ui::checkbox(false, key: "ctl:check", on_checked_changed: this.on_checked));
         crow.add(ui::label("Checkbox is unchecked", key: "ctl:check_status",
             font_size: 14.0, text_color: vocab::Color::ink()));
-        body.add(core::row(crow).gap(12.0));
+        body.add(core::row(crow).gap(12.0).align(flex::Align::Center));
 
         body.add(shell::caption("Radio group  ·  group \"plan\""));
         body.add(ui::radio(true, key: "ctl:radio_a", text: "Alpha", group: "plan",
