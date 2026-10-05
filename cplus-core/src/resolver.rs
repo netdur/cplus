@@ -1626,12 +1626,17 @@ fn override_suffixes_for(platform: &str) -> Vec<String> {
     vec![format!("_{platform}")]
 }
 
-fn override_suffixes() -> Vec<String> {
-    override_suffixes_for(crate::target::active_platform())
+fn platform_override(p: PathBuf) -> PathBuf {
+    platform_variant_for(p, crate::target::active_platform())
 }
 
-fn platform_override(p: PathBuf) -> PathBuf {
-    let suffixes = override_suffixes();
+/// The `_<platform>` override for `platform`: `foo.cplus` becomes
+/// `foo_<platform>.cplus` when that sibling exists (Android also accepts
+/// `_linux`). This is the rule imports follow, exposed so the manifest's
+/// ENTRY follows it too — the entry is never imported, so before that a
+/// `main_windows.cplus` beside `main.cplus` was silently never used.
+pub fn platform_variant_for(p: PathBuf, platform: &str) -> PathBuf {
+    let suffixes = override_suffixes_for(platform);
     // Only base `.cplus` files participate; never double-suffix.
     let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
         return p;

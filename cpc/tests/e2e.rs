@@ -7738,6 +7738,127 @@ fn orphan_source_file_warns_w0005_and_success_prints_module_count() {
 }
 
 #[test]
+fn entry_file_takes_its_platform_variant() {
+    // bugs/a-platform-variant-of-the-entry-file-is-ignored: the entry is not
+    // imported, so the `_<platform>` override never applied to it and
+    // `main_<host>.cplus` beside `main.cplus` was silently never used. It
+    // now resolves the way an import does; the base is shadowed (no W0005),
+    // and the variant is compiled once (one module).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let plat = if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"entv\"\n").unwrap();
+    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 10; }\n").unwrap();
+    std::fs::write(
+        dir.join(format!("src/main_{plat}.cplus")),
+        "fn main() -> i32 { return 20; }\n",
+    )
+    .unwrap();
+    let bin = dir.join(if cfg!(windows) { "entv.exe" } else { "entv" });
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("-o")
+        .arg(&bin)
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "build must succeed: {stderr}");
+    assert!(!stderr.contains("W0005"), "the shadowed base entry is not an orphan: {stderr}");
+    assert!(stdout.contains("ok: 1 modules"), "the variant is compiled once: {stdout}");
+    let run = Command::new(&bin).status().expect("run entv");
+    assert_eq!(run.code(), Some(20), "the platform variant is the entry");
+}
+
+/// bugs/windows-gui-apps-are-console-subsystem: `[windows] subsystem =
+/// "windows"` links a windowed program (no console), and `fn main` still
+/// runs through `/ENTRY:mainCRTStartup`. Read straight from the PE header.
+#[cfg(windows)]
+#[test]
+fn windows_subsystem_key_links_a_gui_program() {
+    fn pe_subsystem(path: &Path) -> u16 {
+        let b = std::fs::read(path).expect("read exe");
+        let pe = u32::from_le_bytes(b[0x3C..0x40].try_into().unwrap()) as usize;
+        assert_eq!(&b[pe..pe + 4], b"PE\0\0", "not a PE image");
+        // Signature (4) + COFF file header (20), then the optional header,
+        // whose Subsystem field sits at offset 68 in both PE32 and PE32+.
+        let opt = pe + 4 + 20;
+        u16::from_le_bytes(b[opt + 68..opt + 70].try_into().unwrap())
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 7; }\n").unwrap();
+    for (manifest, want) in [
+        ("[package]\nname = \"gui\"\n", 3u16),
+        ("[package]\nname = \"gui\"\n\n[windows]\nsubsystem = \"windows\"\n", 2u16),
+    ] {
+        std::fs::write(dir.join("Cplus.toml"), manifest).unwrap();
+        let bin = dir.join("gui.exe");
+        let out = Command::new(cpc)
+            .arg("build")
+            .arg("-o")
+            .arg(&bin)
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc");
+        assert!(
+            out.status.success(),
+            "build must succeed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // 3 = IMAGE_SUBSYSTEM_WINDOWS_CUI, 2 = IMAGE_SUBSYSTEM_WINDOWS_GUI.
+        assert_eq!(pe_subsystem(&bin), want, "manifest:\n{manifest}");
+        let run = Command::new(&bin).status().expect("run gui");
+        assert_eq!(run.code(), Some(7), "`fn main` is still the entry");
+    }
+}
+
+/// bugs/cpc-test-exits-1-silently-when-the-test-binary-cannot-start: a test
+/// driver that dies with an NTSTATUS (here the loader's STATUS_DLL_NOT_FOUND,
+/// raised by hand) was folded into a bare exit 1 with no output at all.
+#[cfg(windows)]
+#[test]
+fn cpc_test_reports_an_abnormal_driver_exit() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "extern fn ExitProcess(code: u32);\n\
+         #[test]\nfn dies() { ExitProcess(0xC0000135u32); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg("--json")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success());
+    assert!(
+        stderr.contains("0xC0000135") && stderr.contains("STATUS_DLL_NOT_FOUND"),
+        "the status is named: {stderr}"
+    );
+    let last = stdout.lines().last().unwrap_or("");
+    assert!(
+        last.starts_with("{\"passed\":null,\"failed\":null,\"error\":")
+            && last.contains("0xC0000135"),
+        "--json ends with a summary that reports it: {stdout}"
+    );
+}
+
+#[test]
 fn lang_string_eq_lang_string_compiles() {
     // 2026-08-12: `Text == Text` compares byte content through BOTH sides'
     // `str` views — the rule `Text == str` set, completed. This was E0302

@@ -83,6 +83,11 @@ Five facts that decide how you use this:
   on a Mac looks for `_ios`, never `_macos`.
 - **A file already carrying the active suffix is never re-suffixed** —
   `reactor_linux.cplus` does not look for `reactor_linux_linux.cplus`.
+- **The entry follows the same rule.** It is never imported, but the
+  manifest's entry (declared, or the `src/main.cplus` default) resolves
+  exactly as an import would: `src/main_windows.cplus` beside
+  `src/main.cplus` is the entry of a Windows build. The base is then
+  shadowed on that platform, not an orphan (no W0005).
 
 ### Android falls back to `_linux`
 

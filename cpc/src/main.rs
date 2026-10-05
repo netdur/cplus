@@ -2592,6 +2592,96 @@ fn prebuild_fingerprint(
     Ok(format!("{:016x}", h.finish()))
 }
 
+/// The running compiler's version, size and mtime: what tells one `cargo
+/// build` of cpc from the next (see `prebuild_fingerprint`).
+fn hash_compiler_identity(h: &mut std::collections::hash_map::DefaultHasher) {
+    use std::hash::Hash;
+    env!("CARGO_PKG_VERSION").hash(h);
+    if let Ok(exe) = std::env::current_exe() {
+        if let Ok(md) = std::fs::metadata(&exe) {
+            md.len().hash(h);
+            if let Ok(t) = md.modified() {
+                if let Ok(d) = t.duration_since(std::time::UNIX_EPOCH) {
+                    d.as_nanos().hash(h);
+                }
+            }
+        }
+    }
+}
+
+/// Bring every prebuilt dependency's `lib/include/` up to date with its
+/// `src/` before a `cpc check`.
+///
+/// A consumer type-checks against those headers, and only a BUILD refreshed
+/// them — `ensure_one_slice` regenerates them together with the archive. So
+/// `cpc check` after an edit to a prebuilt package read the previous surface:
+/// a new item was "no item named `X` in module ..." while every older item in
+/// the same file resolved, and nothing in the message named a cache
+/// (bugs/prebuilt-slice-hides-a-source-edit-from-consumers.md).
+///
+/// Headers only, never the archive: a check does not link, and running the
+/// slice fingerprint here would rebuild every slice in debug mode after each
+/// release build and back again. The stamp is the package's own `src/` plus
+/// the compiler, which is all a header is generated from. A package that has
+/// no `lib/include/` yet resolves from `src/` and is left alone. Best effort:
+/// a failure leaves the old headers, which is what check read before.
+fn refresh_dep_headers(m: &manifest::Manifest, seen: &mut Vec<PathBuf>) {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let platform = target::active_platform();
+    for dep in &m.dependencies {
+        if !dep.active_on(platform) {
+            continue;
+        }
+        let Some(vendor_dir) = vendor_dir_for(m, &dep.name) else {
+            continue;
+        };
+        let key = vendor_dir.canonicalize().unwrap_or_else(|_| vendor_dir.clone());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        let Ok(vm) = manifest::load(&vendor_dir.join("Cplus.toml")) else {
+            continue;
+        };
+        refresh_dep_headers(&vm, seen);
+        if !vm.build.prebuild || vm.build.dev {
+            continue;
+        }
+        if vm.link.as_ref().is_some_and(|l| !l.bundled.is_empty()) {
+            continue;
+        }
+        if !vendor_dir.join("lib").join("include").is_dir() {
+            continue;
+        }
+        let src_dir = vendor_dir.join("src");
+        let Ok(rd) = fs::read_dir(&src_dir) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cplus"))
+            .collect();
+        files.sort();
+        let mut h = DefaultHasher::new();
+        hash_compiler_identity(&mut h);
+        for f in &files {
+            f.file_name().map(|n| n.to_string_lossy().into_owned()).hash(&mut h);
+            fs::read(f).unwrap_or_default().hash(&mut h);
+        }
+        let want = format!("{:016x}", h.finish());
+        let stamp = vendor_dir.join("target").join(".headers.fingerprint");
+        let _lock = lock_package_prebuild(&vendor_dir, &vm.package.name);
+        if fs::read_to_string(&stamp).is_ok_and(|have| have.trim() == want) {
+            continue;
+        }
+        if generate_headers_for(&vendor_dir).is_ok() {
+            let _ = fs::write(&stamp, &want);
+        }
+    }
+}
+
 /// One package's inputs folded into a single number: its own `src/`, then the
 /// same answer for every dependency active on this platform.
 ///
@@ -3348,6 +3438,16 @@ fn build_project(
             link_args.push("-Xlinker".to_string());
             link_args.push(plist.to_string_lossy().to_string());
         }
+    }
+    // `[windows] subsystem = "windows"`: a windowed program. lld-link's
+    // default is the console subsystem, so a GUI app launched from Explorer
+    // opened a console beside its window and died with it. `/ENTRY:
+    // mainCRTStartup` keeps `fn main` the entry — the windows subsystem
+    // would otherwise expect `WinMain`. App builds only: `cpc test` keeps
+    // the console, since its driver reports on stdout.
+    // bugs/windows-gui-apps-are-console-subsystem.md
+    if target::active_platform() == "windows" {
+        link_args.extend(m.windows_subsystem.link_args());
     }
     // Phase 2 Slice 2C: walk dependencies, validate each vendor package's
     // manifest-is-truth contract, and append their `[link]` contributions
@@ -4633,6 +4733,17 @@ fn run_test(
             // back to a clamped u8 ExitCode so callers can distinguish
             // "all passed" (0) from "something failed" (1..=255).
             if let Some(code) = s.code() {
+                // Windows has no signals: a crash, a fast-fail, or a loader
+                // that could not resolve an imported DLL all surface as an
+                // NTSTATUS exit code (0xC0000135, 0xC0000005, ...). The clamp
+                // below folded every one of them into a bare `1` with no
+                // output — indistinguishable from "one test failed", and with
+                // `--json`, no summary line at all.
+                // bugs/cpc-test-exits-1-silently-when-the-test-binary-cannot-start.md
+                if let Some(desc) = abnormal_exit_description(code) {
+                    report_abnormal_test_exit(&desc, opts.json);
+                    return ExitCode::FAILURE;
+                }
                 if code == 0 {
                     ExitCode::SUCCESS
                 } else {
@@ -4649,24 +4760,94 @@ fn run_test(
                 {
                     use std::os::unix::process::ExitStatusExt;
                     if let Some(sig) = s.signal() {
-                        eprintln!(
-                            "cpc test: the test binary was killed by signal {sig} before it finished"
+                        report_abnormal_test_exit(
+                            &format!("killed by signal {sig}"),
+                            opts.json,
                         );
-                        eprintln!(
-                            "    no test output means it died during discovery or in the first test"
-                        );
+                        return ExitCode::FAILURE;
                     }
                 }
-                #[cfg(not(unix))]
-                eprintln!("cpc test: the test binary terminated abnormally");
+                report_abnormal_test_exit("terminated abnormally", opts.json);
                 ExitCode::FAILURE
             }
         }
         Err(e) => {
             eprintln!("cpc test: failed to invoke test binary: {e}");
+            if opts.json {
+                println!(
+                    "{{\"passed\":null,\"failed\":null,\"error\":\"{}\"}}",
+                    json_escape_str(&format!("the test binary could not be started: {e}"))
+                );
+            }
             ExitCode::FAILURE
         }
     }
+}
+
+/// The test driver exits with its failure count. On Windows an exit code with
+/// the top bit set is an NTSTATUS the process died with instead (a crash, a
+/// fast-fail, a DLL the loader could not find) — never a count. Returns a
+/// one-line description for such a code, `None` for an ordinary exit.
+fn abnormal_exit_description(code: i32) -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let status = code as u32;
+    if status & 0x8000_0000 == 0 {
+        return None;
+    }
+    let (name, meaning) = match status {
+        0xC000_0135 => ("STATUS_DLL_NOT_FOUND", "a DLL the test binary imports was not found — is its directory on PATH?"),
+        0xC000_0139 => ("STATUS_ENTRYPOINT_NOT_FOUND", "a DLL was found but lacks a function the test binary imports — a version mismatch?"),
+        0xC000_007B => ("STATUS_INVALID_IMAGE_FORMAT", "a DLL the test binary imports is not a valid x64 image (32-bit, or corrupt)"),
+        0xC000_0142 => ("STATUS_DLL_INIT_FAILED", "a DLL the test binary imports failed to initialize"),
+        0xC000_0005 => ("STATUS_ACCESS_VIOLATION", "access violation (invalid memory read or write)"),
+        0xC000_00FD => ("STATUS_STACK_OVERFLOW", "stack overflow"),
+        0xC000_0409 => ("STATUS_STACK_BUFFER_OVERRUN", "fast-fail (__fastfail / a CRT security check)"),
+        0xC000_001D => ("STATUS_ILLEGAL_INSTRUCTION", "illegal instruction (a trap, or code built for a CPU feature this machine lacks)"),
+        0xC000_0094 => ("STATUS_INTEGER_DIVIDE_BY_ZERO", "integer division by zero"),
+        0xC000_0095 => ("STATUS_INTEGER_OVERFLOW", "integer overflow"),
+        0xC000_0374 => ("STATUS_HEAP_CORRUPTION", "heap corruption"),
+        0xC000_0417 => ("STATUS_INVALID_CRT_PARAMETER", "the C runtime rejected an invalid parameter"),
+        0xC000_013A => ("STATUS_CONTROL_C_EXIT", "interrupted by Ctrl+C"),
+        0x8000_0003 => ("STATUS_BREAKPOINT", "breakpoint (a debug trap with no debugger attached)"),
+        _ => ("", ""),
+    };
+    Some(if name.is_empty() {
+        format!("exited with NTSTATUS 0x{status:08X}")
+    } else {
+        format!("exited with 0x{status:08X} ({name}): {meaning}")
+    })
+}
+
+/// Say what happened to a test driver that did not finish normally. The
+/// driver's own summary never printed, so with `--json` this line IS the
+/// summary — a consumer reading the last line gets an answer, not nothing.
+fn report_abnormal_test_exit(desc: &str, json: bool) {
+    eprintln!("cpc test: the test binary {desc}");
+    eprintln!("    no summary means it died before the suite finished (or before main ran)");
+    if json {
+        println!(
+            "{{\"passed\":null,\"failed\":null,\"error\":\"{}\"}}",
+            json_escape_str(&format!("the test binary {desc}"))
+        );
+    }
+}
+
+fn json_escape_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Single-file program build (lex/parse/lower/sema/borrowck) returning the
@@ -4935,6 +5116,7 @@ fn run_check_project(diag_mode: DiagMode) -> ExitCode {
     if let Err(code) = collect_dep_link_args(&m, diag_mode) {
         return code;
     }
+    refresh_dep_headers(&m, &mut Vec::new());
     let dep_names: Vec<String> = active_dep_names(&m);
     match load_and_check_project_full(
         &entry_path,

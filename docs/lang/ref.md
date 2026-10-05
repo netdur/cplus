@@ -393,6 +393,8 @@ src/reactor_linux.cplus    # shadows it when the target's platform is linux
 
 `<module>_<platform>.cplus` shadows `<module>.cplus` for that target;
 importers always write the base name (`import "./reactor" as reactor;`).
+The app entry follows the same rule (`src/main_windows.cplus` is the entry
+of a Windows build when it sits beside `src/main.cplus`).
 Platform names: `macos linux windows ios android esp32 wasm`.
 
 | Rule | Detail |
@@ -544,6 +546,7 @@ Exit 0 on all-pass, 2 on any failure. Details: [testing.md](testing.md).
 | `[<platform>] entry` | per-platform entry; declaring any scopes the app (E0413 elsewhere). Platforms: `macos linux windows ios android esp32 wasm` |
 | `[dependencies]` / `[<platform>.dependencies]` | flat, complete; `name = "*"` or a tree-URL spec |
 | `[android.maven]` | third-party Maven/AAR pins: `"group:artifact" = "version"`, exact, no wildcard. Android only (E0877 elsewhere); `cpc pm add . --maven G:A:V` writes one and downloads its closure |
+| `[windows] subsystem` | `"console"` (default) or `"windows"`. `"windows"` links a windowed app (`/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`, so `fn main` stays the entry): no console window opens beside it. App builds only; `cpc test` stays console. Windows only (E0406 elsewhere) |
 | `[library] kind/entry/name` | C-ABI product: `staticlib`(default)/`cdylib`/`both`; explicit `entry` = bare C names |
 | `[link] frameworks/libs/search-paths/extra-objects` | the link surface; `${VAR}` expansion in paths. A dependency's `[link]` travels to its consumers |
 | `[link] bundled` | basenames of binaries this package ships at `lib/<triple>/`; the triple is derived, never declared. Declared-but-missing is E0860, undeclared-but-present is E0861 |
