@@ -1,0 +1,189 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/text" as text;
+import "stdlib/env" as env;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/progress" as progress;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn native_label(key: str) -> native::ITextBlock {return check::must::[native::ITextBlock](native::ITextBlock::query(check::object(key)));}
+fn native_button() -> native::IControl {return check::must::[native::IControl](native::IControl::query(check::object("button")));}
+fn content(key: str="button") -> rt::Object {let b=check::must::[native::IContentControl](native::IContentControl::query(check::object(key)));return check::must::[rt::Object](b.content());}
+fn button_props() -> *props::ButtonProps {return (*core::node_data(check::node("button"))).props as *props::ButtonProps;}
+fn animated_source() -> native::IBitmapImage {let host=check::must::[native::IBorder](native::IBorder::query(check::object("animated")));let brush=check::must::[native::IImageBrush](native::IImageBrush::query(check::must::[rt::Object](host.background())));return check::must::[native::IBitmapImage](native::IBitmapImage::query(check::must::[rt::Object](brush.image_source())));}
+fn animation_props() -> *props::ImageProps {return (*core::node_data(check::node("animated"))).props as *props::ImageProps;}
+fn dirty(key: str) {core::touch(check::node(key),0xffffffffffffffffu64);}
+fn named_part(value: rt::Object,name: str) -> rt::Object {
+    match native::IFrameworkElement::query(value) {result::Result::Ok(v)=>{if check::must::[text::Text](v.name())==name {return value.clone();}},result::Result::Err(e)=>{assert e.code==rt::no_interface();}}
+    let tree=check::must::[native::IVisualTreeHelperStatics](native::VisualTreeHelper::i_visual_tree_helper_statics_factory());let count=check::must::[i32](tree.get_children_count(value));var i: i32=0;
+    while i<count {let found=named_part(check::must::[rt::Object](tree.get_child(value,i)),name);if !found.is_null() {return found;}i=i+1;}return rt::Object::empty();
+}
+fn track_brush(name: str) -> rt::Object {let shape=check::must::[native::IShape](native::IShape::query(named_part(check::object("slider"),name)));return check::must::[rt::Object](shape.fill());}
+fn brush_color(value: rt::Object) -> native::Color {let brush=check::must::[native::ISolidColorBrush](native::ISolidColorBrush::query(value));return check::must::[native::Color](brush.color());}
+fn thumb_brush() -> rt::Object {let thumb=check::must::[native::IControl](native::IControl::query(named_part(check::object("slider"),"HorizontalThumb")));return check::must::[rt::Object](thumb.background());}
+fn slider_props() -> *props::SliderProps {return (*core::node_data(check::node("slider"))).props as *props::SliderProps;}
+struct Probe {date_events: i32,min_date: i64,max_date: i64,min_track: native::Color,max_track: native::Color,thumb_color: native::Color,slider_tip: rt::Object,bitmap: rt::Object,button_size: f64,span_size: f64,button_border: f64,phase: u32,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn date_changed(ref this,sender: *u8) {this.date_events=this.date_events+1;}
+    fn build(ref this) -> core::Node {
+        var spans=vocab::Spans::new();let added=spans.add(vocab::TextSpan::of("Decorated",decoration:vocab::TextDecoration::Strikethrough));
+        var options=vocab::TextList::new();let option_added=options.add("Selected item");
+        return @ui {column {
+            date_picker(vocab::Date {year:2026,month:10,day:1},key:"date_reset",on_date_selected:this.date_changed).height(32.0f64)
+            popup("Choose an item",key:"popup_color",selected_index:-1,items:options).height(32.0f64)
+            slider(0.5f64,key:"slider",minimum:0.0f64,maximum:1.0f64).height(32.0f64)
+            button("École Ω 🚀",key:"button").width(360.0f64).height(100.0f64)
+            label("École Ω 🚀",key:"label").height(60.0f64)
+            span("École Ω 🚀",key:"span").height(60.0f64)
+            progress(0.5f64,key:"progress").height(12.0f64)
+            page_dots(3,key:"dots").height(12.0f64)
+            label("",key:"rich",formatted_text:spans).height(50.0f64)
+            text_button("École Ω 🚀",key:"text",text_transform:vocab::TextTransform::Uppercase).height(50.0f64)
+            icon_button(key:"image",symbol:0xe5d2u32,bordered:true).width(64.0f64).height(64.0f64)
+            image("",key:"animated").width(32.0f64).height(32.0f64)
+            radio(false,key:"radio",text:"École Ω 🚀",text_transform:vocab::TextTransform::Lowercase).height(50.0f64)
+        }.padding(20.0f64).gap(12.0f64)};
+    }
+    fn ready(ref this) {
+        let initial=check::must::[native::Thickness](native_label("label").padding());assert initial.top>0.0f64 && initial.top<30.0f64;
+        assert check::must::[native::Thickness](native_label("rich").padding()).top>0.0f64;
+        let date=check::must::[native::ICalendarDatePicker](native::ICalendarDatePicker::query(check::object("date_reset")));this.min_date=check::must::[native::DateTime](date.min_date()).universal_time;this.max_date=check::must::[native::DateTime](date.max_date()).universal_time;
+        let date_p: *props::DatePickerProps=(*core::node_data(check::node("date_reset"))).props as *props::DatePickerProps;(*date_p).minimum_date=vocab::Date {year:2026,month:1,day:1};(*date_p).maximum_date=vocab::Date {year:2026,month:12,day:31};dirty("date_reset");
+        let popup_p: *props::PopupProps=(*core::node_data(check::node("popup_color"))).props as *props::PopupProps;(*popup_p).title_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);(*popup_p).text_color=vocab::Color::rgba(0.0f64,0.0f64,1.0f64,1.0f64);dirty("popup_color");
+        let slider=check::must::[native::IControl](native::IControl::query(check::object("slider")));this.min_track=brush_color(check::must::[rt::Object](slider.foreground()));this.max_track=brush_color(check::must::[rt::Object](slider.background()));
+        let tips=check::must::[native::IToolTipServiceStatics](native::ToolTipService::i_tool_tip_service_statics_factory());this.slider_tip=check::must::[rt::Object](tips.get_tool_tip(named_part(check::object("slider"),"HorizontalThumb")));
+        let tooltip=check::must::[native::IToolTip](native::IToolTip::query(this.slider_tip));assert tooltip.set_is_open(true).is_ok();assert check::must::[bool](tooltip.is_open());
+        this.thumb_color=brush_color(thumb_brush());let slider_p=slider_props();(*slider_p).thumb_color=vocab::Color::rgba(0.0f64,0.0f64,1.0f64,1.0f64);(*slider_p).minimum_track_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);(*slider_p).maximum_track_color=vocab::Color::rgba(0.0f64,1.0f64,0.0f64,1.0f64);dirty("slider");
+        let animation=animation_props();(*animation).source=match env::var("CPLUS_TEST_ANIMATION") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*animation).is_animation_playing=false;dirty("animated");
+        let b=native_button();this.button_size=check::must::[f64](b.font_size());this.button_border=check::must::[native::Thickness](b.border_thickness()).left;this.span_size=check::must::[f64](native_label("span").font_size());
+        let p=button_props();(*p).font_size=20.0f64;(*p).font_weight=vocab::FontWeight::Bold;(*p).is_italic=true;(*p).font_scales=false;(*p).font_family=text::from_str("Consolas");(*p).character_spacing=2.0f64;
+        (*p).border_width=3.0f64;(*p).border_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);(*p).corner_radius=vocab::Corners::all(8.0f64);(*p).text_transform=vocab::TextTransform::Uppercase;dirty("button");
+        let sp: *props::SpanProps=(*core::node_data(check::node("span"))).props as *props::SpanProps;
+        (*sp).font_size=20.0f64;(*sp).font_family=text::from_str("Consolas");(*sp).font_scales=false;(*sp).is_italic=true;(*sp).character_spacing=2.0f64;
+        (*sp).text_transform=vocab::TextTransform::Uppercase;(*sp).line_height=32.0f64;(*sp).text_decoration=vocab::TextDecoration::Underline;dirty("span");
+        let l: *props::LabelProps=(*core::node_data(check::node("label"))).props as *props::LabelProps;(*l).vertical_align=vocab::TextAlign::End;(*l).selectable=true;(*l).text_transform=vocab::TextTransform::Uppercase;(*l).line_height=32.0f64;dirty("label");
+        let image: *props::IconButtonProps=(*core::node_data(check::node("image"))).props as *props::IconButtonProps;
+        (*image).source=match env::var("CPLUS_TEST_IMAGE") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+        (*image).symbol=0;(*image).fit=vocab::ImageFit::AspectFill;(*image).border_width=4.0f64;(*image).corner_radius=vocab::Corners::all(10.0f64);dirty("image");
+        let dots: *props::PageDotsProps=(*core::node_data(check::node("dots"))).props as *props::PageDotsProps;(*dots).dot_shape=vocab::DotShape::Square;dirty("dots");
+        let progress: *props::ProgressProps=(*core::node_data(check::node("progress"))).props as *props::ProgressProps;(*progress).progress_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);dirty("progress");
+        this.timer=services::after(0.2f64,this.changed);
+    }
+    fn changed(ref this) {
+        let bottom=check::must::[native::Thickness](native_label("label").padding());assert bottom.top>27.0f64 && bottom.top<29.0f64;assert check::must::[bool](native_label("label").is_text_selection_enabled());
+        let tooltip=check::must::[native::IToolTip](native::IToolTip::query(this.slider_tip));assert !check::must::[bool](tooltip.is_open());this.slider_tip=rt::Object::empty();check::log("PASS: recoloring closes the old slider thumb tooltip");
+        let date=check::must::[native::ICalendarDatePicker](native::ICalendarDatePicker::query(check::object("date_reset")));assert check::must::[native::DateTime](date.min_date()).universal_time>this.min_date;assert check::must::[native::DateTime](date.max_date()).universal_time<this.max_date;
+        let date_p: *props::DatePickerProps=(*core::node_data(check::node("date_reset"))).props as *props::DatePickerProps;(*date_p).minimum_date=#zero::[vocab::Date]();(*date_p).maximum_date=#zero::[vocab::Date]();(*date_p).date=#zero::[vocab::Date]();dirty("date_reset");
+        let placeholder=check::must::[native::ITextBlock](native::ITextBlock::query(named_part(check::object("popup_color"),"PlaceholderTextBlock")));assert check::must::[text::Text](placeholder.text())=="Choose an item";let title_color=brush_color(check::must::[rt::Object](placeholder.foreground()));assert title_color.r==255 && title_color.b==0;
+        let popup_p: *props::PopupProps=(*core::node_data(check::node("popup_color"))).props as *props::PopupProps;(*popup_p).title_color=vocab::Color::clear();dirty("popup_color");
+        let min=brush_color(track_brush("HorizontalDecreaseRect"));let max=brush_color(track_brush("HorizontalTrackRect"));assert min.r==255 && min.g==0;assert max.r==0 && max.g==255;
+        let thumb=brush_color(thumb_brush());assert thumb.b==255 && thumb.r==0 && thumb.g==0;
+        let slider_p=slider_props();(*slider_p).thumb_color=vocab::Color::clear();(*slider_p).minimum_track_color=vocab::Color::clear();(*slider_p).maximum_track_color=vocab::Color::clear();dirty("slider");
+        let bitmap=animated_source();assert check::must::[bool](bitmap.is_animated_bitmap());assert !check::must::[bool](bitmap.auto_play());assert !check::must::[bool](bitmap.is_playing());this.bitmap=check::must::[rt::Object](bitmap.object().query(rt::unknown_iid()));
+        let animation=animation_props();(*animation).is_animation_playing=true;dirty("animated");
+        let panel=check::must::[native::IPanel](native::IPanel::query(check::object("dots")));let dots=check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));let square=check::must::[native::IRectangle](native::IRectangle::query(check::must::[rt::Object](dots.get_at(0))));
+        let pc=check::must::[native::IControl](native::IControl::query(check::object("progress")));let brush=check::must::[native::ISolidColorBrush](native::ISolidColorBrush::query(check::must::[rt::Object](pc.foreground())));assert check::must::[native::Color](brush.color()).r==255;
+        let dp: *props::PageDotsProps=(*core::node_data(check::node("dots"))).props as *props::PageDotsProps;(*dp).dot_shape=vocab::DotShape::Circle;dirty("dots");
+        let image=check::must::[native::IImage](native::IImage::query(content("image")));assert check::must::[i32](image.stretch())==native::stretch_uniform_to_fill;
+        let source=check::must::[native::IBitmapSource](native::IBitmapSource::query(check::must::[rt::Object](image.source())));assert check::must::[i32](source.pixel_width())==1;
+        let ib=check::must::[native::IControl](native::IControl::query(check::object("image")));assert check::must::[native::Thickness](ib.border_thickness()).left==4.0f64;assert check::must::[native::CornerRadius](ib.corner_radius()).top_left==10.0f64;
+        let ip: *props::IconButtonProps=(*core::node_data(check::node("image"))).props as *props::IconButtonProps;(*ip).bordered=false;(*ip).fit=vocab::ImageFit::Center;dirty("image");
+        let b=native_button();assert check::must::[f64](b.font_size())==20.0f64;assert check::must::[i32](b.character_spacing())==100;assert check::must::[native::FontWeight](b.font_weight()).weight==700;
+        assert check::must::[i32](b.font_style())==native::font_style_italic;assert !check::must::[bool](b.is_text_scale_factor_enabled());assert check::must::[native::Thickness](b.border_thickness()).left==3.0f64;assert check::must::[native::CornerRadius](b.corner_radius()).top_left==8.0f64;
+        let title=check::must::[native::ITextBlock](native::ITextBlock::query(content()));assert check::must::[text::Text](title.text())=="ÉCOLE Ω 🚀";assert check::must::[f64](title.font_size())==20.0f64;
+        assert check::must::[i32](title.text_trimming())==native::text_trimming_character_ellipsis;
+        assert check::must::[text::Text](native_label("label").text())=="ÉCOLE Ω 🚀";assert check::must::[text::Text](native_label("span").text())=="ÉCOLE Ω 🚀";
+        let sp=native_label("span");assert check::must::[i32](sp.character_spacing())==100;assert check::must::[f64](sp.line_height())==32.0f64;assert check::must::[i32](sp.line_stacking_strategy())==native::line_stacking_strategy_block_line_height;
+        assert check::must::[u32](sp.text_decorations())==native::text_decorations_underline;assert !check::must::[bool](sp.is_text_scale_factor_enabled());assert check::must::[f64](native_label("label").line_height())==32.0f64;
+        let inline=check::must::[native::IVector_Microsoft_UI_Xaml_Documents_Inline](native::IVector_Microsoft_UI_Xaml_Documents_Inline::query(check::must::[rt::Object](native_label("rich").inlines())));
+        let run=check::must::[native::ITextElement](native::ITextElement::query(check::must::[rt::Object](inline.get_at(0))));assert check::must::[u32](run.text_decorations())==native::text_decorations_strikethrough;
+        let tl=check::must::[native::ITextBlock](native::ITextBlock::query(content("text")));assert check::must::[text::Text](tl.text())=="ÉCOLE Ω 🚀";
+        let rv=check::must::[native::IPropertyValue](native::IPropertyValue::query(content("radio")));assert check::must::[text::Text](rv.get_string())=="école ω 🚀";
+        let p=button_props();assert (*p).title=="École Ω 🚀";(*p).font_size=0.0f64;(*p).font_family=text::new();(*p).is_italic=false;(*p).font_weight=vocab::FontWeight::Default;
+        (*p).font_scales=true;(*p).character_spacing=0.0f64;(*p).bordered=false;(*p).text_transform=vocab::TextTransform::Lowercase;(*p).line_break=vocab::LineBreak::WordWrap;dirty("button");
+        let span: *props::SpanProps=(*core::node_data(check::node("span"))).props as *props::SpanProps;assert (*span).text=="École Ω 🚀";(*span).font_size=0.0f64;(*span).font_family=text::new();(*span).is_italic=false;(*span).font_scales=true;(*span).character_spacing=0.0f64;
+        (*span).line_height=0.0f64;(*span).text_transform=vocab::TextTransform::None;(*span).text_decoration=vocab::TextDecoration::None;dirty("span");
+        let l: *props::LabelProps=(*core::node_data(check::node("label"))).props as *props::LabelProps;assert (*l).text=="École Ω 🚀";(*l).vertical_align=vocab::TextAlign::Start;(*l).line_height=0.0f64;(*l).text_transform=vocab::TextTransform::None;dirty("label");
+        this.timer=services::after(0.2f64,this.reset);
+    }
+    fn reset(ref this) {
+        assert check::must::[native::Thickness](native_label("label").padding()).top==0.0f64;check::log("PASS: label center/end/start alignment updates retain selection and rich text");
+        let date=check::must::[native::ICalendarDatePicker](native::ICalendarDatePicker::query(check::object("date_reset")));assert check::must::[native::DateTime](date.min_date()).universal_time==this.min_date;assert check::must::[native::DateTime](date.max_date()).universal_time==this.max_date;assert check::must::[rt::Object](date.date()).is_null();assert this.date_events==0;
+        let factory=check::must::[native::IPropertyValueStatics](native::PropertyValue::i_property_value_statics_factory());assert date.set_date(check::must::[rt::Object](factory.create_date_time(native::DateTime {universal_time:this.min_date}))).is_ok();assert this.date_events==1;
+        assert date.set_date(rt::Object::empty()).is_ok();assert this.date_events==2;let date_p: *props::DatePickerProps=(*core::node_data(check::node("date_reset"))).props as *props::DatePickerProps;assert (*date_p).date.year==0;
+        assert date.set_date(rt::Object::empty()).is_ok();assert this.date_events==2;check::log("PASS: calendar clearing, default limits and native empty-selection notifications");
+        let combo=check::must::[native::IComboBox](native::IComboBox::query(check::object("popup_color")));assert check::must::[rt::Object](combo.placeholder_foreground()).is_null();let placeholder=check::must::[native::ITextBlock](native::ITextBlock::query(named_part(check::object("popup_color"),"PlaceholderTextBlock")));let title_color=brush_color(check::must::[rt::Object](placeholder.foreground()));assert title_color.r!=255 || title_color.b!=0;
+        let popup_p: *props::PopupProps=(*core::node_data(check::node("popup_color"))).props as *props::PopupProps;(*popup_p).selected_index=0;dirty("popup_color");
+        check::log("PASS: rendered popup title color and native placeholder restoration");
+        let min=brush_color(track_brush("HorizontalDecreaseRect"));let max=brush_color(track_brush("HorizontalTrackRect"));assert min.r==this.min_track.r && min.g==this.min_track.g && min.b==this.min_track.b && min.a==this.min_track.a;assert max.r==this.max_track.r && max.g==this.max_track.g && max.b==this.max_track.b && max.a==this.max_track.a;
+        let thumb=brush_color(thumb_brush());assert thumb.r==this.thumb_color.r && thumb.g==this.thumb_color.g && thumb.b==this.thumb_color.b && thumb.a==this.thumb_color.a;
+        check::log("PASS: rendered slider track/thumb colors and native default restoration");
+        let bitmap=animated_source();assert check::must::[bool](bitmap.is_playing());assert check::must::[rt::Object](bitmap.object().query(rt::unknown_iid())).raw()==this.bitmap.raw();let animation=animation_props();(*animation).fit=vocab::ImageFit::Fill;dirty("animated");
+        let panel=check::must::[native::IPanel](native::IPanel::query(check::object("dots")));let dots=check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));let circle=check::must::[native::IEllipse](native::IEllipse::query(check::must::[rt::Object](dots.get_at(0))));
+        let ib=check::must::[native::IControl](native::IControl::query(check::object("image")));assert check::must::[native::Thickness](ib.border_thickness()).left==0.0f64;
+        let image=check::must::[native::IImage](native::IImage::query(content("image")));assert check::must::[i32](image.stretch())==native::stretch_none;
+        let ip: *props::IconButtonProps=(*core::node_data(check::node("image"))).props as *props::IconButtonProps;(*ip).bordered=true;dirty("image");
+        let b=native_button();assert check::must::[f64](b.font_size())==this.button_size;assert check::must::[native::Thickness](b.border_thickness()).left==0.0f64;assert check::must::[bool](b.is_text_scale_factor_enabled());assert check::must::[i32](b.character_spacing())==0;
+        let title=check::must::[native::ITextBlock](native::ITextBlock::query(content()));assert check::must::[text::Text](title.text())=="école ω 🚀";assert check::must::[i32](title.text_wrapping())==native::text_wrapping_wrap;assert check::must::[i32](title.text_trimming())==native::text_trimming_none;
+        let sp=native_label("span");assert check::must::[f64](sp.font_size())==this.span_size;assert check::must::[f64](sp.line_height())==0.0f64;assert check::must::[i32](sp.line_stacking_strategy())==native::line_stacking_strategy_max_height;
+        assert check::must::[u32](sp.text_decorations())==native::text_decorations_none;assert check::must::[text::Text](sp.text())=="École Ω 🚀";assert check::must::[f64](native_label("label").line_height())==0.0f64;
+        check::log("PASS: Unicode casing preserves source, button/span typography, line height and inline decoration");
+        let p=button_props();(*p).bordered=true;(*p).border_width=0.0f64;(*p).border_color=vocab::Color::clear();(*p).corner_radius=vocab::Corners::none();(*p).text_transform=vocab::TextTransform::None;(*p).symbol=0xe5d2u32;(*p).content_layout=vocab::ContentLayout::ImageLeft;dirty("button");
+        this.phase=0;this.timer=services::after(0.2f64,this.layout);
+    }
+    fn layout(ref this) {
+        let combo_control=check::must::[native::IControl](native::IControl::query(check::object("popup_color")));let selection_color=brush_color(check::must::[rt::Object](combo_control.foreground()));assert selection_color.r==0 && selection_color.b==255;
+        let selector=check::must::[native::ISelector](native::ISelector::query(check::object("popup_color")));assert check::must::[i32](selector.selected_index())==0;
+        let ib=check::must::[native::IControl](native::IControl::query(check::object("image")));assert check::must::[native::Thickness](ib.border_thickness()).left==4.0f64;
+        assert check::must::[native::Thickness](native_button().border_thickness()).left==this.button_border;
+        let stack=check::must::[native::IStackPanel](native::IStackPanel::query(content()));let panel=check::must::[native::IPanel](native::IPanel::query(content()));let children=check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));
+        assert check::must::[u32](children.size())==2;let orientation=if this.phase==1 || this.phase==3 {native::orientation_vertical} else {native::orientation_horizontal};assert check::must::[i32](stack.orientation())==orientation;
+        let index: u32=if this.phase<2 {1u32} else {0u32};let title=check::must::[native::ITextBlock](native::ITextBlock::query(check::must::[rt::Object](children.get_at(index))));assert check::must::[text::Text](title.text())=="École Ω 🚀";
+        if this.phase>=2 {let image=check::must::[native::IImage](native::IImage::query(check::must::[rt::Object](children.get_at(1))));let source=check::must::[native::IBitmapSource](native::IBitmapSource::query(check::must::[rt::Object](image.source())));assert check::must::[i32](source.pixel_width())==1;}
+        if this.phase==3 {check::log("PASS: button image/symbol ordering, four content layouts and native border reset");let p=button_props();(*p).image=text::new();(*p).symbol=0;dirty("button");this.timer=services::after(0.2f64,this.finish);return;}
+        this.phase=this.phase+1;let p=button_props();(*p).content_layout=if this.phase==1 {vocab::ContentLayout::ImageTop} else if this.phase==2 {vocab::ContentLayout::ImageRight} else {vocab::ContentLayout::ImageBottom};
+        if this.phase==2 {(*p).symbol=0;(*p).image=match env::var("CPLUS_TEST_IMAGE") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};}
+        dirty("button");this.timer=services::after(0.2f64,this.layout);
+    }
+    fn finish(ref this) {
+        let bitmap=animated_source();assert check::must::[bool](bitmap.is_playing());assert check::must::[rt::Object](bitmap.object().query(rt::unknown_iid())).raw()==this.bitmap.raw();let animation=animation_props();(*animation).is_animation_playing=false;dirty("animated");let title=check::must::[native::ITextBlock](native::ITextBlock::query(content()));assert check::must::[text::Text](title.text())=="École Ω 🚀";match progress::find("progress") {option::Option::Some(v)=>{let set=v.set_progress(0.0f64);},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.1f64,this.animate);
+    }
+    fn animate(ref this) {
+        assert !check::must::[bool](animated_source().is_playing());let animation=animation_props();(*animation).source=text::new();dirty("animated");
+        match progress::find("progress") {option::Option::Some(v)=>{let set=v.animate_progress(1.0f64,vocab::Duration {seconds:0.8f64},vocab::Easing::Linear);},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.2f64,this.mid_animation);
+    }
+    fn mid_animation(ref this) {
+        let host=check::must::[native::IBorder](native::IBorder::query(check::object("animated")));let brush=check::must::[native::IImageBrush](native::IImageBrush::query(check::must::[rt::Object](host.background())));assert check::must::[rt::Object](brush.image_source()).is_null();this.bitmap=rt::Object::empty();check::log("PASS: animated image start/stop, retained source during style updates and clearing");
+        let range=check::must::[native::IRangeBase](native::IRangeBase::query(check::object("progress")));let value=check::must::[f64](range.value());assert value>0.0f64 && value<1.0f64;
+        match progress::find("progress") {option::Option::Some(v)=>{assert v.progress()==1.0f64;let set=v.animate_progress(0.0f64,vocab::Duration {seconds:0.2f64},vocab::Easing::CubicOut);},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.35f64,this.animation_done);
+    }
+    fn animation_done(ref this) {
+        let range=check::must::[native::IRangeBase](native::IRangeBase::query(check::object("progress")));assert check::must::[f64](range.value())==0.0f64;
+        match progress::find("progress") {option::Option::Some(v)=>{let set=v.animate_progress(1.0f64,vocab::Duration {seconds:2.0f64});},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.1f64,this.cancel_animation);
+    }
+    fn cancel_animation(ref this) {
+        match progress::find("progress") {option::Option::Some(v)=>{let set=v.set_progress(0.75f64);},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.2f64,this.cancelled_animation);
+    }
+    fn cancelled_animation(ref this) {
+        let range=check::must::[native::IRangeBase](native::IRangeBase::query(check::object("progress")));assert check::must::[f64](range.value())==0.75f64;
+        check::log("PASS: progress interpolation, easing, retarget and immediate-set cancellation");
+        match progress::find("progress") {option::Option::Some(v)=>{let set=v.animate_progress(0.0f64,vocab::Duration {seconds:5.0f64});},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.1f64,this.close_animating);
+    }
+    fn close_animating(ref this) {this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {
+    let owner: box::Box[Probe]=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI text",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: text/content teardown");return 0;
+}

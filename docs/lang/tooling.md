@@ -45,6 +45,8 @@ Build flags, all of which apply to `cpc FILE`, `cpc build`, and `cpc test`:
 | `--target NAME` | cross-compile ([platforms.md](platforms.md)) |
 | `--min-os VERSION` | override a versioned triple's OS floor; place *after* `--target` |
 | `--fp-contract=off\|on\|fast` | float contraction; `off` keeps `a*b+c` as fmul+fadd for bit-identical-to-C output |
+| `--target-cpu=NAME` | the CPU the backend selects instructions for: `-march` on x86_64, `-mcpu` on aarch64. Default is the arch baseline (SSE2 on x86_64, where an `f32x8` is two SSE halves and a vector `fma` is a libm call per lane); `x86-64-v3`, or `native` on a Haswell-or-later host, gives AVX2+FMA. Refused on other arches |
+| `--target-feature=+a,-b` | enable/disable individual LLVM features (`+avx2,+fma`, `-avx512f`), applied after `--target-cpu`. Both flags are part of every prebuilt dependency's fingerprint (under AVX an `f32x8` argument travels in a `ymm` register), so changing them rebuilds the slices; read them in source with `#target_feature` |
 | `--warn-deps` | show dependency warnings too |
 | `--timings` | build cost to stderr, per phase and per package |
 | `--diagnostics=human\|short\|json` | diagnostic rendering |
@@ -273,8 +275,8 @@ cpc build --print-link-args  # what the dependencies add to the link line
 cpc --realtime-report[=json] # whole-project real-time contract digest
 ```
 
-Place `--target` and `--fp-contract` **before** an inline emit flag and its
-file.
+Place `--target`, `--fp-contract` and `--target-cpu`/`--target-feature`
+**before** an inline emit flag and its file.
 
 When chasing a suspected miscompile, the useful ladder is `--emit-ll` (is
 cpc's IR right?) → `--emit-ll-opt` (did an optimizer pass change the

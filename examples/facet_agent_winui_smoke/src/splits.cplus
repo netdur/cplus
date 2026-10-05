@@ -1,0 +1,70 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/split" as split;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/divider" as divider;
+import "facet_winui/record" as record;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn handle() -> split::Split {return match split::find("split") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[split::Split]();}};}
+fn divider_part(index: u32=2u32) -> rt::Object {
+    let border=check::must::[native::IBorder](native::IBorder::query(check::object("split")));
+    let panel=check::must::[native::IPanel](native::IPanel::query(check::must::[rt::Object](border.child())));
+    let children=check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));
+    return check::must::[rt::Object](children.get_at(index));
+}
+fn near(actual: f64,expected: f64,tolerance: f64=0.1f64) {if actual<=expected-tolerance || actual>=expected+tolerance {check::log("FAIL: split geometry actual=${actual} expected=${expected}");}assert actual>expected-tolerance && actual<expected+tolerance;}
+fn geometry(leading: f64,trailing: f64,gap: f64,rows: bool=false) {
+    let a=(*check::node("leading")).frame();let b=(*check::node("trailing")).frame();
+    near(if rows {a.height} else {a.width},leading);near(if rows {b.height} else {b.width},trailing);
+    let t=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(divider_part()));
+    near(check::must::[f64](if rows {t.height()} else {t.width()}),gap);
+    // Native layout rounds to physical pixels; Facet and requested sizes above
+    // remain exact, while actual rendered size may differ by one logical pixel.
+    if gap>0.0f64 {near(check::must::[f64](if rows {t.actual_height()} else {t.actual_width()}),gap,1.0f64);}
+    let target=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(divider_part(3)));
+    near(check::must::[f64](if rows {target.height()} else {target.width()}),if gap>0.0f64 && gap<6.0f64 {6.0f64} else {gap});
+    let visual=check::must::[native::IUIElement](native::IUIElement::query(divider_part()));
+    assert check::must::[i32](visual.visibility())==(if gap>0.0f64 {native::visibility_visible} else {native::visibility_collapsed});
+    if gap>0.0f64 {
+        near(if rows {b.top-a.top-a.height} else {b.left-a.left-a.width},gap);
+        let canvas=check::must::[native::ICanvasStatics](native::Canvas::i_canvas_statics_factory());
+        near(check::must::[f64](if rows {canvas.get_top(divider_part())} else {canvas.get_left(divider_part())}),leading);
+    }
+}
+struct Probe {step: i32,moves: i32,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn moved(ref this,sender: *u8) {this.moves=this.moves+1;}
+    fn build(ref this) -> core::Node {return @ui {column {
+        split(key:"split",position:100.0f64,min_leading:60.0f64,min_trailing:40.0f64,max_leading:350.0f64,max_trailing:120.0f64,divider_thickness:10.0f64,on_move:this.moved) {
+            column(key:"leading") {label("Leading")}
+            column(key:"trailing") {label("Trailing")}
+        }.width(400.0f64).height(120.0f64).grow(0.0f64)
+    }.padding(20.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.2f64,this.inspect);}
+    fn inspect(ref this) {
+        let h=handle();let extent=(*check::node("split")).frame().height;
+        if this.step==0 {geometry(270.0f64,120.0f64,10.0f64);let set=h.set_width(300.0f64).set_position(-100.0f64);}
+        if this.step==1 {geometry(170.0f64,120.0f64,10.0f64);let set=h.set_max(split::Pane::Trailing,0.0f64).set_min(split::Pane::Trailing,100.0f64).set_position(1000.0f64);}
+        if this.step==2 {geometry(190.0f64,100.0f64,10.0f64);let set=h.set_min(split::Pane::Trailing,0.0f64).set_max(split::Pane::Leading,80.0f64).set_position(200.0f64);}
+        if this.step==3 {geometry(80.0f64,210.0f64,10.0f64);let set=h.set_min(split::Pane::Leading,110.0f64);}
+        if this.step==4 {geometry(110.0f64,180.0f64,10.0f64);let set=h.set_min(split::Pane::Leading,0.0f64).set_max(split::Pane::Leading,0.0f64).set_position(120.0f64).set_divider_thickness(18.0f64);}
+        if this.step==5 {geometry(120.0f64,162.0f64,18.0f64);let set=h.collapse(split::Pane::Leading);}
+        if this.step==6 {geometry(0.0f64,300.0f64,0.0f64);let set=h.expand(split::Pane::Leading);}
+        if this.step==7 {geometry(120.0f64,162.0f64,18.0f64);let set=h.collapse(split::Pane::Trailing);}
+        if this.step==8 {geometry(300.0f64,0.0f64,0.0f64);let set=h.expand(split::Pane::Trailing).set_axis(split::SplitAxis::Rows).set_position(30.0f64);}
+        if this.step==9 {geometry(30.0f64,extent-48.0f64,18.0f64,true);let set=h.set_divider_thickness(0.0f64);}
+        if this.step==10 {geometry(30.0f64,extent-30.0f64,0.0f64,true);assert this.moves==0;divider::move_by(core::view_of(check::node("split")) as *record::View,10000.0f64);assert this.moves==1;}
+        if this.step==11 {geometry(extent,0.0f64,0.0f64,true);divider::move_by(core::view_of(check::node("split")) as *record::View,10.0f64);assert this.moves==1;divider::move_by(core::view_of(check::node("split")) as *record::View,-100.0f64);assert this.moves==2;divider::move_by(core::view_of(check::node("split")) as *record::View,-10.0f64);assert this.moves==3;}
+        if this.step==12 {geometry(extent-110.0f64,110.0f64,0.0f64,true);let set=h.collapse(split::Pane::Leading).collapse(split::Pane::Trailing);}
+        if this.step==13 {geometry(0.0f64,0.0f64,0.0f64,true);divider::move_by(core::view_of(check::node("split")) as *record::View,50.0f64);assert this.moves==3;let set=h.expand(split::Pane::Leading).expand(split::Pane::Trailing).set_axis(split::SplitAxis::Columns).set_divider_thickness(10.0f64).set_min(split::Pane::Leading,500.0f64);}
+        if this.step==14 {geometry(290.0f64,0.0f64,10.0f64);let set=h.set_min(split::Pane::Leading,0.0f64).set_position(100.0f64).set_divider_thickness(1.0f64);}
+        if this.step==15 {geometry(100.0f64,199.0f64,1.0f64);check::log("PASS: split bounds, resize, conflict policy, collapse/restore, axis, divider geometry and drag-path callbacks");this.passed=true;assert host::close().is_ok();return;}
+        this.step=this.step+1;this.timer=services::after(0.1f64,this.inspect);
+    }
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI splits",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: split teardown");return 0;}

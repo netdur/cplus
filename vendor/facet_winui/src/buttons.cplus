@@ -1,0 +1,54 @@
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./native" as native;
+import "./style" as style;
+import "./typography" as typography;
+import "./record" as record;
+import "./media" as media;
+import "./choices" as choices;
+fn apply(r: *record::View) {
+    (*r).applying=true;
+    let p: *props::ButtonProps=(*core::node_data((*r).node)).props as *props::ButtonProps;
+    let value=(*r).object.clone();let control=native::must::[ui::IControl](ui::IControl::query(value));
+    native::check(control.set_is_enabled((*core::node_data((*r).node)).common.is_enabled));
+        let defaults: ui::IControlStatics=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());
+        if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
+        native::check(control.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](control.font_size()))));
+        native::check(control.set_font_weight(style::weight((*p).font_weight)));
+        native::check(control.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));
+        native::check(control.set_is_text_scale_factor_enabled((*p).font_scales));
+        if (*p).font_family.is_empty() {typography::clear(value,native::must::[rt::Object](defaults.font_family_property()));} else {native::check(control.set_font_family(typography::font((*p).font_family.view())));}
+        if (*p).text_color.is_set() {native::check(control.set_foreground(style::brush((*p).text_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.foreground_property()));}
+    if (*p).toggles {let toggle=native::must::[ui::IToggleButton](ui::IToggleButton::query(value));native::check(toggle.set_is_checked(choices::boxed((*p).on)));}
+    if (*p).bordered {
+        typography::clear(value,native::must::[rt::Object](defaults.background_property()));
+        if (*p).border_width>0.0f64 {let w=(*p).border_width;native::check(control.set_border_thickness(ui::Thickness {left:w,top:w,right:w,bottom:w}));}
+        else {typography::clear(value,native::must::[rt::Object](defaults.border_thickness_property()));}
+    } else {
+        native::check(control.set_background(style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.0f64))));
+        native::check(control.set_border_thickness(ui::Thickness {left:0.0f64,top:0.0f64,right:0.0f64,bottom:0.0f64}));
+    }
+    if (*p).border_color.is_set() {native::check(control.set_border_brush(style::brush((*p).border_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.border_brush_property()));}
+    native::check(control.set_corner_radius(style::corners((*p).corner_radius)));
+    let title=native::must::[ui::TextBlock](ui::TextBlock::new());(*r).content=title.object();let label=native::must::[ui::ITextBlock](ui::ITextBlock::query(title.object()));
+    native::check(label.set_text(typography::transformed((*p).title.view(),(*p).text_transform).view()));typography::breaking(label,(*p).line_break);
+    let host=native::must::[ui::IContentControl](ui::IContentControl::query(value));
+    if (*p).symbol==0 && (*p).image.is_empty() {native::check(host.set_content(title.object()));(*r).applying=false;return;}
+    var image: rt::Object=rt::Object::empty();
+    if (*p).symbol!=0 {
+        let glyph=native::must::[ui::TextBlock](ui::TextBlock::new());media::icon(native::must::[ui::ITextBlock](ui::ITextBlock::query(glyph.object())),(*p).symbol,20.0f64,(*p).text_color);image=glyph.object();
+    } else {
+        let bitmap=native::must::[ui::BitmapImage](ui::BitmapImage::new());native::check(bitmap.set_uri_source(media::uri((*p).image.view())));
+        let picture=native::must::[ui::Image](ui::Image::new());native::check(picture.set_source(bitmap.object()));native::check(picture.set_stretch(ui::stretch_uniform));image=picture.object();
+        let size=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(image));native::check(size.set_width(24.0f64));native::check(size.set_height(24.0f64));
+    }
+    let row=native::must::[ui::StackPanel](ui::StackPanel::new());native::check(row.set_spacing(8.0f64));
+    native::check(row.set_orientation(if (*p).content_layout==vocab::ContentLayout::ImageTop || (*p).content_layout==vocab::ContentLayout::ImageBottom {ui::orientation_vertical} else {ui::orientation_horizontal}));
+    let panel=native::must::[ui::IPanel](ui::IPanel::query(row.object()));let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));
+    let after=(*p).content_layout==vocab::ContentLayout::ImageRight || (*p).content_layout==vocab::ContentLayout::ImageBottom;
+    native::check(children.append(if after {title.object()} else {image.clone()}));native::check(children.append(if after {image.clone()} else {title.object()}));
+    native::check(host.set_content(row.object()));(*r).applying=false;
+}

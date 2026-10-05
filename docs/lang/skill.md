@@ -1454,6 +1454,7 @@ no module to import. This is the whole set worth writing:
 | `#include_bytes("path")` · `#include_str("path")` | `*[u8; N]` · `str` | path is relative to the source file; `_str` is UTF-8 validated at sema |
 | `#env("NAME")` | `str` | resolved at sema; E0876 if unset |
 | `#platform()` · `#arch()` · `#target()` | `str` | the active TARGET, value-level only (§13) |
+| `#target_feature("avx2")` | `bool` | ISA extension on for this build (`--target-cpu=x86-64-v3`/`native`, `--target-feature=+avx2,+fma`); value-level, dead arm optimized out; another arch's name is `false` |
 | `#str_ptr(s)` · `#str_len(s)` · `#str_from_raw_parts(p, n)` | — | the FFI tier for `str`, not the way to do string work |
 | `#println(x)` | — | no-import debug print |
 | `#asm("…")` | — | only inside a `#[naked]` fn (E0909) |

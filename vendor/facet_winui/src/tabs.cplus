@@ -1,0 +1,99 @@
+// Native headers select Facet-owned panes; collection changes never emit app events.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/tabs" as tabs;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "./record" as record;
+import "./native" as native;
+import "./style" as style;
+import "./typography" as typography;
+import "./choice_colors" as colors;
+struct Pane {opaque node: *core::Node,display: flex::Display,item: rt::Object}
+struct State {strip: rt::Object,panes: vec::Vec[Pane],token: ui::EventRegistrationToken}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn state(r: *record::View) -> *State {return (*r).extra as *State;}
+fn control(r: *record::View) -> ui::ITabView {return native::must::[ui::ITabView](ui::ITabView::query((*state(r)).strip));}
+fn entries(r: *record::View) -> ui::IVector_Object {return native::must::[ui::IVector_Object](ui::IVector_Object::query(native::must::[rt::Object](control(r).tab_items())));}
+fn prepare(r: *record::View) {
+    let s=state(r);let p: *props::TabsProps=(*core::node_data((*r).node)).props as *props::TabsProps;var i: usize=0;
+    while i<(*s).panes.count() {match (*s).panes.at_ptr(i) {option::Option::Some(pane)=>{(*(*pane).node).set_display(if i as i64==(*p).selected_index {(*pane).display} else {flex::Display::None});},option::Option::None=>{}}i=i+1;}
+}
+fn sync_selection(r: *record::View) {
+    let index=(*((*core::node_data((*r).node)).props as *props::TabsProps)).selected_index;
+    native::check(control(r).set_selected_index(if index>=0 && index<(*state(r)).panes.count() as i64 {index as i32} else {-1}));
+    prepare(r);
+}
+fn changed(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;if (*r).applying {return rt::Status {code:0};}
+    let d=core::node_data((*r).node);let p: *props::TabsProps=(*d).props as *props::TabsProps;
+    if !(*d).common.is_enabled {return rt::Status {code:0};}
+    let index=native::must::[i32](control(r).selected_index()) as i64;if index==(*p).selected_index {return rt::Status {code:0};}
+    (*p).selected_index=index;prepare(r);core::touch((*r).node,tabs::P_SELECTED_INDEX);
+    let call=(*p).on_tab_changed;let context=(*p).on_tab_changed_ctx;
+    // The callback can destroy the host; do not read r afterwards.
+    if call!=props::no_handler {call(ctx,context);}return rt::Status {code:0};
+}
+fn attach(r: *record::View) {
+    let strip=native::must::[ui::TabView](ui::TabView::new());let tab=native::must::[ui::ITabView](ui::ITabView::query(strip.object()));
+    native::check(tab.set_is_add_tab_button_visible(false));native::check(tab.set_can_drag_tabs(false));native::check(tab.set_can_reorder_tabs(false));native::check(tab.set_allow_drop_tabs(false));
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(strip.object()));native::check(element.set_name("facet:tab-strip"));
+    let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_z_index(strip.object(),100));
+    let panel=native::must::[ui::IPanel](ui::IPanel::query((*r).content));let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));native::check(children.append(strip.object()));
+    let handler=native::must::[ui::SelectionChangedEventHandler](ui::SelectionChangedEventHandler::new(changed,r as *u8));let token=native::must::[ui::EventRegistrationToken](tab.add_selection_changed(handler.object()));
+    let owner=match box::new::[State](State {strip:strip.object(),panes:vec::new::[Pane](),token:token}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();LIVE=LIVE+1;
+    (*(*r).node).set_padding(flex::Edge::Top,flex::StyleLength::points(48.0f64));
+}
+fn item_palette(value: rt::Object,p: *props::TabsProps) -> bool {
+    var palette=colors::Palette::new(value);
+    palette.set_color("TabViewItemHeaderBackgroundSelected",(*p).selected_tab_color);
+    palette.set_color("TabViewItemHeaderForeground",(*p).bar_text_color);palette.set_color("TabViewItemHeaderForegroundSelected",(*p).bar_text_color);
+    return palette.changed;
+}
+fn item_background(value: rt::Object,p: *props::TabsProps) {
+    let item=native::must::[ui::IControl](ui::IControl::query(value));
+    if (*p).unselected_tab_color.is_set() {native::check(item.set_background(style::brush((*p).unselected_tab_color)));}
+    else {let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());typography::clear(value,native::must::[rt::Object](defaults.background_property()));}
+}
+fn apply(r: *record::View) {
+    (*r).applying=true;let s=state(r);let d=core::node_data((*r).node);let p: *props::TabsProps=(*d).props as *props::TabsProps;
+    let bar=native::must::[ui::IControl](ui::IControl::query((*s).strip));native::check(bar.set_is_enabled((*d).common.is_enabled));
+    if (*p).bar_background.start.is_set() || (*p).bar_background_color.is_set() {native::check(bar.set_background(style::paint(if (*p).bar_background.start.is_set() {(*p).bar_background} else {vocab::Brush::solid((*p).bar_background_color)})));}
+    else {let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());typography::clear((*s).strip,native::must::[rt::Object](defaults.background_property()));}
+    var focus_index: i64=-1;var focus_state: i32=0;
+    var i: usize=0;while i<(*s).panes.count() {match (*s).panes.at_ptr(i) {option::Option::Some(pane)=>{
+        if item_palette((*pane).item,p) {
+            // Reapplying TabViewItem.Template loses its lazy selected outline.
+            // Replace only the private header, with resources installed before
+            // realization. The Facet pane and its retained state stay mounted.
+            let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*pane).item));let old_focus=native::must::[i32](visual.focus_state());
+            if old_focus!=ui::focus_state_unfocused {focus_index=i as i64;focus_state=old_focus;}
+            let replacement=native::must::[ui::TabViewItem](ui::TabViewItem::new());native::check(replacement.set_is_closable(false));native::check(replacement.set_header(colors::key((*(*pane).node).key())));
+            let styled=item_palette(replacement.object(),p);item_background(replacement.object(),p);
+            native::check(entries(r).set_at(i as u32,replacement.object()));(*pane).item=replacement.object();
+        } else {item_background((*pane).item,p);}
+    },option::Option::None=>{}}i=i+1;}
+    sync_selection(r);
+    if focus_index>=0 {let value=native::must::[rt::Object](entries(r).get_at(focus_index as u32));let visual=native::must::[ui::IUIElement](ui::IUIElement::query(value));let focused=native::must::[bool](visual.focus(focus_state));}
+    (*r).applying=false;
+}
+fn insert(r: *record::View,child: *record::View,index: usize) {
+    (*r).applying=true;let item=native::must::[ui::TabViewItem](ui::TabViewItem::new());native::check(item.set_is_closable(false));native::check(item.set_header(colors::key((*(*child).node).key())));
+    assert (*state(r)).panes.insert(Pane {node:(*child).node,display:core::display_of((*child).node),item:item.object()},index).is_ok();native::check(entries(r).insert_at(index as u32,item.object()));apply(r);
+}
+fn remove(r: *record::View,child: *record::View) {
+    (*r).applying=true;let s=state(r);var i: usize=0;while i<(*s).panes.count() {
+        match (*s).panes.at_ptr(i) {option::Option::Some(pane)=>{if (*pane).node==(*child).node {
+            (*(*pane).node).set_display((*pane).display);let removed=(*s).panes.remove(i);native::check(entries(r).remove_at(i as u32));sync_selection(r);(*r).applying=false;return;
+        }},option::Option::None=>{}}i=i+1;
+    }
+    (*r).applying=false;
+}
+fn place(r: *record::View,width: f64) {let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*state(r)).strip));native::check(element.set_width(width));native::check(element.set_height(48.0f64));}
+fn release(r: *record::View) {native::check(control(r).remove_selection_changed((*state(r)).token));let owner=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;LIVE=LIVE-1;}

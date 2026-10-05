@@ -1,0 +1,45 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/window_chrome" as chrome;
+import "facet/label" as label;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "stdlib/option" as option;
+import "../shell" as shell;
+struct WindowChrome {hover: bool,spaced: bool}
+impl WindowChrome {
+    fn new() -> WindowChrome {return WindowChrome {hover:false,spaced:false};}
+    fn visibility(ref this,sender: *u8) {
+        this.hover=!this.hover;
+        if let option::Option::Some(v)=chrome::find("wc:buttons") {let changed=v.set_style(if this.hover {chrome::ButtonStyle::OnHover} else {chrome::ButtonStyle::Native});}
+        if let option::Option::Some(v)=label::find("wc:visibility") {let changed=v.set_text(if this.hover {"Hover over the bar to reveal buttons"} else {"Buttons always visible"});}
+    }
+    fn spacing(ref this,sender: *u8) {
+        this.spaced=!this.spaced;
+        if let option::Option::Some(v)=chrome::find("wc:buttons") {let changed=v.set_spacing(if this.spaced {40.0f64} else {0.0f64});}
+        if let option::Option::Some(v)=label::find("wc:spacing") {let changed=v.set_text(if this.spaced {"Spacing: 40 pt"} else {"Spacing: default"});}
+    }
+}
+impl WindowChrome: component::Component {
+    fn build(ref this) -> core::Node {
+        this.hover=false;this.spaced=false;
+        var bar=@ui {row(key:"wc:bar") {
+            label("Window controls",key:"wc:title").grow(1.0f64)
+            chrome::window_buttons(key:"wc:buttons")
+            label("After",key:"wc:after")
+        }.height(48.0f64).align(flex::Align::Center).padding(8.0f64)};
+        bar.set_background_color(vocab::Color::raised());
+        return shell::panel("Window chrome","These buttons control this gallery window: minimize, maximize/restore, and close.",@ui {column {
+            bar
+            row {button("Toggle hover mode",key:"wc:hover",on_click:this.visibility) button("Toggle spacing",key:"wc:space",on_click:this.spacing)}.gap(12.0f64)
+            label("Buttons always visible",key:"wc:visibility")
+            label("Spacing: default",key:"wc:spacing")
+            text_field("Keyboard focus stays available",key:"wc:edit")
+        }.gap(16.0f64)},howto:"window_chrome::window_buttons(key: \"controls\", style: ButtonStyle::OnHover, spacing: 40.0)");
+    }
+}
+impl WindowChrome: component::Lifecycle {
+    fn on_attach(ref this,why: component::Attach) {}
+    fn on_detach(ref this,why: component::Detach) {}
+}

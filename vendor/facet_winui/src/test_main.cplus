@@ -1,0 +1,78 @@
+// facet_winui's headless suite. Nothing here starts the WinUI Application:
+// that needs the staged runtime and a desktop, and is what the examples'
+// verify scripts are for. These cover the host's bookkeeping that runs
+// without XAML - and they give `cpc test` a root other than
+// facet_winui.cplus, whose `run` (four parameters, three defaulted) the
+// compiler otherwise lends its defaults to an unrelated local fn pointer
+// named `run` in facet/services (E0308 "fn pointer `run` expects 1, got 4").
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "facet/facet" as core;
+import "facet/screen" as screen;
+import "facet/window_chrome" as chrome;
+import "facet/label" as label;
+import "./facet_winui" as host;
+import "./dialogs" as dialogs;
+
+fn tm_noop(ctx: *u8) { return; }
+
+#[test]
+fn no_window_opens_before_launch() {
+    // XAML windows exist only after Application.Start has launched.
+    var root: core::Node = label::label("x", key: "probe");
+    assert !host::launched();
+    assert host::open_window(#addr_of(root), screen::Chrome::new()).is_null();
+    assert host::window_count() == (0 as usize);
+    assert host::active_host().is_null();
+    return;
+}
+
+#[test]
+fn window_buttons_are_found_anywhere_in_the_tree() {
+    // Bar::Blended drops the system caption only for a tree that draws its own.
+    var b: core::Builder = core::Builder::new();
+    var inner: core::Builder = core::Builder::new();
+    inner.add(chrome::window_buttons(key: "wb"));
+    b.add(core::row(inner, key: "header"));
+    var with: core::Node = core::column(b, key: "root");
+    assert host::has_window_buttons(#addr_of(with));
+    var bare: core::Node = label::label("x", key: "bare");
+    assert !host::has_window_buttons(#addr_of(bare));
+    assert !host::has_window_buttons(0 as *core::Node);
+    return;
+}
+
+#[test]
+fn observers_register_and_cancel() {
+    let a: u64 = host::observe(1, tm_noop);
+    let b: u64 = host::observe(3, tm_noop);
+    assert a != (0 as u64);
+    assert b != a;
+    assert host::observe(2, 0 as fn(*u8)) == (0 as u64);
+    host::cancel_observe(a);
+    host::cancel_observe(a);   // idempotent
+    host::cancel_observe(b);
+    return;
+}
+
+#[test]
+fn a_sheet_without_a_window_is_refused() {
+    // No window to put it on: nothing is mounted and nothing is left behind.
+    dialogs::alert_sheet("t", "m", "OK");
+    assert !dialogs::live();
+    assert dialogs::alert("t", "m", "OK") == -1;
+    return;
+}
+
+#[test]
+fn sheet_heights_follow_the_message() {
+    assert dialogs::message_lines("") == 0.0f64;
+    assert dialogs::message_lines("short") == 1.0f64;
+    assert dialogs::message_lines("one\ntwo") == 2.0f64;
+    var long: text::Text = text::new();
+    var i: usize = 0;
+    while i < (120 as usize) { long = long.appending("x"); i = i + (1 as usize); }
+    assert dialogs::message_lines(long.view()) == 3.0f64;
+    assert dialogs::capped(900.0f64) == 560.0f64;
+    return;
+}

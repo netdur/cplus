@@ -1,0 +1,37 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/progress" as progress;
+import "facet/vocabulary" as vocab;
+import "./record" as record;
+import "./native" as native;
+import "./presentation" as presentation;
+struct State {from: f64,target: f64,started: f64,duration: f64,easing: vocab::Easing,factory: rt::Object,token: ui::EventRegistrationToken,running: bool}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn state(r: *record::View) -> *State {return (*r).extra as *State;}
+fn clamp(value: f64) -> f64 {return if value<0.0f64 {0.0f64} else if value>1.0f64 {1.0f64} else {value};}
+fn stop(s: *State) {if (*s).running {presentation::remove_rendering((*s).factory,(*s).token);(*s).running=false;LIVE=LIVE-1;}}
+fn tick(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    if presentation::is_shutting_down() {return rt::Status {code:0};}
+    let r=ctx as *record::View;let s=state(r);let elapsed=presentation::now()-(*s).started;
+    let fraction=presentation::ease(elapsed/(*s).duration,(*s).easing);let value=clamp((*s).from+((*s).target-(*s).from)*fraction);
+    let range=native::must::[ui::IRangeBase](ui::IRangeBase::query((*r).object));native::check(range.set_value(value));if elapsed>=(*s).duration {stop(s);}return rt::Status {code:0};
+}
+fn apply(r: *record::View) {
+    let fresh=(*r).extra.is_null();if fresh {
+        let owner: box::Box[State]=match box::new::[State](#zero::[State]()) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();
+    }
+    let dirty=core::dirty_of((*r).node);if !fresh && (dirty&(progress::P_PROGRESS|progress::P_ANIMATE_PROGRESS))==0 {return;}
+    let s=state(r);stop(s);let p: *props::ProgressProps=(*core::node_data((*r).node)).props as *props::ProgressProps;
+    let range=native::must::[ui::IRangeBase](ui::IRangeBase::query((*r).object));let target=clamp((*p).progress);
+    if !fresh && (dirty&progress::P_ANIMATE_PROGRESS)!=0 && (*p).animate_duration.seconds>0.0f64 {
+        (*s).from=native::must::[f64](range.value());(*s).target=target;(*s).duration=(*p).animate_duration.seconds;(*s).easing=(*p).animate_easing;(*s).started=presentation::now();
+        let factory=native::must::[ui::ICompositionTargetStatics](ui::CompositionTarget::i_composition_target_statics_factory());let handler=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(tick,r as *u8));
+        (*s).factory=factory.object();(*s).token=native::must::[ui::EventRegistrationToken](factory.add_rendering(handler.object()));(*s).running=true;LIVE=LIVE+1;
+    } else {native::check(range.set_value(target));}
+}
+fn release(r: *record::View) {stop(state(r));let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;}

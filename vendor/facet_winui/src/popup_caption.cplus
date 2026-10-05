@@ -1,0 +1,38 @@
+// Keep the native dropdown/items; only override its closed selection presenter.
+import "stdlib/result" as result;
+import "stdlib/text" as text;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./native" as native;
+fn part(value: rt::Object,name: str) -> rt::Object {
+    match ui::IFrameworkElement::query(value) {result::Result::Ok(v)=>{if native::must::[text::Text](v.name())==name {return value.clone();}},result::Result::Err(e)=>{assert e.code==rt::no_interface();}}
+    let tree=native::must::[ui::IVisualTreeHelperStatics](ui::VisualTreeHelper::i_visual_tree_helper_statics_factory());let count=native::must::[i32](tree.get_children_count(value));var i: i32=0;
+    while i<count {let found=part(native::must::[rt::Object](tree.get_child(value,i)),name);if !found.is_null() {return found;}i=i+1;}return rt::Object::empty();
+}
+fn visible(value: rt::Object,show: bool) {
+    if value.is_null() {return;}let element=native::must::[ui::IUIElement](ui::IUIElement::query(value));let desired=if show {ui::visibility_visible} else {ui::visibility_collapsed};
+    if native::must::[i32](element.visibility())!=desired {native::check(element.set_visibility(desired));}
+}
+fn rendered(value: rt::Object,label: str) {
+    match ui::ITextBlock::query(value) {result::Result::Ok(v)=>{if native::must::[text::Text](v.text()).view()!=label {native::check(v.set_text(label));}return;},result::Result::Err(e)=>{assert e.code==rt::no_interface();}}
+    let tree=native::must::[ui::IVisualTreeHelperStatics](ui::VisualTreeHelper::i_visual_tree_helper_statics_factory());let count=native::must::[i32](tree.get_children_count(value));var i: i32=0;
+    while i<count {rendered(native::must::[rt::Object](tree.get_child(value,i)),label);i=i+1;}
+}
+fn apply(value: rt::Object,label: str,selected: str,has_selection: bool) -> bool {
+    let object=part(value,"ContentPresenter");if object.is_null() {return false;}
+    let presenter=native::must::[ui::IContentPresenter](ui::IContentPresenter::query(object));
+    if label.is_empty() {
+        let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(object));
+        let placeholder=native::must::[rt::Object](element.find_name("PlaceholderTextBlock"));
+        if has_selection {let factory=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());native::check(presenter.set_content(native::must::[rt::Object](factory.create_string(selected))));}
+        else {native::check(presenter.set_content(placeholder));}
+        visible(object,true);return true;
+    }
+    let current=native::must::[rt::Object](presenter.content());var same: bool=false;
+    if !current.is_null() {match ui::IPropertyValue::query(current) {result::Result::Ok(v)=>{same=native::must::[text::Text](v.get_string()).view()==label;},result::Result::Err(e)=>{assert e.code==rt::no_interface();}}}
+    if !same {let factory=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());native::check(presenter.set_content(native::must::[rt::Object](factory.create_string(label))));}
+    // ComboBox also updates its generated TextBlock on dropdown selection,
+    // without necessarily changing Content. Reconcile the rendered copy too.
+    rendered(object,label);
+    visible(object,true);return true;
+}

@@ -1,0 +1,80 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/props" as props;
+import "facet/label" as label;
+import "facet/list" as list;
+import "facet/collection" as collection;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/record" as record;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+struct Probe {appearances: usize,disappearances: usize,grid: bool,alternate: bool,builds: usize,saved_builds: usize,generation: usize,clicks: usize,opaque third: *core::Node,opaque fourth: *core::Node,editor: rt::Object,neighbor: rt::Object,passed: bool,timer: services::Cancellable}
+fn child(row: *core::Node,index: usize) -> *core::Node {return match core::child_of(row,index) {option::Option::Some(v)=>v,option::Option::None=>{assert false;0 as *core::Node}};}
+fn object(row: *core::Node,index: usize) -> rt::Object {return (*(core::view_of(child(row,index)) as *record::View)).object.clone();}
+fn same(a: rt::Object,b: rt::Object) -> bool {return check::must::[rt::Object](a.query(rt::unknown_iid())).raw()==check::must::[rt::Object](b.query(rt::unknown_iid())).raw();}
+impl Probe {
+    fn kind(ref this,index: usize) -> usize {return if this.alternate && index==3 {1 as usize} else {0 as usize};}
+    fn row(ref this,index: usize) -> core::Node {
+        this.builds=this.builds+1;
+        var row=@ui {row(key:"retained:${index}") {label("",key:"caption:${index}").width(120.0f64) text_field("Draft",key:"draft:${index}").width(150.0f64) button("Use",key:"use:${index}",on_click:this.used)}.gap(8.0f64)};
+        if this.kind(index)==1 {assert row.add_child(ui::label("Badge",key:"badge:${index}")).is_ok();}return row;
+    }
+    fn replacement(ref this,index: usize) -> core::Node {return this.row(index);}
+    fn bind(ref this,index: usize,row: *core::Node) {
+        if index==3 {this.third=row;}if index==4 {this.fourth=row;}
+        let node=child(row,0);let p=(*core::node_data(node)).props as *props::LabelProps;(*p).text=text::from_str("Row ${index}: ${this.generation}");core::touch(node,label::P_TEXT);
+    }
+    fn appeared(ref this,sender: *u8) {if let option::Option::Some(index)=component::item_index_of(sender) {if index==3 {this.appearances=this.appearances+1;}}}
+    fn disappeared(ref this,sender: *u8) {if let option::Option::Some(index)=component::item_index_of(sender) {if index==3 {this.disappearances=this.disappearances+1;}}}
+    fn used(ref this,sender: *u8) {let index=match component::item_index_of(sender) {option::Option::Some(v)=>v,option::Option::None=>{assert false;0 as usize}};assert index==3;this.clicks=this.clicks+1;}
+    fn rows(ref this) -> core::Node {
+        if this.grid {return ui::collection(key:"rows",count:30,row:this.row,bind:this.bind).height(160.0f64);}
+        return ui::list(key:"rows",count:30,row:this.row,bind:this.bind,row_height:40,on_item_appearing:this.appeared,on_item_disappearing:this.disappeared).height(120.0f64);
+    }
+    fn build(ref this) -> core::Node {return @ui {column {this.rows()}.padding(20.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.25f64,this.initial);}
+    fn initial(ref this) {
+        assert this.third.is_not_null() && this.fourth.is_not_null();this.editor=object(this.third,1);this.neighbor=object(this.fourth,1);this.saved_builds=this.builds;
+        assert check::must::[native::ITextBox](native::ITextBox::query(this.editor)).set_text("Keep this draft").is_ok();this.generation=1;
+        if this.grid {if let option::Option::Some(v)=collection::find("rows") {let updated=v.set_row_bind(this.bind);}}
+        else {if let option::Option::Some(v)=list::find("rows") {let updated=v.set_row_bind(this.bind);}}
+        this.timer=services::after(0.2f64,this.rebound);
+    }
+    fn retained(ref this) {assert same(this.editor,object(this.third,1));assert check::must::[text::Text](check::must::[native::ITextBox](native::ITextBox::query(this.editor)).text())=="Keep this draft";}
+    fn rebound(ref this) {
+        if !this.grid {assert this.appearances==1 && this.disappearances==0;}
+        assert this.builds==this.saved_builds;this.retained();assert check::must::[text::Text](check::must::[native::ITextBlock](native::ITextBlock::query(object(this.third,0))).text())=="Row 3: 1";
+        if this.grid {if let option::Option::Some(v)=collection::find("rows") {let updated=v.scroll_to(4);}}
+        else {if let option::Option::Some(v)=list::find("rows") {let updated=v.scroll_to(4);}}
+        this.timer=services::after(0.25f64,this.scrolled);
+    }
+    fn scrolled(ref this) {
+        if !this.grid {assert this.appearances==1 && this.disappearances==0;}
+        this.retained();assert same(this.neighbor,object(this.fourth,1));this.saved_builds=this.builds;this.alternate=true;
+        if this.grid {if let option::Option::Some(v)=collection::find("rows") {let updated=v.set_row_kind(this.kind);}}
+        else {if let option::Option::Some(v)=list::find("rows") {let updated=v.set_row_kind(this.kind);}}
+        this.timer=services::after(0.2f64,this.reshaped);
+    }
+    fn reshaped(ref this) {
+        if !this.grid {assert this.appearances==2 && this.disappearances==1;}
+        assert this.builds==this.saved_builds+1;assert !same(this.editor,object(this.third,1));assert same(this.neighbor,object(this.fourth,1));assert core::child_count_of(this.third)==4;
+        let factory=check::must::[native::IFrameworkElementAutomationPeerStatics](native::FrameworkElementAutomationPeer::i_framework_element_automation_peer_statics_factory());let peer=check::must::[native::IAutomationPeer](native::IAutomationPeer::query(check::must::[rt::Object](factory.create_peer_for_element(object(this.third,2)))));let provider=check::must::[native::IInvokeProvider](native::IInvokeProvider::query(check::must::[rt::Object](peer.get_pattern(native::pattern_interface_invoke))));assert provider.invoke().is_ok();assert this.clicks==1;
+        this.saved_builds=this.builds;
+        if this.grid {if let option::Option::Some(v)=collection::find("rows") {let updated=v.set_row(this.replacement);}}
+        else {if let option::Option::Some(v)=list::find("rows") {let updated=v.set_row(this.replacement);}}
+        this.timer=services::after(0.2f64,this.replaced);
+    }
+    fn replaced(ref this) {
+        assert this.builds>this.saved_builds;assert !same(this.neighbor,object(this.fourth,1));this.editor=rt::Object::empty();this.neighbor=rt::Object::empty();this.third=0 as *core::Node;this.fourth=0 as *core::Node;
+        if !this.grid {check::log("PASS: list binding and overlapping viewport retain edits; kind and factory changes replace the correct rows");this.grid=true;this.alternate=false;this.builds=0;this.generation=0;this.clicks=0;let old=mount::replace("rows",this.rows());this.timer=services::after(0.25f64,this.initial);}
+        else {check::log("PASS: collection binding and overlapping viewport retain edits; kind and factory changes replace the correct rows");this.passed=true;assert host::close().is_ok();}
+    }
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI row retention",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: row retention teardown");return 0;}

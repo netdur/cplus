@@ -1,0 +1,65 @@
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "facet/facet" as core;
+import "facet/services" as services;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./native" as native;
+struct Timer { id: u64, object: rt::Object, token: ui::EventRegistrationToken, call: fn(*u8), opaque ctx: *u8 }
+struct Observer { id: u64, opaque node: *core::Node, call: fn(*u8), opaque ctx: *u8, width: f64, height: f64 }
+static QUEUE: rt::Object=#zero::[rt::Object]();
+static TIMERS: vec::Vec[Timer]=#zero::[vec::Vec[Timer]]();
+static OBSERVERS: vec::Vec[Observer]=#zero::[vec::Vec[Observer]]();
+static NEXT: u64=1;
+fn id() -> u64 {let n: u64=NEXT;NEXT=NEXT+1;return n;}
+fn cancel(token: u64) {
+    var i: usize=0;
+    while i<TIMERS.count() {
+        match TIMERS.at_ptr(i) {option::Option::Some(p)=>{if (*p).id==token {
+            let t: ui::IDispatcherQueueTimer=native::must::[ui::IDispatcherQueueTimer](ui::IDispatcherQueueTimer::query((*p).object));
+            native::check(t.stop());native::check(t.remove_tick((*p).token));let removed: option::Option[Timer]=TIMERS.swap_remove(i);return;
+        }},option::Option::None=>{}} i=i+1;
+    }
+    return;
+}
+fn tick(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let token: u64=context as usize as u64; var i: usize=0;
+    while i<TIMERS.count() {
+        match TIMERS.at_ptr(i) {option::Option::Some(p)=>{if (*p).id==token {
+            let call: fn(*u8)=(*p).call;let ctx: *u8=(*p).ctx;cancel(token);call(ctx);return rt::Status {code:0};
+        }},option::Option::None=>{}} i=i+1;
+    }
+    return rt::Status {code:0};
+}
+fn after(seconds: f64,call: fn(*u8),ctx: *u8) -> u64 {
+    assert core::on_ui_thread(); if QUEUE.is_null() {return 0;}
+    let queue: ui::IDispatcherQueue=native::must::[ui::IDispatcherQueue](ui::IDispatcherQueue::query(QUEUE));
+    let value: rt::Object=native::must::[rt::Object](queue.create_timer());
+    let timer: ui::IDispatcherQueueTimer=native::must::[ui::IDispatcherQueueTimer](ui::IDispatcherQueueTimer::query(value));
+    let token: u64=id();
+    let callback: ui::TypedEventHandler_Microsoft_UI_Dispatching_DispatcherQueueTimer_Object=native::must::[ui::TypedEventHandler_Microsoft_UI_Dispatching_DispatcherQueueTimer_Object](ui::TypedEventHandler_Microsoft_UI_Dispatching_DispatcherQueueTimer_Object::new(tick,token as usize as *u8,agile:true));
+    let event: ui::EventRegistrationToken=native::must::[ui::EventRegistrationToken](timer.add_tick(callback.object()));
+    native::check(timer.set_is_repeating(false));
+    native::check(timer.set_interval(ui::TimeSpan {duration:if seconds>0.001f64 {(seconds*10000000.0f64) as i64} else {10000 as i64}}));
+    let added: status::Status=TIMERS.append(Timer {id:token,object:value,token:event,call:call,ctx:ctx});assert added==status::Status::Ok;
+    native::check(timer.start()); return token;
+}
+fn run_on_main(call: fn(*u8),ctx: *u8) {let token: u64=after(0.0f64,call,ctx);return;}
+fn observe(node: *core::Node,call: fn(*u8),ctx: *u8) -> u64 {
+    let token: u64=id();let added: status::Status=OBSERVERS.append(Observer {id:token,node:node,call:call,ctx:ctx,width:-1.0f64,height:-1.0f64});assert added==status::Status::Ok;return token;
+}
+fn cancel_observer(token: u64) {var i: usize=0;while i<OBSERVERS.count() {match OBSERVERS.at_ptr(i) {option::Option::Some(p)=>{if (*p).id==token {let old: option::Option[Observer]=OBSERVERS.swap_remove(i);return;}},option::Option::None=>{}} i=i+1;}return;}
+fn forget(node: *core::Node) {var i: usize=0;while i<OBSERVERS.count() {match OBSERVERS.at_ptr(i) {option::Option::Some(p)=>{if (*p).node==node {let old: option::Option[Observer]=OBSERVERS.swap_remove(i);continue;}},option::Option::None=>{}} i=i+1;}return;}
+fn notify_sizes() {
+    var pending: vec::Vec[u64]=vec::new::[u64]();var i: usize=0;
+    while i<OBSERVERS.count() {match OBSERVERS.at_ptr(i) {option::Option::Some(p)=>{
+        let f=(*(*p).node).frame();if f.width!=(*p).width || f.height!=(*p).height {(*p).width=f.width;(*p).height=f.height;let added: status::Status=pending.append((*p).id);}
+    },option::Option::None=>{}} i=i+1;}
+    // Lookup each id again: earlier callbacks can cancel observers and nodes.
+    i=0;while i<pending.count() {match pending.at(i) {option::Option::Some(token)=>{
+        var j: usize=0;while j<OBSERVERS.count() {match OBSERVERS.at_ptr(j) {option::Option::Some(p)=>{if (*p).id==token {let call=(*p).call;let ctx=(*p).ctx;call(ctx);break;}},option::Option::None=>{}}j=j+1;}
+    },option::Option::None=>{}}i=i+1;}return;
+}
+fn install(queue: rt::Object) {QUEUE=queue.clone();services::install_scheduler(services::Scheduler {run_on_main:run_on_main,after:after,cancel_after:cancel,observe_size:observe,cancel_observe_size:cancel_observer});return;}
+fn shutdown() {while TIMERS.count()>0 {match TIMERS.at_ptr(0) {option::Option::Some(p)=>{cancel((*p).id);},option::Option::None=>{break;}}}OBSERVERS.remove_all();services::uninstall_scheduler();QUEUE=rt::Object::empty();return;}

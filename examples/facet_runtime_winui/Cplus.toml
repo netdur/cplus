@@ -1,0 +1,28 @@
+[package]
+name = "facet_runtime_winui"
+version = "0.0.1"
+edition = "2026"
+
+# A `runtime::App` with two windows, run on WinUI through the facade.
+# main.cplus calls `facet_runtime/winui`'s `select()` before `app.run`; that
+# opt-in is the only line that differs from the same app on Win32.
+#
+#   & examples/facet_runtime_winui/build.ps1
+#   & examples/facet_runtime_winui/out/runtime/facet_runtime_winui.exe
+
+[dependencies]
+stdlib        = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+
+[windows.dependencies]
+# facet_runtime's Windows closure (the default Win32 backend)...
+facet_win32 = "*"
+win32       = "*"
+# ...and the WinUI opt-in: only an app that imports `facet_runtime/winui`
+# lists these three, and only it compiles their bindings.
+facet_winui = "*"
+winui       = "*"
+winrt       = "*"

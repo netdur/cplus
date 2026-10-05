@@ -1,0 +1,70 @@
+// Optional glue: Facet keys/policy -> standalone native WinUI agent surface.
+import "stdlib/result" as result;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet_winui/agent_hooks" as hooks;
+import "facet_winui/record" as record;
+import "facet_agent/native_surface" as selected;
+import "facet_agent/agent" as facade;
+import "agent_winui_mcp/agent_winui_mcp" as http;
+import "agent_winui/agent_winui" as agent;
+import "agent_core/identity" as identity;
+import "agent_core/backend" as backend;
+static _SURFACE: agent::Surface=#zero::[agent::Surface]();
+static _ACTIVE: bool=false;
+static _QUEUE: rt::Object=#zero::[rt::Object]();
+static _ID: text::Text=#zero::[text::Text]();
+fn _opened(window: rt::Object) {
+    assert !_ACTIVE;
+    match agent::open(window) { result::Result::Ok(s)=>{_SURFACE=s;},result::Result::Err(_)=>{assert false;return;} }
+    let w: ui::IWindow=match ui::IWindow::query(window) {result::Result::Ok(v)=>v,result::Result::Err(_)=>{assert false;return;}};
+    _QUEUE=match w.dispatcher_queue() {result::Result::Ok(v)=>v,result::Result::Err(_)=>{assert false;return;}};
+    _ACTIVE=true; selected::install(#addr_of(_SURFACE) as *u8,agent::mcp_backend(),_serve);
+    if !_ID.is_empty() { _serve(_ID.view()); }
+}
+fn _closing() { if _ACTIVE { http::stop(); selected::uninstall(); _SURFACE.close(); _QUEUE=rt::Object::empty(); _ACTIVE=false; } }
+fn serve(id: str) -> i32 {
+    if !_ACTIVE { return -12; }
+    return http::start(#addr_of(_SURFACE),_QUEUE,id,facade::effective_policy());
+}
+fn _serve(id: str) {
+    if http::running() { return; }
+    let port: i32=serve(id);
+    if port<0 { io::eprintln("facet_agent_winui: HTTP setup failed (${port})"); }
+    else { io::eprintln("facet_agent_winui: MCP on http://127.0.0.1:${port}/"); }
+}
+fn _policy(a: vocab::Agent) -> u32 {
+    return match a {vocab::Agent::Open=>identity::policy_none(),vocab::Agent::Protected=>identity::policy_protected(),vocab::Agent::Private=>identity::policy_private(),vocab::Agent::Hidden=>identity::policy_exclude()};
+}
+fn _apply(object: rt::Object,node: *core::Node) {
+    if !_ACTIVE { return; }
+    let data: *core::Data=core::node_data(node);
+    // Window commands can have a different native parent from their logical
+    // owner. Carry every owner boundary with them, including live policy edits.
+    var policy=_policy((*data).common.agent);let r=core::view_of(node) as *record::View;
+    if r.is_not_null() && ((*r).kind==props::K_MENU || (*r).kind==props::K_TOOLBAR_ITEM) {var parent=(*r).parent as *record::View;while parent.is_not_null() {policy=policy|_policy((*core::node_data((*parent).node)).common.agent);parent=(*parent).parent as *record::View;}}
+    let key: str=(*node).key();
+    // Even an unkeyed container can carry a privacy boundary. Pin it under a
+    // reserved process-local identity, then make it observe-only.
+    if key=="" {
+        let address: usize=object.raw() as usize;
+        let id: text::Text="facet:policy:${address}";
+        assert _SURFACE.update(object,id.view(),policy,true,false).is_ok();
+        return;
+    }
+    assert _SURFACE.update(object,key,policy).is_ok();
+}
+fn _alias(object: rt::Object,node: *core::Node,key: str) {
+    if !_ACTIVE {return;}let data=core::node_data(node);
+    assert _SURFACE.update(object,key,_policy((*data).common.agent)).is_ok();
+}
+fn _release(object: rt::Object) { if _ACTIVE { let removed: bool=_SURFACE.unpin(object); } }
+fn enable(mcp_id: str="") { _ID=text::from_str(mcp_id); hooks::install(hooks::Hooks {opened:_opened,closing:_closing,apply:_apply,alias:_alias,release:_release}); }
+fn disable() { _closing(); hooks::install(#zero::[hooks::Hooks]()); }
+fn surface_ptr() -> *u8 { assert _ACTIVE; return #addr_of(_SURFACE) as *u8; }
+fn mcp_backend() -> backend::Backend { return agent::mcp_backend(); }

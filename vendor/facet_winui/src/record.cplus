@@ -1,0 +1,41 @@
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+import "facet/facet" as core;
+struct View {
+    object: rt::Object,
+    wrapper: rt::Object,
+    opaque refresh: *u8,
+    opaque reorder: *u8,
+    content: rt::Object,
+    slot: rt::Object,
+    slot_kind: u32,
+    click_attached: bool,
+    button_toggles: bool,
+    editor_secure: bool,
+    pending_focus: i32,
+    opaque node: *core::Node,
+    kind: u32,
+    token: ui::EventRegistrationToken,
+    token2: ui::EventRegistrationToken,
+    token3: ui::EventRegistrationToken,
+    token4: ui::EventRegistrationToken,
+    measure_token: ui::EventRegistrationToken,
+    measure_subscribed: bool,
+    subscribed: bool,
+    applying: bool,
+    scroll_pending: bool,
+    draw_pending: bool,
+    draw_width: f64,
+    draw_height: f64,
+    opaque extra: *u8,
+    opaque table_height: *u8,
+    opaque table_gap: *u8,
+    opaque shortcut: *u8,
+    opaque presentation: *u8,
+    opaque parent: *u8,
+    item_reader: fn(*u8)->*u8,
+    opaque item_context: *u8,
+}
+
+// The native control stays addressable even when its presentation needs a wrapper.
+fn visual(r: *View) -> rt::Object {return if (*r).wrapper.is_null() {(*r).object.clone()} else {(*r).wrapper.clone()};}

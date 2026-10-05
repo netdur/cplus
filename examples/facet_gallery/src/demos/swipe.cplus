@@ -9,6 +9,7 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/label" as label;
+import "facet/swipeable" as swipeable;
 import "facet/vocabulary" as vocab;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
@@ -17,13 +18,27 @@ import "../shell" as shell;
 
 struct Swipe {
     last: text::Text,
+    starts: u32,changes: u32,ends: u32,opens: u32,closes: u32,high: bool,enabled: bool,
 }
 
 impl Swipe {
     fn new() -> Swipe {
-        return Swipe { last: text::from_str("(none)") };
+        return Swipe { last: text::from_str("(none)"),starts:0,changes:0,ends:0,opens:0,closes:0,high:false,enabled:true };
     }
 
+    fn update(ref this) {
+        if let option::Option::Some(l)=label::find("sw:events") {let changed=l.set_text("Started ${this.starts} / ended ${this.ends} / opened ${this.opens} / closed ${this.closes}");}
+    }
+    fn started(ref this,sender: *u8) {this.starts=this.starts+1;this.update();}
+    fn changing(ref this,sender: *u8) {this.changes=this.changes+1;if let option::Option::Some(l)=label::find("sw:changes") {let changed=l.set_text("Position updates: ${this.changes}");}}
+    fn ended(ref this,sender: *u8) {this.ends=this.ends+1;this.update();}
+    fn opened(ref this,sender: *u8) {this.opens=this.opens+1;this.update();}
+    fn closed(ref this,sender: *u8) {this.closes=this.closes+1;this.update();}
+    fn threshold(ref this,sender: *u8) {
+        this.high=!this.high;if let option::Option::Some(c)=swipeable::find("sw:row") {let changed=c.set_reveal_threshold(if this.high {160.0f64} else {0.0f64});}
+        if let option::Option::Some(l)=label::find("sw:settings") {let changed=l.set_text(if this.high {"Threshold: 160 points"} else {"Threshold: automatic"});}
+    }
+    fn enable(ref this,sender: *u8) {this.enabled=!this.enabled;if let option::Option::Some(c)=swipeable::find("sw:row") {let changed=c.set_enabled(this.enabled);}}
     fn on_archive(ref this, sender: *u8) {
         this.last = text::from_str("Archive");
         match label::find("sw:status") {
@@ -50,7 +65,7 @@ impl Swipe: component::Component {
         var body: core::Builder = core::Builder::new();
         body.add(shell::caption("swipeable  ·  content + swipe_item children"));
         body.add(ui::label(
-            "On AppKit, actions also appear as a context menu (right-click). Touch platforms reveal by drag.",
+            "Drag left to reveal actions; drag right or press Escape to close. Right-click also opens the action menu.",
             key: "sw:note",
             font_size: 13.0,
             text_color: vocab::Color::ink(0.65),
@@ -79,7 +94,7 @@ impl Swipe: component::Component {
         content.set_background_color(vocab::Color::raised());
         content.set_corner_radius(vocab::Corners::all(8.0));
 
-        var sw: core::Node = ui::swipeable(key: "sw:row").height(64.0);
+        var sw: core::Node = ui::swipeable(key: "sw:row",on_swipe_started:this.started,observe_swipe_changing:this.changing,on_swipe_ended:this.ended,on_open_requested:this.opened,on_close_requested:this.closed).height(64.0);
         let _c: status::Status = sw.add_child(content);
         let _a: status::Status = sw.add_child(ui::swipe_item(
             key: "sw:archive",
@@ -95,6 +110,13 @@ impl Swipe: component::Component {
             on_clicked: this.on_delete,
         ));
         body.add(sw);
+        body.add(ui::label("Started 0 / ended 0 / opened 0 / closed 0",key:"sw:events",font_size:13.0f64));
+        body.add(ui::label("Position updates: 0",key:"sw:changes",font_size:13.0f64));
+        body.add(ui::label("Threshold: automatic",key:"sw:settings",font_size:13.0f64));
+        var controls: core::Builder=core::Builder::new();
+        controls.add(ui::button("Change threshold",key:"sw:threshold",on_click:this.threshold));
+        controls.add(ui::button("Toggle enabled",key:"sw:enable",on_click:this.enable));
+        body.add(core::row(controls).gap(8.0f64));
 
         body.add(ui::label(
             "last action: (none)",

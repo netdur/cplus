@@ -1,66 +1,52 @@
-// Reference: carousel + page_dots pairing
-//   ui::carousel(key: "c")  — paged horizontal host
-//   ui::page_dots(n, key: "d", position: i)
-
+// Retained child pages hosted by the platform pager.
 import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
+import "facet/carousel" as carousel;
+import "facet/checkbox" as checkbox;
+import "facet/services" as services;
+import "facet/page_dots" as page_dots;
+import "facet/label" as label;
 import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
 import "../shell" as shell;
-
-struct CarouselDemo {
-    n: i32,
-}
-
+struct CarouselDemo {timer: services::Cancellable}
 impl CarouselDemo {
-    fn new() -> CarouselDemo { return CarouselDemo { n: 0 }; }
+    fn new() -> CarouselDemo {return CarouselDemo {timer:#zero::[services::Cancellable]()};}
+    fn paint(ref this) {
+        if let option::Option::Some(c)=carousel::find("cr:host") {
+            let index=c.position();if let option::Option::Some(d)=page_dots::find("cr:dots") {let updated=d.set_position(index);}
+            let shown=index+1;if let option::Option::Some(l)=label::find("cr:status") {let updated=l.set_text("Page ${shown} of 4");}
+        }
+    }
+    fn changed(ref this,sender: *u8) {this.paint();}
+    fn previous(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {let updated=c.set_position(c.position()-1);}this.timer=services::after(0.05f64,this.paint);}
+    fn next_page(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {let updated=c.set_position(c.position()+1);}this.timer=services::after(0.05f64,this.paint);}
+    fn change_loop(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {if let option::Option::Some(b)=checkbox::find("cr:loop") {let updated=c.set_wraps(b.on());}}}
+    fn animate(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {if let option::Option::Some(b)=checkbox::find("cr:animate") {let updated=c.set_animates_scroll(b.on());}}}
+    fn bounce(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {if let option::Option::Some(b)=checkbox::find("cr:bounces") {let updated=c.set_bounces(b.on());}}}
+    fn sizing(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {if let option::Option::Some(b)=checkbox::find("cr:size") {let updated=c.set_item_sizing(if b.on() {vocab::ItemSizing::MeasureFirstItem} else {vocab::ItemSizing::MeasureAllItems});}}}
+    fn first(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {let updated=c.set_position(0);}this.paint();}
+    fn last(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {let updated=c.set_position(3);}this.paint();}
 }
-
+fn card(title: str,detail: str,key: str,color: vocab::Color) -> core::Node {var page=@ui {column(key:key) {label(title,font_size:24.0f64) label(detail,max_lines:3,line_break:vocab::LineBreak::WordWrap)}.padding(28.0f64).gap(12.0f64)};core::set_background_color(#addr_of(page),color);return page;}
 impl CarouselDemo: component::Component {
     fn build(ref this) -> core::Node {
-        var body: core::Builder = core::Builder::new();
-        body.add(shell::caption("carousel  ·  paged horizontal host"));
-        body.add(ui::label(
-            "CarouselView is the paged surface; fill it the same way as collection (items + position). Pair with page_dots for an indicator.",
-            key: "cr:note",
-            font_size: 13.0,
-            text_color: vocab::Color::ink(0.65),
-            max_lines: 4,
-            line_break: vocab::LineBreak::WordWrap,
-        ));
-
-        // Host chrome — empty until count/row are wired the way collection is.
-        // Shows the control surface + a dots strip as the reference pairing.
-        body.add(ui::carousel(key: "cr:host")
-            .height(160.0)
-            .grow(1.0));
-        body.add(ui::page_dots(
-            4,
-            key: "cr:dots",
-            position: 0,
-            selected_dot_color: vocab::Color::primary(),
-        ));
-        body.add(ui::label(
-            "Wire pages via the same items protocol as collection when filling a live feed.",
-            key: "cr:hint",
-            font_size: 12.0,
-            text_color: vocab::Color::ink(0.5),
-            max_lines: 3,
-            line_break: vocab::LineBreak::WordWrap,
-        ));
-
-        return shell::panel(
-            "Carousel",
-            "Paged horizontal scroller. Indicator is a separate page_dots control.",
-            core::column(body).gap(12.0),
-            howto: "ui::carousel(key: \"c\").height(160.0)\nui::page_dots(4, key: \"d\", position: 0)\n// drive: carousel::find(\"c\").set_position(i)\n//        page_dots::find(\"d\").set_position(i)",
-        );
+        var pager=ui::carousel(key:"cr:host",wraps:false,on_position_changed:this.changed).height(220.0f64);
+        var first_page=card("A retained page","Use the native arrows, swipe, or arrow keys to change pages.","cr:first",vocab::Color::rgba(0.12f64,0.19f64,0.32f64,1.0f64));
+        assert first_page.add_child(@ui {row {checkbox(false,key:"cr:keep") label("Keep this checked while changing pages")}.gap(8.0f64)}).is_ok();assert pager.add_child(first_page).is_ok();
+        assert pager.add_child(card("Second page","Each child fills the pager viewport.","cr:second",vocab::Color::rgba(0.24f64,0.14f64,0.32f64,1.0f64))).is_ok();
+        assert pager.add_child(card("Third page","Native paging reports the current position back to Facet.","cr:third",vocab::Color::rgba(0.1f64,0.27f64,0.23f64,1.0f64))).is_ok();
+        assert pager.add_child(card("Last page","Jump back to the first page: its checkbox retains its state.","cr:last",vocab::Color::rgba(0.3f64,0.2f64,0.12f64,1.0f64))).is_ok();
+        return shell::panel("Carousel","Native paging with retained child pages and a separate page indicator.",@ui {column {
+            pager page_dots(4,key:"cr:dots",position:0,selected_dot_color:vocab::Color::primary()) label("Page 1 of 4",key:"cr:status")
+            row {button("First page",key:"cr:go_first",on_click:this.first) button("Last page",key:"cr:go_last",on_click:this.last) button("Previous",key:"cr:previous",on_click:this.previous) button("Next",key:"cr:next",on_click:this.next_page)}.gap(8.0f64)
+            row {checkbox(false,key:"cr:loop",on_checked_changed:this.change_loop) label("Loop Previous / Next") checkbox(true,key:"cr:animate",on_checked_changed:this.animate) label("Animate adjacent pages") checkbox(false,key:"cr:size",on_checked_changed:this.sizing) label("Measure first page")}.gap(8.0f64)
+            row {checkbox(true,key:"cr:bounces",on_checked_changed:this.bounce) label("Bounce / momentum after swiping")}.gap(8.0f64)
+        }.gap(12.0f64)},howto:"var pages = ui::carousel(key: \"c\", on_position_changed: this.changed);\npages.add_child(page);\ncarousel::find(\"c\").set_position(2);");
     }
 }
-
 impl CarouselDemo: component::Lifecycle {
-    fn on_attach(ref this, why: component::Attach) {
-        if why != component::Attach::Mount { return; } return; }
-    fn on_detach(ref this, why: component::Detach) {
-        if why != component::Detach::Unmount { return; } return; }
+    fn on_attach(ref this,why: component::Attach) {return;}
+    fn on_detach(ref this,why: component::Detach) {if why==component::Detach::Unmount {this.timer=#zero::[services::Cancellable]();}return;}
 }

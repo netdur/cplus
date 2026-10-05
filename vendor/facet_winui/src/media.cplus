@@ -1,0 +1,112 @@
+import "stdlib/text" as text;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/symbol" as symbol;
+import "facet/icons" as icons;
+import "facet/vocabulary" as vocab;
+import "./native" as native;
+import "./style" as style;
+import "./typography" as typography;
+import "./record" as record;
+import "./browser" as browser;
+import "./hybrid" as hybrid;
+import "./choices" as choices;
+import "./imaging" as imaging;
+import "./symbols" as symbols;
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE+browser::subscriptions()+hybrid::subscriptions();}
+fn supports(k: u32) -> bool {return k==props::K_PAGE_DOTS || k==props::K_WEB || k==props::K_HYBRID_WEB || k==props::K_ICON_BUTTON || k==props::K_IMAGE || k==props::K_SPAN || k==symbol::K_SYMBOL;}
+fn create(k: u32,n: *core::Node) -> rt::Object {
+    if k==props::K_PAGE_DOTS {let v: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new());return v.object();}
+    if k==props::K_WEB || k==props::K_HYBRID_WEB {let v: ui::WebView2=native::must::[ui::WebView2](ui::WebView2::new());return v.object();}
+    if k==props::K_ICON_BUTTON {let p: *props::IconButtonProps=(*core::node_data(n)).props as *props::IconButtonProps;if (*p).toggles {let v=native::must::[ui::ToggleButton](ui::ToggleButton::new());return v.object();}let v: ui::Button=native::must::[ui::Button](ui::Button::new());return v.object();}
+    if k==props::K_IMAGE || k==symbol::K_SYMBOL {let v: ui::Border=native::must::[ui::Border](ui::Border::new());return v.object();}
+    let v: ui::TextBlock=native::must::[ui::TextBlock](ui::TextBlock::new());return v.object();
+}
+fn named(name: str) -> u32 {
+    if name=="gearshape" {return icons::settings;}
+    if name=="star" {return icons::star;}
+    if name=="archivebox" {return icons::archive;}
+    if name=="trash" {return icons::delete;}
+    if name=="plus" {return icons::add;}
+    if name=="magnifyingglass" {return icons::search;}
+    if name=="house" || name=="house.fill" {return icons::home;}
+    return icons::help;
+}
+fn icon(label: ui::ITextBlock,code: u32,size: f64,color: vocab::Color,font: str="") {
+    let text: text::Text=typography::glyph(code);native::check(label.set_text(text.view()));
+    native::check(label.set_font_family(typography::font(if font.count()>0 {font} else {"ms-appx:///MaterialSymbolsOutlined.ttf#Material Symbols Outlined"})));
+    native::check(label.set_font_size(if size>0.0f64 {size} else {24.0f64}));
+    native::check(label.set_foreground(style::brush(if color.is_set() {color} else {vocab::Color::ink()})));return;
+}
+fn uri(source: str) -> rt::Object {return imaging::uri(source);}
+fn image_source(source: str) -> bool {
+    let lower=text::from_str(source).lowercased();let name=lower.view();
+    return name.has_prefix("https:") || name.has_prefix("http:") || name.has_prefix("file:") || name.has_prefix("ms-appx:") || name.has_suffix(".png") || name.has_suffix(".jpg") || name.has_suffix(".jpeg") || name.has_suffix(".gif") || name.has_suffix(".bmp") || name.has_suffix(".webp") || name.has_suffix(".ico");
+}
+fn stretch(fit: vocab::ImageFit) -> i32 {return if fit==vocab::ImageFit::Fill {ui::stretch_fill} else if fit==vocab::ImageFit::AspectFill {ui::stretch_uniform_to_fill} else if fit==vocab::ImageFit::Center {ui::stretch_none} else {ui::stretch_uniform};}
+fn apply(r: *record::View) {
+    let k: u32=(*r).kind;let raw: *u8=(*core::node_data((*r).node)).props;let value: rt::Object=(*r).object.clone();
+    if k==props::K_PAGE_DOTS {
+        let p: *props::PageDotsProps=raw as *props::PageDotsProps;let panel: ui::IPanel=native::must::[ui::IPanel](ui::IPanel::query(value));let children: ui::IVector_Microsoft_UI_Xaml_UIElement=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));native::check(children.clear());
+        var count: i64=(*p).count;if (*p).max_dots>0 && count>(*p).max_dots {count=(*p).max_dots;}if count==1 && (*p).hides_single {count=0;}
+        let selected=if (*p).selected_dot_color.is_set() {(*p).selected_dot_color} else {vocab::Color::primary()};
+        let normal=if (*p).dot_color.is_set() {(*p).dot_color} else {vocab::Color::ink(0.35f64)};
+        let size: f64=if (*p).dot_size>0.0f64 {(*p).dot_size} else {8.0f64};var i: i64=0;
+        while i<count {var dot: rt::Object=rt::Object::empty();if (*p).dot_shape==vocab::DotShape::Square {let v=native::must::[ui::Rectangle](ui::Rectangle::new());dot=v.object();} else {let v=native::must::[ui::Ellipse](ui::Ellipse::new());dot=v.object();}let shape: ui::IShape=native::must::[ui::IShape](ui::IShape::query(dot.clone()));native::check(shape.set_fill(style::brush(if i==(*p).position {selected} else {normal})));let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(dot.clone()));native::check(element.set_width(size));native::check(element.set_height(size));let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left(dot.clone(),(i as f64)*(size+8.0f64)));native::check(children.append(dot.clone()));i=i+1;}
+        let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));native::check(element.set_min_width((count as f64)*(size+8.0f64)));native::check(element.set_min_height(size));
+    }
+    if k==props::K_WEB {let p: *props::WebProps=raw as *props::WebProps;browser::apply(r,if (*p).source.is_empty() {rt::Object::empty()} else {uri((*p).source.view())});}
+    if k==props::K_HYBRID_WEB {hybrid::apply(r);}
+    if k==symbol::K_SYMBOL {symbols::apply(r);}
+    if k==props::K_ICON_BUTTON {
+        (*r).applying=true;        let p: *props::IconButtonProps=raw as *props::IconButtonProps;
+        let content=native::must::[ui::IContentControl](ui::IContentControl::query(value));
+        if (*p).symbol==0 && image_source((*p).source.view()) {
+            let bitmap=native::must::[ui::BitmapImage](ui::BitmapImage::new());native::check(bitmap.set_uri_source(uri((*p).source.view())));
+            let image=native::must::[ui::Image](ui::Image::new());native::check(image.set_source(bitmap.object()));native::check(image.set_stretch(stretch((*p).fit)));native::check(content.set_content(image.object()));
+        } else {
+            let label=native::must::[ui::TextBlock](ui::TextBlock::new());icon(native::must::[ui::ITextBlock](ui::ITextBlock::query(label.object())),if (*p).symbol!=0 {(*p).symbol} else {named((*p).source.view())},20.0f64,vocab::Color::ink());native::check(content.set_content(label.object()));
+        }
+        let control=native::must::[ui::IControl](ui::IControl::query(value));native::check(control.set_is_enabled((*core::node_data((*r).node)).common.is_enabled));
+        if (*p).toggles {let toggle=native::must::[ui::IToggleButton](ui::IToggleButton::query(value));native::check(toggle.set_is_checked(choices::boxed((*p).on)));}
+        native::check(control.set_padding(ui::Thickness {left:0.0f64,top:0.0f64,right:0.0f64,bottom:0.0f64}));
+        let picture=(*p).symbol==0 && image_source((*p).source.view());
+        native::check(control.set_horizontal_content_alignment(if picture {ui::horizontal_alignment_stretch} else {ui::horizontal_alignment_center}));native::check(control.set_vertical_content_alignment(if picture {ui::vertical_alignment_stretch} else {ui::vertical_alignment_center}));
+        let framework=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));native::check(framework.set_min_height(0.0f64));native::check(framework.set_min_width(0.0f64));
+        let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());
+        if (*p).bordered {
+            typography::clear(value,native::must::[rt::Object](defaults.background_property()));
+            if (*p).border_width>0.0f64 {let w=(*p).border_width;native::check(control.set_border_thickness(ui::Thickness {left:w,top:w,right:w,bottom:w}));} else {typography::clear(value,native::must::[rt::Object](defaults.border_thickness_property()));}
+        } else {native::check(control.set_background(style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.0f64))));native::check(control.set_border_thickness(ui::Thickness {left:0.0f64,top:0.0f64,right:0.0f64,bottom:0.0f64}));}
+        if (*p).border_color.is_set() {native::check(control.set_border_brush(style::brush((*p).border_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.border_brush_property()));}
+        native::check(control.set_corner_radius(style::corners((*p).corner_radius)));(*r).applying=false;
+    }
+    if k==props::K_IMAGE {imaging::apply(r,uri);}
+    if k==props::K_SPAN {
+        let p: *props::SpanProps=raw as *props::SpanProps;let label=native::must::[ui::ITextBlock](ui::ITextBlock::query(value));
+        let defaults: ui::ITextBlockStatics=native::must::[ui::ITextBlockStatics](ui::TextBlock::i_text_block_statics_factory());
+        native::check(label.set_text(typography::transformed((*p).text.view(),(*p).text_transform).view()));
+        if (*p).font_size>0.0f64 { native::check(label.set_font_size((*p).font_size)); } else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
+        if (*p).text_color.is_set() {native::check(label.set_foreground(style::brush((*p).text_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.foreground_property()));}
+        native::check(label.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](label.font_size()))));
+        native::check(label.set_is_text_scale_factor_enabled((*p).font_scales));
+        native::check(label.set_text_decorations(typography::decoration((*p).text_decoration)));
+        native::check(label.set_font_weight(style::weight((*p).font_weight)));
+        native::check(label.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));
+        if (*p).font_family.count()>0 {native::check(label.set_font_family(typography::font((*p).font_family.view())));} else {typography::clear(value,native::must::[rt::Object](defaults.font_family_property()));}
+        typography::line_height(label,(*p).line_height);
+    }
+    (*(*r).node).mark_content_changed();return;
+}
+fn clicked(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    if (*(context as *record::View)).applying {return rt::Status {code:0};}
+    let r: *record::View=context as *record::View;let p: *props::IconButtonProps=(*core::node_data((*r).node)).props as *props::IconButtonProps;
+    if (*p).toggles!=(*r).button_toggles {return rt::Status {code:0};}
+    if (*p).toggles {(*p).on=choices::is_checked(sender);}let call: fn(*u8,*u8)=(*p).on_clicked;let ctx: *u8=(*p).on_clicked_ctx;
+    if call!=props::no_handler {call(context,ctx);}return rt::Status {code:0};
+}
+fn attach(r: *record::View) {if (*r).kind==props::K_ICON_BUTTON {let p: *props::IconButtonProps=(*core::node_data((*r).node)).props as *props::IconButtonProps;choices::click_attach(r,(*p).toggles,clicked);}return;}
+fn release(r: *record::View) {if (*r).kind==props::K_IMAGE {imaging::release(r);}if (*r).kind==props::K_WEB {browser::release(r);}if (*r).kind==props::K_HYBRID_WEB {hybrid::release(r);}if (*r).kind==props::K_ICON_BUTTON {let p: *props::IconButtonProps=(*core::node_data((*r).node)).props as *props::IconButtonProps;choices::click_release(r);}return;}

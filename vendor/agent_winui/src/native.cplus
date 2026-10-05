@@ -1,0 +1,81 @@
+// Native inspection and activation. No authorization lives in this module.
+import "stdlib/result" as result;
+import "stdlib/text" as text;
+import "agent_core/identity" as identity;
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+
+fn object(take r: result::Result[rt::Object, rt::Error]) -> rt::Object {
+    return match r { result::Result::Ok(v) => v, result::Result::Err(_) => rt::Object::empty() };
+}
+fn string(take r: result::Result[text::Text, rt::Error]) -> text::Text {
+    return match r { result::Result::Ok(v) => v, result::Result::Err(_) => text::new() };
+}
+fn boolean(take r: result::Result[bool, rt::Error], fallback: bool=false) -> bool {
+    return match r { result::Result::Ok(v) => v, result::Result::Err(_) => fallback };
+}
+fn same(a: rt::Object, b: rt::Object) -> bool {
+    let aa: rt::Object=object(a.query(rt::unknown_iid()));
+    let bb: rt::Object=object(b.query(rt::unknown_iid()));
+    return !aa.is_null() && aa.raw()==bb.raw();
+}
+fn peer(value: rt::Object) -> rt::Object {
+    guard let result::Result::Ok(factory)=ui::FrameworkElementAutomationPeer::i_framework_element_automation_peer_statics_factory() else { return rt::Object::empty(); };
+    return object(factory.create_peer_for_element(value));
+}
+fn pattern(value: rt::Object, kind: i32) -> rt::Object {
+    guard let result::Result::Ok(p)=ui::IAutomationPeer::query(value) else { return rt::Object::empty(); };
+    return object(p.get_pattern(kind));
+}
+fn enabled(value: rt::Object) -> bool {
+    if let result::Result::Ok(c)=ui::IControl::query(value) { return boolean(c.is_enabled()); }
+    return true;
+}
+fn visible(value: rt::Object) -> bool {
+    guard let result::Result::Ok(e)=ui::IUIElement::query(value) else { return false; };
+    guard let result::Result::Ok(v)=e.visibility() else { return false; };
+    return v==ui::visibility_visible;
+}
+fn password(value: rt::Object) -> bool {
+    if let result::Result::Ok(p)=ui::IPasswordBox::query(value) { return true; }
+    return false;
+}
+fn classify(value: rt::Object, p: rt::Object) -> identity::Role {
+    if password(value) { return identity::Role::Input; }
+    if let result::Result::Ok(t)=ui::ITextBox::query(value) { return identity::Role::Input; }
+    if !pattern(p,ui::pattern_interface_invoke).is_null() || !pattern(p,ui::pattern_interface_toggle).is_null() || !pattern(p,ui::pattern_interface_selection_item).is_null() { return identity::Role::Button; }
+    if !pattern(p,ui::pattern_interface_range_value).is_null() { return identity::Role::Value; }
+    if let result::Result::Ok(t)=ui::ITextBlock::query(value) { return identity::Role::Text; }
+    return identity::Role::Group;
+}
+fn clickable(p: rt::Object) -> bool {
+    return !pattern(p,ui::pattern_interface_invoke).is_null() || !pattern(p,ui::pattern_interface_toggle).is_null() || !pattern(p,ui::pattern_interface_selection_item).is_null();
+}
+fn click(p: rt::Object) -> rt::Status {
+    if let result::Result::Ok(v)=ui::IToggleProvider::query(pattern(p,ui::pattern_interface_toggle)) { return v.toggle(); }
+    if let result::Result::Ok(v)=ui::ISelectionItemProvider::query(pattern(p,ui::pattern_interface_selection_item)) { return v.select(); }
+    if let result::Result::Ok(v)=ui::IInvokeProvider::query(pattern(p,ui::pattern_interface_invoke)) { return v.invoke(); }
+    return rt::Status {code:0x80004001 as i32};
+}
+// Only call after the content gate. Password content is never read.
+fn value(o: rt::Object, p: rt::Object) -> text::Text {
+    if password(o) { return text::new(); }
+    // Read the control's property for synchronous read-after-write. The peer
+    // Value path returned empty in the immediate-write integration test.
+    if let result::Result::Ok(v)=ui::ITextBox::query(o) { return string(v.text()); }
+    if let result::Result::Ok(v)=ui::IValueProvider::query(pattern(p,ui::pattern_interface_value)) { return string(v.value()); }
+    if let result::Result::Ok(v)=ui::IRangeValueProvider::query(pattern(p,ui::pattern_interface_range_value)) {
+        if let result::Result::Ok(n)=v.value() { return "${n}"; }
+    }
+    if let result::Result::Ok(v)=ui::ITextBlock::query(o) { return string(v.text()); }
+    if let result::Result::Ok(v)=ui::IAutomationPeer::query(p) { return string(v.get_name()); }
+    return text::new();
+}
+fn set_text(o: rt::Object, value: str) -> rt::Status {
+    if let result::Result::Ok(v)=ui::ITextBox::query(o) {
+        if boolean(v.is_read_only(),true) { return rt::Status {code:0x80070005 as i32}; }
+        return v.set_text(value);
+    }
+    if let result::Result::Ok(v)=ui::IPasswordBox::query(o) { return v.set_password(value); }
+    return rt::Status {code:0x80004001 as i32};
+}

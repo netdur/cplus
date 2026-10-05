@@ -1,0 +1,536 @@
+// Native records are owned by Facet Data.view_release, not by the WinUI tree.
+// An event context borrows its record; unsubscribe before destroying the record.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "stdlib/env" as env;
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "facet/scroll" as scroll;
+import "facet/text_field" as field;
+import "flex_layout/flex_layout" as flex;
+import "./native" as native;
+import "./native_slot" as native_slot;
+import "./record" as record;
+import "./outline" as outline;
+import "facet/tree" as tree;
+import "facet/split" as split;
+import "facet/window_chrome" as chrome;
+import "./window_buttons" as window_buttons;
+import "./style" as style;
+import "./scheduler" as scheduler;
+import "./choices" as choices;
+import "./editing" as editing;
+import "./pickers" as pickers;
+import "./media" as media;
+import "./typography" as typography;
+import "./labels" as labels;
+import "./button_text" as button_text;
+import "./html_label" as html_label;
+import "./drawing" as drawing;
+import "./borders" as borders;
+import "./tabs" as tabs;
+import "./tables" as tables;
+import "./paging" as paging;
+import "./items" as items;
+import "./actions" as actions;
+import "./swipe" as swipe;
+import "./menus" as menus;
+import "./command_strip" as commands;
+import "./shortcuts" as shortcuts;
+import "./presentation" as presentation;
+import "./divider" as divider;
+import "./agent_hooks" as agent_hooks;
+import "./browser" as browser;
+import "./hybrid" as hybrid;
+import "./pointer" as pointer;
+import "./buttons" as buttons;
+import "./refreshing" as refreshing;
+
+type View = record::View;
+static LIVE: i64=0;
+static SUBSCRIPTIONS: i64=0;
+fn live_views() -> i64 { return LIVE; }
+fn live_subscriptions() -> i64 { return SUBSCRIPTIONS+outline::subscriptions()+choices::subscriptions()+editing::subscriptions()+pickers::subscriptions()+media::subscriptions()+items::subscriptions()+actions::subscriptions()+shortcuts::subscriptions()+divider::subscriptions()+presentation::subscriptions()+pointer::subscriptions()+refreshing::subscriptions()+tabs::subscriptions()+paging::subscriptions()+swipe::subscriptions()+window_buttons::subscriptions(); }
+fn supports(n: *core::Node) -> bool {
+    let kind: u32=core::kind_of(n); let count: usize=core::child_count_of(n);
+    if kind!=chrome::K_WINDOW_BUTTONS && kind!=props::K_TABS && kind!=props::K_REFRESHABLE && kind!=props::K_TABLE && kind!=props::K_SWIPEABLE && kind!=props::K_CAROUSEL && kind!=core::K_NODE && kind!=props::K_LABEL && kind!=props::K_BUTTON && kind!=props::K_TEXT_FIELD && kind!=props::K_SCROLL && kind!=tree::K_TREE && kind!=split::K_SPLIT && !actions::supports(kind) && !menus::supports(kind) && kind!=props::K_CANVAS && kind!=props::K_BOX && kind!=props::K_BORDERED && !items::supports(kind) && !media::supports(kind) && !pickers::supports(kind) && !editing::supports(kind) && !choices::supports(kind) { return false; }
+    if core::view_of(n).is_not_null() || (!menus::supports(kind) && kind!=props::K_TABS && kind!=props::K_REFRESHABLE && kind!=props::K_TABLE && kind!=props::K_SWIPEABLE && kind!=props::K_CAROUSEL && kind!=core::K_NODE && kind!=props::K_SCROLL && kind!=split::K_SPLIT && kind!=props::K_BORDERED && count!=0) { return false; }
+    var i: usize=0;
+    while i<count {
+        match core::child_of(n,i) { option::Option::Some(child)=>{if kind==props::K_MENU && !actions::flyout_item(core::kind_of(child)) {return false;}if actions::flyout_item(core::kind_of(child)) && kind!=props::K_MENU && kind!=props::K_CONTEXT_MENU && kind!=props::K_SWIPEABLE {return false;}if !supports(child) {return false;}},option::Option::None=>{} }
+        i=i+1;
+    }
+    return true;
+}
+// WinUI template metrics are not final before first Loaded. Invalidate the
+// flex measurement cached during mounting once native resources are available.
+fn measured_loaded(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let r=context as *View;
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));
+    native::check(element.remove_loaded((*r).measure_token));(*r).measure_subscribed=false;SUBSCRIPTIONS=SUBSCRIPTIONS-1;
+    if (*r).pending_focus!=ui::focus_state_unfocused {let focus=(*r).pending_focus;(*r).pending_focus=ui::focus_state_unfocused;let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));let restored=native::must::[bool](visual.focus(focus));}
+    (*(*r).node).mark_content_changed();core::touch((*r).node,0u64);return rt::Status {code:0};
+}
+fn measure(ctx: *u8, width: f64, wm: flex::MeasureMode, height: f64, hm: flex::MeasureMode) -> flex::Size {
+    let value: rt::Object=object(ctx);
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));
+    let old_width: f64=native::must::[f64](element.width()); let old_height: f64=native::must::[f64](element.height());
+    let automatic: f64=#bitcast::[f64](0x7ff8000000000000u64);
+    native::check(element.set_width(automatic)); native::check(element.set_height(automatic));
+    let layout: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(value));
+    let infinity: f32=#bitcast::[f32](0x7f800000u32);
+    // Intrinsic flex passes may carry NaN with an AtMost mode. WinUI
+    // requires infinity for an unconstrained axis and rejects NaN.
+    let available=ui::Size {width:if wm==flex::MeasureMode::Undefined || flex::is_undefined(width) {infinity} else {width as f32},height:if hm==flex::MeasureMode::Undefined || flex::is_undefined(height) {infinity} else {height as f32}};
+    button_text::prepare(ctx as *View,available.width as f64);
+    let size: ui::Size=if (*(ctx as *View)).kind==props::K_LABEL {labels::measure(value,available)} else {native::check(layout.measure(available));native::must::[ui::Size](layout.desired_size())};
+    native::check(element.set_width(old_width)); native::check(element.set_height(old_height));
+    var w: f64=size.width as f64; var h: f64=size.height as f64;
+    if (*(ctx as *View)).kind==props::K_TEXT_AREA {h=editing::measured_height(ctx as *View,h);}
+    // Native button text can trim at its own reported DesiredSize under
+    // fractional DPI rounding. Reserve two DIPs for automatic widths; exact
+    // widths and caller constraints below remain authoritative.
+    if (*(ctx as *View)).kind==props::K_BUTTON {w=w+2.0f64;}
+    if wm==flex::MeasureMode::Exactly || (wm==flex::MeasureMode::AtMost && w>width) {w=width;}
+    if hm==flex::MeasureMode::Exactly || (hm==flex::MeasureMode::AtMost && h>height) {h=height;}
+    return flex::Size {width:w,height:h};
+}
+
+fn clicked(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    if (*(context as *View)).applying {return rt::Status {code:0};}
+    let record: *View=context as *View;
+    if choices::button_mode(record)!=(*record).button_toggles {return rt::Status {code:0};}
+    let n: *core::Node=(*record).node;
+    let data: *core::Data=core::node_data(n);
+    if data.is_null() || !(*data).common.is_enabled { return rt::Status {code:0}; }
+    let p: *props::ButtonProps=(*data).props as *props::ButtonProps;
+    if (*p).toggles {
+        let toggle: ui::IToggleButton=native::must::[ui::IToggleButton](ui::IToggleButton::query(sender));let checked: rt::Object=native::must::[rt::Object](toggle.is_checked());let reference: ui::IReference_Bool=native::must::[ui::IReference_Bool](ui::IReference_Bool::query(checked));(*p).on=native::must::[bool](reference.value());
+    }
+    // Copy both before invoking: the handler may remove and destroy this node.
+    let call: fn(*u8,*u8)=(*p).on_click; let ctx: *u8=(*p).on_click_ctx;
+    if call!=props::no_handler { call(context,ctx); }
+    return rt::Status {code:0};
+}
+
+fn bar(value: vocab::ScrollBars) -> i32 {
+    if value==vocab::ScrollBars::Always { return ui::scroll_bar_visibility_visible; }
+    if value==vocab::ScrollBars::Never { return ui::scroll_bar_visibility_hidden; }
+    return ui::scroll_bar_visibility_auto;
+}
+fn configure_scroll(record: *View, n: *core::Node) {
+    let data: *core::Data=core::node_data(n);
+    let p: *props::ScrollProps=(*data).props as *props::ScrollProps;
+    let control: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*record).object));
+    (*record).applying=true;
+    let horizontal: bool=(*p).axis==vocab::ScrollAxis::Both || (*p).axis==vocab::ScrollAxis::Horizontal;
+    let vertical: bool=(*p).axis==vocab::ScrollAxis::Both || (*p).axis==vocab::ScrollAxis::Vertical;
+    native::check(control.set_is_horizontal_scroll_chaining_enabled((*p).cascades_input));native::check(control.set_is_vertical_scroll_chaining_enabled((*p).cascades_input));
+    native::check(control.set_horizontal_scroll_mode(if horizontal {ui::scroll_mode_enabled} else {ui::scroll_mode_disabled}));
+    native::check(control.set_vertical_scroll_mode(if vertical {ui::scroll_mode_enabled} else {ui::scroll_mode_disabled}));
+    native::check(control.set_horizontal_scroll_bar_visibility(if horizontal {bar((*p).horizontal_scroll_bars)} else {ui::scroll_bar_visibility_disabled}));
+    native::check(control.set_vertical_scroll_bar_visibility(if vertical {bar((*p).vertical_scroll_bars)} else {ui::scroll_bar_visibility_disabled}));
+    if !(*record).subscribed || (core::dirty_of(n) & (scroll::P_SCROLL_X | scroll::P_SCROLL_Y))!=0 {
+        (*record).scroll_pending=true;
+    }
+    (*record).applying=false;
+    return;
+}
+fn scrolled(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let record: *View=context as *View;
+    if (*record).scroll_pending || (*record).applying { return rt::Status {code:0}; }
+    let data: *core::Data=core::node_data((*record).node);
+    let p: *props::ScrollProps=(*data).props as *props::ScrollProps;
+    let control: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query(sender));
+    let x: f64=native::must::[f64](control.horizontal_offset());
+    let y: f64=native::must::[f64](control.vertical_offset());
+    if x==(*p).scroll_x && y==(*p).scroll_y { return rt::Status {code:0}; }
+    (*p).scroll_x=x; (*p).scroll_y=y;
+    let call: fn(*u8,*u8)=(*p).observe_scrolled; let ctx: *u8=(*p).observe_scrolled_ctx;
+    if call!=props::no_handler { call(context,ctx); }
+    return rt::Status {code:0};
+}
+fn size_scroll(record: *View, n: *core::Node) {
+    let frame: flex::Frame=(*n).frame(); var width: f64=frame.width; var height: f64=frame.height;
+    var i: usize=0;
+    while i<core::child_count_of(n) {
+        match core::child_of(n,i) {
+            option::Option::Some(child)=>{
+                let f: flex::Frame=(*child).frame();
+                let right: f64=f.left-frame.left+f.width; let bottom: f64=f.top-frame.top+f.height;
+                if right>width {width=right;} if bottom>height {height=bottom;}
+            },option::Option::None=>{}
+        }
+        i=i+1;
+    }
+    let content: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*record).content));
+    native::check(content.set_width(width)); native::check(content.set_height(height));
+    if (*record).kind==props::K_REFRESHABLE {return;}
+    let data: *core::Data=core::node_data(n); let p: *props::ScrollProps=(*data).props as *props::ScrollProps;
+    (*p).content_size=vocab::Size {width:width,height:height};
+    if (*record).scroll_pending {
+        let layout: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*record).object));
+        native::check(layout.update_layout());
+        let control: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*record).object));
+        // Initial layout can run before the native viewport is loaded.
+        if native::must::[f64](control.viewport_height())<=0.0f64 { return; }
+        let factory: ui::IPropertyValueStatics=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());
+        let x: rt::Object=native::must::[rt::Object](factory.create_double((*p).scroll_x));
+        let y: rt::Object=native::must::[rt::Object](factory.create_double((*p).scroll_y));
+        let accepted: bool=native::must::[bool](control.change_view_with_optional_animation(x,y,rt::Object::empty(),true));
+        (*record).scroll_pending=false;
+    }
+    return;
+}
+fn object(view: *u8) -> rt::Object {
+    if view.is_null() { return rt::Object::empty(); }
+    return record::visual(view as *View);
+}
+fn children(view: *u8) -> ui::IVector_Microsoft_UI_Xaml_UIElement {
+    let record: *View=view as *View;
+    let host: rt::Object=if !(*record).content.is_null() {(*record).content.clone()} else {object(view)};
+    let panel: ui::IPanel=native::must::[ui::IPanel](ui::IPanel::query(host));
+    return native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));
+}
+fn reclassify_leaf(r: *View) {
+    let editor=(*r).kind==props::K_TEXT_FIELD && (*r).subscribed && editing::secure((*r).node)!=(*r).editor_secure;
+    let button=(*r).click_attached && choices::button_mode(r)!=(*r).button_toggles;
+    if !editor && !button {return;}
+    let old=(*r).object.clone();let old_control=native::must::[ui::IUIElement](ui::IUIElement::query(old));let focus=native::must::[i32](old_control.focus_state());
+    let old_element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(old));
+    let width=native::must::[f64](old_element.width());let height=native::must::[f64](old_element.height());
+    let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());let x=native::must::[f64](canvas.get_left(old));let y=native::must::[f64](canvas.get_top(old));
+    agent_hooks::release(old);presentation::release(r);
+    if pointer::supports((*r).kind) {pointer::release(r);}
+    if editor {editing::release(r);} else {choices::click_release(r);}
+    if (*r).measure_subscribed {native::check(old_element.remove_loaded((*r).measure_token));(*r).measure_subscribed=false;SUBSCRIPTIONS=SUBSCRIPTIONS-1;}
+    let toggles=choices::button_mode(r);
+    if editor {(*r).object=editing::create((*r).node);(*r).editor_secure=editing::secure((*r).node);}
+    else if toggles {let button=native::must::[ui::ToggleButton](ui::ToggleButton::new());(*r).object=button.object();}
+    else {let button=native::must::[ui::Button](ui::Button::new());(*r).object=button.object();}
+    (*r).content=rt::Object::empty();
+    if editor {agent_hooks::apply((*r).object,(*r).node);editing::apply(r);editing::attach(r);}
+    else if (*r).kind==props::K_BUTTON {choices::click_attach(r,toggles,clicked);}
+    else if (*r).kind==props::K_ICON_BUTTON {choices::click_attach(r,toggles,media::clicked);}
+    else {choices::click_attach(r,toggles,choices::changed);}
+    if pointer::supports((*r).kind) {pointer::attach(r);}
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));native::check(element.set_width(width));native::check(element.set_height(height));native::check(canvas.set_left((*r).object,x));native::check(canvas.set_top((*r).object,y));
+    let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(measured_loaded,r as *u8));(*r).measure_token=native::must::[ui::EventRegistrationToken](element.add_loaded(handler.object()));(*r).measure_subscribed=true;SUBSCRIPTIONS=SUBSCRIPTIONS+1;
+    (*r).pending_focus=focus;
+    // Apply privacy metadata before exposing the replacement in the native tree.
+    agent_hooks::apply((*r).object,(*r).node);native_slot::replace(r,old);
+}
+fn configure(record: *View, n: *core::Node) {
+    let data: *core::Data=core::node_data(n);
+    if data.is_null() { return; }
+    reclassify_leaf(record);
+    let value: rt::Object=record::visual(record);
+    // Apply the privacy boundary before property changes can call application
+    // event handlers that themselves inspect the agent surface.
+    agent_hooks::apply((*record).object,n);
+    if env::has_var("FACET_WINUI_TRACE") {
+        let key: str=(*n).key(); let opacity: f64=(*data).common.opacity; let visible: bool=(*data).common.is_visible;
+        io::eprintln("WinUI props ${key}: opacity=${opacity} visible=${visible}");
+    }
+    let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(value));
+    presentation::apply(record);
+    if (*record).kind==props::K_CANVAS {drawing::apply(record);}
+    native::check(element.set_is_hit_test_visible(!(*data).common.input_transparent));
+    native::check(element.set_visibility(if (*data).common.is_visible {0 as i32} else {1 as i32}));
+    let framework: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));
+    native::check(framework.set_requested_theme(ui::element_theme_dark));
+    if (*data).common.flow_direction!=vocab::FlowDirection::MatchParent {native::check(framework.set_flow_direction(if (*data).common.flow_direction==vocab::FlowDirection::RightToLeft {ui::flow_direction_right_to_left} else {ui::flow_direction_left_to_right}));}
+    if (*record).kind==props::K_TABS || (*record).kind==props::K_TABLE || (*record).kind==props::K_CONTEXT_MENU || (*record).kind==props::K_SWIPEABLE || (*record).kind==core::K_NODE || (*record).kind==split::K_SPLIT || (*record).kind==props::K_BOX || (*record).kind==props::K_BORDERED {
+        let border: ui::IBorder=native::must::[ui::IBorder](ui::IBorder::query(value));
+        native::check(border.set_background(style::paint(if (*data).common.background.start.is_set() {(*data).common.background} else {vocab::Brush::solid((*data).common.background_color)})));
+        native::check(border.set_corner_radius(style::corners((*data).common.corner_radius)));
+        if (*record).kind==props::K_BOX {let p: *props::BoxProps=(*data).props as *props::BoxProps;native::check(border.set_background(style::brush((*p).color)));native::check(border.set_corner_radius(style::corners((*p).corner_radius)));}
+        if (*record).kind==props::K_BORDERED {borders::apply(record);}
+    }
+    if (*record).kind==props::K_LABEL {
+        let p: *props::LabelProps=(*data).props as *props::LabelProps;
+        let label: ui::ITextBlock=native::must::[ui::ITextBlock](ui::ITextBlock::query(value));
+        let defaults: ui::ITextBlockStatics=native::must::[ui::ITextBlockStatics](ui::TextBlock::i_text_block_statics_factory());
+        native::check(label.set_text(typography::transformed((*p).text.view(),(*p).text_transform).view()));
+        if (*p).font_size>0.0f64 { native::check(label.set_font_size((*p).font_size)); } else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
+        if (*p).text_color.is_set() {native::check(label.set_foreground(style::brush((*p).text_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.foreground_property()));}
+        native::check(label.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](label.font_size()))));
+        native::check(label.set_is_text_scale_factor_enabled((*p).font_scales));
+        native::check(label.set_text_alignment(typography::alignment((*p).text_align)));
+        native::check(label.set_text_decorations(typography::decoration((*p).text_decoration)));
+        native::check(label.set_font_weight(style::weight((*p).font_weight)));
+        typography::breaking(label,(*p).line_break);typography::line_height(label,(*p).line_height);
+        native::check(label.set_max_lines((*p).max_lines as i32));
+        native::check(label.set_is_text_selection_enabled((*p).selectable));
+        native::check(label.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));
+        if (*p).font_family.count()>0 {native::check(label.set_font_family(typography::font((*p).font_family.view())));} else {typography::clear(value,native::must::[rt::Object](defaults.font_family_property()));}
+        if !(*p).formatted_text.is_empty() {typography::runs(label,(*p).formatted_text);}
+        else if (*p).text_format==vocab::TextFormat::Html {html_label::apply(label,(*p).text.view(),(*p).text_transform);}
+    }
+    if (*record).kind==props::K_BUTTON {buttons::apply(record);}
+    if (*record).kind==chrome::K_WINDOW_BUTTONS {window_buttons::apply(record);}
+    if actions::supports((*record).kind) {actions::apply(record);}
+    if menus::supports((*record).kind) {menus::apply(record);}
+    if (*record).kind==props::K_CAROUSEL {paging::apply(record);}
+    if (*record).kind==props::K_TABS {tabs::apply(record);}
+    if (*record).kind==props::K_SWIPEABLE {swipe::apply(record);}
+    if (*record).kind==props::K_REFRESHABLE {refreshing::apply(record);}
+    if items::supports((*record).kind) {items::apply(record);}
+    if media::supports((*record).kind) {media::apply(record);}
+    if pickers::supports((*record).kind) {pickers::apply(record);}
+    if choices::supports((*record).kind) {choices::apply(record);}
+    if (*record).kind==tree::K_TREE { outline::apply(record); }
+    if editing::supports((*record).kind) { editing::apply(record); }
+    if (*record).kind==props::K_SCROLL { configure_scroll(record,n); }
+    if (*record).kind==props::K_LABEL || (*record).kind==props::K_BUTTON || (*record).kind==props::K_TEXT_FIELD { (*n).mark_content_changed(); }
+    return;
+}
+fn create(ctx: *u8, n: *core::Node) -> *u8 {
+    let kind: u32=core::kind_of(n);
+    var value: rt::Object=rt::Object::empty();
+    if kind==props::K_LABEL { let v: ui::TextBlock=native::must::[ui::TextBlock](ui::TextBlock::new()); value=v.object(); }
+    else if kind==props::K_BUTTON && (*((*core::node_data(n)).props as *props::ButtonProps)).toggles {let v: ui::ToggleButton=native::must::[ui::ToggleButton](ui::ToggleButton::new());value=v.object();}
+    else if kind==props::K_BUTTON { let v: ui::Button=native::must::[ui::Button](ui::Button::new()); value=v.object(); }
+    else if kind==props::K_CAROUSEL {let v=native::must::[ui::FlipView](ui::FlipView::new());value=v.object();}
+    else if kind==props::K_REFRESHABLE {let v=native::must::[ui::RefreshContainer](ui::RefreshContainer::new());value=v.object();}
+    else if editing::supports(kind) { value=editing::create(n); }
+    else if kind==props::K_MENU || kind==props::K_TOOLBAR_ITEM {let v=native::must::[ui::Button](ui::Button::new());value=v.object();}
+    else if actions::flyout_item(kind) {let v: ui::MenuFlyoutItem=native::must::[ui::MenuFlyoutItem](ui::MenuFlyoutItem::new());value=v.object();}
+    else if items::supports(kind) {let v: ui::ScrollViewer=native::must::[ui::ScrollViewer](ui::ScrollViewer::new());value=v.object();}
+    else if kind==props::K_SCROLL { let v: ui::ScrollViewer=native::must::[ui::ScrollViewer](ui::ScrollViewer::new()); value=v.object(); }
+    else if kind==props::K_CANVAS {let v: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new());value=v.object();}
+    else if kind==chrome::K_WINDOW_BUTTONS {let v=native::must::[ui::Border](ui::Border::new());value=v.object();}
+    else if media::supports(kind) {value=media::create(kind,n);}
+    else if pickers::supports(kind) {value=pickers::create(kind);}
+    else if choices::supports(kind) { value=choices::create(kind,n); }
+    else if kind==tree::K_TREE { let v: ui::TreeView=native::must::[ui::TreeView](ui::TreeView::new()); value=v.object(); }
+    else if kind==props::K_TABS || kind==props::K_TABLE || kind==props::K_CONTEXT_MENU || kind==props::K_SWIPEABLE || kind==core::K_NODE || kind==split::K_SPLIT || kind==props::K_BOX || kind==props::K_BORDERED { let v: ui::Border=native::must::[ui::Border](ui::Border::new()); value=v.object(); }
+    else { io::eprintln("facet_winui unsupported node kind ${kind}"); assert false; return 0 as *u8; }
+    let record: box::Box[View]=match box::new::[View](View {object:value,wrapper:rt::Object::empty(),refresh:0 as *u8,reorder:0 as *u8,content:rt::Object::empty(),slot:rt::Object::empty(),slot_kind:0,click_attached:false,button_toggles:false,editor_secure:editing::secure(n),pending_focus:0,node:n,kind:kind,token:#zero::[ui::EventRegistrationToken](),token2:#zero::[ui::EventRegistrationToken](),token3:#zero::[ui::EventRegistrationToken](),token4:#zero::[ui::EventRegistrationToken](),measure_token:#zero::[ui::EventRegistrationToken](),measure_subscribed:false,subscribed:false,applying:false,scroll_pending:false,draw_pending:true,draw_width:0.0f64,draw_height:0.0f64,extra:0 as *u8,table_height:0 as *u8,table_gap:0 as *u8,shortcut:0 as *u8,presentation:0 as *u8,parent:0 as *u8,item_reader:0 as fn(*u8)->*u8,item_context:0 as *u8}) {
+        option::Option::Some(v)=>{v}, option::Option::None=>{assert false; return 0 as *u8;}
+    };
+    let p: *View=record.ptr();
+    if kind==chrome::K_WINDOW_BUTTONS {window_buttons::attach(p);}
+    if kind==props::K_SCROLL || kind==props::K_REFRESHABLE {
+        let canvas: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new()); (*p).content=canvas.object();
+        let control: ui::IContentControl=native::must::[ui::IContentControl](ui::IContentControl::query((*p).object));
+        if kind==props::K_REFRESHABLE {
+            // Own the interaction source. Descendant lists can have their own
+            // RefreshContainer; two adapters cannot own one ScrollViewer.
+            let scroll=native::must::[ui::ScrollViewer](ui::ScrollViewer::new());
+            let document=native::must::[ui::IContentControl](ui::IContentControl::query(scroll.object()));native::check(document.set_content((*p).content));
+            let scroller=native::must::[ui::IScrollViewer](ui::IScrollViewer::query(scroll.object()));native::check(scroller.set_horizontal_scroll_bar_visibility(ui::scroll_bar_visibility_disabled));native::check(scroller.set_vertical_scroll_bar_visibility(ui::scroll_bar_visibility_hidden));
+            native::check(control.set_content(scroll.object()));
+            let outer=native::must::[ui::IControl](ui::IControl::query((*p).object));native::check(outer.set_horizontal_content_alignment(ui::horizontal_alignment_stretch));native::check(outer.set_vertical_content_alignment(ui::vertical_alignment_stretch));
+        } else {native::check(control.set_content((*p).content));}
+    }
+    if kind==props::K_TABS || kind==props::K_TABLE || kind==props::K_CONTEXT_MENU || kind==props::K_SWIPEABLE || kind==core::K_NODE || kind==split::K_SPLIT || kind==props::K_BORDERED {
+        let canvas: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new());(*p).content=canvas.object();
+        let border: ui::IBorder=native::must::[ui::IBorder](ui::IBorder::query((*p).object));native::check(border.set_child((*p).content));
+    }
+    if kind==props::K_CAROUSEL {paging::attach(p);}
+    if kind==props::K_TABS {tabs::attach(p);}
+    if kind==props::K_REFRESHABLE {refreshing::attach(p);}
+    if kind==props::K_SWIPEABLE {actions::host(p);swipe::attach(p);}
+    if actions::supports(kind) {actions::attach(p);}
+    if menus::supports(kind) {menus::attach(p);}
+    if items::supports(kind) {items::attach(p);}
+    if kind==props::K_LIST {refreshing::attach(p);}
+    if kind==tree::K_TREE { outline::attach(p); }
+    if kind==split::K_SPLIT {divider::attach(p);}
+    if kind==props::K_WEB {browser::attach(p);}
+    if kind==props::K_HYBRID_WEB {hybrid::attach(p);}
+    configure(p,n);
+    if pointer::supports(kind) {pointer::attach(p);}
+    if media::supports(kind) {media::attach(p);}
+    if choices::supports(kind) {choices::attach(p);}
+    if editing::supports(kind) {editing::attach(p);}
+    if pickers::supports(kind) {pickers::attach(p);}
+    if kind==chrome::K_WINDOW_BUTTONS || kind==props::K_MENU || kind==props::K_TOOLBAR_ITEM || kind==props::K_LABEL || kind==props::K_BUTTON || editing::supports(kind) || choices::supports(kind) || pickers::supports(kind) || media::supports(kind) {
+        (*n).set_context(p as *u8); (*n).set_measure(measure); (*n).mark_content_changed();
+        let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*p).object));
+        let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(measured_loaded,p as *u8));
+        (*p).measure_token=native::must::[ui::EventRegistrationToken](element.add_loaded(handler.object()));(*p).measure_subscribed=true;SUBSCRIPTIONS=SUBSCRIPTIONS+1;
+    }
+    if kind==props::K_BUTTON {
+        let props: *props::ButtonProps=(*core::node_data(n)).props as *props::ButtonProps;choices::click_attach(p,(*props).toggles,clicked);(*p).subscribed=true;
+    }
+    if kind==props::K_SCROLL {
+        let control: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*p).object));
+        let callback: ui::EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangedEventArgs=native::must::[ui::EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangedEventArgs](ui::EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangedEventArgs::new(scrolled,p as *u8));
+        (*p).token=native::must::[ui::EventRegistrationToken](control.add_view_changed(callback.object()));
+        (*p).subscribed=true; SUBSCRIPTIONS=SUBSCRIPTIONS+1;
+    }
+    LIVE=LIVE+1;
+    return record.into_raw();
+}
+fn release(view: *u8) {
+    agent_hooks::release(object(view));
+    if view.is_null() { return; }
+    let p: *View=view as *View;
+    if env::has_var("FACET_WINUI_TRACE") {let kind: u32=(*p).kind;io::eprintln("WinUI release kind=${kind}");}
+    tables::restore(p);tables::restore_gap(p);
+    if commands::supports((*p).kind) {commands::detach(p);}
+    scheduler::forget((*p).node);
+    if (*p).measure_subscribed {let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*p).object));native::check(element.remove_loaded((*p).measure_token));(*p).measure_subscribed=false;SUBSCRIPTIONS=SUBSCRIPTIONS-1;}
+    if pointer::supports((*p).kind) {pointer::release(p);}
+    presentation::release(p);
+    if (*p).kind==chrome::K_WINDOW_BUTTONS {window_buttons::release(p);}
+    if (*p).kind==props::K_CAROUSEL {paging::release(p);}
+    if (*p).kind==props::K_TABS {tabs::release(p);}
+    if (*p).kind==props::K_SWIPEABLE {swipe::release(p);}
+    if (*p).kind==props::K_BORDERED {borders::release(p);}
+    if (*p).kind==split::K_SPLIT {divider::release(p);}
+    if actions::supports((*p).kind) {actions::release(p);}
+    if (*p).kind==props::K_REFRESHABLE || (*p).kind==props::K_LIST {refreshing::release(p);}
+    if pickers::supports((*p).kind) {pickers::release(p);}
+    if (*p).subscribed && ((*p).kind==props::K_BUTTON || (*p).kind==props::K_SCROLL) {
+        if (*p).kind==props::K_BUTTON {
+            let props: *props::ButtonProps=(*core::node_data((*p).node)).props as *props::ButtonProps;choices::click_release(p);
+        } else if (*p).kind==props::K_SCROLL {
+            let control=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*p).object));native::check(control.remove_view_changed((*p).token));SUBSCRIPTIONS=SUBSCRIPTIONS-1;
+        }
+        (*p).subscribed=false;
+    }
+    if (*p).kind==tree::K_TREE { outline::release(p); }
+    if items::supports((*p).kind) {items::release(p);}
+    if media::supports((*p).kind) {media::release(p);}
+    if choices::supports((*p).kind) {choices::release(p);}
+    if editing::supports((*p).kind) {editing::release(p);}
+    (*p).node=0 as *core::Node;
+    let owner: box::Box[View]=box::from_raw::[View](view);
+    LIVE=LIVE-1;
+    return;
+}
+fn apply(ctx: *u8, n: *core::Node) {
+    let v: *u8=core::view_of(n); if v.is_not_null() { configure(v as *View,n); }
+    return;
+}
+fn insert(ctx: *u8, host: *u8, child: *u8, index: usize) {
+    (*(child as *View)).parent=host;if (*(child as *View)).kind==props::K_CONTEXT_MENU_ITEM {actions::apply(child as *View);}
+    if (*(child as *View)).kind==chrome::K_WINDOW_BUTTONS {window_buttons::watch(child as *View,record::visual(host as *View));}
+    if commands::supports((*(child as *View)).kind) {return;}
+    var native_index=index;
+    var scan: usize=0;while scan<index {if let option::Option::Some(n)=core::child_of((*(host as *View)).node,scan) {if commands::supports(core::kind_of(n)) {native_index=native_index-1;}}scan=scan+1;}
+    if (*(host as *View)).kind==props::K_CAROUSEL {paging::insert(host as *View,child as *View,native_index);return;}
+    if (*(host as *View)).kind==props::K_MENU {native::check(menus::entries(host as *View).insert_at(index as u32,object(child)));menus::count_changed(host as *View);return;}
+    if (*(host as *View)).kind==props::K_SWIPEABLE || (*(host as *View)).kind==props::K_CONTEXT_MENU {
+        // Facet interleaves visible content and actions. WinUI keeps separate
+        // vectors, so neither vector can use the unfiltered child index.
+        let action=actions::flyout_item((*(child as *View)).kind);native_index=0;var i: usize=0;
+        while i<index {match core::child_of((*(host as *View)).node,i) {option::Option::Some(n)=>{if !commands::supports(core::kind_of(n)) && actions::flyout_item(core::kind_of(n))==action {native_index=native_index+1;}},option::Option::None=>{}}i=i+1;}
+        if action {if (*(host as *View)).kind==props::K_SWIPEABLE {swipe::insert(host as *View,child as *View,native_index);}native::check(actions::entries(host as *View).insert_at(native_index as u32,object(child)));if (*(host as *View)).kind==props::K_CONTEXT_MENU {menus::count_changed(host as *View);}return;}
+    }
+    let list: ui::IVector_Microsoft_UI_Xaml_UIElement=children(host);
+    native::check(list.insert_at(native_index as u32,object(child)));
+    let owner=host as *View;native_slot::bind(child as *View,if !(*owner).content.is_null() {(*owner).content.clone()} else {(*owner).object.clone()},native_slot::PANEL);
+    if (*(host as *View)).kind==props::K_TABS {tabs::insert(host as *View,child as *View,native_index);}
+    if env::has_var("FACET_WINUI_TRACE") { let count: u32=native::must::[u32](list.size()); io::eprintln("WinUI children=${count}"); }
+    return;
+}
+fn remove(ctx: *u8, host: *u8, child: *u8) {
+    if (*(host as *View)).kind==props::K_TABS {tabs::remove(host as *View,child as *View);}
+    tables::detached(host as *View,child as *View);
+    presentation::detach(child as *View);
+    if (*(host as *View)).kind==props::K_SWIPEABLE && actions::flyout_item((*(child as *View)).kind) {swipe::remove(host as *View,child as *View);}
+    shortcuts::release(child as *View);(*(child as *View)).parent=0 as *u8;
+    if commands::supports((*(child as *View)).kind) {commands::detach(child as *View);return;}
+    if (*(host as *View)).kind==props::K_CAROUSEL {paging::remove(host as *View,child as *View);return;}
+    if ((*(host as *View)).kind==props::K_SWIPEABLE || menus::supports((*(host as *View)).kind)) && actions::flyout_item((*(child as *View)).kind) {
+        let list: ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase=if menus::supports((*(host as *View)).kind) {menus::entries(host as *View)} else {actions::entries(host as *View)};
+        let count: u32=native::must::[u32](list.size());let target: rt::Object=native::must::[rt::Object](object(child).query(rt::unknown_iid()));var i: u32=0;
+        while i<count {let entry: rt::Object=native::must::[rt::Object](list.get_at(i));let identity: rt::Object=native::must::[rt::Object](entry.query(rt::unknown_iid()));if identity.raw()==target.raw() {native::check(list.remove_at(i));if menus::supports((*(host as *View)).kind) {menus::count_changed(host as *View);}return;}i=i+1;}return;
+    }
+    let list: ui::IVector_Microsoft_UI_Xaml_UIElement=children(host);
+    let count: u32=native::must::[u32](list.size());
+    let target: rt::Object=native::must::[rt::Object](object(child).query(rt::unknown_iid()));
+    var i: u32=0;
+    while i<count {
+        let item: rt::Object=native::must::[rt::Object](list.get_at(i));
+        let identity: rt::Object=native::must::[rt::Object](item.query(rt::unknown_iid()));
+        if identity.raw()==target.raw() { native::check(list.remove_at(i)); return; }
+        i=i+1;
+    }
+    return;
+}
+fn place(n: *core::Node, parent: flex::Frame) {
+    if actions::flyout_item(core::kind_of(n)) || commands::supports(core::kind_of(n)) {return;}
+    let frame: flex::Frame=(*n).frame(); let value: rt::Object=object(core::view_of(n));
+    if env::has_var("FACET_WINUI_TRACE") {
+        let key: str=(*n).key(); let x: f64=frame.left; let y: f64=frame.top; let w: f64=frame.width; let h: f64=frame.height;
+        io::eprintln("WinUI frame ${key}: ${x},${y} ${w}x${h}");
+    }
+    if value.is_null() { return; }
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));
+    native::check(element.set_width(frame.width)); native::check(element.set_height(frame.height));
+    let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());
+    native::check(canvas.set_left(value,frame.left-parent.left)); native::check(canvas.set_top(value,frame.top-parent.top));
+    native::check(canvas.set_z_index(value,(*n).z_index()));
+    if core::kind_of(n)==props::K_LABEL {labels::place(core::view_of(n) as *View,frame.width,frame.height);}
+    button_text::place(core::view_of(n) as *View,frame.width);
+    if core::kind_of(n)==chrome::K_WINDOW_BUTTONS {window_buttons::refresh(core::view_of(n) as *View);}
+    presentation::place(core::view_of(n) as *View,frame.width,frame.height);
+    let element_ui: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(value));native::check(element_ui.set_visibility(if core::display_of(n)==flex::Display::None || !(*core::node_data(n)).common.is_visible {ui::visibility_collapsed} else {ui::visibility_visible}));
+    var i: usize=0;
+    while i<core::child_count_of(n) {
+        match core::child_of(n,i) { option::Option::Some(child)=>{place(child,frame);},option::Option::None=>{} }
+        i=i+1;
+    }
+    if core::kind_of(n)==props::K_SWIPEABLE {swipe::place(core::view_of(n) as *View,frame.width,frame.height);}
+    if core::kind_of(n)==props::K_TABS {tabs::place(core::view_of(n) as *View,frame.width);}
+    if core::kind_of(n)==split::K_SPLIT {divider::place(core::view_of(n) as *View,frame.width,frame.height);}
+    if items::supports(core::kind_of(n)) {items::place(core::view_of(n) as *View,frame.width,frame.height,layout_row);}
+    if core::kind_of(n)==tree::K_TREE {outline::place(core::view_of(n) as *View,frame.width,layout_row);}
+    if core::kind_of(n)==props::K_BORDERED {borders::place(core::view_of(n) as *View,frame.width,frame.height);}
+    if core::kind_of(n)==props::K_CANVAS {drawing::render(core::view_of(n) as *View,frame.width,frame.height);}
+    if core::kind_of(n)==props::K_SCROLL || core::kind_of(n)==props::K_REFRESHABLE { size_scroll(core::view_of(n) as *View,n); }
+    return;
+}
+fn prepare_layout(n: *core::Node) {
+    let kind: u32=core::kind_of(n);
+    if kind==props::K_TABLE {tables::prepare(n);}
+    if kind==props::K_TABS {tabs::prepare(core::view_of(n) as *View);}
+    if actions::flyout_item(kind) || commands::supports(kind) {(*n).set_display(flex::Display::None);}
+    if kind==split::K_SPLIT {
+        let p: *split::SplitProps=(*core::node_data(n)).props as *split::SplitProps;
+        let f: flex::Frame=(*n).frame();
+        let extent: f64=if (*p).axis==split::SplitAxis::Columns {f.width} else {f.height};
+        var position: f64=divider::constrained(p,extent,(*p).position);
+        if (*p).collapsed_leading {position=0.0f64;}
+        if (*p).collapsed_trailing {position=extent;}
+        (*n).set_flex_direction(if (*p).axis==split::SplitAxis::Columns {flex::FlexDirection::Row} else {flex::FlexDirection::Column});
+        (*n).set_gap(flex::Gutter::All,flex::StyleLength::points(divider::thickness(p)));
+        match core::child_of(n,0) {option::Option::Some(c)=>{(*c).set_display(if (*p).collapsed_leading || !(*core::node_data(c)).common.is_visible {flex::Display::None} else {flex::Display::Flex});(*c).set_flex_basis(flex::StyleLength::points(position));(*c).set_flex_grow(0.0f64);(*c).set_flex_shrink(0.0f64);},option::Option::None=>{}}
+        match core::child_of(n,1) {option::Option::Some(c)=>{(*c).set_display(if (*p).collapsed_trailing || !(*core::node_data(c)).common.is_visible {flex::Display::None} else {flex::Display::Flex});(*c).set_flex_basis(flex::StyleLength::points(0.0f64));(*c).set_flex_grow(1.0f64);},option::Option::None=>{}}
+    }
+    if kind==props::K_SCROLL {
+        (*n).set_overflow(flex::Overflow::Scroll);
+        match core::child_of(n,0) {option::Option::Some(c)=>{(*c).set_flex_shrink(0.0f64);},option::Option::None=>{}}
+    }
+    var i: usize=0;
+    while i<core::child_count_of(n) {match core::child_of(n,i) {option::Option::Some(c)=>{prepare_layout(c);},option::Option::None=>{}} i=i+1;}
+    if kind==props::K_CAROUSEL {paging::prepare(core::view_of(n) as *View);}
+    return;
+}
+fn sender_key(sender: *u8) -> text::Text {
+    let n: *core::Node=(*(sender as *View)).node;
+    return text::from_str((*n).key());
+}
+fn sender_item(sender: *u8) -> *u8 {
+    var r: *View=sender as *View;
+    while r.is_not_null() {if (*r).item_reader.is_not_null() {return (*r).item_reader((*r).item_context);}let item: *u8=core::item_of((*r).node);if item.is_not_null() {return item;}r=(*r).parent as *View;}
+    return 0 as *u8;
+}
+fn install_readers() {
+    var readers: component::SenderReaders=component::sender_readers_none();
+    readers.key_of=sender_key; readers.item_of=sender_item; component::install_sender_readers(readers);
+    return;
+}
+
+fn layout_row(n: *core::Node,width: f64,height: f64) -> f64 {prepare_layout(n);(*n).calculate_layout(width:width,height:height);place(n,(*n).frame());return (*n).frame().height;}

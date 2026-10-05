@@ -2,19 +2,32 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/vocabulary" as vocab;
+import "facet/label" as label;
+import "stdlib/option" as option;
 import "../shell" as shell;
 
 struct TextDemo {
     n: i32,
+    html: bool,
 }
 
 impl TextDemo {
-    fn new() -> TextDemo { return TextDemo { n: 0 }; }
+    fn new() -> TextDemo { return TextDemo { n: 0, html: true }; }
+    fn toggle_html(ref this,sender: *u8) {
+        this.html=!this.html;
+        if let option::Option::Some(v)=label::find("t:html") {let changed=v.set_text_format(if this.html {vocab::TextFormat::Html} else {vocab::TextFormat::Text});}
+        if let option::Option::Some(v)=label::find("t:html-status") {let changed=v.set_text(if this.html {"HTML formatting"} else {"Literal text"});}
+    }
 }
 
 impl TextDemo: component::Component {
     fn build(ref this) -> core::Node {
         var body: core::Builder = core::Builder::new();
+        this.html=true;
+        body.add(shell::caption("HTML text"));
+        body.add(ui::label("<b>Bold <i>and italic</i></b> · <u>underlined</u> &amp; &#x1F680;<br>Second line with <s>strikethrough</s> and <code>code</code>.",key:"t:html",text_format:vocab::TextFormat::Html,selectable:true,line_break:vocab::LineBreak::WordWrap));
+        body.add(ui::button("Toggle HTML / literal text",key:"t:html-toggle",on_click:this.toggle_html));
+        body.add(ui::label("HTML formatting",key:"t:html-status"));
 
         body.add(shell::caption("Scale"));
         body.add(ui::label("Display 28 / Bold", key: "t:d", font_size: 28.0,
@@ -31,6 +44,13 @@ impl TextDemo: component::Component {
             text_color: vocab::Color::ink()));
         body.add(ui::label("Primary role colour", key: "t:p", font_size: 15.0,
             font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::primary()));
+
+        body.add(shell::caption("Vertical alignment"));
+        body.add(@ui {row {
+            label("Top", key:"t:top", vertical_align:vocab::TextAlign::Start).width(120.0).height(64.0)
+            label("Center", key:"t:center", vertical_align:vocab::TextAlign::Center).width(120.0).height(64.0)
+            label("Bottom", key:"t:bottom", vertical_align:vocab::TextAlign::End).width(120.0).height(64.0)
+        }.gap(12.0)});
 
         body.add(shell::caption("Wrapping"));
         body.add(ui::label(

@@ -1,0 +1,28 @@
+[package]
+name = "facet_agent_winui_smoke"
+version = "0.0.1"
+edition = "2026"
+
+[build]
+prebuild = false
+
+[dependencies]
+stdlib = "*"
+facet = "*"
+flex_layout = "*"
+events = "*"
+facet_winui = "*"
+facet_agent = "*"
+agent_winui = "*"
+agent_winui_mcp = "*"
+agent_core = "*"
+agent_inapp = "*"
+agent_mcp = "*"
+json = "*"
+winui = "*"
+winrt = "*"
+# facet_agent's existing Windows facade remains available for Win32 apps.
+agent_win32 = "*"
+win32 = "*"
+
+facet_agent_winui = "*"

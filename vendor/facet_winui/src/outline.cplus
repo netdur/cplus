@@ -1,0 +1,201 @@
+import "stdlib/box" as box;
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "facet/facet" as core;
+import "facet/tree" as tree;
+import "facet/vocabulary" as vocab;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./native" as native;
+import "./record" as record;
+import "./outline_content" as content;
+struct Entry { object: rt::Object, id: text::Text, name: text::Text, opaque row: *content::Row }
+struct State { entries: vec::Vec[Entry], invoked: ui::EventRegistrationToken, expanding: ui::EventRegistrationToken, collapsed: ui::EventRegistrationToken, selection: ui::EventRegistrationToken, layout: ui::EventRegistrationToken, named: bool, built: bool, factory: fn(*tree::TreeNode,*u8)->core::Node, opaque factory_ctx: *u8 }
+static LIVE: i64=0;
+fn subscriptions() -> i64 { return LIVE+content::subscriptions(); }
+fn props(r: *record::View) -> *tree::TreeProps { return (*core::node_data((*r).node)).props as *tree::TreeProps; }
+fn lookup(n: *tree::TreeNode,id: str) -> *tree::TreeNode {
+    if (*n).id.view()==id { return n; }
+    var i: usize=0;
+    while i<(*n).child_count() {
+        match (*n).child_ptr(i) { option::Option::Some(child)=>{let found: *tree::TreeNode=lookup(child,id); if found.is_not_null() {return found;}},option::Option::None=>{} }
+        i=i+1;
+    }
+    return 0 as *tree::TreeNode;
+}
+fn invoked(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View; if (*r).applying {return rt::Status {code:0};}
+    let event: ui::ITreeViewItemInvokedEventArgs=native::must::[ui::ITreeViewItemInvokedEventArgs](ui::ITreeViewItemInvokedEventArgs::query(args));
+    let selected: rt::Object=native::must::[rt::Object](event.invoked_item());
+    let identity: rt::Object=native::must::[rt::Object](selected.query(rt::unknown_iid()));
+    let state: *State=(*r).extra as *State; var i: usize=0;
+    while i<(*state).entries.count() {
+        match (*state).entries.at_ptr(i) {
+            option::Option::Some(entry)=>{
+                let other: rt::Object=native::must::[rt::Object]((*entry).object.query(rt::unknown_iid()));
+                if other.raw()==identity.raw() {
+                    let p: *tree::TreeProps=props(r); let item: *tree::TreeNode=lookup(#addr_of((*p).root),(*entry).id.view());
+                    if item.is_null() {return rt::Status {code:0};}
+                    if (*p).selection_mode!=vocab::SelectionMode::Single || (*p).selected.view()==(*entry).id.view() {return rt::Status {code:0};}
+                    // Automation's Invoke may not select the node. Route it
+                    // through native selection so the same readback path runs.
+                    let control=native::must::[ui::ITreeView2](ui::ITreeView2::query((*r).object));native::check(control.set_selected_node((*entry).object));return rt::Status {code:0};
+                }
+            },option::Option::None=>{}
+        }
+        i=i+1;
+    }
+    return rt::Status {code:0};
+}
+fn selection_changed(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;if (*r).applying {return rt::Status {code:0};}
+    let p: *tree::TreeProps=props(r);let state: *State=(*r).extra as *State;let control=native::must::[ui::ITreeView](ui::ITreeView::query((*r).object));
+    let nodes=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode](ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode::query(native::must::[rt::Object](control.selected_nodes())));
+    var ids=vocab::TextList::new();var i: u32=0;let count=native::must::[u32](nodes.size());var changed=(*p).selection.count()!=count as usize;
+    while i<count {
+        let value=native::must::[rt::Object](nodes.get_at(i));let identity=native::must::[rt::Object](value.query(rt::unknown_iid()));var j: usize=0;
+        while j<(*state).entries.count() {match (*state).entries.at_ptr(j) {option::Option::Some(entry)=>{
+            let other=native::must::[rt::Object]((*entry).object.query(rt::unknown_iid()));if other.raw()==identity.raw() {if !(*p).selection.has((*entry).id.view()) {changed=true;}let added=ids.add((*entry).id.view());break;}
+        },option::Option::None=>{}}j=j+1;}
+        i=i+1;
+    }
+    if !changed {return rt::Status {code:0};}tree::note_selection(p,ids);
+    let item=lookup(#addr_of((*p).root),(*p).selected.view());if item.is_null() || (*p).selected.is_empty() {return rt::Status {code:0};}
+    let call=(*p).on_select;let context=if (*p).on_select_ctx.is_not_null() {(*p).on_select_ctx} else {(*p).ctx};if call!=tree::no_select {call(item,context);}return rt::Status {code:0};
+}
+fn expanded(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View; if (*r).applying {return rt::Status {code:0};}
+    let state: *State=(*r).extra as *State; let p: *tree::TreeProps=props(r);
+    (*p).expanded.clear(); var i: usize=0;
+    while i<(*state).entries.count() {
+        match (*state).entries.at_ptr(i) { option::Option::Some(e)=>{
+            let node: ui::ITreeViewNode=native::must::[ui::ITreeViewNode](ui::ITreeViewNode::query((*e).object));
+            if native::must::[bool](node.is_expanded()) {let added: status::Status=(*p).expanded.add((*e).id.view());}
+        },option::Option::None=>{} } i=i+1;
+    }
+    return rt::Status {code:0};
+}
+// Cache application-provided names during apply. Native layout only maps
+// cached names to current containers, never calls application code.
+fn row_name(p: *tree::TreeProps,model: *tree::TreeNode) -> text::Text {
+    if (*p).row_id==tree::no_row_id {return text::new();}
+    return (*p).row_id(model,content::context((*p).row_id_ctx,(*p).ctx));
+}
+fn name_rows(r: *record::View) {
+    let state=(*r).extra as *State;if state.is_null() || !(*state).named {return;}
+    let view=native::must::[ui::ITreeView2](ui::ITreeView2::query((*r).object));
+    let automation=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());
+    var i: usize=0;while i<(*state).entries.count() {
+        match (*state).entries.at_ptr(i) {option::Option::Some(entry)=>{
+            let container=native::must::[rt::Object](view.container_from_node((*entry).object));
+            if !container.is_null() && native::must::[text::Text](automation.get_automation_id(container)).view()!=(*entry).name.view() {native::check(automation.set_automation_id(container,(*entry).name.view()));}
+        },option::Option::None=>{}}i=i+1;
+    }
+}
+fn layout_updated(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {let r=ctx as *record::View;if !(*r).applying {name_rows(r);}return rt::Status {code:0};}
+fn append_node(r: *record::View,state: *State,model: *tree::TreeNode,list: ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode,depth: usize) {
+    let p=props(r);
+    let node: ui::TreeViewNode=native::must::[ui::TreeViewNode](ui::TreeViewNode::new());
+    let factory: ui::IPropertyValueStatics=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());
+    var row: *content::Row=0 as *content::Row;
+    if (*p).row!=tree::no_row {row=content::create(r,model,p,depth);native::check(node.set_content((*row).canvas));}
+    else {native::check(node.set_content(native::must::[rt::Object](factory.create_string((*model).label.view()))));}
+    let added: status::Status=(*state).entries.append(Entry {object:node.object(),id:text::from_str((*model).id.view()),name:row_name(p,model),row:row}); assert added==status::Status::Ok;
+    let children: ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode](ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode::query(native::must::[rt::Object](node.children())));
+    var i: usize=0;
+    while i<(*model).child_count() {match (*model).child_ptr(i) {option::Option::Some(c)=>{append_node(r,state,c,children,depth+1);},option::Option::None=>{}} i=i+1;}
+    native::check(list.append(node.object())); return;
+}
+fn apply(r: *record::View) {
+    let state: *State=(*r).extra as *State; let p: *tree::TreeProps=props(r);
+    let control: ui::ITreeView=native::must::[ui::ITreeView](ui::ITreeView::query((*r).object));
+    (*r).applying=true;
+    let dirty=core::dirty_of((*r).node);
+    let factory_changed=(*state).factory!=(*p).row || (*state).factory_ctx!=(*p).row_ctx;
+    let rebuilt=!(*state).built || (dirty&tree::P_ROOT)!=0 || (((*state).factory==tree::no_row)!=((*p).row==tree::no_row));
+    // Detach old containers before changing their template: a custom canvas
+    // cannot be parented by both the old and replacement presenters.
+    if rebuilt {
+        let nodes=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode](ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode::query(native::must::[rt::Object](control.root_nodes())));
+        native::check(nodes.clear());clear(state);
+    }
+    if !(*state).built || (((*state).factory==tree::no_row)!=((*p).row==tree::no_row)) {
+        let templated=native::must::[ui::ITreeView2](ui::ITreeView2::query((*r).object));
+        if (*p).row!=tree::no_row {
+            // The stock node template binds Content into TextBlock.Text.
+            // Present the UIElement itself when Facet supplies a subtree.
+            let reader=native::must::[ui::IXamlReaderStatics](ui::XamlReader::i_xaml_reader_statics_factory());
+            native::check(templated.set_item_template(native::must::[rt::Object](reader.load("<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"><ContentPresenter Content=\"{Binding Content}\" HorizontalContentAlignment=\"Stretch\"/></DataTemplate>"))));
+        } else {native::check(templated.set_item_template(rt::Object::empty()));}
+    }
+    if !(*state).built || (dirty&(tree::P_ROW_HEIGHT|tree::P_ROW))!=0 {
+        let styled=native::must::[ui::ITreeView2](ui::ITreeView2::query((*r).object));
+        if (*p).row_height>0 || (*p).row!=tree::no_row {
+            // An item-container style reaches both existing and recycled rows.
+            // Override the theme minimum too, so compact heights remain exact.
+            let height=(*p).row_height;
+            var height_style=text::new();if height>0 {height_style=text::from_str("<Setter Property=\"MinHeight\" Value=\"0\"/><Setter Property=\"Height\" Value=\"${height}\"/>");}
+            let markup="<Style xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" TargetType=\"TreeViewItem\"><Setter Property=\"HorizontalContentAlignment\" Value=\"Stretch\"/>${height_style}</Style>";
+            let reader=native::must::[ui::IXamlReaderStatics](ui::XamlReader::i_xaml_reader_statics_factory());
+            native::check(styled.set_item_container_style(native::must::[rt::Object](reader.load(markup))));
+        } else {native::check(styled.set_item_container_style(rt::Object::empty()));}
+    }
+    if rebuilt {
+        let nodes: ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode](ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode::query(native::must::[rt::Object](control.root_nodes())));
+        var i: usize=0;
+        while i<(*p).root.child_count() {match (*p).root.child_ptr(i) {option::Option::Some(c)=>{append_node(r,state,c,nodes,0);},option::Option::None=>{}} i=i+1;}
+        (*state).built=true;
+    }
+    if !rebuilt && (dirty&tree::P_ROW)!=0 {var index: usize=0;while index<(*state).entries.count() {match (*state).entries.at_ptr(index) {option::Option::Some(e)=>{if (*e).row.is_not_null() {let model=lookup(#addr_of((*p).root),(*e).id.view());assert model.is_not_null();content::refresh((*e).row,model,p,factory_changed || (*p).bind==tree::no_bind);}},option::Option::None=>{}}index=index+1;}}
+    if !rebuilt && (dirty&tree::P_ROW_ID)!=0 {var index: usize=0;while index<(*state).entries.count() {match (*state).entries.at_ptr(index) {option::Option::Some(e)=>{let model=lookup(#addr_of((*p).root),(*e).id.view());if model.is_not_null() {(*e).name=row_name(p,model);}},option::Option::None=>{}}index=index+1;}}
+    // Keep clearing names on recycled containers after the callback is reset.
+    if (*p).row_id!=tree::no_row_id {(*state).named=true;}
+    name_rows(r);
+    (*state).factory=(*p).row;(*state).factory_ctx=(*p).row_ctx;
+    let selection: ui::ITreeView2=native::must::[ui::ITreeView2](ui::ITreeView2::query((*r).object));
+    native::check(selection.set_can_drag_items(false)); native::check(selection.set_can_reorder_items(false));
+    var i: usize=0;
+    while i<(*state).entries.count() {
+        match (*state).entries.at_ptr(i) {option::Option::Some(e)=>{
+            let node: ui::ITreeViewNode=native::must::[ui::ITreeViewNode](ui::ITreeViewNode::query((*e).object));
+            native::check(node.set_is_expanded((*p).expanded.has((*e).id.view())));
+        },option::Option::None=>{}} i=i+1;
+    }
+    if rebuilt || (core::dirty_of((*r).node)&(tree::P_SELECTED|tree::P_SELECTION_MODE))!=0 {
+        native::check(control.set_selection_mode(if (*p).selection_mode==vocab::SelectionMode::Multiple {ui::tree_view_selection_mode_multiple} else if (*p).selection_mode==vocab::SelectionMode::None {ui::tree_view_selection_mode_none} else {ui::tree_view_selection_mode_single}));
+        let nodes=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode](ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode::query(native::must::[rt::Object](control.selected_nodes())));native::check(nodes.clear());
+        if (*p).selection_mode!=vocab::SelectionMode::None {
+            var j: usize=0;var selected_one: bool=false;
+            while j<(*state).entries.count() {match (*state).entries.at_ptr(j) {option::Option::Some(e)=>{
+                let wanted=(*p).selection.has((*e).id.view()) || ((*p).selection.count()==0 && (*p).selected.view()==(*e).id.view());
+                if wanted && (!selected_one || (*p).selection_mode==vocab::SelectionMode::Multiple) {native::check(nodes.append((*e).object));selected_one=true;}
+            },option::Option::None=>{}}j=j+1;}
+        }
+    }
+    (*r).applying=false; return;
+}
+fn attach(r: *record::View) {
+    let control: ui::ITreeView=native::must::[ui::ITreeView](ui::ITreeView::query((*r).object));
+    let a: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewItemInvokedEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewItemInvokedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewItemInvokedEventArgs::new(invoked,r as *u8));
+    let b: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewExpandingEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewExpandingEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewExpandingEventArgs::new(expanded,r as *u8));
+    let c: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewCollapsedEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewCollapsedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewCollapsedEventArgs::new(expanded,r as *u8));
+    let selection=native::must::[ui::ITreeView3](ui::ITreeView3::query((*r).object));
+    let d=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewSelectionChangedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewSelectionChangedEventArgs::new(selection_changed,r as *u8));
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));let layout=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(layout_updated,r as *u8));
+    let owner: box::Box[State]=match box::new(State {entries:vec::new::[Entry](),invoked:native::must::[ui::EventRegistrationToken](control.add_item_invoked(a.object())),expanding:native::must::[ui::EventRegistrationToken](control.add_expanding(b.object())),collapsed:native::must::[ui::EventRegistrationToken](control.add_collapsed(c.object())),selection:native::must::[ui::EventRegistrationToken](selection.add_selection_changed(d.object())),layout:native::must::[ui::EventRegistrationToken](element.add_layout_updated(layout.object())),named:false,built:false,factory:tree::no_row,factory_ctx:0 as *u8}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};
+    (*r).extra=owner.into_raw(); LIVE=LIVE+5; return;
+}
+fn release(r: *record::View) {
+    let state: *State=(*r).extra as *State;
+    let control: ui::ITreeView=native::must::[ui::ITreeView](ui::ITreeView::query((*r).object));
+    native::check(control.remove_item_invoked((*state).invoked)); native::check(control.remove_expanding((*state).expanding)); native::check(control.remove_collapsed((*state).collapsed));
+    let selection=native::must::[ui::ITreeView3](ui::ITreeView3::query((*r).object));native::check(selection.remove_selection_changed((*state).selection));
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));native::check(element.remove_layout_updated((*state).layout));
+    clear(state);
+    let owner: box::Box[State]=box::from_raw::[State]((*r).extra); (*r).extra=0 as *u8; LIVE=LIVE-5; return;
+}
+
+fn clear(state: *State) {var i: usize=0;while i<(*state).entries.count() {match (*state).entries.at_ptr(i) {option::Option::Some(e)=>{content::release((*e).row);(*e).row=0 as *content::Row;},option::Option::None=>{}}i=i+1;}(*state).entries.remove_all();}
+fn place(r: *record::View,width: f64,layout: fn(*core::Node,f64,f64)->f64) {let state=(*r).extra as *State;let p=props(r);var i: usize=0;while i<(*state).entries.count() {match (*state).entries.at_ptr(i) {option::Option::Some(e)=>{if (*e).row.is_not_null() {content::place((*e).row,width,(*p).row_height,layout);}},option::Option::None=>{}}i=i+1;} }

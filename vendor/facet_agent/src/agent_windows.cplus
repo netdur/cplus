@@ -60,6 +60,9 @@ import "flex_layout/flex_layout" as flex;
 import "stdlib/text" as text;
 import "stdlib/io" as io;
 import "stdlib/thread" as thread;
+import "./native_surface" as native_surface;
+import "facet/facet" as core;
+import "stdlib/option" as option;
 
 static AGENT_SURFACE: agent_win32::Surface = #zero::[agent_win32::Surface]();
 static AGENT_SERVING: bool = false;
@@ -74,6 +77,18 @@ fn enable() {
     // The window list first: `attach_window` below asks for every open window
     // and the backend has no way of its own to know what they are.
     agent_win32::set_windows_fn(open_windows);
+    // FACET'S KEYS, for a backend that cannot read facet's nodes. AppKit and
+    // GTK find the key on the widget (accessibilityIdentifier / widget name);
+    // facet_win32 keeps it in the node, so without this every control walked
+    // came out untagged — not exposed — and `describe_ui` answered `[]`.
+    agent_win32::set_keys_fn(keyed_windows);
+    // facet's child index is its paint order (index 0 at the back), the
+    // reverse of a dialog's; read siblings in facet's order, not upside down.
+    agent_win32::set_back_to_front(true);
+    // AND THE THREAD TO WALK THEM ON. The serve worker answers `describe_ui`;
+    // facet's tree belongs to the UI thread. The same synchronous hop the
+    // inspector's verbs take.
+    agent_win32::set_marshal_fn(iplatform::run_on_main_sync);
     app::install_agent(app::AgentHooks {
         attach_window: attach_window,
         serve_once: serve_once,
@@ -85,6 +100,9 @@ fn enable() {
 // Back to the portable no-op: an app that stops serving has no surface, and
 // the runtime's hooks answer nothing rather than reaching a dead one.
 fn disable() {
+    agent_win32::set_keys_fn(0 as fn() -> vec::Vec[agent_win32::KeyedWindow]);
+    agent_win32::set_marshal_fn(0 as fn(*u8, fn(*u8)));
+    agent_win32::set_back_to_front(false);
     app::install_agent(app::AgentHooks {
         attach_window: 0 as fn(*u8),
         serve_once: 0 as fn(str),
@@ -106,6 +124,7 @@ fn disable() {
 // compiled into this binary — see agent_inapp's header. It is the developer
 // bounding what MODEL OUTPUT can reach, in-process, on purpose.
 fn in_app() -> inapp::Session {
+    if native_surface::installed() { return native_surface::in_app(auth::operator()); }
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
     return inapp::open(surf, agent_win32::mcp_backend());
 }
@@ -117,6 +136,7 @@ fn in_app() -> inapp::Session {
 // one task should not outlive the task, and the shortest way to guarantee that
 // is for the authority to live in a value the app drops.
 fn in_app_with_grant(grant: auth::Grant) -> inapp::Session {
+    if native_surface::installed() { return native_surface::in_app(grant); }
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
     return inapp::open_with_grant(surf, agent_win32::mcp_backend(), grant);
 }
@@ -172,6 +192,48 @@ fn open_windows() -> vec::Vec[usize] {
         i = i +% (1 as usize);
     }
     return out;
+}
+
+// EVERY KEYED NODE THAT HAS A WINDOW, by native handle — the answer to
+// `agent_win32::set_keys_fn`. Walked from every open window's root, fresh at
+// each refresh, for the reason `open_windows` is: a re-render moves keys onto
+// new windows and a cached list would name dead ones.
+//
+// A keyed node with NO window of its own (a viewless span) is left out: there
+// is nothing for an HWND walk to find it on.
+fn keyed_windows() -> vec::Vec[agent_win32::KeyedWindow] {
+    var out: vec::Vec[agent_win32::KeyedWindow] = vec::new::[agent_win32::KeyedWindow]();
+    let n: usize = app::window_count();
+    var i: usize = 0 as usize;
+    while i < n {
+        let root: *flex::Node = app::window_root(i);
+        if root.is_not_null() { collect_keyed(root, out); }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn collect_keyed(n: *flex::Node, ref out: vec::Vec[agent_win32::KeyedWindow]) {
+    let k: str = { (*n).key() };
+    if k != "" {
+        let v: *u8 = core::view_of(n);
+        if v.is_not_null() {
+            let _s: status::Status = out.append(agent_win32::KeyedWindow {
+                hwnd: { #addr(v) },
+                key: text::from_str(k),
+            });
+        }
+    }
+    let c: usize = core::child_count_of(n);
+    var j: usize = 0 as usize;
+    while j < c {
+        match core::child_of(n, j) {
+            option::Option[*flex::Node]::Some(ch) => { collect_keyed(ch, out); }
+            option::Option[*flex::Node]::None => { }
+        }
+        j = j +% (1 as usize);
+    }
+    return;
 }
 
 fn attach_window(win: *u8) {
@@ -257,6 +319,9 @@ fn serve_main(take job: AgentServe) -> i32 {
 // Start the serve worker exactly once per process. The accept loop lives for
 // the app's life.
 fn serve_once(id: str) {
+    // The legacy HWND server calls its backend on a worker. A native XAML
+    // surface instead uses DispatcherQueue and handle_request on its UI thread.
+    if native_surface::installed() { native_surface::serve_once(id); return; }
     if AGENT_SERVING { return; }
     // Clear out what dead processes left behind. A descriptor carries the pid,
     // so a name is never reused and nothing else would ever remove these.

@@ -1,11 +1,13 @@
-// Reference: list pull-to-refresh
-//   ui::list(key: "l", refreshable: true, on_refreshing: this.on_refresh)
-//   list::find("l").begin_refresh() / .end_refresh()
+// Reference: refreshable content host
+//   ui::refreshable(key: "r", refreshable: true, on_refreshing: this.on_refresh)
+//   refreshable::find("r").set_refreshing(false) after the load
 
 import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/list" as list;
+import "facet/refreshable" as refreshable;
+import "facet/services" as services;
 import "facet/label" as label;
 import "facet/vocabulary" as vocab;
 import "stdlib/option" as option;
@@ -13,6 +15,8 @@ import "../shell" as shell;
 
 struct Refresh {
     times: i32,
+    pending: bool,
+    timer: services::Cancellable,
 }
 
 fn refresh_row(index: usize, ctx: *u8) -> core::Node {
@@ -28,9 +32,11 @@ fn refresh_row(index: usize, ctx: *u8) -> core::Node {
 }
 
 impl Refresh {
-    fn new() -> Refresh { return Refresh { times: 0 }; }
+    fn new() -> Refresh { return Refresh { times: 0, pending: false, timer: #zero::[services::Cancellable]() }; }
 
     fn on_refresh(ref this, sender: *u8) {
+        if this.pending { return; }
+        this.pending = true;
         this.times = this.times +% 1;
         match label::find("rf:status") {
             option::Option[label::Label]::Some(l) => {
@@ -38,22 +44,26 @@ impl Refresh {
             }
             option::Option::None => { }
         }
-        // End the spinner — a real app would do this after the load finishes.
-        match list::find("rf:list") {
-            option::Option[list::List]::Some(l) => {
-                let _e: list::List = l.end_refresh();
-            }
+        // Simulate asynchronous loading so the native indicator is visible.
+        this.timer = services::after(0.75f64, this.finish_refresh);
+    }
+
+    fn finish_refresh(ref this) {
+        this.pending = false;
+        match refreshable::find("rf:host") {
+            option::Option::Some(r) => { let updated = r.set_refreshing(false); }
             option::Option::None => { }
         }
     }
 
     fn force_refresh(ref this, sender: *u8) {
-        match list::find("rf:list") {
-            option::Option[list::List]::Some(l) => {
-                let _b: list::List = l.begin_refresh();
-            }
+        if this.pending { return; }
+        match refreshable::find("rf:host") {
+            option::Option::Some(r) => { let updated = r.set_refreshing(true); }
             option::Option::None => { }
         }
+        // State setters do not dispatch an action on every backend. The pending
+        // guard also handles backends that report the native refresh request.
         this.on_refresh(sender);
     }
 }
@@ -61,22 +71,20 @@ impl Refresh {
 impl Refresh: component::Component {
     fn build(ref this) -> core::Node {
         var body: core::Builder = core::Builder::new();
-        body.add(shell::caption("list  ·  refreshable"));
+        body.add(shell::caption("refreshable  ·  list content"));
         body.add(ui::label(
-            "On touch: pull to refresh. On AppKit the control is present; use begin_refresh / end_refresh from a button to simulate the cycle.",
+            "Pull to refresh where supported, or press Refresh. The indicator remains active while the simulated load completes.",
             key: "rf:note",
             font_size: 13.0,
             text_color: vocab::Color::ink(0.65),
             max_lines: 4,
             line_break: vocab::LineBreak::WordWrap,
         ));
-        body.add(ui::button("Simulate refresh", key: "rf:btn", on_click: this.force_refresh));
+        body.add(ui::button("Refresh", key: "rf:btn", on_click: this.force_refresh));
 
         var host: core::Node = ui::list(
             key: "rf:list",
-            refreshable: true,
             row_height: 40,
-            on_refreshing: this.on_refresh,
         ).height(220.0).grow(1.0);
         match list::find("rf:list", within: #addr_of(host)) {
             option::Option[list::List]::Some(l) => {
@@ -85,7 +93,10 @@ impl Refresh: component::Component {
             }
             option::Option::None => { }
         }
-        body.add(host);
+        var refresh_host = ui::refreshable(key: "rf:host", refreshable: true,
+            on_refreshing: this.on_refresh).height(220.0).grow(1.0);
+        let attached = refresh_host.add_child(host);
+        body.add(refresh_host);
         body.add(ui::label(
             "refreshed 0 time(s)",
             key: "rf:status",
@@ -95,9 +106,9 @@ impl Refresh: component::Component {
 
         return shell::panel(
             "Refresh",
-            "Pull-to-refresh on a list. Handlers call begin_refresh / end_refresh around the load.",
+            "A refreshable host keeps its indicator active until the load finishes.",
             core::column(body).gap(12.0),
-            howto: "ui::list(key: \"l\", refreshable: true,\n    on_refreshing: this.on_refresh)\n// in handler after load:\nlist::find(\"l\").end_refresh()",
+            howto: "ui::refreshable(key: \"r\", refreshable: true,\n    on_refreshing: this.on_refresh)\n// add scrollable content; after loading:\nrefreshable::find(\"r\").set_refreshing(false)",
         );
     }
 }
@@ -106,5 +117,5 @@ impl Refresh: component::Lifecycle {
     fn on_attach(ref this, why: component::Attach) {
         if why != component::Attach::Mount { return; } return; }
     fn on_detach(ref this, why: component::Detach) {
-        if why != component::Detach::Unmount { return; } return; }
+        if why != component::Detach::Unmount { return; } this.timer.cancel(); return; }
 }

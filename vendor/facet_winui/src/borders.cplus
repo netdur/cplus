@@ -1,0 +1,58 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./record" as record;
+import "./native" as native;
+import "./style" as style;
+import "./drawing" as drawing;
+struct State {path: rt::Object,width: f64,height: f64,dirty: bool}
+fn state(r: *record::View) -> *State {return (*r).extra as *State;}
+fn positive(v: f64) -> f64 {return if v>0.0f64 {v} else {0.0f64};}
+fn cap(v: vocab::LineCap) -> i32 {return if v==vocab::LineCap::Round {ui::pen_line_cap_round} else if v==vocab::LineCap::Square {ui::pen_line_cap_square} else {ui::pen_line_cap_flat};}
+fn apply(r: *record::View) {
+    if (*r).extra.is_null() {
+        let path=native::must::[ui::Path](ui::Path::new());
+        let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(path.object()));native::check(element.set_name("facet:border-stroke"));
+        let visual=native::must::[ui::IUIElement](ui::IUIElement::query(path.object()));native::check(visual.set_is_hit_test_visible(false));
+        let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_z_index(path.object(),-1));
+        let panel=native::must::[ui::IPanel](ui::IPanel::query((*r).content));let entries=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));native::check(entries.append(path.object()));
+        let owner=match box::new::[State](State {path:path.object(),width:-1.0f64,height:-1.0f64,dirty:true}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();
+    }
+    let p: *props::BorderedProps=(*core::node_data((*r).node)).props as *props::BorderedProps;let shape=native::must::[ui::IShape](ui::IShape::query((*state(r)).path));
+    let width=positive((*p).stroke_width);native::check(shape.set_stroke(style::paint((*p).stroke)));native::check(shape.set_stroke_thickness(width));
+    native::check(shape.set_stroke_start_line_cap(cap((*p).stroke_cap)));native::check(shape.set_stroke_end_line_cap(cap((*p).stroke_cap)));native::check(shape.set_stroke_dash_cap(cap((*p).stroke_cap)));
+    native::check(shape.set_stroke_line_join(if (*p).stroke_join==vocab::LineJoin::Round {ui::pen_line_join_round} else if (*p).stroke_join==vocab::LineJoin::Bevel {ui::pen_line_join_bevel} else {ui::pen_line_join_miter}));
+    native::check(shape.set_stroke_miter_limit(if (*p).stroke_miter_limit>0.0f64 {(*p).stroke_miter_limit} else {10.0f64}));
+    // Facet dash lengths/phase are DIPs; XAML expresses them in stroke widths.
+    let unit=if width>0.0f64 {width} else {1.0f64};let dashes=native::must::[ui::DoubleCollection](ui::DoubleCollection::new());var i: usize=0;var total: f64=0.0f64;
+    while i<(*p).stroke_dash.count && i<vocab::DASH_SLOTS {let run=positive((*p).stroke_dash.run(i));total=total+run;native::check(dashes.append(run/unit));i=i+1;}
+    if total==0.0f64 {native::check(dashes.clear());}
+    native::check(shape.set_stroke_dash_array(dashes.object()));native::check(shape.set_stroke_dash_offset((*p).stroke_dash_offset/unit));(*state(r)).dirty=true;
+}
+fn radius(v: f64,inset: f64,limit: f64) -> f64 {let r=positive(v-inset);return if r>limit {limit} else {r};}
+fn place(r: *record::View,width: f64,height: f64) {
+    let s=state(r);if !(*s).dirty && (*s).width==width && (*s).height==height {return;};(*s).dirty=false;(*s).width=width;(*s).height=height;
+    let data=core::node_data((*r).node);let p: *props::BorderedProps=(*data).props as *props::BorderedProps;
+    let inset=positive((*p).stroke_width)*0.5f64;let w=positive(width-2.0f64*inset);let h=positive(height-2.0f64*inset);
+    let path=native::must::[ui::IPath](ui::IPath::query((*s).path));
+    if (*p).stroke_shape.kind==3 {
+        let ellipse=native::must::[ui::EllipseGeometry](ui::EllipseGeometry::new());native::check(ellipse.set_center(ui::Point {x:(width*0.5f64) as f32,y:(height*0.5f64) as f32}));native::check(ellipse.set_radius_x(w*0.5f64));native::check(ellipse.set_radius_y(h*0.5f64));native::check(path.set_data(ellipse.object()));return;
+    }
+    let corners=if (*p).stroke_shape.kind==2 {(*p).stroke_shape.corners} else if (*p).stroke_shape.kind==0 {(*data).common.corner_radius} else {vocab::Corners::none()};
+    let limit=(if w<h {w} else {h})*0.5f64;let a=radius(corners.top_leading,inset,limit);let b=radius(corners.top_trailing,inset,limit);let c=radius(corners.bottom_trailing,inset,limit);let d=radius(corners.bottom_leading,inset,limit);
+    let l=inset;let t=inset;let right=inset+w;let bottom=inset+h;let k=0.5522847498307936f64;var outline=vocab::Path::new();
+    let p0=outline.move_to(vocab::Point::of(l+a,t));let p1=outline.line_to(vocab::Point::of(right-b,t));
+    if b>0.0f64 {let p2=outline.curve_to(vocab::Point::of(right,t+b),vocab::Point::of(right-b+k*b,t),vocab::Point::of(right,t+b-k*b));}
+    let p3=outline.line_to(vocab::Point::of(right,bottom-c));
+    if c>0.0f64 {let p4=outline.curve_to(vocab::Point::of(right-c,bottom),vocab::Point::of(right,bottom-c+k*c),vocab::Point::of(right-c+k*c,bottom));}
+    let p5=outline.line_to(vocab::Point::of(l+d,bottom));
+    if d>0.0f64 {let p6=outline.curve_to(vocab::Point::of(l,bottom-d),vocab::Point::of(l+d-k*d,bottom),vocab::Point::of(l,bottom-d+k*d));}
+    let p7=outline.line_to(vocab::Point::of(l,t+a));
+    if a>0.0f64 {let p8=outline.curve_to(vocab::Point::of(l+a,t),vocab::Point::of(l,t+a-k*a),vocab::Point::of(l+a-k*a,t));}
+    let p9=outline.close();native::check(path.set_data(drawing::path(#addr_of(outline))));
+}
+fn release(r: *record::View) {let owner=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;}

@@ -1,0 +1,107 @@
+import "stdlib/box" as box;
+import "stdlib/text" as text;
+import "./imaging" as imaging;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/vec" as vec;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/slider" as slider;
+import "./choice_colors" as colors;
+import "./presentation" as presentation;
+import "./record" as record;
+import "./native" as native;
+struct Thumb {object: rt::Object,template: rt::Object,image: rt::Object,started: ui::EventRegistrationToken,completed: ui::EventRegistrationToken}
+struct State {thumbs: vec::Vec[Thumb],loaded: ui::EventRegistrationToken,dragging: bool,source: text::Text,bitmap: rt::Object}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn state(r: *record::View) -> *State {return (*r).extra as *State;}
+fn started(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View;let p: *props::SliderProps=(*core::node_data((*r).node)).props as *props::SliderProps;
+    if (*r).applying {return rt::Status {code:0};}
+    (*state(r)).dragging=true;let call=(*p).on_drag_started;let context=(*p).on_drag_started_ctx;if call!=props::no_handler {call(ctx,context);}return rt::Status {code:0};
+}
+fn completed(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View;let p: *props::SliderProps=(*core::node_data((*r).node)).props as *props::SliderProps;
+    if (*r).applying {return rt::Status {code:0};}
+    (*state(r)).dragging=false;core::touch((*r).node,slider::P_THUMB_COLOR);
+    let call=(*p).on_drag_completed;let context=(*p).on_drag_completed_ctx;if call!=props::no_handler {call(ctx,context);}return rt::Status {code:0};
+}
+fn clear(r: *record::View) {
+    let s=state(r);var i: usize=0;while i<(*s).thumbs.count() {
+        match (*s).thumbs.at_ptr(i) {option::Option::Some(entry)=>{
+            // Close the attached value popup before its thumb is discarded.
+            if !presentation::is_shutting_down() {
+                let service=native::must::[ui::IToolTipServiceStatics](ui::ToolTipService::i_tool_tip_service_statics_factory());
+                let tooltip=native::must::[rt::Object](service.get_tool_tip((*entry).object));
+                if !tooltip.is_null() {if let result::Result::Ok(tip)=ui::IToolTip::query(tooltip) {native::check(tip.set_is_open(false));}}
+                // A Loaded event can rebind the same thumb after reparenting.
+                // Restore its original template before forgetting the snapshot.
+                if !(*entry).image.is_null() {let control=native::must::[ui::IControl](ui::IControl::query((*entry).object));native::check(control.set_template((*entry).template));}
+            }
+            let thumb=native::must::[ui::IThumb](ui::IThumb::query((*entry).object));native::check(thumb.remove_drag_started((*entry).started));native::check(thumb.remove_drag_completed((*entry).completed));LIVE=LIVE-2;
+        },option::Option::None=>{}}i=i+1;
+    }
+    (*s).thumbs.remove_all();
+}
+fn walk(r: *record::View,value: rt::Object,tree: ui::IVisualTreeHelperStatics) {
+    match ui::IThumb::query(value) {
+        result::Result::Ok(thumb)=>{
+            let start=native::must::[ui::DragStartedEventHandler](ui::DragStartedEventHandler::new(started,r as *u8));
+            let complete=native::must::[ui::DragCompletedEventHandler](ui::DragCompletedEventHandler::new(completed,r as *u8));
+            let a=native::must::[ui::EventRegistrationToken](thumb.add_drag_started(start.object()));let b=native::must::[ui::EventRegistrationToken](thumb.add_drag_completed(complete.object()));
+            let added=(*state(r)).thumbs.append(Thumb {object:value.clone(),template:native::must::[rt::Object](native::must::[ui::IControl](ui::IControl::query(value)).template()),image:rt::Object::empty(),started:a,completed:b});LIVE=LIVE+2;return;
+        },result::Result::Err(e)=>{assert e.code==rt::no_interface();}
+    }
+    let count=native::must::[i32](tree.get_children_count(value));var i: i32=0;
+    while i<count {walk(r,native::must::[rt::Object](tree.get_child(value,i)),tree);i=i+1;}
+}
+fn images(r: *record::View) {
+    let s=state(r);if s.is_null() {return;}
+    let p: *props::SliderProps=(*core::node_data((*r).node)).props as *props::SliderProps;
+    if (*s).source.view()!=(*p).thumb_image.view() {
+        (*s).bitmap=rt::Object::empty();
+        if !(*p).thumb_image.is_empty() {let bitmap=native::must::[ui::BitmapImage](ui::BitmapImage::new());native::check(bitmap.set_uri_source(imaging::uri((*p).thumb_image.view())));(*s).bitmap=bitmap.object();}
+        (*s).source=text::from_str((*p).thumb_image.view());
+    }
+    var i: usize=0;while i<(*s).thumbs.count() {
+        if let option::Option::Some(entry)=(*s).thumbs.at_ptr(i) {
+            let control=native::must::[ui::IControl](ui::IControl::query((*entry).object));
+            if (*s).bitmap.is_null() {
+                if !(*entry).image.is_null() {native::check(control.set_template((*entry).template));let applied=native::must::[bool](control.apply_template());(*entry).image=rt::Object::empty();}
+            } else {
+                if (*entry).image.is_null() {
+                    let reader=native::must::[ui::IXamlReaderStatics](ui::XamlReader::i_xaml_reader_statics_factory());
+                    native::check(control.set_template(native::must::[rt::Object](reader.load("<ControlTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\" TargetType=\"Thumb\"><Grid Background=\"Transparent\"><Image x:Name=\"FacetThumbImage\" Stretch=\"Uniform\" /></Grid></ControlTemplate>"))));
+                    let applied=native::must::[bool](control.apply_template());let parts=native::must::[ui::IControlProtected](ui::IControlProtected::query((*entry).object));(*entry).image=native::must::[rt::Object](parts.get_template_child("FacetThumbImage"));
+                }
+                if !(*entry).image.is_null() {let image=native::must::[ui::IImage](ui::IImage::query((*entry).image));native::check(image.set_source((*s).bitmap));let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*entry).image));native::check(visual.set_opacity(if (*core::node_data((*r).node)).common.is_enabled {1.0f64} else {0.4f64}));}
+            }
+        }i=i+1;
+    }
+}
+// A color change may replace native thumbs. Rebind only after replacement;
+// leave active drags intact and apply their pending color on completion.
+fn apply(r: *record::View) {
+    let s=state(r);if s!=(0 as *State) && (*s).dragging {return;}
+    let p: *props::SliderProps=(*core::node_data((*r).node)).props as *props::SliderProps;
+    var palette=colors::Palette::new((*r).object);palette.set_color("SliderThumbBackground",(*p).thumb_color);
+    if !palette.changed {images(r);return;}
+    if s!=(0 as *State) {clear(r);}
+    palette.commit((*r).object);
+    if s!=(0 as *State) {let tree=native::must::[ui::IVisualTreeHelperStatics](ui::VisualTreeHelper::i_visual_tree_helper_statics_factory());walk(r,(*r).object,tree);images(r);}
+}
+fn loaded(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;clear(r);let tree=native::must::[ui::IVisualTreeHelperStatics](ui::VisualTreeHelper::i_visual_tree_helper_statics_factory());walk(r,(*r).object,tree);images(r);return rt::Status {code:0};
+}
+fn attach(r: *record::View) {
+    let owner: box::Box[State]=match box::new::[State](State {thumbs:vec::new::[Thumb](),loaded:#zero::[ui::EventRegistrationToken](),dragging:false,source:text::new(),bitmap:rt::Object::empty()}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+    (*r).extra=owner.into_raw();let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));
+    let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(loaded,r as *u8));(*state(r)).loaded=native::must::[ui::EventRegistrationToken](element.add_loaded(handler.object()));LIVE=LIVE+1;
+}
+fn release(r: *record::View) {
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));native::check(element.remove_loaded((*state(r)).loaded));LIVE=LIVE-1;clear(r);
+    let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;
+}

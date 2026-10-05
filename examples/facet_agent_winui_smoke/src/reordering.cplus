@@ -1,0 +1,68 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/collection" as collection;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/record" as record;
+import "facet_winui/items" as items;
+import "facet_winui/item_reorder" as reorder;
+import "facet_winui/scheduler" as scheduler;
+import "winui/winui" as native;
+import "./parity" as check;
+fn view() -> *record::View {return core::view_of(check::node("rows")) as *record::View;}
+fn cursor() -> collection::Collection {return match collection::find("rows") {option::Option::Some(v)=>v,option::Option::None=>{assert false;#zero::[collection::Collection]()}};}
+fn draggable() -> bool {let s=items::state(view());var i: usize=0;while i<(*s).rows.count() {if let option::Option::Some(row)=(*s).rows.at_ptr(i) {if (*row).data==0 {return check::must::[bool](check::must::[native::IUIElement](native::IUIElement::query((*row).visual)).can_drag());}}i=i+1;}assert false;return false;}
+struct Probe {moves: usize,remove: bool,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn item(ref this,index: usize) -> core::Node {return ui::label("Item ${index}: ${this.moves}",key:"item-${index}");}
+    fn size(ref this,index: usize) -> usize {return 3;}
+    fn header(ref this,index: usize) -> core::Node {return ui::label("Group ${index}");}
+    fn moved(ref this,sender: *u8) {
+        assert sender==view() as *u8;let c=cursor();assert c.reorder_from()==0;assert c.reorder_to()==(if this.moves==0 {1 as i64} else {3 as i64});this.moves=this.moves+1;
+        if this.remove {let old=mount::replace("rows",ui::label("Removed",key:"rows"));}else {let changed=c.set_row(this.item);}
+    }
+    fn make(ref this) -> core::Node {var node=ui::collection(key:"rows",count:6,row:this.item,columns:3,grouped:true,on_reorder_completed:this.moved).height(220.0f64);if let option::Option::Some(c)=collection::find("rows",within:#addr_of(node)) {let changed=c.set_group_count(2).set_group_size(this.size).set_group_header(this.header);}return node;}
+    fn build(ref this) -> core::Node {return @ui {column {this.make()}.padding(20.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.3f64,this.initial);}
+    fn initial(ref this) {
+        assert !draggable();assert !reorder::begin(view(),0);assert items::drop_target(view(),10.0f64,10.0f64)==-1;assert items::drop_target(view(),10.0f64,100.0f64)==0;
+        let changed=cursor().set_reorder_items(true);this.timer=services::after(0.2f64,this.enabled);
+    }
+    fn enabled(ref this) {
+        assert draggable();assert reorder::begin(view(),0);assert !reorder::accepts(view(),-1);assert !reorder::accepts(view(),0);assert !reorder::accepts(view(),3);assert !reorder::accepts(view(),100);
+        assert reorder::accepts(view(),1);assert reorder::commit(view(),1);assert this.moves==0;assert !reorder::begin(view(),0);this.timer=services::after(0.2f64,this.first_move);
+    }
+    fn first_move(ref this) {
+        assert this.moves==1;assert cursor().reorder_from()==0 && cursor().reorder_to()==1;assert reorder::begin(view(),0);
+        let changed=cursor().set_mix_groups(true);this.timer=services::after(0.2f64,this.mix);
+    }
+    fn mix(ref this) {
+        assert !reorder::accepts(view(),3);assert reorder::begin(view(),0);assert reorder::accepts(view(),3);assert reorder::commit(view(),3);this.timer=services::after(0.2f64,this.second_move);
+    }
+    fn second_move(ref this) {
+        assert this.moves==2;assert cursor().reorder_to()==3;check::log("PASS: native drag availability, header exclusion, flat reorder readback and cross-group policy");
+        assert reorder::begin(view(),0);assert reorder::commit(view(),3);let changed=cursor().set_reorder_items(false);mount::sync_from(check::node("rows"));this.timer=services::after(0.2f64,this.disabled);
+    }
+    fn disabled(ref this) {
+        assert this.moves==2;assert !draggable();assert !reorder::begin(view(),0);let changed=cursor().set_reorder_items(true);this.timer=services::after(0.2f64,this.mutate);
+    }
+    fn mutate(ref this) {
+        assert reorder::begin(view(),0);assert reorder::commit(view(),3);let changed=cursor().set_count(6);
+        // Deliver before mount::sync_from, as if the drop timer won the race.
+        scheduler::cancel((*reorder::state(view())).timer);reorder::deliver(view() as *u8);assert this.moves==2;this.timer=services::after(0.2f64,this.cancelled);
+    }
+    fn cancelled(ref this) {
+        assert this.moves==2;check::log("PASS: disabling reorder and changing data cancel queued moves");this.remove=true;assert reorder::begin(view(),0);assert reorder::commit(view(),3);this.timer=services::after(0.2f64,this.removed);
+    }
+    fn removed(ref this) {
+        assert this.moves==3;assert reorder::subscriptions()==0;this.remove=false;let old=mount::replace("rows",this.make());let changed=cursor().set_reorder_items(true).set_mix_groups(true);this.timer=services::after(0.2f64,this.remove_pending);
+    }
+    fn remove_pending(ref this) {
+        assert reorder::begin(view(),0);assert reorder::commit(view(),3);let old=mount::replace("rows",ui::label("Cancelled",key:"rows"));this.timer=services::after(0.2f64,this.finish);
+    }
+    fn finish(ref this) {assert this.moves==3;assert reorder::subscriptions()==0;check::log("PASS: collection removal during callback or before delivery is safe");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI reordering",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0 && host::live_subscriptions()==0;check::log("PASS: reorder teardown");return 0;}

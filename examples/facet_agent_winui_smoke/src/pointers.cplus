@@ -1,0 +1,70 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/slider" as slider;
+import "facet/text_button" as text_button;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "facet/component" as component;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_agent_winui/facet_agent_winui" as connector;
+import "agent_mcp/agent_mcp" as mcp;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+struct Probe {slide_starts: i32,slide_ends: i32,slide_changes: i32,presses: i32,releases: i32,clicks: i32,canvas_presses: i32,canvas_releases: i32,cancels: i32,hovers: i32,leaves: i32,moves: i32,drags: i32,passed: bool}
+impl Probe {
+    fn slide_start(ref this,sender: *u8) {this.slide_starts=this.slide_starts+1;check::log("SLIDER START ${this.slide_starts}");if let option::Option::Some(s)=slider::find("slider") {let updated=s.set_thumb_color(vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64));}}
+    fn slide_change(ref this,sender: *u8) {this.slide_changes=this.slide_changes+1;}
+    fn slide_end(ref this,sender: *u8) {if let option::Option::Some(s)=slider::find("slider") {let value=s.value();check::log("SLIDER VALUE ${value}");assert value>0.1f64 && value<0.9f64;}this.slide_ends=this.slide_ends+1;check::log("SLIDER END ${this.slide_ends}");if this.slide_ends==1 {return;}let old=mount::replace("slider",ui::label("Slider removed from drag callback",key:"slider").height(48.0f64));}
+    fn press(ref this,sender: *u8) {this.presses=this.presses+1;let name=component::key_of(sender);check::log("PRESS ${name}");}
+    fn release(ref this,sender: *u8) {this.releases=this.releases+1;let name=component::key_of(sender);check::log("RELEASE ${name}");}
+    fn click(ref this,sender: *u8) {this.clicks=this.clicks+1;let name=component::key_of(sender);check::log("CLICK ${name}");}
+    fn canvas_press(ref this,sender: *u8) {
+        this.canvas_presses=this.canvas_presses+1;check::log("CANVAS PRESS ${this.canvas_presses}");
+        if this.canvas_presses==3 {let old=mount::replace("canvas",ui::label("Canvas removed from pointer callback",key:"canvas").height(160.0f64));check::log("PASS: removed canvas while pressed");}
+    }
+    fn canvas_release(ref this,sender: *u8) {this.canvas_releases=this.canvas_releases+1;check::log("CANVAS RELEASE");}
+    fn cancel(ref this,sender: *u8) {this.cancels=this.cancels+1;check::log("CANVAS CANCEL");}
+    fn hover(ref this,sender: *u8) {this.hovers=this.hovers+1;check::log("CANVAS HOVER");}
+    fn leave(ref this,sender: *u8) {this.leaves=this.leaves+1;check::log("CANVAS LEAVE");}
+    fn hover_moved(ref this,sender: *u8) {this.moves=this.moves+1;check::log("CANVAS MOVE");}
+    fn drag(ref this,sender: *u8) {this.drags=this.drags+1;check::log("CANVAS DRAG");}
+    fn cancel_capture(ref this,sender: *u8) {let e=check::must::[native::IUIElement](native::IUIElement::query(check::object("canvas")));assert e.release_pointer_captures().is_ok();}
+    fn finish(ref this,sender: *u8) {
+        let b: *props::ButtonProps=(*core::node_data(check::node("button"))).props as *props::ButtonProps;assert (*b).on;assert !(*b).is_pressed;
+        let icon: *props::IconButtonProps=(*core::node_data(check::node("icon"))).props as *props::IconButtonProps;assert (*icon).on;assert !(*icon).is_pressed;
+        let text: *text_button::TextButtonProps=(*core::node_data(check::node("text"))).props as *text_button::TextButtonProps;assert (*text).on;
+        assert this.slide_starts==2;assert this.slide_ends==2;assert this.slide_changes>0;assert core::kind_of(check::node("slider"))==props::K_LABEL;
+        assert this.presses==2;assert this.releases==2;assert this.clicks==6;
+        assert this.canvas_presses==3;assert this.canvas_releases==1;assert this.cancels==2;
+        assert this.hovers>0;assert this.leaves>0;assert this.moves>0;assert this.drags>0;
+        assert core::kind_of(check::node("canvas"))==props::K_LABEL;
+        this.passed=true;check::log("PASS: pointer press/release, hover, drag, capture cancellation and callback removal");assert host::close().is_ok();
+    }
+    fn build(ref this) -> core::Node {
+        return @ui {column {
+            button("Button",key:"button",toggles:true,on:true,on_pressed:this.press,on_released:this.release,on_click:this.click).width(200.0f64).height(48.0f64)
+            icon_button(key:"icon",toggles:true,on:true,symbol:0xe5d2u32,on_pressed:this.press,on_released:this.release,on_clicked:this.click).width(48.0f64).height(48.0f64)
+            text_button("Text toggle",key:"text",toggles:true,on:true,on_click:this.click).width(200.0f64).height(40.0f64)
+            slider(0.5f64,key:"slider",thumb_color:vocab::Color::rgba(0.0f64,0.0f64,1.0f64,1.0f64),minimum:0.0f64,maximum:1.0f64,on_drag_started:this.slide_start,on_drag_completed:this.slide_end,on_value_changed:this.slide_change).width(400.0f64).height(48.0f64)
+            canvas(key:"canvas",on_press:this.canvas_press,on_release:this.canvas_release,on_cancel:this.cancel,on_hover:this.hover,on_unhover:this.leave,observe_move_hover_interaction:this.hover_moved,observe_drag_interaction:this.drag).width(400.0f64).height(160.0f64)
+            button("Cancel capture",key:"cancel",on_click:this.cancel_capture).width(200.0f64).height(36.0f64)
+            button("Finish",key:"finish",on_click:this.finish).width(200.0f64).height(36.0f64)
+        }.padding(20.0f64).gap(12.0f64)};
+    }
+    fn ready(ref this) {
+        if let option::Option::Some(s)=slider::find("slider") {let updated=s.set_thumb_color(vocab::Color::rgba(0.0f64,1.0f64,0.0f64,1.0f64));}
+        let frame=(*check::node("canvas")).frame();let x=frame.left;let y=frame.top;let w=frame.width;let h=frame.height;
+        check::log("CANVAS FRAME ${x} ${y} ${w} ${h}");
+        let port=mcp::loopback_port(mcp::current_pid());check::log("POINTER READY ${port}");
+    }
+}
+fn run() -> i32 {
+    let owner: box::Box[Probe]=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};
+    let p=owner.ptr();connector::enable("facet-winui-pointer");assert host::run((*p).build(),"Facet WinUI pointer",on_ready:(*p).ready).is_ok();
+    assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;connector::disable();check::log("PASS: pointer teardown");return 0;
+}

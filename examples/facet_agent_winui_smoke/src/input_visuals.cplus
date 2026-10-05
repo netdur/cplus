@@ -1,0 +1,70 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/env" as env;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/elements" as ui;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/sliding" as sliding;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "./texts" as texts;
+fn search_props() -> *props::SearchFieldProps {return (*core::node_data(check::node("search"))).props as *props::SearchFieldProps;}
+fn area_props(key: str) -> *props::TextAreaProps {return (*core::node_data(check::node(key))).props as *props::TextAreaProps;}
+fn slider_props() -> *props::SliderProps {return (*core::node_data(check::node("slider"))).props as *props::SliderProps;}
+fn dirty(key: str) {core::touch(check::node(key),0xffffffffffffffffu64);}
+fn part(name: str) -> rt::Object {let control=check::must::[native::IControlProtected](native::IControlProtected::query(check::object("search")));return check::must::[rt::Object](control.get_template_child(name));}
+fn icon_color() -> native::Color {let label=check::must::[native::ITextBlock](native::ITextBlock::query(part("FacetSearchIcon")));return texts::brush_color(check::must::[rt::Object](label.foreground()));}
+fn cancel_color() -> native::Color {let label=check::must::[native::ITextBlock](native::ITextBlock::query(texts::named_part(part("DeleteButton"),"GlyphElement")));return texts::brush_color(check::must::[rt::Object](label.foreground()));}
+fn thumb_image() -> rt::Object {return texts::named_part(check::object("slider"),"FacetThumbImage");}
+fn fixture() -> text::Text {return match env::var("CPLUS_TEST_IMAGE") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return text::new();}};}
+fn height(key: str) -> f64 {return (*check::node(key)).frame().height;}
+fn focus_search() {let element=check::must::[native::IUIElement](native::IUIElement::query(check::object("search")));assert check::must::[bool](element.focus(native::focus_state_programmatic));}
+struct Probe {changes: i32,fixed_height: f64,growing_height: f64,icon_default: native::Color,cancel_default: native::Color,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn changed(ref this,sender: *u8) {this.changes=this.changes+1;}
+    fn build(ref this) -> core::Node {return @ui {column {
+        search_field("Search me",key:"search",on_text_changed:this.changed).width(320.0f64)
+        slider(0.4f64,key:"slider",minimum:0.0f64,maximum:1.0f64).width(320.0f64)
+        text_area("First\nSecond\nThird",key:"fixed",auto_size:vocab::AutoSize::Disabled).width(180.0f64)
+        text_area("First\nSecond\nThird",key:"growing",auto_size:vocab::AutoSize::TextChanges).width(180.0f64)
+        text_area("First\nSecond\nThird",key:"explicit",auto_size:vocab::AutoSize::TextChanges).width(180.0f64).height(48.0f64)
+    }.gap(12.0f64).padding(20.0f64)};}
+    fn ready(ref this) {focus_search();this.timer=services::after(0.15f64,this.initial);}
+    fn initial(ref this) {
+        this.icon_default=icon_color();this.cancel_default=cancel_color();this.fixed_height=height("fixed");this.growing_height=height("growing");
+        assert this.growing_height>this.fixed_height+20.0f64;assert height("explicit")==48.0f64;
+        let p=search_props();(*p).search_icon_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);(*p).cancel_button_color=vocab::Color::rgba(0.0f64,0.0f64,1.0f64,1.0f64);(*p).input_view.cursor_position=2;(*p).input_view.selection_length=3;dirty("search");
+        let slider=slider_props();(*slider).thumb_image=fixture();dirty("slider");
+        let fixed=area_props("fixed");(*fixed).input_view.text=text::from_str("One\nTwo\nThree\nFour\nFive");dirty("fixed");let growing=area_props("growing");(*growing).input_view.text=text::from_str("One\nTwo\nThree\nFour\nFive");dirty("growing");
+        this.timer=services::after(0.3f64,this.custom);
+    }
+    fn custom(ref this) {
+        assert this.changes==0;let icon=icon_color();let cancel=cancel_color();assert icon.r==255 && icon.b==0;assert cancel.b==255 && cancel.r==0;
+        let edit=check::must::[native::ITextBox](native::ITextBox::query(check::object("search")));assert check::must::[i32](edit.selection_start())==2;assert check::must::[i32](edit.selection_length())==3;
+        let image=check::must::[native::IImage](native::IImage::query(thumb_image()));let source=check::must::[native::IBitmapSource](native::IBitmapSource::query(check::must::[rt::Object](image.source())));assert check::must::[i32](source.pixel_width())==1;
+        assert height("fixed")==this.fixed_height;assert height("growing")>this.growing_height+20.0f64;
+        let p=search_props();(*p).search_icon_color=vocab::Color::clear();(*p).cancel_button_color=vocab::Color::clear();dirty("search");
+        let slider=slider_props();(*slider).thumb_color=vocab::Color::rgba(0.0f64,0.0f64,1.0f64,1.0f64);dirty("slider");
+        let growing=area_props("growing");(*growing).auto_size=vocab::AutoSize::Disabled;dirty("growing");let fixed=area_props("fixed");(*fixed).auto_size=vocab::AutoSize::TextChanges;dirty("fixed");
+        this.timer=services::after(0.2f64,this.restored);
+    }
+    fn restored(ref this) {
+        let icon=icon_color();let cancel=cancel_color();assert icon.r==this.icon_default.r && icon.a==this.icon_default.a;assert cancel.r==this.cancel_default.r && cancel.b==this.cancel_default.b;
+        assert this.changes==0;assert !thumb_image().is_null();assert height("growing")==this.fixed_height;assert height("fixed")>this.growing_height;
+        assert sliding::loaded(check::object("slider"),rt::Object::empty(),core::view_of(check::node("slider"))).is_ok();assert !thumb_image().is_null();
+        let slider=slider_props();(*slider).thumb_image=text::new();dirty("slider");
+        let factory=check::must::[native::IFrameworkElementAutomationPeerStatics](native::FrameworkElementAutomationPeer::i_framework_element_automation_peer_statics_factory());let peer=check::must::[native::IAutomationPeer](native::IAutomationPeer::query(check::must::[rt::Object](factory.create_peer_for_element(part("DeleteButton")))));let provider=check::must::[native::IInvokeProvider](native::IInvokeProvider::query(check::must::[rt::Object](peer.get_pattern(native::pattern_interface_invoke))));assert provider.invoke().is_ok();
+        this.timer=services::after(0.2f64,this.cleared);
+    }
+    fn cleared(ref this) {
+        assert this.changes==1;assert (*search_props()).input_view.text.is_empty();assert thumb_image().is_null();let color=texts::brush_color(texts::thumb_brush());assert color.b==255 && color.r==0;
+        check::log("PASS: search icon/cancel colors, reset, selection, native clearing; slider image/recolor/reset; editor autosize changes and explicit heights");
+        this.passed=true;assert host::close().is_ok();
+    }
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI input visuals",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: input visuals teardown");return 0;}

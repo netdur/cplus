@@ -1,0 +1,155 @@
+// Handwritten WinUI application composition, built on generated metadata APIs.
+// This module is independent of Facet. Generated files never overwrite it.
+import "./winui" as ui;
+import "winrt/runtime" as rt;
+import "stdlib/result" as result;
+import "stdlib/atomic" as atomic;
+extern fn malloc(size: usize) -> *u8;
+extern fn free(memory: *u8);
+extern fn memset(memory: *u8, value: i32, size: usize) -> *u8;
+extern fn CoTaskMemAlloc(size: usize) -> *u8;
+extern fn WindowsDuplicateString(value: usize, out: *usize) -> i32;
+
+// Owner: atomic refs, inner, identity, overrides, metadata, provider, app,
+// on_launched, borrowed context, launch HRESULT. Records: table, owner.
+fn _get(p: *u8, offset: usize) -> *u8 { return rt::read_pointer(p,offset); }
+fn _set(p: *u8, offset: usize, value: *u8) { rt::write_pointer(p,offset,value); return; }
+fn _retain(self: *u8) -> u32 {
+    return (atomic::fetch_add_i32(_get(self,8) as *i32,1,atomic::Ordering::Relaxed)+1) as u32;
+}
+fn _release(self: *u8) -> u32 {
+    let owner: *u8=_get(self,8);
+    let remaining: i32=atomic::fetch_sub_i32(owner as *i32,1,atomic::Ordering::AcqRel)-1;
+    if remaining==0 {
+        rt::release(_get(owner,8)); rt::release(_get(owner,40));
+        var offset: usize=16;
+        while offset<=32 { let record: *u8=_get(owner,offset); free(_get(record,0)); free(record); offset=offset+8; }
+        free(owner);
+    }
+    return remaining as u32;
+}
+fn _query(self: *u8, id: *rt::Guid, out: *usize) -> i32 {
+    if out==(0 as *usize) { return rt::pointer_error(); }
+    *out=0; let owner: *u8=_get(self,8); var selected: *u8=0 as *u8;
+    if rt::guid_equal(*id,rt::unknown_iid()) || rt::guid_equal(*id,rt::inspectable_iid()) { selected=_get(owner,16); }
+    if rt::guid_equal(*id,ui::i_application_overrides_iid()) { selected=_get(owner,24); }
+    if rt::guid_equal(*id,ui::i_xaml_metadata_provider_iid()) { selected=_get(owner,32); }
+    if selected!=(0 as *u8) { *out=selected as usize; let _n: u32=_retain(self); return 0; }
+    let inner: *u8=_get(owner,8);
+    if inner==(0 as *u8) { return rt::no_interface(); }
+    let query: fn(*u8,*rt::Guid,*usize)->i32=rt::slot(inner,0) as fn(*u8,*rt::Guid,*usize)->i32;
+    return query(inner,id,out);
+}
+fn _iids(self: *u8, count: *u32, out: *usize) -> i32 {
+    *count=0; *out=0; let ids: *u8=CoTaskMemAlloc(32);
+    if ids==(0 as *u8) { return rt::out_of_memory(); }
+    *(ids as *rt::Guid)=ui::i_application_overrides_iid(); *((ids+16) as *rt::Guid)=ui::i_xaml_metadata_provider_iid();
+    *count=2; *out=ids as usize; return 0;
+}
+fn _name(self: *u8, out: *usize) -> i32 {
+    *out=0;
+    let name: rt::HString=match rt::HString::new("Cplus.WinUI.Application") { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return e.code;} };
+    return WindowsDuplicateString(name.raw(),out);
+}
+fn _trust(self: *u8, out: *i32) -> i32 { *out=0; return 0; }
+// These two ABI forms contain TypeName/XmlnsDefinition (owning strings).
+// Forward unchanged to WinUI's provider; never copy or free the native arrays.
+fn _metadata_type(self: *u8, typename: *u8, out: *usize) -> i32 {
+    let provider: *u8=_get(_get(self,8),40);
+    if provider==(0 as *u8) { *out=0; return 0x8000ffff as i32; }
+    let f: fn(*u8,*u8,*usize)->i32=rt::slot(provider,ui::i_xaml_metadata_provider_get_xaml_type_slot) as fn(*u8,*u8,*usize)->i32;
+    return f(provider,typename,out);
+}
+fn _metadata_name(self: *u8, name: *u8, out: *usize) -> i32 {
+    let provider: *u8=_get(_get(self,8),40);
+    if provider==(0 as *u8) { *out=0; return 0x8000ffff as i32; }
+    let f: fn(*u8,*u8,*usize)->i32=rt::slot(provider,ui::i_xaml_metadata_provider_get_xaml_type_by_full_name_slot) as fn(*u8,*u8,*usize)->i32;
+    return f(provider,name,out);
+}
+fn _metadata_xmlns(self: *u8, count: *u32, out: *usize) -> i32 {
+    let provider: *u8=_get(_get(self,8),40);
+    if provider==(0 as *u8) { *count=0; *out=0; return 0x8000ffff as i32; }
+    let f: fn(*u8,*u32,*usize)->i32=rt::slot(provider,ui::i_xaml_metadata_provider_get_xmlns_definitions_slot) as fn(*u8,*u32,*usize)->i32;
+    return f(provider,count,out);
+}
+fn _interface(owner: *u8, slots: usize) -> *u8 {
+    let table: *u8=malloc(slots*8); let record: *u8=malloc(16);
+    if table==(0 as *u8) || record==(0 as *u8) { free(table); free(record); return 0 as *u8; }
+    let _p: *u8=memset(table,0,slots*8);
+    let query: fn(*u8,*rt::Guid,*usize)->i32=_query; let retain: fn(*u8)->u32=_retain; let release: fn(*u8)->u32=_release;
+    let ids: fn(*u8,*u32,*usize)->i32=_iids; let name: fn(*u8,*usize)->i32=_name; let trust: fn(*u8,*i32)->i32=_trust;
+    _set(table,0,query as *u8); _set(table,8,retain as *u8); _set(table,16,release as *u8);
+    _set(table,24,ids as *u8); _set(table,32,name as *u8); _set(table,40,trust as *u8);
+    _set(record,0,table); _set(record,8,owner); return record;
+}
+fn _resources(app: rt::Object) -> rt::Status {
+    let application: ui::IApplication=match ui::IApplication::query(app) { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};} };
+    let resources: rt::Object=match application.resources() { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};} };
+    let dictionary: ui::IResourceDictionary=match ui::IResourceDictionary::query(resources) { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};} };
+    let merged: rt::Object=match dictionary.merged_dictionaries() { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};} };
+    let vector: ui::IVector_Microsoft_UI_Xaml_ResourceDictionary=match ui::IVector_Microsoft_UI_Xaml_ResourceDictionary::query(merged) { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};} };
+    let controls: ui::XamlControlsResources=match ui::XamlControlsResources::new() { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};} };
+    return vector.append(controls.object());
+}
+fn _launched(self: *u8, args: *u8) -> i32 {
+    let owner: *u8=_get(self,8); let app: rt::Object=rt::Object::retain(_get(owner,48));
+    var status: rt::Status=_resources(app);
+    if status.is_ok() {
+        let callback: fn(rt::Object,*u8)->rt::Status=_get(owner,56) as fn(rt::Object,*u8)->rt::Status;
+        status=callback(app,_get(owner,64));
+    }
+    *((owner+72) as *i32)=status.code;
+    if status.is_err() {
+        match ui::IApplication::query(app) { result::Result::Ok(v)=>{let _s: rt::Status=v.exit();},result::Result::Err(e)=>{} }
+    }
+    return 0;
+}
+fn _initialize(args: rt::Object, owner: *u8) -> rt::Status {
+    let composed: rt::Composition=match rt::compose("Microsoft.UI.Xaml.Application",ui::i_application_factory_iid(),ui::i_application_factory_create_instance_slot,_get(owner,16)) {
+        result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};}
+    };
+    let inner: rt::Object=composed.inner(); rt::add_ref(inner.raw()); _set(owner,8,inner.raw());
+    let app: rt::Object=composed.object(); rt::add_ref(app.raw()); _set(owner,48,app.raw());
+    let provider: ui::XamlControlsXamlMetaDataProvider=match ui::XamlControlsXamlMetaDataProvider::new() { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};} };
+    let metadata: ui::IXamlMetadataProvider=match ui::IXamlMetadataProvider::query(provider.object()) { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};} };
+    rt::add_ref(metadata.raw()); _set(owner,40,metadata.raw()); return rt::Status {code:0};
+}
+
+// Call after deployment/runtime setup and STA initialization. Keep the caller's
+// Apartment alive until all window/event objects have been released after run.
+// Borrowed context must outlive run.
+// on_launched builds native controls; keep window/event state until run returns.
+fn run(on_launched: fn(rt::Object,*u8)->rt::Status, on_launched_ctx: *u8=0 as *u8) -> rt::Status {
+    let factory: rt::Object=match rt::activation_factory("Microsoft.UI.Xaml.Application",ui::i_application_statics_iid()) { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};} };
+    let statics: ui::IApplicationStatics=match ui::IApplicationStatics::query(factory) { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{return rt::Status {code:e.code};} };
+    let owner: *u8=malloc(80);
+    if owner==(0 as *u8) { return rt::Status {code:rt::out_of_memory()}; }
+    let _zero: *u8=memset(owner,0,80); *(owner as *i32)=1;
+    var offset: usize=16;
+    while offset<=32 {
+        let count: usize=if offset==16 {6 as usize} else {if offset==24 {7 as usize} else {9 as usize}};
+        let record: *u8=_interface(owner,count);
+        if record==(0 as *u8) {
+            var previous: usize=16; while previous<offset { let p: *u8=_get(owner,previous); free(_get(p,0)); free(p); previous=previous+8; }
+            free(owner); return rt::Status {code:rt::out_of_memory()};
+        }
+        _set(owner,offset,record); offset=offset+8;
+    }
+    let launched: fn(*u8,*u8)->i32=_launched;
+    _set(_get(_get(owner,24),0),ui::i_application_overrides_on_launched_slot*8,launched as *u8);
+    let mt: fn(*u8,*u8,*usize)->i32=_metadata_type; let mn: fn(*u8,*u8,*usize)->i32=_metadata_name; let mx: fn(*u8,*u32,*usize)->i32=_metadata_xmlns;
+    let table: *u8=_get(_get(owner,32),0);
+    _set(table,ui::i_xaml_metadata_provider_get_xaml_type_slot*8,mt as *u8); _set(table,ui::i_xaml_metadata_provider_get_xaml_type_by_full_name_slot*8,mn as *u8); _set(table,ui::i_xaml_metadata_provider_get_xmlns_definitions_slot*8,mx as *u8);
+    _set(owner,56,on_launched as *u8); _set(owner,64,on_launched_ctx);
+    var status: rt::Status=rt::Status {code:0};
+    {
+        match ui::ApplicationInitializationCallback::new(_initialize,owner) {
+            result::Result::Ok(callback)=>{status=statics.start(callback.object());},
+            result::Result::Err(e)=>{status=rt::Status {code:e.code};}
+        }
+    }
+    let launch_error: i32=*((owner+72) as *i32);
+    rt::release(_get(owner,48)); let _refs: u32=_release(_get(owner,16));
+    if status.is_ok() && launch_error<0 { return rt::Status {code:launch_error}; }
+    return status;
+}

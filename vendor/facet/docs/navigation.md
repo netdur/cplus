@@ -84,8 +84,8 @@ it does not start an app, and `open_window` returns `None`. Use
 `runtime::app_running()` when a callback can also run outside app lifetime.
 Fetch the handle when the action runs instead of caching the current app globally.
 
-The accessor currently exists in the macOS, Linux, iOS, Android, and neutral
-facades. The Windows facade does not yet expose `runtime::app()`.
+The accessor exists in every facade: macOS, Linux, Windows (on Win32 and on
+WinUI alike), iOS, Android, and the neutral one.
 
 ## Name, key, and instance lifetime
 

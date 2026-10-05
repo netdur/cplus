@@ -8,17 +8,55 @@ import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/tree" as tree;
 import "facet/label" as label;
+import "facet/props" as props;
+import "stdlib/text" as text;
 import "facet/vocabulary" as vocab;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "../shell" as shell;
 
 struct Trees {
-    n: i32,
+    n: i32, custom: bool, generation: i32,
 }
 
+// The legacy tree binder takes its context before the retained row.
+fn bind_row(model: *tree::TreeNode,ctx: *u8,row: *core::Node) {
+    let owner=ctx as *Trees;
+    if let option::Option::Some(child)=core::child_of(row,0) {
+        let p=(*core::node_data(child)).props as *props::LabelProps;
+        (*p).text=text::from_str("${(*model).label} · ${(*owner).generation}");core::touch(child,label::P_TEXT);
+    }
+}
 impl Trees {
-    fn new() -> Trees { return Trees { n: 0 }; }
+    fn new() -> Trees { return Trees { n: 0, custom: false, generation: 0 }; }
+
+    fn toggle_rows(ref this,sender: *u8) {
+        this.custom=!this.custom;this.n=if this.custom {1} else {0};
+        if let option::Option::Some(l)=label::find("tr:rows") {if this.custom {let updated=l.set_text("Rows: 44 DIP");} else {let updated=l.set_text("Rows: 26 DIP");}}
+        if let option::Option::Some(t)=tree::find("tr:demo") {
+            if this.custom {let updated=t.set_row(this.row).set_row_bind(bind_row,ctx:#addr_of(this) as *u8).set_row_height(44);}
+            else {let updated=t.set_row(tree::no_row).set_row_height(26);}
+        }
+    }
+    fn rebind(ref this,sender: *u8) {
+        this.generation=this.generation+1;
+        if let option::Option::Some(t)=tree::find("tr:demo") {let updated=t.set_row_bind(bind_row,ctx:#addr_of(this) as *u8);}
+    }
+    fn row_id(ref this,model: *tree::TreeNode) -> text::Text {return text::from_str("tr:item:${(*model).id}");}
+    fn row(ref this,model: *tree::TreeNode) -> core::Node {
+        let id=(*model).id.view();
+        return @ui {row {label("",key:"tr:label:${id}").width(150.0f64) text_field("Draft",key:"tr:edit:${id}").width(160.0f64) button("Use",key:"tr:use:${id}",on_click:this.use_row)}.gap(8.0f64)};
+    }
+    fn use_row(ref this,sender: *u8) {
+        let model=component::item_of(sender) as *tree::TreeNode;if model.is_null() {return;}
+        if let option::Option::Some(l)=label::find("tr:status") {let updated=l.set_text("used: ${(*model).label}  (id=${(*model).id})");}
+    }
+
+    fn resize_rows(ref this, sender: *u8) {
+        this.n=(this.n+1)%3;let height: i64=if this.n==1 {44i64} else if this.n==2 {0i64} else {26i64};
+        if let option::Option::Some(t)=tree::find("tr:demo") {let updated=t.set_row_height(height);}
+        if let option::Option::Some(l)=label::find("tr:rows") {if height==0 {let updated=l.set_text("Rows: native default");} else {let updated=l.set_text("Rows: ${height} DIP");}}
+    }
 
     fn on_select(ref this, node: *tree::TreeNode) {
         if node.is_null() { return; }
@@ -53,6 +91,7 @@ fn sample_tree() -> tree::TreeNode {
 
 impl Trees: component::Component {
     fn build(ref this) -> core::Node {
+        this.n=0;this.custom=false;this.generation=0;
         var body: core::Builder = core::Builder::new();
         body.add(shell::caption("tree  ·  hierarchical outline"));
         body.add(ui::label(
@@ -67,8 +106,11 @@ impl Trees: component::Component {
             sample_tree(),
             key: "tr:demo",
             on_select: this.on_select,
+            row_id: this.row_id,
             row_height: 26,
         ).height(220.0).grow(1.0));
+        body.add(@ui {row {button("Change row height",key:"tr:resize",on_click:this.resize_rows) label("Rows: 26 DIP",key:"tr:rows")}.gap(12.0f64)});
+        body.add(@ui {row {button("Toggle custom rows",key:"tr:custom",on_click:this.toggle_rows) button("Rebind labels",key:"tr:rebind",on_click:this.rebind)}.gap(12.0f64)});
         body.add(ui::label("selected: (none)", key: "tr:status",
             font_size: 13.0, text_color: vocab::Color::ink(0.7)));
 

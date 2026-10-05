@@ -7,9 +7,11 @@ implement three of a control's twenty verbs and still be a body.
 
 This answers below the kind level, in two dimensions — every declared write and
 command is a `P_*` bit in its module, and every declared handler is a `fn` field
-— and sorts each into one of six dispositions:
+— and sorts each into the following dispositions:
 
-  LIVE           the apply body gates on `<mod>::P_X`, so a later write lands
+  LIVE           a dirty-bit/read path, or a native setter reachable from apply
+  REVIEWED-LIVE  an indirect live path reviewed in the manifest; requires a
+                 recognized read, but is not automatic or runtime proof
   HOST-RENDERED  the node has no view; its HOST re-applies (a `span` is a run
                  in its label's attributed string). Listed in the manifest.
   CREATE-ONLY    read when the view is built, never after — and listed in the
@@ -30,10 +32,17 @@ a dead handler, or a ledger row naming a verb that does not exist.
 
 The unread check is the one that took longest to earn. Naming a bit in a dirty
 mask used to count as implementing it, so a body could gate on `P_ICON | P_FONT`
-and read neither field and score two live verbs. LIVE now requires BOTH halves:
+and read neither field and score two live verbs. The dirty-bit path requires BOTH halves:
 the bit gated AND the field read by a body that reaches the control's struct. A
 COMMAND has no field by construction (`web.reload`), so gating it is the whole
 implementation and it stays live — that distinction is `declares_field`.
+
+WinUI re-applies many properties without testing individual dirty bits. Its
+additional path follows local calls from views.apply and credits a property
+only when a lexically resolved Props field flows directly into a native setter.
+Constructor-only helpers, event callbacks, and unreachable helpers do not count.
+Indirect flows through local variables are deliberately not inferred. This is
+a static inventory, not proof that every credited behavior works correctly.
 
 The limit of the read check, stated so nobody over-trusts it: it asks whether
 SOME body reaching the control's struct reads the field, not whether the body
@@ -66,12 +75,12 @@ Four things this has to get right, and simpler versions got each of them wrong:
 
   python3 tools/verb_coverage.py                    # appkit, the summary
   python3 tools/verb_coverage.py gtk --list         # one backend, every verb
+  python3 tools/verb_coverage.py winui --list       # experimental WinUI backend
   python3 tools/verb_coverage.py --all              # the comparison table
   python3 tools/verb_coverage.py --all --check      # the gate, every backend
 
-FIVE BACKENDS, one comparable column. LIVE is read out of the code and means
-the same thing everywhere: the apply body gates on the dirty bit, so a later
-write lands. Every other bucket is read out of the backend's own MANIFEST
+SIX BACKENDS, one comparable column. LIVE is read out of the code and looks
+for a path that can apply a later write. Every other bucket is read out of the backend's own MANIFEST
 ledgers, which is why the two halves of the table must be read together.
 
 A BACKEND WITH NO LEDGER REPORTS ITS WHOLE NON-LIVE SURFACE AS DEBT, including
@@ -119,6 +128,7 @@ BACKENDS = {
     "gtk":     ("vendor/facet_gtk",     "GTK"),
     "android": ("vendor/facet_android", "Android"),
     "win32":   ("vendor/facet_win32",   "Win32"),
+    "winui":   ("vendor/facet_winui",   "WinUI"),
 }
 
 # Modules that declare no control verbs: the tree itself, the seam, the tiers.
@@ -136,6 +146,119 @@ STRUCT_USE = re.compile(r"\b(\w+)::(\w+Props)\b")
 # which a plain `\(\*\w+\)` misses and which is how the per-kind readers in
 # `text_input.cplus` reach a prop without naming a local for it.
 FIELD_READ = re.compile(r"\(\*[^;{}]*?\)((?:\.\w+)+)")
+
+# A backend may apply native setters on every sync instead of branching per bit.
+# These are renderer entry points, not a list of capabilities to credit. Only
+# property values reaching a setter along the local call graph count below.
+REAPPLY_ROOTS = {"facet_winui": [("views", "apply")]}
+
+
+def code_mask(src):
+    """Blank comments and strings, retaining offsets for balanced scans."""
+    return re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"',
+                  lambda m: re.sub(r'[^\n]', ' ', m.group()), src, flags=re.S)
+
+
+def closing(code, start, left, right):
+    depth = 0
+    for i in range(start, len(code)):
+        if code[i] == left:
+            depth += 1
+        elif code[i] == right:
+            depth -= 1
+            if depth == 0:
+                return i
+    return len(code)
+
+
+def reapplied_fields(backend_dir, roots=None):
+    """(Props type, field) values passed directly to native setters from apply.
+
+    Conservative: no credit for field reads in constructors/events, in dead
+    helpers, or in comments; no credit merely because a field is read in an
+    apply function. Local calls are followed, but dataflow through arbitrary
+    helper parameters is not inferred. The existing per-bit path remains valid.
+    """
+    if roots is None:
+        roots = REAPPLY_ROOTS.get(os.path.basename(os.path.dirname(backend_dir)), [])
+    functions = {}
+    for path in sorted(glob.glob(os.path.join(backend_dir, '*.cplus'))):
+        if os.path.basename(path) in TEST_ROOTS:
+            continue
+        with open(path, encoding='utf-8') as stream:
+            src = stream.read()
+        code = code_mask(src)
+        module = os.path.basename(path)[:-6]
+        aliases = {alias: target[2:] for target, alias in IMPORT.findall(src)
+                   if target.startswith('./')}
+        for match in re.finditer(r'^fn\s+(\w+)\s*\(', code, re.M):
+            begin = code.find('{', match.end())
+            if begin < 0:
+                continue
+            end = closing(code, begin, '{', '}')
+            functions[module, match[1]] = (code[match.start():end+1], aliases)
+    found, visited, pending = set(), set(), list(roots)
+    while pending:
+        key = pending.pop()
+        if key in visited or key not in functions:
+            continue
+        visited.add(key)
+        code, aliases = functions[key]
+        for call in re.finditer(r'\b(\w+)::(\w+)\s*\(', code):
+            if call[1] in aliases:
+                pending.append((aliases[call[1]], call[2]))
+        for call in re.finditer(r'(?<![\w.:])([a-z_]\w*)\s*\(', code):
+            pending.append((key[0], call[1]))
+        # Resolve pointer declarations in lexical scope. Reusing `p` in two
+        # control branches must not credit one control with the other's fields.
+        declarations = []
+        scopes = []
+        scope_at = {}
+        for i, char in enumerate(code):
+            scope_at[i] = tuple(scopes)
+            if char == '{':
+                scopes.append(i)
+            elif char == '}' and scopes:
+                scopes.pop()
+        for decl in re.finditer(r'\b(\w+)\s*:\s*\*\s*\w+::(\w+Props)\b', code):
+            declarations.append((decl.start(), decl[1], decl[2], scope_at[decl.start()]))
+        # C+ permits `let p = raw as *props::LabelProps`. Record that exact
+        # cast as a typed owner too. Unknown locals still shadow outer Props
+        # pointers; otherwise an unrelated local named p can earn false credit.
+        for local in re.finditer(r'\b(?:let|var)\s+(\w+)\b([^;{}]*)', code):
+            tail = local[2]
+            explicit = re.match(r'\s*:\s*\*\s*\w+::(\w+Props)\b', tail)
+            inferred = re.fullmatch(r'\s*=\s*[^;{}]+?\bas\s+\*\s*\w+::(\w+Props)\s*', tail)
+            owner = (explicit or inferred)
+            declarations.append((local.start(), local[1], owner[1] if owner else None,
+                                 scope_at[local.start()]))
+        declarations.sort(key=lambda declaration: declaration[0])
+        for setter in re.finditer(r'\b\w+\.(?:set_[a-z_0-9]+|select)\s*\(', code):
+            start = code.find('(', setter.start())
+            end = closing(code, start, '(', ')')
+            for read in re.finditer(r'\(\*(\w+)\)((?:\.\w+)+)', code[start:end]):
+                position = start + read.start()
+                scope = scope_at[position]
+                owner = next((struct for pos, var, struct, enclosing in reversed(declarations)
+                              if pos < position and var == read[1]
+                              and scope[:len(enclosing)] == enclosing), None)
+                if owner:
+                    field = read[2].lstrip('.')
+                    if code[start + read.end():].lstrip().startswith('('):
+                        field = field.rsplit('.', 1)[0] if '.' in field else ''
+                    if field:
+                        found.add((owner, field))
+    return found
+
+
+def property_owners(bodies, struct, prefix='', seen=()):
+    """Resolve inherited property blocks to typed dotted field paths."""
+    if struct in seen:
+        return []
+    out = [(struct, prefix)]
+    for field, base in re.findall(r'^\s*(\w+): (\w+Props),', bodies.get(struct, ''), re.M):
+        out += property_owners(bodies, base, prefix + field + '.', seen + (struct,))
+    return out
 
 
 def facet_modules(facet_dir):
@@ -213,7 +336,8 @@ def ledger(manifest, tag):
     """
     if not os.path.exists(manifest):
         return {}
-    block = re.search(r"^```" + tag + r"\n(.*?)^```", open(manifest, encoding="utf-8").read(), re.M | re.S)
+    with open(manifest, encoding="utf-8") as source:
+        block = re.search(r"^```" + re.escape(tag) + r"\n(.*?)^```", source.read(), re.M | re.S)
     if not block:
         return {}
     rows = {}
@@ -341,6 +465,7 @@ def buckets(facet_dir, backend_dir, recorded=()):
     mods = facet_modules(facet_dir)
     fns = backend_functions(backend_dir)
     bodies = struct_bodies(facet_dir)
+    reapplied = reapplied_fields(backend_dir)
     gated = set()
     for bits, _, _, _ in fns:
         gated |= bits
@@ -369,7 +494,13 @@ def buckets(facet_dir, backend_dir, recorded=()):
             reads = bool(struct) and any(
                 (s & reach) and reads_field(r, field) for _, s, r, _ in fns
             )
-            if (mod, bit) in gated and reads:
+            # Direct setter sinks may name the derived block or its base type.
+            owners = property_owners(bodies, struct)
+            applied = any(owner in reach and (owner, field) in reapplied
+                          for owner, _ in owners)
+            applied = applied or any((struct, prefix + field) in reapplied
+                                     for _, prefix in owners)
+            if ((mod, bit) in gated and reads) or applied:
                 live.append(entry)
             elif entry in recorded:
                 # An explicit record beats the heuristic below. Without this,
@@ -426,6 +557,7 @@ def report(name, show_list=False):
     by_arch = ledger(manifest, "by-architecture")
     derived = ledger(manifest, "derived")
     modifiers = ledger(manifest, "modifier")
+    reviewed = ledger(manifest, "reviewed-live")
     recorded = dict(decided)
     recorded.update(no_carrier)
     recorded.update(by_arch)
@@ -437,7 +569,10 @@ def report(name, show_list=False):
     total = (len(live) + len(create_only) + len(absent) + len(ruled_out)
              + len(blocked) + len(architectural) + len(unread))
     print(f"facet_{name} verb coverage — {total} declared prop/command bits")
-    print(f"  {len(live):>4}  live         gated on the dirty bit; a later write lands")
+    print(f"  {len(live):>4}  live         dirty-bit path or native setter reachable from apply")
+    by_review = [e for e in create_only if e in reviewed]
+    create_only = [e for e in create_only if e not in reviewed]
+    print(f"  {len(by_review):>4}  reviewed-live  manifest source audit of indirect live paths; not runtime proof")
     by_host = [e for e in create_only if e in hosted]
     create_only = [e for e in create_only if e not in hosted]
     # A create-only verb nobody wrote down is DEBT, not a decision — the same
@@ -463,6 +598,11 @@ def report(name, show_list=False):
     print(f"  {len(architectural):>4}  by design    this backend answers the verb's purpose another way")
     print(f"  {len(unread):>4}  gated, unread  the mask names the bit and the body never reads the field")
     print(f"  {len(absent):>4}  absent       neither implemented nor decided — the debt")
+    if name == "winui":
+        print("\n  Scanner limitation: only direct property-to-setter flows reachable from")
+        print("  configure/apply are credited without dirty bits; indirect flows need review.")
+        print(f"  {len(undocumented)} of the absent entries have recognized field reads but no")
+        print("  per-bit gate or ledger. These counts are not a verified implementation percentage.")
     ruled = dict(decided)
     ruled.update(by_arch)
     wired, dead, h_ruled = handler_buckets(facet, backend, ruled, no_carrier)
@@ -471,9 +611,9 @@ def report(name, show_list=False):
     print(f"  {len(h_ruled):>4}  decided      the manifest records why it does not fire")
     print(f"  {len(dead):>4}  never fire   neither wired nor decided — the debt")
     stale = [n for n in list(decided) + list(hosted) + list(no_carrier) + list(by_design)
-             + list(derived) + list(modifiers) + list(by_arch)
-             if n not in set(live + create_only + by_host + by_derivation + by_modification
-                             + blocked + architectural + absent + ruled_out
+             + list(derived) + list(modifiers) + list(by_arch) + list(reviewed)
+             if n not in set(live + by_review + create_only + by_host + by_derivation + by_modification
+                             + blocked + architectural + absent + ruled_out + unread
                              + wired + dead + h_ruled)]
     if stale:
         print(f"\nLEDGER NAMES {len(stale)} VERBS THAT DO NOT EXIST: {', '.join(sorted(stale))}")
@@ -488,9 +628,9 @@ def report(name, show_list=False):
     # and never reads `spacing` at all. A create-only credit needs SOME body to
     # read the field, so the verb lands in absent correctly; without this line
     # the contradicting row sits in the manifest reading true.
-    contradicted = sorted(set(absent) & (set(by_design) | set(hosted)
+    contradicted = sorted(set(absent + unread) & (set(by_design) | set(hosted)
                                          | set(derived) | set(modifiers)
-                                         | set(by_arch)))
+                                         | set(by_arch) | set(reviewed)))
     if contradicted:
         print(f"\n  LEDGER CONTRADICTED — recorded, and the field is never read:")
         for e in contradicted:
@@ -500,7 +640,8 @@ def report(name, show_list=False):
         for e in sorted(unread):
             print(f"    {e}")
     if show_list:
-        for bucket, rows in (("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host),
+        for bucket, rows in (("REVIEWED-LIVE", by_review),
+                             ("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host),
                              ("DERIVED", by_derivation), ("MODIFIER", by_modification),
                              ("NO CARRIER", blocked), ("ABSENT", absent),
                              ("BY DESIGN", architectural),
@@ -510,12 +651,12 @@ def report(name, show_list=False):
             for r in rows:
                 print(f"  {r}")
     return {
-        "live": len(live), "total": total,
+        "live": len(live), "reviewed_live": len(by_review), "total": total,
         "absent": absent, "dead": dead, "stale": stale, "unread": unread,
         "contradicted": contradicted,
         "handlers": len(wired) + len(dead) + len(h_ruled), "wired": len(wired),
         "ledgers": sum(map(len, (decided, hosted, no_carrier, by_design,
-                                 derived, modifiers, by_arch))),
+                                 derived, modifiers, by_arch, reviewed))),
         # The dispositions this backend has WRITTEN DOWN, for the cross-check
         # in `main`. A verb here is one somebody argued is not debt.
         "recorded": set(by_host) | set(create_only) | set(by_derivation)
@@ -563,7 +704,7 @@ def main():
         elsewhere = set()
         for name in names:
             elsewhere |= out[name]["recorded"]
-        print(f"\n{'':<10}{'live':>11}  {'handlers':>9}  {'ledger':>7}"
+        print(f"\n{'':<10}{'live':>11}  {'reviewed':>8}  {'handlers':>9}  {'ledger':>7}"
               f"{'debt':>7}{'argued elsewhere':>18}")
         for name in names:
             r = out[name]
@@ -572,7 +713,7 @@ def main():
             seen_ = len([e for e in r["absent"] if e in elsewhere
                          and e not in r["recorded"]])
             print(f"  {name:<8}{r['live']:>5} / {r['total']} {pct:>3}%  "
-                  f"{r['wired']:>4} / {r['handlers']}  {r['ledgers']:>7}"
+                  f"{r['reviewed_live']:>8}  {r['wired']:>4} / {r['handlers']}  {r['ledgers']:>7}"
                   f"{debt:>7}{seen_:>18}")
 
     # `--check` makes this a GATE rather than a report. The manifest has always

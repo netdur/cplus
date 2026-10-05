@@ -1,0 +1,132 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./record" as record;
+import "./native" as native;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
+import "./style" as style;
+import "./accessibility" as accessibility;
+extern fn cos(value: f64) -> f64;
+extern fn sin(value: f64) -> f64;
+extern fn QueryPerformanceCounter(value: *i64) -> i32;
+extern fn QueryPerformanceFrequency(value: *i64) -> i32;
+static FREQUENCY: i64=0;
+static LIVE: i64=0;
+static SHUTTING_DOWN: bool=false;
+static UI_THREAD: u32=0;
+extern fn GetCurrentThreadId() -> u32;
+fn begin_shutdown() {assert UI_THREAD==0 || UI_THREAD==GetCurrentThreadId();SHUTTING_DOWN=true;return;}
+fn is_shutting_down() -> bool {return SHUTTING_DOWN;}
+// A window that is not the last one has finished closing.
+fn end_shutdown() {SHUTTING_DOWN=false;return;}
+fn remove_rendering(factory: rt::Object,token: ui::EventRegistrationToken) {
+    let target=native::must::[ui::ICompositionTargetStatics](ui::ICompositionTargetStatics::query(factory));let removed=target.remove_rendering(token);
+    // XAML may already have discarded this UI thread's rendering event source.
+    if !(SHUTTING_DOWN && removed.code==(0x8001010e as i32)) {native::check(removed);}
+}
+fn subscriptions() -> i64 {return LIVE;}
+fn now() -> f64 {if FREQUENCY==0 {let ok: i32=QueryPerformanceFrequency(#addr_of(FREQUENCY));assert ok!=0;}var value: i64=0;let ok: i32=QueryPerformanceCounter(#addr_of(value));assert ok!=0;return value as f64/FREQUENCY as f64;}
+extern fn pow(base: f64,power: f64) -> f64;
+struct Values {opacity: f64,sx: f64,sy: f64,rotation: f64,x: f64,y: f64}
+struct State {current: Values,from: Values,target: Values,transform: rt::Object,render_token: ui::EventRegistrationToken,render_factory: rt::Object,animating: bool,frames: u32,started: f64,duration: f64,easing: vocab::Easing,clipped: bool,shadowed: bool,shadow_host: rt::Object,shadow_entries: rt::Object}
+fn values(p: *props::CommonProps) -> Values {return Values {opacity:(*p).opacity,sx:(*p).scale*(*p).scale_x,sy:(*p).scale*(*p).scale_y,rotation:(*p).rotation,x:(*p).translation_x,y:(*p).translation_y};}
+fn state(r: *record::View) -> *State {return (*r).presentation as *State;}
+fn remove_shadow(s: *State) {
+    if (*s).shadow_host.is_null() {return;}
+    let entries: ui::IVector_Microsoft_UI_Xaml_UIElement=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query((*s).shadow_entries));
+    let target: rt::Object=native::must::[rt::Object]((*s).shadow_host.query(rt::unknown_iid()));let count: u32=native::must::[u32](entries.size());var i: u32=0;
+    while i<count {let entry: rt::Object=native::must::[rt::Object](entries.get_at(i));let identity: rt::Object=native::must::[rt::Object](entry.query(rt::unknown_iid()));if identity.raw()==target.raw() {native::check(entries.remove_at(i));break;}i=i+1;}
+    (*s).shadow_host=rt::Object::empty();(*s).shadow_entries=rt::Object::empty();(*s).shadowed=false;return;
+}
+fn shadow_host(r: *record::View,width: f64,height: f64) -> rt::Object {
+    let s: *State=state(r);let parent: *record::View=(*r).parent as *record::View;
+    if (*s).shadow_host.is_null() {
+        // A separate sibling puts the shadow below the card and outside its
+        // rounded Border clip. Child visuals on the card cover its text.
+        let host: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new());(*s).shadow_host=host.object();
+        let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*s).shadow_host));native::check(element.set_is_hit_test_visible(false));
+        let panel: ui::IPanel=native::must::[ui::IPanel](ui::IPanel::query(if !(*parent).content.is_null() {(*parent).content.clone()} else {(*parent).object.clone()}));(*s).shadow_entries=native::must::[rt::Object](panel.children());
+        let entries: ui::IVector_Microsoft_UI_Xaml_UIElement=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query((*s).shadow_entries));native::check(entries.insert_at(0,(*s).shadow_host));
+    }
+    let f=(*(*r).node).frame();let pf=(*(*parent).node).frame();let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left((*s).shadow_host,f.left-pf.left));native::check(canvas.set_top((*s).shadow_host,f.top-pf.top));native::check(canvas.set_z_index((*s).shadow_host,(*(*r).node).z_index()-1));
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*s).shadow_host));native::check(element.set_width(width));native::check(element.set_height(height));
+    let visual: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*s).shadow_host));let p: *props::CommonProps=#addr_of((*core::node_data((*r).node)).common);native::check(visual.set_render_transform((*s).transform));native::check(visual.set_render_transform_origin(ui::Point {x:(*p).anchor_x as f32,y:(*p).anchor_y as f32}));native::check(visual.set_opacity((*s).current.opacity));native::check(visual.set_visibility(if (*p).is_visible {ui::visibility_visible} else {ui::visibility_collapsed}));
+    return (*s).shadow_host.clone();
+}
+fn bounce(t: f64) -> f64 {var x: f64=t;if x<1.0f64/2.75f64 {return 7.5625f64*x*x;}if x<2.0f64/2.75f64 {x=x-1.5f64/2.75f64;return 7.5625f64*x*x+0.75f64;}if x<2.5f64/2.75f64 {x=x-2.25f64/2.75f64;return 7.5625f64*x*x+0.9375f64;}x=x-2.625f64/2.75f64;return 7.5625f64*x*x+0.984375f64;}
+fn ease(t: f64,e: vocab::Easing) -> f64 {
+    if t<=0.0f64 {return 0.0f64;}if t>=1.0f64 {return 1.0f64;}
+    if e==vocab::Easing::SinIn {return 1.0f64-cos(t*1.5707963267948966f64);}if e==vocab::Easing::SinOut {return sin(t*1.5707963267948966f64);}if e==vocab::Easing::SinInOut {return (1.0f64-cos(t*3.141592653589793f64))*0.5f64;}
+    if e==vocab::Easing::CubicIn {return t*t*t;}if e==vocab::Easing::CubicOut {let x: f64=1.0f64-t;return 1.0f64-x*x*x;}if e==vocab::Easing::CubicInOut {if t<0.5f64 {return 4.0f64*t*t*t;}let x: f64=1.0f64-t;return 1.0f64-4.0f64*x*x*x;}
+    if e==vocab::Easing::BounceOut {return bounce(t);}if e==vocab::Easing::BounceIn {return 1.0f64-bounce(1.0f64-t);}
+    if e==vocab::Easing::SpringOut {return 1.0f64-pow(2.0f64,-10.0f64*t)*cos(t*12.0f64);}if e==vocab::Easing::SpringIn {return pow(2.0f64,10.0f64*(t-1.0f64))*cos((1.0f64-t)*12.0f64);}
+    return t;
+}
+fn output(r: *record::View) {
+    let s: *State=state(r);let v: Values=(*s).current;let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(record::visual(r)));native::check(element.set_opacity(if v.opacity<0.0f64 {0.0f64} else if v.opacity>1.0f64 {1.0f64} else {v.opacity}));
+    if !(*s).shadow_host.is_null() {let shadow: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*s).shadow_host));native::check(shadow.set_opacity(if v.opacity<0.0f64 {0.0f64} else if v.opacity>1.0f64 {1.0f64} else {v.opacity}));}
+    let tr: ui::ICompositeTransform=native::must::[ui::ICompositeTransform](ui::ICompositeTransform::query((*s).transform));native::check(tr.set_scale_x(v.sx));native::check(tr.set_scale_y(v.sy));native::check(tr.set_rotation(v.rotation));native::check(tr.set_translate_x(v.x));native::check(tr.set_translate_y(v.y));return;
+}
+fn mix(a: f64,b: f64,t: f64) -> f64 {return a+(b-a)*t;}
+fn stop(s: *State) {
+    if !(*s).animating {return;}
+    remove_rendering((*s).render_factory,(*s).render_token);
+    (*s).animating=false;LIVE=LIVE-1;return;
+}
+fn tick(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    // A teardown-time native dispatch must never dereference a released view.
+    if SHUTTING_DOWN {return rt::Status {code:0};}
+    let r: *record::View=ctx as *record::View;let s: *State=state(r);let elapsed: f64=now()-(*s).started;let t: f64=ease(elapsed/(*s).duration,(*s).easing);let a: Values=(*s).from;let b: Values=(*s).target;
+    (*s).current=Values {opacity:mix(a.opacity,b.opacity,t),sx:mix(a.sx,b.sx,t),sy:mix(a.sy,b.sy,t),rotation:mix(a.rotation,b.rotation,t),x:mix(a.x,b.x,t),y:mix(a.y,b.y,t)};output(r);(*s).frames=(*s).frames+1;
+    if elapsed>=(*s).duration {stop(s);if env::has_var("FACET_WINUI_TRACE_ANIMATION") {let frames: u32=(*s).frames;io::println("WinUI animation: ${frames} frames in ${elapsed}s");}}
+    return rt::Status {code:0};
+}
+fn apply(r: *record::View) {
+    if UI_THREAD==0 {UI_THREAD=GetCurrentThreadId();}
+    let p: *props::CommonProps=#addr_of((*core::node_data((*r).node)).common);let target: Values=values(p);let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(record::visual(r)));
+    if (*r).presentation.is_null() {
+        let tr: ui::CompositeTransform=native::must::[ui::CompositeTransform](ui::CompositeTransform::new());native::check(element.set_render_transform(tr.object()));
+        let owner: box::Box[State]=match box::new::[State](State {current:target,from:target,target:target,transform:tr.object(),render_token:#zero::[ui::EventRegistrationToken](),render_factory:rt::Object::empty(),animating:false,frames:0,started:0.0f64,duration:0.0f64,easing:vocab::Easing::Linear,clipped:false,shadowed:false,shadow_host:rt::Object::empty(),shadow_entries:rt::Object::empty()}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};(*r).presentation=owner.into_raw();
+    }
+    let s: *State=state(r);let dirty: u64=core::dirty_of((*r).node);let changed: bool=target.opacity!=(*s).target.opacity || target.sx!=(*s).target.sx || target.sy!=(*s).target.sy || target.rotation!=(*s).target.rotation || target.x!=(*s).target.x || target.y!=(*s).target.y;
+    if changed || (dirty & props::C_CANCEL_ANIMATIONS)!=0 {
+        stop(s);(*s).from=(*s).current;(*s).target=target;
+        if (dirty & props::C_ANIMATE)!=0 && (*p).animate_channels!=0 && (*p).animate_duration.seconds>0.0f64 && (dirty & props::C_CANCEL_ANIMATIONS)==0 {
+            if ((*p).animate_channels & props::ANIM_OPACITY)==0 {(*s).from.opacity=target.opacity;}
+            if ((*p).animate_channels & props::ANIM_TRANSFORM)==0 {(*s).from.sx=target.sx;(*s).from.sy=target.sy;(*s).from.rotation=target.rotation;(*s).from.x=target.x;(*s).from.y=target.y;}
+            (*s).started=now();(*s).duration=(*p).animate_duration.seconds;(*s).easing=(*p).animate_easing;(*s).frames=0;
+            let target: ui::ICompositionTargetStatics=native::must::[ui::ICompositionTargetStatics](ui::CompositionTarget::i_composition_target_statics_factory());let handler: ui::EventHandler_Object=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(tick,r as *u8));
+            (*s).render_factory=target.object();(*s).render_token=native::must::[ui::EventRegistrationToken](target.add_rendering(handler.object()));(*s).animating=true;LIVE=LIVE+1;
+        } else {(*s).current=target;}
+    }
+    native::check(element.set_render_transform_origin(ui::Point {x:(*p).anchor_x as f32,y:(*p).anchor_y as f32}));output(r);
+    accessibility::apply(r);
+    return;
+}
+fn detach(r: *record::View) {if !(*r).presentation.is_null() {remove_shadow(state(r));}return;}
+// Application shutdown has already closed XAML. Release references here;
+// live child removal detaches the sibling visual before removing its owner.
+fn release(r: *record::View) {if (*r).presentation.is_null() {return;}stop(state(r));let owner: box::Box[State]=box::from_raw::[State]((*r).presentation);(*r).presentation=0 as *u8;return;}
+fn place(r: *record::View,width: f64,height: f64) {
+    let s: *State=state(r);if s.is_null() {return;}let p: *props::CommonProps=#addr_of((*core::node_data((*r).node)).common);
+    if (*p).clip.kind==0 && (*p).shadow.opacity<=0.0f64 && !(*s).clipped && !(*s).shadowed {return;}
+    let preview: ui::IElementCompositionPreviewStatics=native::must::[ui::IElementCompositionPreviewStatics](ui::ElementCompositionPreview::i_element_composition_preview_statics_factory());
+    let visual: rt::Object=native::must::[rt::Object](preview.get_element_visual(record::visual(r)));let view: ui::IVisual=native::must::[ui::IVisual](ui::IVisual::query(visual));let object: ui::ICompositionObject=native::must::[ui::ICompositionObject](ui::ICompositionObject::query(visual));let compositor: rt::Object=native::must::[rt::Object](object.compositor());
+    if (*p).clip.kind!=0 {
+        let factory: ui::ICompositor5=native::must::[ui::ICompositor5](ui::ICompositor5::query(compositor));var geometry: rt::Object=rt::Object::empty();
+        if (*p).clip.kind==3 {geometry=native::must::[rt::Object](factory.create_ellipse_geometry());let ellipse: ui::ICompositionEllipseGeometry=native::must::[ui::ICompositionEllipseGeometry](ui::ICompositionEllipseGeometry::query(geometry));let radius: ui::Vector2=ui::Vector2 {x:(width*0.5f64) as f32,y:(height*0.5f64) as f32};native::check(ellipse.set_center(radius));native::check(ellipse.set_radius(radius));}
+        else {geometry=native::must::[rt::Object](factory.create_rounded_rectangle_geometry());let rect: ui::ICompositionRoundedRectangleGeometry=native::must::[ui::ICompositionRoundedRectangleGeometry](ui::ICompositionRoundedRectangleGeometry::query(geometry));native::check(rect.set_size(ui::Vector2 {x:width as f32,y:height as f32}));let radius: f32=if (*p).clip.kind==2 {(*p).clip.corners.top_leading as f32} else {0.0f32};native::check(rect.set_corner_radius(ui::Vector2 {x:radius,y:radius}));}
+        let factory6: ui::ICompositor6=native::must::[ui::ICompositor6](ui::ICompositor6::query(compositor));let clip: rt::Object=native::must::[rt::Object](factory6.create_geometric_clip_with_geometry(geometry));native::check(view.set_clip(clip));(*s).clipped=true;
+    } else if (*s).clipped {native::check(view.set_clip(rt::Object::empty()));(*s).clipped=false;}
+    if (*p).shadow.opacity>0.0f64 && (*r).parent.is_not_null() {
+        let factory: ui::ICompositor=native::must::[ui::ICompositor](ui::ICompositor::query(compositor));let factory2: ui::ICompositor2=native::must::[ui::ICompositor2](ui::ICompositor2::query(compositor));let sprite: rt::Object=native::must::[rt::Object](factory.create_sprite_visual());let shadow: rt::Object=native::must::[rt::Object](factory2.create_drop_shadow());
+        let drop: ui::IDropShadow=native::must::[ui::IDropShadow](ui::IDropShadow::query(shadow));native::check(drop.set_color(style::color((*p).shadow.color)));native::check(drop.set_blur_radius((*p).shadow.radius as f32));native::check(drop.set_opacity((*p).shadow.opacity as f32));native::check(drop.set_offset(ui::Vector3 {x:(*p).shadow.offset.x as f32,y:(*p).shadow.offset.y as f32,z:0.0f32}));
+        let sv: ui::ISpriteVisual2=native::must::[ui::ISpriteVisual2](ui::ISpriteVisual2::query(sprite));native::check(sv.set_shadow(shadow));let v: ui::IVisual=native::must::[ui::IVisual](ui::IVisual::query(sprite));native::check(v.set_size(ui::Vector2 {x:width as f32,y:height as f32}));let host: rt::Object=shadow_host(r,width,height);native::check(preview.set_element_child_visual(host,sprite));(*s).shadowed=true;
+    } else if (*s).shadowed {remove_shadow(s);}
+    return;
+}

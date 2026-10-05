@@ -1,0 +1,29 @@
+// Facet menu nodes are window-strip launchers; context-menu hosts retain visible
+// content separately from native flyout actions.
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "./record" as record;
+import "./native" as native;
+import "./actions" as actions;
+fn supports(k: u32) -> bool {return k==props::K_MENU || k==props::K_CONTEXT_MENU;}
+fn attach(r: *record::View) {
+    if (*r).kind==props::K_CONTEXT_MENU {actions::host(r);return;}
+    let flyout=native::must::[ui::MenuFlyout](ui::MenuFlyout::new());(*r).content=flyout.object();let button=native::must::[ui::IButton](ui::IButton::query((*r).object));native::check(button.set_flyout(flyout.object()));
+}
+fn entries(r: *record::View) -> ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase {
+    if (*r).kind==props::K_CONTEXT_MENU {return actions::entries(r);}
+    let menu=native::must::[ui::IMenuFlyout](ui::IMenuFlyout::query((*r).content));return native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase](ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase::query(native::must::[rt::Object](menu.items())));
+}
+fn apply(r: *record::View) {
+    if (*r).kind!=props::K_MENU {return;}
+    let p: *props::MenuProps=(*core::node_data((*r).node)).props as *props::MenuProps;
+    let values=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());let content=native::must::[ui::IContentControl](ui::IContentControl::query((*r).object));native::check(content.set_content(native::must::[rt::Object](values.create_string((*p).text.view()))));
+    let control=native::must::[ui::IControl](ui::IControl::query((*r).object));native::check(control.set_is_enabled((*core::node_data((*r).node)).common.is_enabled));(*(*r).node).mark_content_changed();
+}
+fn count_changed(r: *record::View) {
+    let count=native::must::[u32](entries(r).size()) as i64;
+    if (*r).kind==props::K_MENU {let p=(*core::node_data((*r).node)).props as *props::MenuProps;(*p).count=count;}
+    else {let p=(*core::node_data((*r).node)).props as *props::ContextMenuProps;(*p).count=count;}
+}

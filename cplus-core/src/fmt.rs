@@ -158,7 +158,9 @@ impl<'a> Printer<'a> {
             // `,` or a binary op or an open bracket) preserve the user's
             // literal leading whitespace — they may have aligned the
             // continuation by hand and we don't want to flatten that.
-            if self.is_statement_start_after_newline(&tok.kind) {
+            if self.is_wrapped_list_continuation(&tok.kind) {
+                self.emit_wrapped_list_indent(start);
+            } else if self.is_statement_start_after_newline(&tok.kind) {
                 self.emit_indent_for_token(&tok.kind);
             } else {
                 self.preserve_line_leading_whitespace(start);
@@ -242,6 +244,49 @@ impl<'a> Printer<'a> {
                 // don't typically end a continuation.
                 | LineComment(_) | BlockComment(_)
             ),
+        }
+    }
+
+    /// A list element wrapped onto its own line inside a `(` / `[` whose
+    /// first element stayed on the opening line:
+    ///
+    /// ```text
+    /// fn add(first: i32, second: i32,
+    ///        third: i32) -> i32 {
+    /// ```
+    ///
+    /// The comma makes the line look like a fresh list element, but the
+    /// bracket is not multi-line (nothing after `(` broke), so it adds no
+    /// indent level — the computed indent was the enclosing statement's,
+    /// column 0 at top level. That moved the continuation to column 0
+    /// (bugs/cpc-fmt-moves-a-continuation-line-to-column-zero).
+    fn is_wrapped_list_continuation(&self, curr: &TokenKind) -> bool {
+        if matches!(curr, TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket) {
+            return false;
+        }
+        if !matches!(self.prev_kind, Some(TokenKind::Comma)) {
+            return false;
+        }
+        self.brackets
+            .last()
+            .is_some_and(|b| !b.multi_line && b.open != BracketKind::Brace)
+    }
+
+    /// Indent for a wrapped list element: the line's own leading whitespace
+    /// as written (alignment under the open paren is the common choice), but
+    /// never left of the enclosing statement's indent, which is what such a
+    /// line got before — so code the old rule accepted is unchanged. Stable:
+    /// the output is at or right of the statement indent, and a second pass
+    /// keeps it verbatim.
+    fn emit_wrapped_list_indent(&mut self, start: usize) {
+        let depth = self.indent_depth();
+        let mark = self.out.len();
+        self.preserve_line_leading_whitespace(start);
+        if self.out.len() - mark < depth * INDENT.len() {
+            self.out.truncate(mark);
+            for _ in 0..depth {
+                self.out.push_str(INDENT);
+            }
         }
     }
 
@@ -679,6 +724,40 @@ mod tests {
         let once = fmt(src);
         let twice = fmt(&once);
         assert_eq!(once, twice, "format must be idempotent");
+    }
+
+    #[test]
+    fn wrapped_parameter_list_keeps_its_alignment() {
+        // bugs/cpc-fmt-moves-a-continuation-line-to-column-zero.
+        let src = "fn add(first: i32, second: i32, third: i32,\n       fourth: i32) -> i32 {\n    return first + second + third + fourth;\n}\n";
+        let once = fmt(src);
+        assert_eq!(once, src, "an aligned continuation is kept as written");
+        assert_eq!(fmt(&once), once, "format must be idempotent");
+    }
+
+    #[test]
+    fn wrapped_call_arguments_keep_their_alignment() {
+        let src = "fn f() -> i32 {\n    return add(1, 2,\n               3, 4);\n}\n";
+        let once = fmt(src);
+        assert_eq!(once, src);
+        assert_eq!(fmt(&once), once);
+    }
+
+    #[test]
+    fn wrapped_list_left_of_the_statement_moves_to_the_statement_indent() {
+        // Left of the statement's own indent: moved to it (what the old rule
+        // did for every wrapped element). At it: kept. Stable either way.
+        let src = "fn f() -> i32 {\n    return foo(a,\n  b,\n    c);\n}\n";
+        let once = fmt(src);
+        assert_eq!(once, "fn f() -> i32 {\n    return foo(a,\n    b,\n    c);\n}\n");
+        assert_eq!(fmt(&once), once);
+    }
+
+    #[test]
+    fn multi_line_list_elements_still_use_computed_indent() {
+        let src = "fn f() {\n    g(\n        1,\n          2,\n    );\n}\n";
+        let once = fmt(src);
+        assert_eq!(once, "fn f() {\n    g(\n        1,\n        2,\n    );\n}\n");
     }
 
     #[test]

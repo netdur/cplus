@@ -10,6 +10,9 @@ path = "src/main.rs"
 
 [dependencies]
 serde_json = "1"
+# 0.58 supports the workspace's Rust 1.75 floor (0.60 requires 1.82).
+windows-metadata = "=0.58.0"
+sha1 = "0.10"
 # v0.0.28: the bit-cursor rule a C record is laid out with lives in the
 # compiler (`sema::place_field`). Binding a header means reproducing that
 # layout exactly, so this generator calls it rather than re-deriving it.

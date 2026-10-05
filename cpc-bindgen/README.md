@@ -18,6 +18,71 @@ cargo build --release -p cpc-bindgen
 
 ## Usage
 
+### WinMD (`--winmd`)
+
+Reads Windows Runtime metadata directly, without clang, C++/WinRT headers,
+or a C++ bridge. This mode writes a package directory instead of stdout:
+
+```powershell
+cpc-bindgen --winmd Microsoft.UI.Xaml.winmd --reference Windows.winmd --include Microsoft.UI.Xaml.Window --out vendor/winui --package winui
+```
+
+Supply every additional SDK metadata dependency with another `--reference`.
+Use `--selection FILE` for a JSON object containing an `include` array of
+qualified type names; namespace selections end in `.*`. The repository's
+pinned WinUI inputs and selection are wired by `tools/generate_winui.ps1`:
+
+```powershell
+cargo build --release -p cpc-bindgen
+& tools/generate_winui.ps1
+cargo test -p cpc-bindgen winmd::
+python tools/test_winui_generation.py
+```
+
+The script accepts `-Packages` and `-WindowsMetadata` to use a different
+cache/SDK location. It expects Windows SDK 10.0.26100.0 metadata and these
+unpacked NuGet packages: WinUI 2.3.9, InteractiveExperiences 2.1.9, and
+WebView2 1.0.3719.77 (see exact package names/paths in the script). Restoring
+`Microsoft.WindowsAppSDK` version 2.5.1 supplies this dependency set.
+
+Outputs are `src/<package>.cplus`, `Cplus.toml`, and `MANIFEST.json`.
+The manifest records source hashes, selected types, IIDs, method slots,
+and unsupported signatures. Generation preserves other files, including
+the handwritten WinUI application startup module. Metadata validation and
+resolution occur before output writes; filesystem failures are not transactional.
+
+The generated package depends on `winrt` and `stdlib`, never Facet.
+`winrt` owns COM references, HSTRING conversion, HRESULTs, activation,
+and delegate allocation. Generated class/interface wrappers expose native
+properties and methods, metadata factory interfaces, public default
+construction where supported, and typed delegate constructors. Protected
+composition factories remain available for outer implementations but do
+not receive a plain `new()` constructor. Generic interface IIDs are derived
+from WinRT signatures, not guessed from the generic definition GUID.
+
+Delegate constructors default to non-agile. `agile: true` explicitly enables
+IAgileObject for APIs such as DispatcherQueue; the caller must satisfy the
+callback/context threading contract. This does not marshal a UI object.
+Generated delegates also provide `boxed()` for inspectable-object APIs such
+as WinUI `AddHandler`. It creates an owned `IReference<Delegate>` with the
+derived parameterized IID. Retain the same box for `RemoveHandler`; use
+`object()` for ordinary typed event subscriptions. Boxes are non-agile.
+
+Current scope is Windows x64, a selected API subset. Object parameters and
+returns use owned `winrt::Object` handles; use typed interface queries as
+needed. Null object results remain explicit empty handles. Arrays, extra
+out parameters, non-POD structs, and aggregate/string delegate inputs are
+reported as unsupported. Async interfaces do not supply a Future adapter.
+This is not yet a complete general WinRT projection.
+
+Validation includes an independent SDK IID/slot fixture, deterministic
+regeneration, provenance, rejected-selection checks, and a runnable
+[standalone example](../examples/winui_standalone/README.md). Its debug and
+release tests exercise activation, Application composition, properties,
+generic collections, Size/Rect calls, real pointer events, and shutdown.
+
+### Header modes
+
 ```
 cpc-bindgen [--objc] [--prefix P] [--overrides FILE] <header.h> [-- <clang args>...]
 ```

@@ -1,0 +1,88 @@
+import "stdlib/io" as io;
+import "stdlib/result" as result;
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+import "winui/application" as application;
+
+extern fn exit(code: i32);
+extern fn fflush(stream: *u8) -> i32;
+static WINDOW: rt::Object = #zero::[rt::Object]();
+static BUTTON: rt::Object = #zero::[rt::Object]();
+static CLICK: ui::EventRegistrationToken = #zero::[ui::EventRegistrationToken]();
+static LOADED: ui::EventRegistrationToken = #zero::[ui::EventRegistrationToken]();
+static COUNT: i32 = 0;
+
+fn must[T](take value: result::Result[T, rt::Error]) -> T {
+    match value {
+        result::Result::Ok(v) => { return v; }
+        result::Result::Err(e) => { io::println("WinUI failed: ${e.code}"); let _f: i32=fflush(0 as *u8); exit(1); }
+    }
+    // The C exit declaration has no language-level never return type.
+    return #zero::[T]();
+}
+fn check(status: rt::Status) {
+    if status.is_err() { io::println("WinUI failed: ${status.code}"); let _f: i32=fflush(0 as *u8); exit(1); }
+    return;
+}
+fn log(message: str) { io::println(message); let _f: i32=fflush(0 as *u8); return; }
+fn set_label(value: str) {
+    let factory: ui::IPropertyValueStatics=must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());
+    let content: rt::Object=must::[rt::Object](factory.create_string(value));
+    let button: ui::IContentControl=must::[ui::IContentControl](ui::IContentControl::query(BUTTON));
+    check(button.set_content(content)); return;
+}
+fn on_click(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    COUNT=COUNT+1; set_label("Generated WinUI called C+!"); log("CLICK: generated delegate reached C+"); return rt::Status {code:0};
+}
+fn on_loaded(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    log("BUTTON LOADED: generated WinUI is ready"); return rt::Status {code:0};
+}
+fn on_launched(app: rt::Object, context: *u8) -> rt::Status {
+    let window: ui::Window=must::[ui::Window](ui::Window::new());
+    WINDOW=window.object(); check(window.set_title("Generated WinUI / standalone C+"));
+    let canvas: ui::Canvas=must::[ui::Canvas](ui::Canvas::new());
+    let button: ui::Button=must::[ui::Button](ui::Button::new()); BUTTON=button.object();
+    set_label("Click me - generated bindings, no Facet");
+    let element: ui::IFrameworkElement=must::[ui::IFrameworkElement](ui::IFrameworkElement::query(BUTTON));
+    check(element.set_width(380.0f64)); check(element.set_height(56.0f64));
+    // Exercise native aggregate inputs (8-byte Size, 16-byte Rect) and output.
+    let layout: ui::IUIElement=must::[ui::IUIElement](ui::IUIElement::query(BUTTON));
+    check(layout.measure(ui::Size {width:500.0f32,height:100.0f32}));
+    let measured: ui::Size=must::[ui::Size](layout.desired_size());
+    assert measured.width==380.0f32; assert measured.height==56.0f32;
+    check(layout.arrange(ui::Rect {x:0.0f32,y:0.0f32,width:380.0f32,height:56.0f32}));
+    check(layout.set_allow_drop(true)); assert must::[bool](layout.allow_drop());
+    check(layout.set_allow_drop(false)); assert !must::[bool](layout.allow_drop());
+    log("PASS: generated Size/Rect ABI and bool roundtrip");
+    let loaded: ui::RoutedEventHandler=must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(on_loaded));
+    LOADED=must::[ui::EventRegistrationToken](element.add_loaded(loaded.object()));
+    let base: ui::IButtonBase=must::[ui::IButtonBase](ui::IButtonBase::query(BUTTON));
+    let clicked: ui::RoutedEventHandler=must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(on_click));
+    CLICK=must::[ui::EventRegistrationToken](base.add_click(clicked.object()));
+    let position: ui::ICanvasStatics=must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());
+    check(position.set_left(BUTTON,36.0f64)); check(position.set_top(BUTTON,36.0f64));
+    let panel: ui::IPanel=must::[ui::IPanel](ui::IPanel::query(canvas.object()));
+    let children: rt::Object=must::[rt::Object](panel.children());
+    let vector: ui::IVector_Microsoft_UI_Xaml_UIElement=must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(children));
+    check(vector.append(BUTTON));
+    check(window.set_content(canvas.object())); check(window.activate());
+    // Check a generated property getter and a computed generic IID against WinUI.
+    let width: f64=must::[f64](element.width()); assert width==380.0f64;
+    log("PASS: standalone generated window, property, collection and event APIs");
+    return rt::Status {code:0};
+}
+
+fn main() -> i32 {
+    check(rt::load_runtime("Microsoft.WindowsAppRuntime.dll"));
+    let apartment: rt::Apartment=must::[rt::Apartment](rt::Apartment::sta());
+    check(application::run(on_launched));
+    {
+        let base: ui::IButtonBase=must::[ui::IButtonBase](ui::IButtonBase::query(BUTTON));
+        check(base.remove_click(CLICK));
+        let element: ui::IFrameworkElement=must::[ui::IFrameworkElement](ui::IFrameworkElement::query(BUTTON));
+        check(element.remove_loaded(LOADED));
+    }
+    BUTTON=rt::Object::empty(); WINDOW=rt::Object::empty();
+    io::println("CLEAN EXIT; clicks=${COUNT}"); let _f: i32=fflush(0 as *u8);
+    return 0;
+}

@@ -93,7 +93,13 @@ build flags (apply to `cpc FILE` and `cpc build`):
   --fp-contract=off|on|fast         float contraction policy; `off` keeps `a*b+c` as
                                     fmul+fadd for bit-identical-to-C output (default: on).
                                     Place before --emit-ll/--emit-asm/--emit-obj FILE.
-  --warn-deps                       report warnings from dependencies too
+  --target-cpu=NAME                 CPU the backend may tune and select instructions for
+                                    (x86_64: -march, aarch64: -mcpu). `x86-64-v3` or
+                                    `native` enables AVX2+FMA; default: the arch baseline.
+  --target-feature=+a,-b            enable/disable LLVM features (e.g. +avx2,+fma).
+                                    Both are part of every prebuilt dependency's
+                                    fingerprint; `#target_feature(NAME)` reads them.
+  --warn-deps                      report warnings from dependencies too
                                     (default: only this project's own `src/`)
   --timings                         print build cost to stderr: per phase
                                     (resolve+sema+borrowck / codegen / prune / clang+link)
@@ -506,6 +512,11 @@ fn main() -> ExitCode {
     // time so the inline-dispatching `--emit-*` flags see it — hence the
     // "place --target first" rule shared with --fp-contract.
     let mut target_spec: TargetSpec = target::HOST;
+    let mut cpu_tuning = target::CpuTuning::default();
+    // `#target_feature` asks clang, lazily and once, so a build that never
+    // uses it never pays for the probe. Installed before the flag loop
+    // because the inline `--emit-*` flags run sema from inside it.
+    target::set_feature_probe(probe_target_macros);
     let mut subcommand: Option<Subcommand> = None;
     // Phase 5 Slice 5.A: deferred-dispatch input for `--emit-obj FILE`.
     // Order-independent with `-o OUT.o` because the FILE may appear before
@@ -728,6 +739,10 @@ fn main() -> ExitCode {
                 };
                 target_spec = spec;
                 target::set_active_target(spec);
+                if let Err(msg) = target::cpu_tuning_clang_args(&cpu_tuning, target_spec.arch) {
+                    eprintln!("cpc: {msg}");
+                    return ExitCode::from(2);
+                }
                 i += 2;
             }
             // v0.0.22: `--min-os VERSION` — override the OS version baked
@@ -765,6 +780,53 @@ fn main() -> ExitCode {
                 };
                 target_spec = spec;
                 target::set_active_target(spec);
+                if let Err(msg) = target::cpu_tuning_clang_args(&cpu_tuning, target_spec.arch) {
+                    eprintln!("cpc: {msg}");
+                    return ExitCode::from(2);
+                }
+                i += 1;
+            }
+            // `--target-cpu=NAME` / `--target-feature=+a,-b`: which ISA
+            // extensions the backend may use (`x86-64-v3` or `native` for
+            // AVX2+FMA). Installed as soon as parsed, like `--target`, so an
+            // inline `--emit-*` placed after them sees it. Checked against the
+            // target's arch here and again at `--target`, so either order is
+            // refused before anything is emitted.
+            Some(s) if s.starts_with("--target-cpu=") => {
+                let v = &s["--target-cpu=".len()..];
+                if v.is_empty() {
+                    eprintln!("cpc: --target-cpu expects a CPU name (e.g. x86-64-v3, native)");
+                    return ExitCode::from(2);
+                }
+                cpu_tuning.cpu = Some(v.to_string());
+                target::set_cpu_tuning(cpu_tuning.clone());
+                if let Err(msg) = target::cpu_tuning_clang_args(&cpu_tuning, target_spec.arch) {
+                    eprintln!("cpc: {msg}");
+                    return ExitCode::from(2);
+                }
+                i += 1;
+            }
+            Some(s) if s.starts_with("--target-feature=") => {
+                for f in s["--target-feature=".len()..].split(',') {
+                    let name = f.get(1..).unwrap_or("");
+                    let well_formed = (f.starts_with('+') || f.starts_with('-'))
+                        && !name.is_empty()
+                        && name
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+                    if !well_formed {
+                        eprintln!(
+                            "cpc: --target-feature expects `+name` or `-name` items, comma-separated (e.g. +avx2,+fma), got `{f}`"
+                        );
+                        return ExitCode::from(2);
+                    }
+                    cpu_tuning.features.push(f.to_string());
+                }
+                target::set_cpu_tuning(cpu_tuning.clone());
+                if let Err(msg) = target::cpu_tuning_clang_args(&cpu_tuning, target_spec.arch) {
+                    eprintln!("cpc: {msg}");
+                    return ExitCode::from(2);
+                }
                 i += 1;
             }
             Some("-h" | "--help") => {
@@ -1543,6 +1605,9 @@ fn detect_host_triple_uncached() -> Option<String> {
 /// cross-emitting iOS objects with mainline clang) simply omits the flag.
 fn clang_target_args(t: &TargetSpec) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
+    // `--target-cpu` / `--target-feature`, host or not. An arch that cannot
+    // take one was refused when the flags were read.
+    args.extend(target::cpu_tuning_clang_args(&target::cpu_tuning(), t.arch).unwrap_or_default());
     if t.triple.is_none() {
         return args;
     }
@@ -1560,6 +1625,26 @@ fn clang_target_args(t: &TargetSpec) -> Vec<String> {
         }
     }
     args
+}
+
+/// The predefined macros clang uses for the active target and CPU tuning —
+/// `#target_feature`'s source of truth (see `target::set_feature_probe`).
+/// Asking clang rather than keeping a table of CPUs is what makes `native`
+/// and every named `--target-cpu` answer exactly what the backend will use.
+fn probe_target_macros() -> Option<String> {
+    let tgt = target::active_target();
+    let prog = clang_program_for(&tgt).ok()?;
+    let out = Command::new(prog)
+        .args(clang_target_args(&tgt))
+        .args(["-x", "c", "-E", "-dM", "-"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// `xcrun --sdk <name> --show-sdk-path`, or `None` when xcrun is missing,
@@ -2497,8 +2582,104 @@ fn prebuild_fingerprint(
     let mut sans: Vec<&str> = sanitizers.to_vec();
     sans.sort_unstable();
     sans.hash(&mut h);
+    // SO IS THE CPU TUNING, and for a harder reason than speed: with AVX an
+    // `f32x8` is passed in a `ymm` register, without it in memory, so a
+    // slice built for `x86-64-v3` linked into a baseline caller (or the
+    // reverse) disagrees about where every vector argument is. Same slot,
+    // same rebuild-on-flip trade as the sanitizer set above.
+    target::cpu_tuning().hash(&mut h);
     package_input_digest(vendor_dir, &mut Vec::new())?.hash(&mut h);
     Ok(format!("{:016x}", h.finish()))
+}
+
+/// The running compiler's version, size and mtime: what tells one `cargo
+/// build` of cpc from the next (see `prebuild_fingerprint`).
+fn hash_compiler_identity(h: &mut std::collections::hash_map::DefaultHasher) {
+    use std::hash::Hash;
+    env!("CARGO_PKG_VERSION").hash(h);
+    if let Ok(exe) = std::env::current_exe() {
+        if let Ok(md) = std::fs::metadata(&exe) {
+            md.len().hash(h);
+            if let Ok(t) = md.modified() {
+                if let Ok(d) = t.duration_since(std::time::UNIX_EPOCH) {
+                    d.as_nanos().hash(h);
+                }
+            }
+        }
+    }
+}
+
+/// Bring every prebuilt dependency's `lib/include/` up to date with its
+/// `src/` before a `cpc check`.
+///
+/// A consumer type-checks against those headers, and only a BUILD refreshed
+/// them — `ensure_one_slice` regenerates them together with the archive. So
+/// `cpc check` after an edit to a prebuilt package read the previous surface:
+/// a new item was "no item named `X` in module ..." while every older item in
+/// the same file resolved, and nothing in the message named a cache
+/// (bugs/prebuilt-slice-hides-a-source-edit-from-consumers.md).
+///
+/// Headers only, never the archive: a check does not link, and running the
+/// slice fingerprint here would rebuild every slice in debug mode after each
+/// release build and back again. The stamp is the package's own `src/` plus
+/// the compiler, which is all a header is generated from. A package that has
+/// no `lib/include/` yet resolves from `src/` and is left alone. Best effort:
+/// a failure leaves the old headers, which is what check read before.
+fn refresh_dep_headers(m: &manifest::Manifest, seen: &mut Vec<PathBuf>) {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let platform = target::active_platform();
+    for dep in &m.dependencies {
+        if !dep.active_on(platform) {
+            continue;
+        }
+        let Some(vendor_dir) = vendor_dir_for(m, &dep.name) else {
+            continue;
+        };
+        let key = vendor_dir.canonicalize().unwrap_or_else(|_| vendor_dir.clone());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        let Ok(vm) = manifest::load(&vendor_dir.join("Cplus.toml")) else {
+            continue;
+        };
+        refresh_dep_headers(&vm, seen);
+        if !vm.build.prebuild || vm.build.dev {
+            continue;
+        }
+        if vm.link.as_ref().is_some_and(|l| !l.bundled.is_empty()) {
+            continue;
+        }
+        if !vendor_dir.join("lib").join("include").is_dir() {
+            continue;
+        }
+        let src_dir = vendor_dir.join("src");
+        let Ok(rd) = fs::read_dir(&src_dir) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cplus"))
+            .collect();
+        files.sort();
+        let mut h = DefaultHasher::new();
+        hash_compiler_identity(&mut h);
+        for f in &files {
+            f.file_name().map(|n| n.to_string_lossy().into_owned()).hash(&mut h);
+            fs::read(f).unwrap_or_default().hash(&mut h);
+        }
+        let want = format!("{:016x}", h.finish());
+        let stamp = vendor_dir.join("target").join(".headers.fingerprint");
+        let _lock = lock_package_prebuild(&vendor_dir, &vm.package.name);
+        if fs::read_to_string(&stamp).is_ok_and(|have| have.trim() == want) {
+            continue;
+        }
+        if generate_headers_for(&vendor_dir).is_ok() {
+            let _ = fs::write(&stamp, &want);
+        }
+    }
 }
 
 /// One package's inputs folded into a single number: its own `src/`, then the
@@ -3258,6 +3439,16 @@ fn build_project(
             link_args.push(plist.to_string_lossy().to_string());
         }
     }
+    // `[windows] subsystem = "windows"`: a windowed program. lld-link's
+    // default is the console subsystem, so a GUI app launched from Explorer
+    // opened a console beside its window and died with it. `/ENTRY:
+    // mainCRTStartup` keeps `fn main` the entry — the windows subsystem
+    // would otherwise expect `WinMain`. App builds only: `cpc test` keeps
+    // the console, since its driver reports on stdout.
+    // bugs/windows-gui-apps-are-console-subsystem.md
+    if target::active_platform() == "windows" {
+        link_args.extend(m.windows_subsystem.link_args());
+    }
     // Phase 2 Slice 2C: walk dependencies, validate each vendor package's
     // manifest-is-truth contract, and append their `[link]` contributions
     // after the consumer's own. Errors abort the build before clang runs.
@@ -3666,14 +3857,18 @@ fn build_lib_project(
 
     // Step 5 (cdylib): clang -shared -o libNAME.<ext> NAME.o + manifest frameworks/libs.
     if want_shared {
-        // Platform-correct extension: .dylib on macOS, .so on Linux/other.
+        // Platform-correct name: libNAME.dylib on macOS, NAME.dll on Windows
+        // (lld-link writes its import library beside it as NAME.lib, the name
+        // an MSVC consumer links), libNAME.so on Linux/other.
         // (Cross-compilation is out of scope; we use host triple via cfg.)
-        let dylib_ext = if cfg!(target_os = "macos") {
-            "dylib"
+        let dylib_file = if cfg!(target_os = "macos") {
+            format!("lib{}.dylib", lib.name)
+        } else if cfg!(windows) {
+            format!("{}.dll", lib.name)
         } else {
-            "so"
+            format!("lib{}.so", lib.name)
         };
-        let dylib_path = target_dir.join(format!("lib{}.{}", lib.name, dylib_ext));
+        let dylib_path = target_dir.join(dylib_file);
         let mut cmd = Command::new(clang_program());
         cmd.arg("-shared").arg(opt).arg("-Wno-override-module");
         // A cdylib IS linked here, so it needs the runtime as well as the
@@ -3698,6 +3893,18 @@ fn build_lib_project(
         }
         for ll in &lib.libs {
             cmd.arg(format!("-l{ll}"));
+        }
+        // The same system libraries an executable gets: stdlib's Windows
+        // modules call into them whether the program is an .exe or a .dll.
+        // And a DLL exports nothing unless told to: name the header's C ABI,
+        // so the import library lld-link writes beside it resolves it.
+        if cfg!(windows) {
+            for sys in WINDOWS_SYSTEM_LIBS {
+                cmd.arg(format!("-l{sys}"));
+            }
+            for name in c_export_names(&program) {
+                cmd.arg(format!("-Wl,/EXPORT:{name}"));
+            }
         }
         // Phase 2 Slice 2C: forward each transitive dep's link args to the
         // .dylib link line. (Static archives don't carry these — consumers
@@ -4526,6 +4733,17 @@ fn run_test(
             // back to a clamped u8 ExitCode so callers can distinguish
             // "all passed" (0) from "something failed" (1..=255).
             if let Some(code) = s.code() {
+                // Windows has no signals: a crash, a fast-fail, or a loader
+                // that could not resolve an imported DLL all surface as an
+                // NTSTATUS exit code (0xC0000135, 0xC0000005, ...). The clamp
+                // below folded every one of them into a bare `1` with no
+                // output — indistinguishable from "one test failed", and with
+                // `--json`, no summary line at all.
+                // bugs/cpc-test-exits-1-silently-when-the-test-binary-cannot-start.md
+                if let Some(desc) = abnormal_exit_description(code) {
+                    report_abnormal_test_exit(&desc, opts.json);
+                    return ExitCode::FAILURE;
+                }
                 if code == 0 {
                     ExitCode::SUCCESS
                 } else {
@@ -4542,24 +4760,94 @@ fn run_test(
                 {
                     use std::os::unix::process::ExitStatusExt;
                     if let Some(sig) = s.signal() {
-                        eprintln!(
-                            "cpc test: the test binary was killed by signal {sig} before it finished"
+                        report_abnormal_test_exit(
+                            &format!("killed by signal {sig}"),
+                            opts.json,
                         );
-                        eprintln!(
-                            "    no test output means it died during discovery or in the first test"
-                        );
+                        return ExitCode::FAILURE;
                     }
                 }
-                #[cfg(not(unix))]
-                eprintln!("cpc test: the test binary terminated abnormally");
+                report_abnormal_test_exit("terminated abnormally", opts.json);
                 ExitCode::FAILURE
             }
         }
         Err(e) => {
             eprintln!("cpc test: failed to invoke test binary: {e}");
+            if opts.json {
+                println!(
+                    "{{\"passed\":null,\"failed\":null,\"error\":\"{}\"}}",
+                    json_escape_str(&format!("the test binary could not be started: {e}"))
+                );
+            }
             ExitCode::FAILURE
         }
     }
+}
+
+/// The test driver exits with its failure count. On Windows an exit code with
+/// the top bit set is an NTSTATUS the process died with instead (a crash, a
+/// fast-fail, a DLL the loader could not find) — never a count. Returns a
+/// one-line description for such a code, `None` for an ordinary exit.
+fn abnormal_exit_description(code: i32) -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let status = code as u32;
+    if status & 0x8000_0000 == 0 {
+        return None;
+    }
+    let (name, meaning) = match status {
+        0xC000_0135 => ("STATUS_DLL_NOT_FOUND", "a DLL the test binary imports was not found — is its directory on PATH?"),
+        0xC000_0139 => ("STATUS_ENTRYPOINT_NOT_FOUND", "a DLL was found but lacks a function the test binary imports — a version mismatch?"),
+        0xC000_007B => ("STATUS_INVALID_IMAGE_FORMAT", "a DLL the test binary imports is not a valid x64 image (32-bit, or corrupt)"),
+        0xC000_0142 => ("STATUS_DLL_INIT_FAILED", "a DLL the test binary imports failed to initialize"),
+        0xC000_0005 => ("STATUS_ACCESS_VIOLATION", "access violation (invalid memory read or write)"),
+        0xC000_00FD => ("STATUS_STACK_OVERFLOW", "stack overflow"),
+        0xC000_0409 => ("STATUS_STACK_BUFFER_OVERRUN", "fast-fail (__fastfail / a CRT security check)"),
+        0xC000_001D => ("STATUS_ILLEGAL_INSTRUCTION", "illegal instruction (a trap, or code built for a CPU feature this machine lacks)"),
+        0xC000_0094 => ("STATUS_INTEGER_DIVIDE_BY_ZERO", "integer division by zero"),
+        0xC000_0095 => ("STATUS_INTEGER_OVERFLOW", "integer overflow"),
+        0xC000_0374 => ("STATUS_HEAP_CORRUPTION", "heap corruption"),
+        0xC000_0417 => ("STATUS_INVALID_CRT_PARAMETER", "the C runtime rejected an invalid parameter"),
+        0xC000_013A => ("STATUS_CONTROL_C_EXIT", "interrupted by Ctrl+C"),
+        0x8000_0003 => ("STATUS_BREAKPOINT", "breakpoint (a debug trap with no debugger attached)"),
+        _ => ("", ""),
+    };
+    Some(if name.is_empty() {
+        format!("exited with NTSTATUS 0x{status:08X}")
+    } else {
+        format!("exited with 0x{status:08X} ({name}): {meaning}")
+    })
+}
+
+/// Say what happened to a test driver that did not finish normally. The
+/// driver's own summary never printed, so with `--json` this line IS the
+/// summary — a consumer reading the last line gets an answer, not nothing.
+fn report_abnormal_test_exit(desc: &str, json: bool) {
+    eprintln!("cpc test: the test binary {desc}");
+    eprintln!("    no summary means it died before the suite finished (or before main ran)");
+    if json {
+        println!(
+            "{{\"passed\":null,\"failed\":null,\"error\":\"{}\"}}",
+            json_escape_str(&format!("the test binary {desc}"))
+        );
+    }
+}
+
+fn json_escape_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Single-file program build (lex/parse/lower/sema/borrowck) returning the
@@ -4828,6 +5116,7 @@ fn run_check_project(diag_mode: DiagMode) -> ExitCode {
     if let Err(code) = collect_dep_link_args(&m, diag_mode) {
         return code;
     }
+    refresh_dep_headers(&m, &mut Vec::new());
     let dep_names: Vec<String> = active_dep_names(&m);
     match load_and_check_project_full(
         &entry_path,
@@ -6166,6 +6455,32 @@ fn embed_windows_manifest(cmd: &mut Command, out: &Path) {
 
 #[cfg(not(windows))]
 fn embed_windows_manifest(_cmd: &mut Command, _out: &Path) {}
+
+// System libraries every Windows link gets, executable and DLL alike.
+//
+// The async reactor (reactor_windows.cplus) and the socket stack
+// (netsys_windows.cplus / net.cplus) call into Winsock — WSAPoll, WSAStartup,
+// recv/send/closesocket/ioctlsocket. ws2_32 is not auto-linked by the MSVC
+// driver, so request it here. Harmless (an import table entry) for programs
+// that don't touch sockets.
+//
+// shell32 is `CommandLineToArgvW`, the OS's own command-line splitter that
+// argv_sys_windows.cplus uses instead of re-deriving Windows' quoting
+// rules; bcrypt is CNG, which crypto_sys_windows.cplus binds for SHA-2,
+// HMAC and the system CSPRNG; ntdll is `RtlGetVersion`, the only call that
+// reports the real Windows version; winhttp is the http package's transport.
+// advapi32 is the Credential Manager (`CredWriteW`/`CredReadW`/…), the
+// Windows keychain the `securestore` backend binds; comdlg32 is
+// `GetOpenFileNameW`/`GetSaveFileNameW`, the file dialogs the `filepicker`
+// backend binds; user32 is `CreateWindowExW`/`LoadIconW`, the hidden window
+// the `notifications` backend files its tray icon under (a facet app pulls
+// user32 through win32 anyway — this covers the console-shaped consumer).
+// None is auto-linked, and each is the same import-table-only
+// cost as ws2_32 for a program that never calls into it.
+const WINDOWS_SYSTEM_LIBS: &[&str] = &[
+    "ws2_32", "shell32", "bcrypt", "ntdll", "winhttp", "advapi32", "comdlg32", "user32",
+];
+
 fn run_clang(
     input_ll: &Path,
     out: &Path,
@@ -6196,6 +6511,12 @@ fn run_clang(
     };
     let mut cmd = Command::new(clang_program());
     cmd.arg(opt).arg("-Wno-override-module");
+    // `--target-cpu` / `--target-feature`: this invocation compiles the
+    // program's own `.ll`, so it needs them as much as `clang -c` does.
+    cmd.args(
+        target::cpu_tuning_clang_args(&target::cpu_tuning(), target::active_target().arch)
+            .unwrap_or_default(),
+    );
     // f16 lowering on x86_64 emits libcalls to the half-precision conversion
     // builtins (`__extendhfsf2`, `__truncsfhf2`). On Linux/macOS these live in
     // the default runtime clang links; on windows-msvc clang links the MSVC
@@ -6305,34 +6626,10 @@ fn run_clang(
     if cfg!(all(unix, not(target_os = "macos"))) {
         cmd.arg("-lm");
     }
-    // On Windows the async reactor (reactor_windows.cplus) and the socket
-    // stack (netsys_windows.cplus / net.cplus) call into Winsock — WSAPoll,
-    // WSAStartup, recv/send/closesocket/ioctlsocket. ws2_32 is not auto-
-    // linked by the MSVC driver, so request it here. Harmless (an import
-    // table entry) for programs that don't touch sockets.
-    //
-    // shell32 is `CommandLineToArgvW`, the OS's own command-line splitter that
-    // argv_sys_windows.cplus uses instead of re-deriving Windows' quoting
-    // rules; bcrypt is CNG, which crypto_sys_windows.cplus binds for SHA-2,
-    // HMAC and the system CSPRNG; ntdll is `RtlGetVersion`, the only call that
-    // reports the real Windows version; winhttp is the http package's transport.
-    // advapi32 is the Credential Manager (`CredWriteW`/`CredReadW`/…), the
-    // Windows keychain the `securestore` backend binds; comdlg32 is
-    // `GetOpenFileNameW`/`GetSaveFileNameW`, the file dialogs the `filepicker`
-    // backend binds; user32 is `CreateWindowExW`/`LoadIconW`, the hidden window
-    // the `notifications` backend files its tray icon under (a facet app pulls
-    // user32 through win32 anyway — this covers the console-shaped consumer).
-    // None is auto-linked, and each is the same import-table-only
-    // cost as ws2_32 for a program that never calls into it.
     if cfg!(windows) {
-        cmd.arg("-lws2_32");
-        cmd.arg("-lshell32");
-        cmd.arg("-lbcrypt");
-        cmd.arg("-lntdll");
-        cmd.arg("-lwinhttp");
-        cmd.arg("-ladvapi32");
-        cmd.arg("-lcomdlg32");
-        cmd.arg("-luser32");
+        for lib in WINDOWS_SYSTEM_LIBS {
+            cmd.arg(format!("-l{lib}"));
+        }
         // THE APPLICATION MANIFEST, embedded as an RT_MANIFEST resource.
         //
         // A Windows process gets Common Controls **5.82** by default — the 1995
@@ -6644,15 +6941,7 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
     // consumer couldn't write a matching signature anyway.
     for item in &program.items {
         if let ItemKind::Function(f) = &item.kind {
-            if !f.is_export {
-                continue;
-            }
-            // Skip the parser-collapsed body for extern declarations
-            // (no body, decl form): those are imports, not exports.
-            if f.is_extern && f.body.stmts.is_empty() && f.body.tail.is_none() {
-                continue;
-            }
-            if !f.generic_params.is_empty() {
+            if !is_c_export_candidate(f) {
                 continue;
             }
             let Some(decl) = render_fn_decl(f) else {
@@ -6665,6 +6954,32 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
 
     out.push_str("\n#ifdef __cplusplus\n} // extern \"C\"\n#endif\n");
     out
+}
+
+/// An `export fn` or `export extern fn ... { body }` the C header may declare:
+/// public, defined here (an extern declaration without a body is an import),
+/// and not generic.
+fn is_c_export_candidate(f: &cplus_core::ast::Function) -> bool {
+    f.is_export
+        && !(f.is_extern && f.body.stmts.is_empty() && f.body.tail.is_none())
+        && f.generic_params.is_empty()
+}
+
+/// The functions the generated header declares — the library's C ABI. A
+/// Windows DLL exports only what it is told to, so the shared link passes
+/// each of these to lld-link as `/EXPORT:`.
+fn c_export_names(program: &cplus_core::ast::Program) -> Vec<String> {
+    use cplus_core::ast::ItemKind;
+    program
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Function(f) if is_c_export_candidate(f) && render_fn_decl(f).is_some() => {
+                Some(f.name.name.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Render a `#[repr(C)] export struct Foo { ... }` as a C declaration.

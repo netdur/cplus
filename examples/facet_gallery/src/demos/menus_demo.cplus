@@ -1,0 +1,55 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/mount" as mount;
+import "facet/menu_item" as menu_item;
+import "facet/menu" as menu;
+import "facet/toolbar_item" as toolbar_item;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "../shell" as shell;
+struct MenusDemo {clicks: i32,custom: bool,promoted: bool,secondary: bool}
+impl MenusDemo {
+    fn new() -> MenusDemo {return MenusDemo {clicks:0,custom:false,promoted:false,secondary:false};}
+    fn prioritize(ref this,sender: *u8) {
+        this.promoted=!this.promoted;
+        if let option::Option::Some(v)=menu::find("mn:more") {let changed=v.set_priority(if this.promoted {10i64} else {0i64});}
+        if let option::Option::Some(v)=toolbar_item::find("mn:tool") {let changed=v.set_priority(if this.promoted {10i64} else {0i64}).set_placement(if this.secondary {vocab::ToolbarPlacement::Secondary} else if this.promoted {vocab::ToolbarPlacement::Primary} else {vocab::ToolbarPlacement::Default});}
+    }
+    fn placement(ref this,sender: *u8) {
+        this.secondary=!this.secondary;
+        if let option::Option::Some(v)=toolbar_item::find("mn:tool") {let changed=v.set_placement(if this.secondary {vocab::ToolbarPlacement::Secondary} else if this.promoted {vocab::ToolbarPlacement::Primary} else {vocab::ToolbarPlacement::Default});}
+    }
+    fn clicked(ref this,sender: *u8) {this.clicks=this.clicks+1;let key=component::key_of(sender);if let option::Option::Some(l)=label::find("mn:status") {let updated=l.set_text("Action ${key}: ${this.clicks} click(s)");}}
+    fn remove_menu(ref this,sender: *u8) {assert mount::remove("mn:menu");if let option::Option::Some(l)=label::find("mn:status") {let updated=l.set_text("Menu removed; its shortcuts are detached");}}
+    fn restyle(ref this,sender: *u8) {
+        this.custom=!this.custom;
+        if let option::Option::Some(v)=menu_item::find("mn:archive") {let updated=v.set_text(if this.custom {"Delete archive"} else {"Archive"}).set_icon(if this.custom {"trash"} else {"archivebox"}).set_destructive(this.custom);}
+        if let option::Option::Some(v)=toolbar_item::find("mn:tool") {let updated=v.set_text(if this.custom {"Remove"} else {"Favorite"}).set_icon(if this.custom {"trash"} else {"star"}).set_destructive(this.custom);}
+    }
+}
+impl MenusDemo: component::Component {
+    fn build(ref this) -> core::Node {
+        var actions=ui::menu("Actions",key:"mn:menu",priority:5);
+        assert actions.add_child(ui::menu_item("Archive",key:"mn:archive",icon:"archivebox",on_clicked:this.clicked)).is_ok();
+        assert actions.add_child(ui::context_menu_item("Delete",key:"mn:delete",shortcut:vocab::Shortcut::of("d",vocab::KeyModifiers::Ctrl),icon:"trash",destructive:true,on_clicked:this.clicked)).is_ok();
+        assert actions.add_child(ui::context_menu_item("Remove this menu",key:"mn:remove",shortcut:vocab::Shortcut::of("r",vocab::KeyModifiers::Ctrl),on_clicked:this.remove_menu)).is_ok();
+        var more=ui::menu("More",key:"mn:more");
+        assert more.add_child(ui::menu_item("Help",key:"mn:help",on_clicked:this.clicked)).is_ok();
+        var context=ui::context_menu(key:"mn:context").height(140.0f64);
+        assert context.add_child(@ui {column {label("Right-click this area",font_size:20.0f64) text_field("",key:"mn:scope",placeholder:"Focus here, then press Ctrl+I").height(36.0f64)}.padding(20.0f64).gap(8.0f64)}).is_ok();
+        assert context.add_child(ui::context_menu_item("Inspect",key:"mn:inspect",shortcut:vocab::Shortcut::of("i",vocab::KeyModifiers::Ctrl),icon:"magnifyingglass",on_clicked:this.clicked)).is_ok();
+        core::set_background_color(#addr_of(context),vocab::Color::rgba(0.12f64,0.19f64,0.32f64,1.0f64));
+        return shell::panel("Menus","Window menu and toolbar commands follow placement and priority; context actions stay with their content.",@ui {column {
+            row {actions toolbar_item("Favorite",key:"mn:tool",icon:"star",on_clicked:this.clicked) button("Change action styling",key:"mn:style",on_click:this.restyle)}.gap(12.0f64)
+            more
+            toolbar_item("Navigate",key:"mn:sidebar",placement:vocab::ToolbarPlacement::Sidebar,on_clicked:this.clicked)
+            toolbar_item("Primary",key:"mn:primary",placement:vocab::ToolbarPlacement::Primary,priority:5,on_clicked:this.clicked)
+            toolbar_item("Settings",key:"mn:secondary",placement:vocab::ToolbarPlacement::Secondary,on_clicked:this.clicked)
+            row {button("Promote / reset commands",key:"mn:priority",on_click:this.prioritize) button("Move favorite to / from secondary",key:"mn:placement",on_click:this.placement)}.gap(8.0f64)
+            context label("No actions yet",key:"mn:status")
+        }.gap(20.0f64)},howto:"var actions = ui::menu(\"Actions\");\nactions.add_child(ui::menu_item(\"Archive\", on_clicked: this.clicked));");
+    }
+}
+impl MenusDemo: component::Lifecycle {fn on_attach(ref this,why: component::Attach) {return;}fn on_detach(ref this,why: component::Detach) {return;}}

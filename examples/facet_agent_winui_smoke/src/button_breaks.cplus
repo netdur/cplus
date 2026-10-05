@@ -1,0 +1,76 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/button" as button;
+import "facet/text_button" as text_button;
+import "facet/props" as props;
+import "facet/icons" as icons;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/button_text" as flow;
+import "facet_winui/record" as record;
+import "winui/winui" as native;
+import "./parity" as check;
+fn label(key: str) -> native::ITextBlock {let r=core::view_of(check::node(key)) as *record::View;return check::must::[native::ITextBlock](native::ITextBlock::query((*r).content));}
+fn shown(key: str) -> text::Text {return check::must::[text::Text](label(key).text());}
+fn wrapped_height(label: native::ITextBlock,value: str) -> f32 {
+    assert label.set_text(value).is_ok();assert label.set_text_wrapping(native::text_wrapping_wrap).is_ok();
+    let visual=check::must::[native::IUIElement](native::IUIElement::query(label.object()));assert visual.measure(native::Size {width:100.0f32,height:#bitcast::[f32](0x7f800000u32)}).is_ok();return check::must::[native::Size](visual.desired_size()).height;
+}
+const TITLE: str="Beginning — a very long caption — ending";
+struct Probe {passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn build(ref this) -> core::Node {
+        var percent=@ui {button(TITLE,key:"percent",line_break:vocab::LineBreak::MiddleTruncation)};percent.set_width(flex::StyleLength::percent(50.0f64));
+        return @ui {column {
+        button(TITLE,key:"head",line_break:vocab::LineBreak::HeadTruncation).width(160.0f64)
+        text_button(TITLE,key:"middle",line_break:vocab::LineBreak::MiddleTruncation).width(160.0f64)
+        button(TITLE,key:"icon",symbol:icons::home,line_break:vocab::LineBreak::MiddleTruncation).width(160.0f64)
+        button("ABCDE FGHIJ KLMNO",key:"characters",line_break:vocab::LineBreak::CharacterWrap,font_family:"Consolas",font_size:20.0f64).width(118.0f64)
+        text_button("ABCDE FGHIJ KLMNO",key:"words",line_break:vocab::LineBreak::WordWrap,font_family:"Consolas",font_size:20.0f64).width(118.0f64)
+        button("Short",key:"short",line_break:vocab::LineBreak::HeadTruncation).width(160.0f64)
+        percent
+    }.padding(20.0f64).gap(12.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.25f64,this.initial);}
+    fn initial(ref this) {
+        let head=shown("head");let middle=shown("middle");let icon=shown("icon");
+        assert (*check::node("characters")).frame().height>40.0f64;assert (*check::node("words")).frame().height>40.0f64;
+        let percent=check::must::[native::IControl](native::IControl::query(check::object("percent")));let padding=check::must::[native::Thickness](percent.padding());let border=check::must::[native::Thickness](percent.border_thickness());
+        let caption=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(label("percent").object()));let expected=(*check::node("percent")).frame().width-padding.left-padding.right-border.left-border.right;let actual=check::must::[f64](caption.max_width());assert actual>expected-0.01f64 && actual<expected+0.01f64;
+        assert head.view().has_prefix("…") && head.view().has_suffix("ending");assert middle.view().has_prefix("B") && middle.view().has_suffix("ending");assert middle.view()!=TITLE && !middle.view().has_prefix("…");assert icon.count()<middle.count();assert shown("short").view()=="Short";
+        let source=(*core::node_data(check::node("head"))).props as *props::ButtonProps;assert (*source).title.view()==TITLE;
+        // ICU boundaries keep combining accents, surrogate pairs and ZWJ emoji whole.
+        let joined=flow::character_wrap("é👩‍💻🇲🇦X");assert joined.view()=="é​👩‍💻​🇲🇦​X";
+        let measurer=check::must::[native::TextBlock](native::TextBlock::new());let text=check::must::[native::ITextBlock](native::ITextBlock::query(measurer.object()));
+        assert flow::fit(text,"é👩‍💻🇲🇦X",0.0f64,true).is_empty();
+        let exact=flow::width(text,"…X");assert flow::fit(text,"é👩‍💻🇲🇦X",exact,false).view()=="…X";
+        let lines=flow::fit_lines(text,"A very long first line\nAnother long second line",80.0f64,false);assert lines.view().has_prefix("…");
+        let automation=check::must::[native::IAutomationPropertiesStatics](native::AutomationProperties::i_automation_properties_statics_factory());assert check::must::[text::Text](automation.get_name(label("head").object())).view()==TITLE;
+        assert check::must::[text::Text](automation.get_name(check::object("head"))).view()==TITLE;
+        (*core::node_data(check::node("middle"))).common.accessibility_label=text::from_str("Custom caption action");core::touch(check::node("middle"),0u64);
+        assert text.set_font_size(20.0f64).is_ok();
+        let family=check::must::[native::IFontFamilyFactory](native::FontFamily::i_font_family_factory_factory());assert text.set_font_family(check::must(family.create_instance_with_name("Consolas"))).is_ok();
+        let words="ABCDE FGHIJ KLMNO PQRST";let word_height=wrapped_height(text,words);let chars=flow::character_wrap(words);let char_height=wrapped_height(text,chars.view());assert char_height<word_height;
+        if let option::Option::Some(v)=button::find("head") {let changed=v.set_line_break(vocab::LineBreak::MiddleTruncation).set_title("Updated beginning and a long new ending").set_toggles(true);}
+        if let option::Option::Some(v)=text_button::find("middle") {let changed=v.set_line_break(vocab::LineBreak::HeadTruncation).set_toggles(true);}
+        if let option::Option::Some(v)=button::find("short") {let changed=v.set_width(20.0f64);}
+        this.timer=services::after(0.2f64,this.changed);
+    }
+    fn changed(ref this) {
+        let toggle=check::must::[native::IToggleButton](native::IToggleButton::query(check::object("head")));let other=check::must::[native::IToggleButton](native::IToggleButton::query(check::object("middle")));
+        let automation=check::must::[native::IAutomationPropertiesStatics](native::AutomationProperties::i_automation_properties_statics_factory());assert check::must::[text::Text](automation.get_name(check::object("middle"))).view()=="Custom caption action";
+        assert shown("head").view().has_prefix("U") && shown("head").view().has_suffix("ending");assert shown("middle").view().has_prefix("…");assert shown("short").is_empty();
+        if let option::Option::Some(v)=button::find("head") {let changed=v.set_width(800.0f64);}
+        if let option::Option::Some(v)=text_button::find("middle") {let changed=v.set_line_break(vocab::LineBreak::NoWrap);}
+        this.timer=services::after(0.2f64,this.finish);
+    }
+    fn finish(ref this) {
+        assert shown("head").view()=="Updated beginning and a long new ending";assert shown("middle").view()==TITLE;
+        check::log("PASS: button head/middle fitting, icon space, Unicode graphemes, full accessible titles, live changes, resize and toggle replacement");this.passed=true;assert host::close().is_ok();
+    }
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet button line breaks",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: button breaks teardown");return 0;}

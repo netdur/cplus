@@ -1,0 +1,70 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/env" as env;
+import "stdlib/text" as text;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/component" as component;
+import "facet/swipe_item" as swipe_item;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn item() -> native::IMenuFlyoutItem {return check::must::[native::IMenuFlyoutItem](native::IMenuFlyoutItem::query(check::object("action")));}
+fn action_props() -> *props::SwipeItemProps {return (*core::node_data(check::node("action"))).props as *props::SwipeItemProps;}
+fn dirty() {core::touch(check::node("action"),0xffffffffffffffffu64);}
+fn flyout() -> native::IFlyoutBase {let element=check::must::[native::IUIElement](native::IUIElement::query(check::object("row")));return check::must::[native::IFlyoutBase](native::IFlyoutBase::query(check::must::[rt::Object](element.context_flyout())));}
+fn invoke(key: str="action") {
+    let factory=check::must::[native::IFrameworkElementAutomationPeerStatics](native::FrameworkElementAutomationPeer::i_framework_element_automation_peer_statics_factory());let peer=check::must::[native::IAutomationPeer](native::IAutomationPeer::query(check::must::[rt::Object](factory.create_peer_for_element(check::object(key)))));
+    let provider=check::must::[native::IInvokeProvider](native::IInvokeProvider::query(check::must::[rt::Object](peer.get_pattern(native::pattern_interface_invoke))));assert provider.invoke().is_ok();
+}
+struct Probe {bitmap_identity: rt::Object,clicked: i32,invoked: i32,mode: i32,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn click(ref this,sender: *u8) {
+        assert component::key_of(sender)=="action";this.clicked=this.clicked+1;assert this.clicked==this.invoked+1;
+        if this.mode==1 {let old=mount::replace("sibling",ui::label("Changed",key:"sibling"));}
+        if this.mode==2 {let old=mount::replace("row",ui::label("Removed by click",key:"row"));}
+    }
+    fn invoked_event(ref this,sender: *u8) {
+        assert component::key_of(sender)=="action";this.invoked=this.invoked+1;assert this.clicked==this.invoked;
+        if this.mode==3 {let old=mount::replace("row",ui::label("Removed by invocation",key:"row"));}
+    }
+    fn make_row(ref this) -> core::Node {
+        var row=ui::swipeable(key:"row").height(60.0f64);assert row.add_child(ui::swipe_item(key:"action",text:"Archive",icon:"archivebox",destructive:true,on_clicked:this.click,on_invoked:this.invoked_event)).is_ok();assert row.add_child(ui::label("Context action",key:"content")).is_ok();assert row.add_child(ui::swipe_item(text:"Last",key:"last")).is_ok();return row;
+    }
+    fn build(ref this) -> core::Node {return @ui {column {this.make_row() label("Sibling",key:"sibling")}.padding(20.0f64).gap(12.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.2f64,this.initial);}
+    fn initial(ref this) {
+        let icon=check::must::[native::IFontIcon](native::IFontIcon::query(check::must::[rt::Object](item().icon())));let glyph=check::must::[text::Text](icon.glyph());assert !glyph.is_empty();assert check::must::[text::Text](item().text())=="Archive";
+        let control=check::must::[native::IControl](native::IControl::query(check::object("action")));let brush=check::must::[native::ISolidColorBrush](native::ISolidColorBrush::query(check::must::[rt::Object](control.foreground())));let color=check::must::[native::Color](brush.color());assert color.r>color.g;
+        let p=action_props();(*p).menu_item.icon=match env::var("CPLUS_TEST_IMAGE") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*p).menu_item.text=text::from_str("Updated");(*p).menu_item.is_destructive=false;dirty();this.timer=services::after(0.2f64,this.bitmap);
+    }
+    fn bitmap(ref this) {
+        let icon=check::must::[native::IBitmapIcon](native::IBitmapIcon::query(check::must::[rt::Object](item().icon())));assert !check::must::[rt::Object](icon.uri_source()).is_null();assert !check::must::[bool](icon.show_as_monochrome());assert check::must::[text::Text](item().text())=="Updated";
+        let control=check::must::[native::IControl](native::IControl::query(check::object("action")));let brush=check::must::[native::ISolidColorBrush](native::ISolidColorBrush::query(check::must::[rt::Object](control.foreground())));let color=check::must::[native::Color](brush.color());assert color.r==color.g;
+        this.bitmap_identity=check::must::[rt::Object](icon.object().query(rt::unknown_iid()));
+        match swipe_item::find("action") {option::Option::Some(v)=>{let updated=v.set_text("Text only");},option::Option::None=>{assert false;}}this.timer=services::after(0.2f64,this.retained);
+    }
+    fn retained(ref this) {
+        let icon=check::must::[rt::Object](item().icon());assert check::must::[rt::Object](icon.query(rt::unknown_iid())).raw()==this.bitmap_identity.raw();assert check::must::[text::Text](item().text())=="Text only";this.bitmap_identity=rt::Object::empty();let p=action_props();(*p).menu_item.icon=text::new();dirty();this.timer=services::after(0.2f64,this.cleared);
+    }
+    fn cleared(ref this) {assert check::must::[rt::Object](item().icon()).is_null();let old=mount::replace("action",ui::swipe_item(key:"action",text:"Replacement",on_clicked:this.click,on_invoked:this.invoked_event));this.timer=services::after(0.2f64,this.open);}
+    fn open(ref this) {
+        let menu=check::must::[native::IMenuFlyout](native::IMenuFlyout::query(flyout().object()));let entries=check::must::[native::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase](native::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase::query(check::must::[rt::Object](menu.items())));assert check::must::[u32](entries.size())==2;
+        let first=check::must::[native::IMenuFlyoutItem](native::IMenuFlyoutItem::query(check::must::[rt::Object](entries.get_at(0))));assert check::must::[text::Text](first.text())=="Replacement";let last=check::must::[native::IMenuFlyoutItem](native::IMenuFlyoutItem::query(check::must::[rt::Object](entries.get_at(1))));assert check::must::[text::Text](last.text())=="Last";check::log("PASS: interleaved content/action insertion and action replacement order");
+        assert check::must::[rt::Object](item().icon()).is_null();check::log("PASS: native action text, named/bitmap icons, clearing and destructive reset");assert flyout().show_at(check::object("row")).is_ok();this.timer=services::after(0.2f64,this.activate);}
+    fn activate(ref this) {invoke();this.timer=services::after(0.2f64,this.after_click);}
+    fn after_click(ref this) {
+        if this.mode==0 {assert this.clicked==1 && this.invoked==1;this.mode=1;assert flyout().show_at(check::object("row")).is_ok();this.timer=services::after(0.2f64,this.activate);return;}
+        if this.mode==1 {assert this.clicked==2 && this.invoked==2;check::log("PASS: clicked then invoked, including unrelated callback mutation");this.mode=2;assert flyout().show_at(check::object("row")).is_ok();this.timer=services::after(0.2f64,this.activate);return;}
+        if this.mode==2 {assert this.clicked==3 && this.invoked==2;check::log("PASS: removing an action from clicked cancels invoked safely");this.clicked=0;this.invoked=0;this.mode=3;let old=mount::replace("row",this.make_row());this.timer=services::after(0.2f64,this.reopen);return;}
+        assert this.clicked==1 && this.invoked==1;check::log("PASS: removing action host from invoked is safe");this.passed=true;assert host::close().is_ok();
+    }
+    fn reopen(ref this) {assert flyout().show_at(check::object("row")).is_ok();this.timer=services::after(0.2f64,this.activate);}
+}
+fn run() -> i32 {
+    let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI actions",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: action teardown");return 0;
+}

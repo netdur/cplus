@@ -30,8 +30,12 @@ field_furniture  the magnifier and the clear button, drawn over an EDIT
 shadow       the band's drop shadow — a blurred DIB the PARENT blits
 scroller     a `scroll` that scrolls: the document's extent, the wheel, the bars
 swipe        swipe-to-reveal: a drag, and the strip of actions under the row
-menus        HMENU, and the one command-id table
-dialogs      alert / choose / prompt as facet trees, and the open and save file choosers
+menus        HMENU, the one command-id table, and the dark menu bar (WM_UAHDRAWMENU*)
+caption      a Bar::Blended window over its own window_buttons(): no caption, the
+             content answers the hit test (drag, top resize, snap-layouts maximise)
+menustrip    that window's menu bar, as a strip in the client area
+dialogs      alert / choose / prompt as facet trees, the open and save file choosers,
+             and the folder picker (IFileOpenDialog, COM by measured vtable index)
 sys          constants, and the UTF-8 <-> UTF-16 door every string goes through
 observers    size observation, for the resource tier
 ```

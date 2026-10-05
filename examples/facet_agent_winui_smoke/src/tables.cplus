@@ -1,0 +1,72 @@
+import "stdlib/box" as box;
+import "stdlib/io" as io;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/elements" as ui;
+import "facet/table" as table;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "flex_layout/flex_layout" as flex;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/tables" as tables;
+import "winui/winui" as native;
+import "./parity" as check;
+fn properties() -> *props::TableProps {return (*core::node_data(check::node("table"))).props as *props::TableProps;}
+fn dirty() {core::touch(check::node("table"),0xffffffffffffffffu64);}
+fn height(key: str) -> f64 {return (*check::node(key)).frame().height;}
+fn near(value: f64,target: f64) {if !(value>target-0.81f64 && value<target+0.81f64) {io::eprintln("TABLE: expected ${target}, got ${value}");assert false;}}
+struct Probe {automatic: f64,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn build(ref this) -> core::Node {
+        let doc=@ui {column(key:"doc") {text_field("Original",key:"editor") label("Explicit row",key:"row").height(65.0f64)}.gap(5.0f64)};
+        var node=ui::table(key:"table",row_height:40).width(320.0f64);
+        if let option::Option::Some(t)=table::find("table",within:#addr_of(node)) {let set=t.set_content(doc);}
+        return @ui {column {node}.padding(20.0f64)};
+    }
+    fn ready(ref this) {
+        near(height("editor"),40.0f64);near(height("row"),40.0f64);near(height("doc"),80.0f64);assert tables::live_overrides()==2;
+        let edit=check::must::[native::ITextBox](native::ITextBox::query(check::object("editor")));assert edit.set_text("Retained edit").is_ok();
+        (*check::node("doc")).set_flex_direction(flex::FlexDirection::Row);dirty();this.timer=services::after(0.15f64,this.row_document);
+    }
+    fn row_document(ref this) {
+        // The document itself is now the table's single row. Its children must
+        // regain their original sizes even though their native views survive.
+        assert tables::live_overrides()==1;assert tables::same((*check::node("doc")).style.gap_row,5.0f64);assert tables::same((*check::node("row")).style.height,65.0f64);
+        assert (*check::node("editor")).style.height.unit==flex::StyleLength::auto().unit;
+        (*check::node("doc")).set_flex_direction(flex::FlexDirection::Column);dirty();this.timer=services::after(0.15f64,this.column_document);
+    }
+    fn column_document(ref this) {
+        near(height("doc"),80.0f64);near(height("row"),40.0f64);assert tables::live_overrides()==2;
+        check::log("PASS: changing table document shape restores former row sizes");
+        let p=properties();(*p).has_uneven_rows=true;dirty();this.timer=services::after(0.15f64,this.uneven);
+    }
+    fn uneven(ref this) {
+        this.automatic=height("editor");assert this.automatic<40.0f64;near(height("row"),65.0f64);assert tables::live_overrides()==0;
+        let p=properties();(*p).has_uneven_rows=false;(*p).row_height=55;(*p).style=vocab::TableStyle::Form;dirty();this.timer=services::after(0.15f64,this.grouped);
+    }
+    fn grouped(ref this) {
+        near(height("row"),55.0f64);near(height("editor"),55.0f64);let visual=check::must::[native::IUIElement](native::IUIElement::query(check::object("row")));let rendered=check::must::[native::Size](visual.render_size());near(rendered.height as f64,55.0f64);
+        let f=(*check::node("table")).frame();let row=(*check::node("editor")).frame();near(row.left-f.left,12.0f64);near(row.top-f.top,12.0f64);
+        let edit=check::must::[native::ITextBox](native::ITextBox::query(check::object("editor")));assert check::must::[text::Text](edit.text())=="Retained edit";
+        (*check::node("row")).set_height(flex::StyleLength::points(76.0f64));let p=properties();(*p).style=vocab::TableStyle::Settings;dirty();this.timer=services::after(0.15f64,this.remember);
+    }
+    fn remember(ref this) {near(height("row"),55.0f64);let p=properties();(*p).row_height=0;(*p).style=vocab::TableStyle::Menu;dirty();this.timer=services::after(0.15f64,this.reset);}
+    fn reset(ref this) {
+        near(height("editor"),this.automatic);near(height("row"),76.0f64);near(height("doc"),this.automatic+76.0f64);assert tables::live_overrides()==0;
+        let replacement=@ui {column(key:"doc") {label("First",key:"fresh-a").height(27.0f64) label("Second",key:"fresh-b").height(70.0f64)}};
+        let old=mount::replace("doc",replacement);let p=properties();(*p).row_height=48;(*p).style=vocab::TableStyle::Data;dirty();this.timer=services::after(0.15f64,this.replaced);
+    }
+    fn replaced(ref this) {
+        near(height("fresh-a"),48.0f64);near(height("fresh-b"),48.0f64);assert tables::live_overrides()==2;
+        let p=properties();(*p).has_uneven_rows=true;dirty();this.timer=services::after(0.15f64,this.replacement_reset);
+    }
+    fn replacement_reset(ref this) {
+        near(height("fresh-a"),27.0f64);near(height("fresh-b"),70.0f64);let p=properties();(*p).has_uneven_rows=false;dirty();this.timer=services::after(0.15f64,this.remove);
+    }
+    fn remove(ref this) {assert tables::live_overrides()==2;let old=mount::replace("table",ui::label("Removed",key:"done"));this.timer=services::after(0.15f64,this.finish);}
+    fn finish(ref this) {assert tables::live_overrides()==0;assert tables::live_gaps()==0;check::log("PASS: table row sizing, uneven restoration, four styles, retained edits, live row heights, document replacement and override cleanup");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI tables",on_ready:(*p).ready).is_ok();assert (*p).passed;assert tables::live_overrides()==0;assert tables::live_gaps()==0;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: table teardown");return 0;}

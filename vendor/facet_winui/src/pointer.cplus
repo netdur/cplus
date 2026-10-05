@@ -1,0 +1,118 @@
+// Own routed-event delegates until RemoveHandler. State uses View.extra only
+// on buttons, icon buttons and canvases, which have no other extra owner.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./record" as record;
+import "./native" as native;
+import "./style" as style;
+struct State {handlers: [rt::Object;7],events: [rt::Object;7],down: bool,id: u32}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn supports(kind: u32) -> bool {return kind==props::K_BUTTON || kind==props::K_ICON_BUTTON || kind==props::K_CANVAS;}
+fn state(r: *record::View) -> *State {return (*r).extra as *State;}
+fn point(r: *record::View,args: rt::Object) -> ui::IPointerPoint {
+    let event=native::must::[ui::IPointerRoutedEventArgs](ui::IPointerRoutedEventArgs::query(args));
+    return native::must::[ui::IPointerPoint](ui::IPointerPoint::query(native::must::[rt::Object](event.get_current_point((*r).object))));
+}
+fn emit(r: *record::View,kind: usize) -> rt::Status {
+    let raw: *u8=(*core::node_data((*r).node)).props;
+    var call: fn(*u8,*u8)=props::no_handler;var ctx: *u8=0 as *u8;
+    if (*r).kind==props::K_BUTTON {
+        let p: *props::ButtonProps=raw as *props::ButtonProps;
+        (*p).is_pressed=kind==0;
+        call=if kind==0 {(*p).on_pressed} else {(*p).on_released};ctx=if kind==0 {(*p).on_pressed_ctx} else {(*p).on_released_ctx};
+    }
+    if (*r).kind==props::K_ICON_BUTTON {
+        let p: *props::IconButtonProps=raw as *props::IconButtonProps;
+        (*p).is_pressed=kind==0;
+        call=if kind==0 {(*p).on_pressed} else {(*p).on_released};ctx=if kind==0 {(*p).on_pressed_ctx} else {(*p).on_released_ctx};
+    }
+    if (*r).kind==props::K_CANVAS {
+        let p: *props::CanvasProps=raw as *props::CanvasProps;
+        if kind==0 {call=(*p).on_press;ctx=(*p).on_press_ctx;}
+        if kind==1 {call=(*p).on_release;ctx=(*p).on_release_ctx;}
+        if kind==2 {call=(*p).on_hover;ctx=(*p).on_hover_ctx;}
+        if kind==3 {call=(*p).on_unhover;ctx=(*p).on_unhover_ctx;}
+        if kind==4 {call=(*p).observe_move_hover_interaction;ctx=(*p).observe_move_hover_interaction_ctx;}
+        if kind==5 {call=(*p).on_cancel;ctx=(*p).on_cancel_ctx;}
+        if kind==6 {call=(*p).observe_drag_interaction;ctx=(*p).observe_drag_interaction_ctx;}
+    }
+    // A user callback can destroy this record. All data is copied before it.
+    if call!=props::no_handler {call(r as *u8,ctx);}return rt::Status {code:0};
+}
+fn pressed(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View;let s=state(r);
+    if (*s).down || !(*core::node_data((*r).node)).common.is_enabled {return rt::Status {code:0};}
+    let current=point(r,args);let properties=native::must::[ui::IPointerPointProperties](ui::IPointerPointProperties::query(native::must::[rt::Object](current.properties())));
+    if !native::must::[bool](properties.is_primary()) {return rt::Status {code:0};}
+    if native::must::[i32](current.pointer_device_type())==ui::pointer_device_type_mouse && !native::must::[bool](properties.is_left_button_pressed()) {return rt::Status {code:0};}
+    if (*r).kind==props::K_CANVAS {
+        let event=native::must::[ui::IPointerRoutedEventArgs](ui::IPointerRoutedEventArgs::query(args));
+        let element=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));
+        if !native::must::[bool](element.capture_pointer(native::must::[rt::Object](event.pointer()))) {return rt::Status {code:0};}
+    }
+    (*s).down=true;(*s).id=native::must::[u32](current.pointer_id());return emit(r,0);
+}
+fn released(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View;let s=state(r);let current=point(r,args);
+    if !(*s).down || (*s).id!=native::must::[u32](current.pointer_id()) {return rt::Status {code:0};}
+    (*s).down=false;
+    if (*r).kind==props::K_CANVAS {
+        let event=native::must::[ui::IPointerRoutedEventArgs](ui::IPointerRoutedEventArgs::query(args));
+        let element=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));
+        native::check(element.release_pointer_capture(native::must::[rt::Object](event.pointer())));
+    }
+    return emit(r,1);
+}
+fn cancelled(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View;let s=state(r);
+    if !(*s).down {return rt::Status {code:0};}
+    let current=point(r,args);if (*s).id!=native::must::[u32](current.pointer_id()) {return rt::Status {code:0};}
+    (*s).down=false;return emit(r,5);
+}
+fn entered(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {let r=ctx as *record::View;if !(*core::node_data((*r).node)).common.is_enabled {return rt::Status {code:0};}return emit(r,2);}
+fn exited(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {return emit(ctx as *record::View,3);}
+fn moved(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;let s=state(r);if !(*core::node_data((*r).node)).common.is_enabled {return rt::Status {code:0};}
+    if (*s).down {let current=point(r,args);if (*s).id!=native::must::[u32](current.pointer_id()) {return rt::Status {code:0};}}
+    return emit(r,if (*s).down {6 as usize} else {4 as usize});
+}
+fn event(index: usize) -> rt::Object {
+    let factory=native::must::[ui::IUIElementStatics](ui::UIElement::iui_element_statics_factory());
+    if index==0 {return native::must::[rt::Object](factory.pointer_pressed_event());}
+    if index==1 {return native::must::[rt::Object](factory.pointer_released_event());}
+    if index==2 {return native::must::[rt::Object](factory.pointer_entered_event());}
+    if index==3 {return native::must::[rt::Object](factory.pointer_exited_event());}
+    if index==4 {return native::must::[rt::Object](factory.pointer_moved_event());}
+    if index==5 {return native::must::[rt::Object](factory.pointer_canceled_event());}
+    return native::must::[rt::Object](factory.pointer_capture_lost_event());
+}
+fn callback(index: usize) -> fn(rt::Object,rt::Object,*u8)->rt::Status {
+    if index==0 {return pressed;}if index==1 {return released;}if index==2 {return entered;}
+    if index==3 {return exited;}if index==4 {return moved;}return cancelled;
+}
+fn attach(r: *record::View) {
+    let owner: box::Box[State]=match box::new::[State](#zero::[State]()) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+    (*r).extra=owner.into_raw();let s=state(r);
+    let element=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));
+    if (*r).kind==props::K_CANVAS {let panel=native::must::[ui::IPanel](ui::IPanel::query((*r).object));native::check(panel.set_background(style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.0f64))));}
+    var i: usize=0;while i<7 {
+        if (*r).kind==props::K_CANVAS || i<2 || i>=5 {
+            let handler=native::must::[ui::PointerEventHandler](ui::PointerEventHandler::new(callback(i),r as *u8));
+            (*s).events[i]=event(i);(*s).handlers[i]=native::must::[rt::Object](handler.boxed());
+            native::check(element.add_handler((*s).events[i],(*s).handlers[i],true));LIVE=LIVE+1;
+        }
+        i=i+1;
+    }
+}
+fn release(r: *record::View) {
+    let s=state(r);let element=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));var i: usize=0;
+    while i<7 {if !(*s).handlers[i].is_null() {native::check(element.remove_handler((*s).events[i],(*s).handlers[i]));LIVE=LIVE-1;}i=i+1;}
+    (*s).down=false;
+    let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;
+}

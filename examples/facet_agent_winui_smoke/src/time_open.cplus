@@ -1,0 +1,40 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/time_picker" as picker;
+import "facet/mount" as mount;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/record" as record;
+import "facet_winui/pickers" as pickers;
+import "facet_winui/time_popup" as popup;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn handle(key: str="time") -> picker::TimePicker {return match picker::find(key) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[picker::TimePicker]();}};}
+fn flyout() -> native::IFlyoutBase {let r=core::view_of(check::node("time")) as *record::View;let e=(*r).extra as *pickers::Events;return popup::base((*e).time_popup as *popup::State);}
+struct Probe {opens: i32,closes: i32,changes: i32,removed: bool,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn opened(ref this,sender: *u8) {this.opens=this.opens+1;}
+    fn closed(ref this,sender: *u8) {this.closes=this.closes+1;}
+    fn changed(ref this,sender: *u8) {this.changes=this.changes+1;}
+    fn remove(ref this,sender: *u8) {this.removed=true;let old=mount::replace("ephemeral",ui::label("Removed",key:"ephemeral"));}
+    fn build(ref this) -> core::Node {
+        var initial=ui::time_picker(vocab::Duration {seconds:3600.0f64},key:"time",on_opened:this.opened,on_closed:this.closed,on_time_selected:this.changed);
+        let p=(*core::node_data(#addr_of(initial))).props as *props::TimePickerProps;(*p).is_open=true;
+        var children=core::Builder::new();children.add(initial);children.add(ui::time_picker(vocab::Duration {seconds:7200.0f64},key:"ephemeral",on_opened:this.remove));return core::column(children).padding(20.0f64).gap(12.0f64);
+    }
+    fn ready(ref this) {this.timer=services::after(0.4f64,this.initial);}
+    fn initial(ref this) {assert handle().is_open();assert check::must::[bool](flyout().is_open());assert this.opens==1 && this.closes==0;let set=handle().set_open(true);this.timer=services::after(0.3f64,this.duplicate);}
+    fn duplicate(ref this) {assert this.opens==1;assert flyout().hide().is_ok();this.timer=services::after(0.4f64,this.dismissed);}
+    fn dismissed(ref this) {assert !handle().is_open();assert !check::must::[bool](flyout().is_open());assert this.closes==1;let set=handle().set_open(true).set_format("HH:mm");this.timer=services::after(0.4f64,this.reopened);}
+    fn reopened(ref this) {assert this.opens==2 && this.closes==1;assert handle().is_open();let set=handle().set_time(vocab::Duration {seconds:10800.0f64});this.timer=services::after(0.2f64,this.updated);}
+    fn updated(ref this) {let p=check::must::[native::ITimePickerFlyout](native::ITimePickerFlyout::query(flyout().object()));assert check::must::[native::TimeSpan](p.time()).duration==108000000000i64;assert this.changes==0;let set=handle().set_open(false);this.timer=services::after(0.4f64,this.program_closed);}
+    fn program_closed(ref this) {assert !handle().is_open();assert !check::must::[bool](flyout().is_open());assert this.opens==2 && this.closes==2;let set=handle("ephemeral").set_open(true);this.timer=services::after(0.4f64,this.removed_ok);}
+    fn removed_ok(ref this) {assert this.removed;assert this.changes==0;check::log("PASS: initial/programmatic time flyout, dismissal readback, duplicate suppression, live time and callback removal");let set=handle().set_open(true);this.timer=services::after(0.4f64,this.finish);}
+    fn finish(ref this) {check::log("TIME: closing window with flyout open");assert this.opens==3;assert check::must::[bool](flyout().is_open());this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI time presentation",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: time flyout open-window teardown");return 0;}

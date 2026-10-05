@@ -1,0 +1,15 @@
+// Explicit backend selection for native hosts sharing an OS. No toolkit import.
+// Calls are UI-thread-only; external transports must marshal requests themselves.
+import "agent_core/backend" as backend;
+import "agent_core/auth" as auth;
+import "agent_inapp/agent_inapp" as inapp;
+static _SURFACE: *u8=0 as *u8;
+static _BACKEND: backend::Backend=#zero::[backend::Backend]();
+static _SERVE: fn(str)=0 as fn(str);
+fn install(surface: *u8, vtable: backend::Backend, serve: fn(str)=0 as fn(str)) { assert surface.is_not_null(); _SURFACE=surface; _BACKEND=vtable; _SERVE=serve; }
+fn uninstall() { _SURFACE=0 as *u8; _BACKEND=#zero::[backend::Backend](); _SERVE=0 as fn(str); }
+fn serve_once(id: str) { let callback: fn(str)=_SERVE; if callback != (0 as fn(str)) { callback(id); } }
+fn installed() -> bool { return _SURFACE.is_not_null(); }
+fn in_app(grant: auth::Grant) -> inapp::Session {
+    assert installed(); return inapp::open_with_grant(_SURFACE,_BACKEND,grant);
+}

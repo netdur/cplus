@@ -1,0 +1,170 @@
+import "stdlib/io" as io;
+import "stdlib/env" as env;
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "stdlib/vec" as vec;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/text_field" as field;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_agent/agent" as agent;
+import "facet_agent/native_surface" as selected;
+import "facet_agent_winui/facet_agent_winui" as connector;
+import "agent_core/surface" as surface;
+import "agent_core/backend" as backend;
+import "agent_core/auth" as auth;
+import "agent_inapp/agent_inapp" as inapp;
+import "winrt/runtime" as rt;
+import "agent_mcp/agent_mcp" as mcp;
+import "./parity" as parity;
+import "./styles" as styles;
+import "./pointers" as pointers;
+import "./texts" as texts;
+import "./tables" as tables;
+import "./input_visuals" as input_visuals;
+import "./lifecycle" as lifecycle;
+import "./actions" as actions;
+import "./date_formats" as date_formats;
+import "./refresh" as refresh;
+import "./layout" as layout;
+import "./choice_colors" as choice_colors;
+import "./canvas_redraw" as canvas_redraw;
+import "./borders" as borders;
+import "./tabs" as tabs;
+import "./paging" as paging;
+import "./menus" as menus;
+import "./commands" as commands;
+import "./window_buttons" as window_buttons;
+import "./html_labels" as html_labels;
+import "./carousel_sizing" as carousel_sizing;
+import "./tree_rows" as tree_rows;
+import "./row_retention" as row_retention;
+import "./input_transform" as input_transform;
+import "./popup_caption" as popup_caption;
+import "./clear_button" as clear_button;
+import "./splits" as splits;
+import "./split_roles" as split_roles;
+import "./return_keys" as return_keys;
+import "./button_breaks" as button_breaks;
+import "./button_modes" as button_modes;
+import "./secure_modes" as secure_modes;
+import "./time_open" as time_open;
+import "./list_refresh" as list_refresh;
+import "./grouped_items" as grouped_items;
+import "./reordering" as reordering;
+import "./hybrid_web" as hybrid_web;
+import "./swiping" as swiping;
+extern fn fflush(p: *u8) -> i32;
+
+struct Probe { clicks: i32, edited: bool, passed: bool, timer: services::Cancellable }
+impl Probe {
+    fn button(ref this) -> core::Node { return @ui { button("Increment and replace",key:"increment",on_click:this.clicked).height(48.0f64) }; }
+    fn clicked(ref this,sender: *u8) {
+        this.clicks=this.clicks+1;
+        let old: option::Option[core::Node]=mount::replace("increment",this.button());
+    }
+    fn changed(ref this,sender: *u8) { this.edited=true; }
+    fn close_http(ref this,sender: *u8) {
+        this.timer=services::after(0.5f64,this.finish_http);
+    }
+    fn finish_http(ref this) {
+        assert this.clicks==2; assert this.edited;
+        this.passed=true; assert host::close().is_ok();
+    }
+    fn build(ref this) -> core::Node {
+        var secret: core::Node=@ui { column { label("sensitive label",key:"secret") } };
+        secret.set_agent(vocab::Agent::Private);
+        return @ui { column(key:"root") {
+            this.button()
+            text_field("",key:"edit",on_text_changed:this.changed).height(40.0f64)
+            secret
+            button("Close HTTP test",key:"close",on_click:this.close_http)
+        }.padding(20.0f64).gap(10.0f64) };
+    }
+    fn ready(ref this) {
+        if env::has_var("CPLUS_AGENT_HTTP_TEST") {
+            // Exercise the existing facade route, not just connector::serve.
+            agent::serve_once("facet-agent-winui-http-test");
+            let port: u16=mcp::loopback_port(mcp::current_pid());
+            io::println("HTTP READY ${port}"); let f: i32=fflush(0 as *u8); return;
+        }
+        this.timer=services::after(0.1f64,this.first);
+    }
+    fn first(ref this) {
+        assert selected::installed();
+        let s: inapp::Session=agent::in_app();
+        let nodes: vec::Vec[backend::UiNode]=s.describe_ui();
+        var found: bool=false; var i: usize=0;
+        while i<nodes.count() { if let option::Option::Some(n)=nodes.at_ptr(i) { if (*n).id.view()=="secret" { found=true; assert !(*n).readable; assert (*n).text.is_empty(); } } i=i+1; }
+        assert found;
+        assert surface::outcome_eq(agent::in_app_with_grant(auth::reader()).click("increment"),surface::Outcome::NeedsGrant);
+        assert surface::outcome_eq(s.click("increment"),surface::Outcome::Allowed);
+        assert surface::outcome_eq(s.set_text("edit","Agent wrote through WinUI"),surface::Outcome::Allowed);
+        this.timer=services::after(0.2f64,this.second);
+    }
+    fn second(ref this) {
+        assert this.clicks==1;
+        assert this.edited;
+        if let option::Option::Some(edit)=field::find("edit") { assert edit.text()=="Agent wrote through WinUI"; } else { assert false; }
+        let s: inapp::Session=agent::in_app();
+        assert surface::outcome_eq(s.click("increment"),surface::Outcome::Allowed);
+        this.timer=services::after(0.2f64,this.finish);
+    }
+    fn finish(ref this) {
+        assert this.clicks==2;
+        this.passed=true;
+        io::println("PASS: Facet facade selected WinUI, callbacks, replacement, policy inheritance and text readback");
+        assert host::close().is_ok();
+    }
+}
+
+fn main() -> i32 {
+    if env::has_var("CPLUS_FACET_RETURN_KEYS") {return return_keys::run();}
+    if env::has_var("CPLUS_FACET_BUTTON_BREAKS") {return button_breaks::run();}
+    if env::has_var("CPLUS_FACET_SPLIT_ROLES") {return split_roles::run();}
+    if env::has_var("CPLUS_FACET_CAROUSEL_SIZING") {return carousel_sizing::run();}
+    if env::has_var("CPLUS_FACET_HTML_LABELS") {return html_labels::run();}
+    if env::has_var("CPLUS_FACET_WINDOW_BUTTONS") {return window_buttons::run();}
+    if env::has_var("CPLUS_FACET_COMMANDS") {return commands::run();}
+    if env::has_var("CPLUS_FACET_SWIPING") {return swiping::run();}
+    if env::has_var("CPLUS_FACET_HYBRID") {return hybrid_web::run();}
+    if env::has_var("CPLUS_FACET_CLEAR_BUTTON") {return clear_button::run();}
+    if env::has_var("CPLUS_FACET_POPUP_CAPTION") {return popup_caption::run();}
+    if env::has_var("CPLUS_FACET_INPUT_TRANSFORM") {return input_transform::run();}
+    if env::has_var("CPLUS_FACET_ROW_RETENTION") {return row_retention::run();}
+    if env::has_var("CPLUS_FACET_TREE_ROWS") {return tree_rows::run();}
+    if env::has_var("CPLUS_FACET_MENUS") {return menus::run();}
+    if env::has_var("CPLUS_FACET_PAGING") {return paging::run();}
+    if env::has_var("CPLUS_FACET_TABS") {return tabs::run();}
+    if env::has_var("CPLUS_FACET_BORDERS") {return borders::run();}
+    if env::has_var("CPLUS_FACET_CANVAS_REDRAW") {return canvas_redraw::run();}
+    if env::has_var("CPLUS_FACET_CHOICE_COLORS") {return choice_colors::run();}
+    if env::has_var("CPLUS_FACET_LAYOUT") {return layout::run();}
+    if env::has_var("CPLUS_FACET_REORDERING") {return reordering::run();}
+    if env::has_var("CPLUS_FACET_GROUPED_ITEMS") {return grouped_items::run();}
+    if env::has_var("CPLUS_FACET_LIST_REFRESH") {return list_refresh::run();}
+    if env::has_var("CPLUS_FACET_TIME_OPEN") {return time_open::run();}
+    if env::has_var("CPLUS_FACET_SECURE_MODES") {return secure_modes::run();}
+    if env::has_var("CPLUS_FACET_BUTTON_MODES") {return button_modes::run();}
+    if env::has_var("CPLUS_FACET_SPLITS") {return splits::run();}
+    if env::has_var("CPLUS_FACET_REFRESH") {return refresh::run();}
+    if env::has_var("CPLUS_FACET_DATE_FORMATS") {return date_formats::run();}
+    if env::has_var("CPLUS_FACET_ACTIONS") {return actions::run();}
+    if env::has_var("CPLUS_FACET_LIFECYCLE") {return lifecycle::run();}
+    if env::has_var("CPLUS_FACET_INPUT_VISUALS") {return input_visuals::run();}
+    if env::has_var("CPLUS_FACET_TABLES") {return tables::run();}
+    if env::has_var("CPLUS_FACET_TEXT") {return texts::run();}
+    if env::has_var("CPLUS_FACET_POINTER") {return pointers::run();}
+    if env::has_var("CPLUS_FACET_STYLES") {return styles::run();}
+    if env::has_var("CPLUS_FACET_PARITY") {return parity::run();}
+    let owner: box::Box[Probe]=match box::new::[Probe](Probe {clicks:0,edited:false,passed:false,timer:#zero::[services::Cancellable]()}) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};
+    let p: *Probe=owner.ptr(); connector::enable();
+    let status: rt::Status=host::run((*p).build(),"Facet WinUI agent verification",on_ready:(*p).ready);
+    assert status.is_ok(); assert (*p).passed; assert !selected::installed();
+    assert host::live_views()==0; assert host::live_subscriptions()==0;
+    connector::disable(); io::println("PASS: Facet agent detached and native resources released");
+    return 0;
+}

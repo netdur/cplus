@@ -1,0 +1,161 @@
+import "stdlib/box" as box;
+import "stdlib/env" as env;
+import "stdlib/option" as option;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/carousel" as carousel;
+import "facet/page_dots" as page_dots;
+import "./choice_colors" as colors;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "./texts" as texts;
+fn control() -> native::ISelector {return check::must::[native::ISelector](native::ISelector::query(check::object("pager")));}
+fn handle() -> carousel::Carousel {return match carousel::find("pager") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[carousel::Carousel]();}};}
+fn inertia(expected: bool) {
+    let scroll=check::must::[native::IScrollViewer](native::IScrollViewer::query(texts::named_part(check::object("pager"),"ScrollingHost")));
+    assert check::must::[bool](scroll.is_scroll_inertia_enabled())==expected;
+    let attached=check::must::[native::IScrollViewerStatics](native::ScrollViewer::i_scroll_viewer_statics_factory());
+    assert check::must::[bool](attached.get_is_scroll_inertia_enabled(check::object("pager")))==expected;
+}
+fn dots() -> page_dots::PageDots {return match page_dots::find("dots") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[page_dots::PageDots]();}};}
+fn dot_color(index: u32) -> native::Color {
+    let panel=check::must::[native::IPanel](native::IPanel::query(check::object("dots")));
+    let children=check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));
+    assert check::must::[u32](children.size())==3;
+    let shape=check::must::[native::IShape](native::IShape::query(check::must::[rt::Object](children.get_at(index))));return texts::brush_color(check::must::[rt::Object](shape.fill()));
+}
+struct Probe {selected: native::Color,normal: native::Color,passed: bool,positions: i64,items: i64,thresholds: i64,scrolls: i64,remove_host: bool,remove_current: bool,timer: services::Cancellable}
+impl Probe {
+    fn position(ref this,sender: *u8) {
+        this.positions=this.positions+1;assert handle().position()==1;
+        if this.remove_host && !this.remove_current {assert mount::remove("pager");}else {let replaced=mount::replace("unrelated",ui::label("Unrelated replacement",key:"unrelated"));}
+    }
+    fn current(ref this,sender: *u8) {this.items=this.items+1;assert handle().position()==1;if this.remove_host && this.remove_current {assert mount::remove("pager");}}
+    fn threshold(ref this,sender: *u8) {this.thresholds=this.thresholds+1;}
+    fn scroll(ref this,sender: *u8) {this.scrolls=this.scrolls+1;}
+    fn build(ref this) -> core::Node {
+        var pager=ui::carousel(key:"pager",position:8,wraps:true,remaining_threshold:-1,on_position_changed:this.position,on_current_item_changed:this.current,on_remaining_items_threshold_reached:this.threshold,observe_scrolled:this.scroll).width(400.0f64).height(220.0f64);
+        assert pager.add_child(@ui {column(key:"first") {label("First page") checkbox(false,key:"kept")}.padding(20.0f64)}).is_ok();
+        assert pager.add_child(ui::label("Second page",key:"second")).is_ok();assert pager.add_child(ui::label("Third page",key:"third")).is_ok();
+        return @ui {column {pager page_dots(3,key:"dots") label("Unrelated",key:"unrelated")}.padding(20.0f64)};
+    }
+    fn ready(ref this) {this.remove_current=env::has_var("CPLUS_FACET_PAGING_CURRENT");this.timer=services::after(0.4f64,this.initial);}
+    fn initial(ref this) {
+        inertia(true);
+        this.selected=dot_color(0);this.normal=dot_color(1);assert this.selected.a>0u8 && this.normal.a>0u8;
+        assert this.selected.a!=this.normal.a || this.selected.r!=this.normal.r || this.selected.g!=this.normal.g || this.selected.b!=this.normal.b;
+        let updated=dots().set_dot_color(colors::red()).set_selected_dot_color(colors::red());
+        let plain=handle().set_wraps(false);
+        assert check::must::[i32](control().selected_index())==2;assert handle().position()==2;assert this.positions==0 && this.items==0;
+        let visual=check::must::[native::IUIElement](native::IUIElement::query(check::object("pager")));assert check::must::[bool](visual.focus(native::focus_state_keyboard));
+        let frame=(*check::node("pager")).frame();let page=(*check::node("first")).frame();assert page.width==frame.width && page.height==frame.height;
+        assert control().set_selected_index(1).is_ok();assert this.positions==1 && this.items==1;
+        assert control().set_selected_index(1).is_ok();assert this.positions==1;
+        check::log("PASS: carousel initial position, full viewport pages, native readback and both callbacks");
+        let old=mount::replace("second",ui::label("New second page",key:"second"));this.timer=services::after(0.2f64,this.replaced);
+    }
+    fn replaced(ref this) {
+        assert dot_color(0).r==255u8 && dot_color(0).g==0u8;colors::same(dot_color(0),dot_color(1));
+        let updated=dots().set_dot_color(vocab::Color::clear()).set_selected_dot_color(vocab::Color::clear());
+        assert handle().position()==1;assert check::must::[i32](control().selected_index())==1;assert this.positions==1;
+        assert mount::insert_child(check::node("pager"),ui::label("Inserted",key:"inserted"),0);this.timer=services::after(0.2f64,this.inserted);
+    }
+    fn inserted(ref this) {
+        colors::same(this.selected,dot_color(0));colors::same(this.normal,dot_color(1));check::log("PASS: page dots visible defaults, explicit colors and clear-to-default reset");
+        assert handle().position()==2;assert check::must::[i32](control().selected_index())==2;assert this.positions==1;
+        assert mount::remove("inserted");let updated=handle().scroll_to(0).set_bounces(false).set_swipeable(false).set_horizontal_scroll_bars(vocab::ScrollBars::Always);this.timer=services::after(0.3f64,this.programmatic);
+    }
+    fn programmatic(ref this) {
+        inertia(false);
+        assert handle().position()==0;assert check::must::[i32](control().selected_index())==0;assert this.positions==1 && this.items==1;
+        let scroll=check::must::[native::IScrollViewer](native::IScrollViewer::query(texts::named_part(check::object("pager"),"ScrollingHost")));assert check::must::[i32](scroll.horizontal_scroll_mode())==native::scroll_mode_disabled;assert check::must::[i32](scroll.horizontal_scroll_bar_visibility())==native::scroll_bar_visibility_visible;
+        let updated=handle().set_position(99).set_remaining_threshold(0);this.timer=services::after(0.4f64,this.clamped);
+    }
+    fn clamped(ref this) {
+        assert handle().position()==2;assert this.thresholds==1;assert this.positions==1 && this.items==1;assert !handle().is_scrolling();assert this.scrolls>0;
+        let updated=handle().set_background_color(vocab::Color::primary());this.timer=services::after(0.2f64,this.anchors);
+    }
+    fn anchors(ref this) {
+        assert this.thresholds==1;
+        let updated=handle().set_remaining_threshold(-1).set_wraps(true).set_position(6).set_animates_scroll(false);
+        this.timer=services::after(0.15f64,this.loop_first);
+    }
+    fn loop_first(ref this) {
+        assert handle().position()==0;assert check::must::[i32](control().selected_index())==0;
+        let pager=check::must::[native::IFlipView](native::IFlipView::query(check::object("pager")));assert !check::must::[bool](pager.use_touch_animations_for_all_navigation());
+        let updated=handle().set_position(-1);this.timer=services::after(0.15f64,this.loop_last);
+    }
+    fn loop_last(ref this) {
+        assert handle().position()==2;assert check::must::[i32](control().selected_index())==2;
+        let updated=handle().scroll_to(7);this.timer=services::after(0.15f64,this.loop_command);
+    }
+    fn loop_command(ref this) {
+        assert handle().position()==1;assert check::must::[i32](control().selected_index())==1;
+        let updated=handle().set_position(-9223372036854775807i64-1i64);this.timer=services::after(0.15f64,this.loop_minimum);
+    }
+    fn loop_minimum(ref this) {
+        assert handle().position()==1;let updated=handle().set_wraps(false).set_position(-1);this.timer=services::after(0.15f64,this.no_loop);
+    }
+    fn no_loop(ref this) {
+        assert handle().position()==0;assert check::must::[i32](control().selected_index())==0;
+        let updated=handle().set_swipeable(true).set_animates_scroll(true);this.timer=services::after(0.2f64,this.start_motion);
+    }
+    fn start_motion(ref this) {
+        let updated=handle().set_position(1);this.timer=services::after(0.05f64,this.motion);
+    }
+    fn motion(ref this) {
+        inertia(false);
+        let scroll=check::must::[native::IScrollViewer](native::IScrollViewer::query(texts::named_part(check::object("pager"),"ScrollingHost")));
+        let offset=check::must::[f64](scroll.horizontal_offset());
+        let visual=check::must::[native::IUIElement](native::IUIElement::query(check::object("second")));
+        let transform=check::must::[native::IGeneralTransform](native::IGeneralTransform::query(check::must::[rt::Object](visual.transform_to_visual(check::object("pager")))));
+        let point=check::must::[native::Point](transform.transform_point(native::Point {x:0.0f32,y:0.0f32}));let x=point.x;assert offset>2.0f64 && offset<3.0f64;assert x>0.0f32 && x<400.0f32;
+        this.timer=services::after(0.65f64,this.loop_done);
+    }
+    fn loop_done(ref this) {
+        assert handle().position()==1;assert this.positions==1 && this.items==1;
+        let pager=check::must::[native::IFlipView](native::IFlipView::query(check::object("pager")));assert check::must::[bool](pager.use_touch_animations_for_all_navigation());
+        check::log("PASS: circular positive/negative/extreme page indexes, wrapped scroll-to and live wrap/animation switches");
+        let updated=handle().set_position(2).set_animates_scroll(false);this.timer=services::after(0.05f64,this.immediate);
+    }
+    fn immediate(ref this) {
+        inertia(false);
+        let scroll=check::must::[native::IScrollViewer](native::IScrollViewer::query(texts::named_part(check::object("pager"),"ScrollingHost")));
+        assert check::must::[f64](scroll.horizontal_offset())==4.0f64;assert !handle().is_scrolling();
+        check::log("PASS: adjacent animation has intermediate offset/geometry; disabled animation reaches the target immediately");
+        let updated=handle().set_bounces(true);this.timer=services::after(0.1f64,this.resume_anchors);
+    }
+    fn resume_anchors(ref this) {
+        inertia(true);check::log("PASS: carousel bounce maps to native inertia, live disable/reset independent of swipe and page animation");
+        let updated=handle().set_scroll_anchor(vocab::ScrollAnchor::KeepLastItemInView).set_remaining_threshold(0);
+        assert mount::insert_child(check::node("pager"),ui::label("Appended page",key:"appended"),3);
+        this.timer=services::after(0.2f64,this.pinned);
+    }
+    fn pinned(ref this) {
+        assert handle().position()==3;assert check::must::[i32](control().selected_index())==3;assert this.thresholds==2;
+        assert mount::remove("appended");let updated=handle().set_scroll_anchor(vocab::ScrollAnchor::KeepScrollOffset).set_remaining_threshold(-1);
+        assert mount::insert_child(check::node("pager"),ui::label("Offset anchor",key:"inserted"),0);this.timer=services::after(0.2f64,this.offset);
+    }
+    fn offset(ref this) {
+        assert handle().position()==2;assert this.positions==1 && this.items==1;
+        assert mount::remove("inserted");assert mount::remove("first");assert mount::remove("second");assert mount::remove("third");
+        assert handle().position()==0;assert check::must::[i32](control().selected_index())==-1;
+        this.timer=services::after(0.15f64,this.refill);
+    }
+    fn refill(ref this) {
+        assert mount::insert_child(check::node("pager"),ui::label("Refilled first",key:"first"),0);assert mount::insert_child(check::node("pager"),ui::label("Refilled second",key:"second"),1);
+        this.timer=services::after(0.2f64,this.finish);
+    }
+    fn finish(ref this) {
+        assert this.thresholds==2;assert handle().position()==0;check::log("PASS: silent page replacement/anchors/scroll-to, clamping, native swipe/bars, scroll readback and threshold suppression");
+        this.remove_host=true;assert control().set_selected_index(1).is_ok();assert this.positions==2 && this.items==(if this.remove_current {2i64} else {1i64});
+        this.timer=services::after(0.2f64,this.close);
+    }
+    fn close(ref this) {this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI carousel",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: carousel teardown");return 0;}

@@ -1,0 +1,94 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/env" as env;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/swipeable" as swipeable;
+import "facet/swipe_item" as swipe_item;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "facet_agent/agent" as agent;
+import "facet_agent_winui/facet_agent_winui" as connector;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/record" as record;
+import "facet_winui/swipe" as swipe;
+import "facet_winui/actions" as actions;
+import "winui/winui" as native;
+import "./parity" as check;
+fn view() -> *record::View {return core::view_of(check::node("row")) as *record::View;}
+fn cursor() -> swipeable::Swipeable {return match swipeable::find("row") {option::Option::Some(c)=>c,option::Option::None=>{assert false;#zero::[swipeable::Swipeable]()}};}
+struct Probe {counts: [u32;5],clicks: u32,invoked: u32,removal: u32,removed: bool,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn event(ref this,kind: u32) {this.counts[kind as usize]=this.counts[kind as usize]+1;if this.removal==kind+1 {let old=mount::replace("row",ui::label("Removed",key:"row"));this.removed=true;}}
+    fn started(ref this,sender: *u8) {this.event(0);}
+    fn changing(ref this,sender: *u8) {this.event(1);}
+    fn opened(ref this,sender: *u8) {this.event(2);}
+    fn closed(ref this,sender: *u8) {this.event(3);}
+    fn ended(ref this,sender: *u8) {this.event(4);}
+    fn clicked(ref this,sender: *u8) {this.clicks=this.clicks+1;}
+    fn action_invoked(ref this,sender: *u8) {this.invoked=this.invoked+1;}
+    fn build(ref this) -> core::Node {
+        var row=ui::swipeable(key:"row",on_swipe_started:this.started,observe_swipe_changing:this.changing,on_open_requested:this.opened,on_close_requested:this.closed,on_swipe_ended:this.ended).height(70.0f64).width(320.0f64);
+        assert row.add_child(ui::label("Drag me",key:"content")).is_ok();assert row.add_child(ui::swipe_item(text:"Archive",key:"archive",on_clicked:this.clicked,on_invoked:this.action_invoked)).is_ok();assert row.add_child(ui::swipe_item(text:"Delete",key:"delete",destructive:true)).is_ok();
+        return @ui {column {row}.padding(20.0f64)};
+    }
+    fn ready(ref this) {this.timer=services::after(0.2f64,this.initial);}
+    fn gesture(ref this,distance: f64) {assert swipe::begin(view(),250.0f64,30.0f64,1);assert swipe::drag(view(),250.0f64-distance,30.0f64);assert swipe::finish(view());}
+    fn initial(ref this) {
+        assert (*swipe::state(view())).limit==176.0f64;assert swipe::threshold(view())==88.0f64;
+        if this.removal>0 {this.gesture(if this.removal==4 {30.0f64} else {120.0f64});this.timer=services::after(0.3f64,this.check_removed);return;}
+        assert swipe::begin(view(),250.0f64,30.0f64,1);assert !swipe::drag(view(),248.0f64,30.0f64);assert !swipe::finish(view());
+        assert swipe::begin(view(),250.0f64,30.0f64,1);assert !swipe::drag(view(),248.0f64,50.0f64);assert !swipe::finish(view());
+        this.gesture(120.0f64);assert (*swipe::state(view())).offset==176.0f64;this.timer=services::after(0.3f64,this.opened_check);
+    }
+    fn policy(ref this,private: bool) {
+        core::set_agent(check::node("archive"),if private {vocab::Agent::Private} else {vocab::Agent::Open});mount::sync_from(check::node("archive"));
+        let nodes=agent::in_app().describe_ui();var found=false;var i: usize=0;
+        while i<nodes.count() {if let option::Option::Some(n)=nodes.at_ptr(i) {if (*n).id.view()=="@swipe:archive" {found=true;assert (*n).readable!=private;if private {assert (*n).text.is_empty();}}}i=i+1;}
+        assert found;
+    }
+    fn opened_check(ref this) {
+        this.policy(true);this.policy(false);check::log("PASS: revealed action inherits live agent privacy policy");
+        assert this.counts[0]==1 && this.counts[1]==1 && this.counts[2]==1 && this.counts[3]==0 && this.counts[4]==1;
+        let item=core::view_of(check::node("archive")) as *record::View;assert !actions::reveal(item).is_null();let status=swipe::invoke(actions::reveal(item),actions::reveal(item),item as *u8);assert status.code==0;assert this.clicks==1 && this.invoked==1;assert (*swipe::state(view())).offset==0.0f64;
+        let changed=cursor().set_reveal_threshold(160.0f64);this.timer=services::after(0.2f64,this.high);
+    }
+    fn high(ref this) {assert this.counts[3]==1;assert swipe::threshold(view())==160.0f64;this.gesture(120.0f64);assert (*swipe::state(view())).offset==0.0f64;this.timer=services::after(0.2f64,this.cancelled);}
+    fn cancelled(ref this) {
+        assert this.counts[0]==2 && this.counts[2]==1 && this.counts[3]==2 && this.counts[4]==2;
+        assert swipe::begin(view(),250.0f64,30.0f64,1);assert swipe::drag(view(),70.0f64,30.0f64);swipe::cancel(view());assert (*swipe::state(view())).offset==0.0f64;
+        let changed=cursor().set_enabled(false);mount::sync_from(check::node("row"));assert !swipe::begin(view(),250.0f64,30.0f64,1);this.timer=services::after(0.2f64,this.disabled);
+    }
+    fn disabled(ref this) {
+        assert this.counts[0]==3 && this.counts[2]==1 && this.counts[3]==2 && this.counts[4]==3;
+        let changed=cursor().set_enabled(true).set_reveal_threshold(999.0f64);mount::sync_from(check::node("row"));assert swipe::threshold(view())==176.0f64;
+        check::log("PASS: swipe slop, vertical rejection, threshold, cancellation, actions and disabled state");
+        let old=mount::replace("delete",ui::swipe_item(text:"Changed",key:"delete",icon:"star",destructive:false));this.timer=services::after(0.2f64,this.live);
+    }
+    fn live(ref this) {
+        let item=core::view_of(check::node("delete")) as *record::View;let value=actions::reveal(item);let automation=check::must::[native::IAutomationPropertiesStatics](native::AutomationProperties::i_automation_properties_statics_factory());assert check::must::[text::Text](automation.get_name(value)).view()=="Changed";
+        core::set_visible(check::node("delete"),false);this.timer=services::after(0.2f64,this.hidden);
+    }
+    fn hidden(ref this) {
+        assert (*swipe::state(view())).limit==88.0f64;
+        core::set_visible(check::node("delete"),true);core::set_accessibility_label(check::node("delete"),"Custom action");this.timer=services::after(0.2f64,this.reshown);
+    }
+    fn reshown(ref this) {
+        let item=core::view_of(check::node("delete")) as *record::View;let value=actions::reveal(item);let automation=check::must::[native::IAutomationPropertiesStatics](native::AutomationProperties::i_automation_properties_statics_factory());
+        assert (*swipe::state(view())).limit==176.0f64;assert check::must::[text::Text](automation.get_name(value)).view()=="Custom action";
+        core::set_accessibility_label(check::node("delete"),"");mount::sync_from(check::node("row"));assert check::must::[text::Text](automation.get_name(value)).view()=="Changed";
+        check::log("PASS: live action visibility compacts the strip; accessible name overrides and resets");
+        this.gesture(176.0f64);let old=mount::replace("row",ui::label("Removed",key:"row"));this.timer=services::after(0.2f64,this.finish);
+    }
+    fn check_removed(ref this) {assert this.removed;assert this.counts[(this.removal-1) as usize]==1;this.finish();}
+    fn finish(ref this) {
+        let nodes=agent::in_app().describe_ui();var i: usize=0;while i<nodes.count() {if let option::Option::Some(n)=nodes.at_ptr(i) {assert !(*n).id.view().has_prefix("@swipe:");}i=i+1;}
+        assert swipe::subscriptions()==0;check::log("PASS: swipe callback removal and pending delivery teardown");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {
+    let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();
+    if env::has_var("CPLUS_SWIPE_REMOVE_START") {(*p).removal=1;}if env::has_var("CPLUS_SWIPE_REMOVE_CHANGE") {(*p).removal=2;}if env::has_var("CPLUS_SWIPE_REMOVE_OPEN") {(*p).removal=3;}if env::has_var("CPLUS_SWIPE_REMOVE_CLOSE") {(*p).removal=4;}if env::has_var("CPLUS_SWIPE_REMOVE_END") {(*p).removal=5;}
+    connector::enable();assert host::run((*p).build(),"Facet WinUI swiping",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0 && host::live_subscriptions()==0;check::log("PASS: swipe teardown");return 0;
+}

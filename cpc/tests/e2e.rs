@@ -7738,6 +7738,127 @@ fn orphan_source_file_warns_w0005_and_success_prints_module_count() {
 }
 
 #[test]
+fn entry_file_takes_its_platform_variant() {
+    // bugs/a-platform-variant-of-the-entry-file-is-ignored: the entry is not
+    // imported, so the `_<platform>` override never applied to it and
+    // `main_<host>.cplus` beside `main.cplus` was silently never used. It
+    // now resolves the way an import does; the base is shadowed (no W0005),
+    // and the variant is compiled once (one module).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let plat = if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"entv\"\n").unwrap();
+    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 10; }\n").unwrap();
+    std::fs::write(
+        dir.join(format!("src/main_{plat}.cplus")),
+        "fn main() -> i32 { return 20; }\n",
+    )
+    .unwrap();
+    let bin = dir.join(if cfg!(windows) { "entv.exe" } else { "entv" });
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("-o")
+        .arg(&bin)
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "build must succeed: {stderr}");
+    assert!(!stderr.contains("W0005"), "the shadowed base entry is not an orphan: {stderr}");
+    assert!(stdout.contains("ok: 1 modules"), "the variant is compiled once: {stdout}");
+    let run = Command::new(&bin).status().expect("run entv");
+    assert_eq!(run.code(), Some(20), "the platform variant is the entry");
+}
+
+/// bugs/windows-gui-apps-are-console-subsystem: `[windows] subsystem =
+/// "windows"` links a windowed program (no console), and `fn main` still
+/// runs through `/ENTRY:mainCRTStartup`. Read straight from the PE header.
+#[cfg(windows)]
+#[test]
+fn windows_subsystem_key_links_a_gui_program() {
+    fn pe_subsystem(path: &Path) -> u16 {
+        let b = std::fs::read(path).expect("read exe");
+        let pe = u32::from_le_bytes(b[0x3C..0x40].try_into().unwrap()) as usize;
+        assert_eq!(&b[pe..pe + 4], b"PE\0\0", "not a PE image");
+        // Signature (4) + COFF file header (20), then the optional header,
+        // whose Subsystem field sits at offset 68 in both PE32 and PE32+.
+        let opt = pe + 4 + 20;
+        u16::from_le_bytes(b[opt + 68..opt + 70].try_into().unwrap())
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 7; }\n").unwrap();
+    for (manifest, want) in [
+        ("[package]\nname = \"gui\"\n", 3u16),
+        ("[package]\nname = \"gui\"\n\n[windows]\nsubsystem = \"windows\"\n", 2u16),
+    ] {
+        std::fs::write(dir.join("Cplus.toml"), manifest).unwrap();
+        let bin = dir.join("gui.exe");
+        let out = Command::new(cpc)
+            .arg("build")
+            .arg("-o")
+            .arg(&bin)
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc");
+        assert!(
+            out.status.success(),
+            "build must succeed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // 3 = IMAGE_SUBSYSTEM_WINDOWS_CUI, 2 = IMAGE_SUBSYSTEM_WINDOWS_GUI.
+        assert_eq!(pe_subsystem(&bin), want, "manifest:\n{manifest}");
+        let run = Command::new(&bin).status().expect("run gui");
+        assert_eq!(run.code(), Some(7), "`fn main` is still the entry");
+    }
+}
+
+/// bugs/cpc-test-exits-1-silently-when-the-test-binary-cannot-start: a test
+/// driver that dies with an NTSTATUS (here the loader's STATUS_DLL_NOT_FOUND,
+/// raised by hand) was folded into a bare exit 1 with no output at all.
+#[cfg(windows)]
+#[test]
+fn cpc_test_reports_an_abnormal_driver_exit() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "extern fn ExitProcess(code: u32);\n\
+         #[test]\nfn dies() { ExitProcess(0xC0000135u32); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg("--json")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success());
+    assert!(
+        stderr.contains("0xC0000135") && stderr.contains("STATUS_DLL_NOT_FOUND"),
+        "the status is named: {stderr}"
+    );
+    let last = stdout.lines().last().unwrap_or("");
+    assert!(
+        last.starts_with("{\"passed\":null,\"failed\":null,\"error\":")
+            && last.contains("0xC0000135"),
+        "--json ends with a summary that reports it: {stdout}"
+    );
+}
+
+#[test]
 fn lang_string_eq_lang_string_compiles() {
     // 2026-08-12: `Text == Text` compares byte content through BOTH sides'
     // `str` views — the rule `Text == str` set, completed. This was E0302
@@ -19827,6 +19948,153 @@ fn fp_contract_flag_controls_fmuladd_emission() {
         let run = Command::new(&bin).output().expect("run");
         // 2*3+4 = 10
         assert_eq!(run.status.code(), Some(10), "wrong result for {extra:?}");
+    }
+}
+
+/// The IR line `fn has() -> bool { return #target_feature("NAME"); }`
+/// lowers to, under `flags`.
+fn target_feature_ret(flags: &[&str], name: &str) -> String {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("tf.cplus");
+    std::fs::write(
+        &src,
+        format!(
+            "fn has() -> bool {{ return #target_feature(\"{name}\"); }}\n\
+             fn main() -> i32 {{ if has() {{ return 1; }} return 0; }}\n"
+        ),
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .args(flags)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll");
+    assert!(
+        out.status.success(),
+        "{flags:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout).into_owned();
+    let body = ir.split("@has()").nth(1).expect("has() in IR");
+    body.lines()
+        .find(|l| l.trim_start().starts_with("ret i1"))
+        .expect("ret i1")
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn target_feature_reflects_target_cpu_and_target_feature() {
+    // `#target_feature` answers from clang's predefined macros for the active
+    // tuning, so a named CPU expands to its features without a CPU table.
+    // `--emit-ll` only: nothing here executes an AVX2 instruction.
+    if !cfg!(target_arch = "x86_64") {
+        return;
+    }
+    assert_eq!(target_feature_ret(&[], "avx2"), "ret i1 false");
+    assert_eq!(target_feature_ret(&["--target-cpu=x86-64-v3"], "avx2"), "ret i1 true");
+    assert_eq!(target_feature_ret(&["--target-cpu=x86-64-v3"], "fma"), "ret i1 true");
+    assert_eq!(target_feature_ret(&["--target-cpu=x86-64-v3"], "avx512f"), "ret i1 false");
+    assert_eq!(
+        target_feature_ret(&["--target-cpu=x86-64-v3", "--target-feature=-fma"], "fma"),
+        "ret i1 false"
+    );
+    assert_eq!(target_feature_ret(&["--target-feature=+avx2,+fma"], "fma"), "ret i1 true");
+    // Another arch's feature is false, not an error: one kernel file can ask
+    // about both and build on both.
+    assert_eq!(target_feature_ret(&["--target-cpu=x86-64-v3"], "dotprod"), "ret i1 false");
+}
+
+#[test]
+fn target_feature_rejects_an_unknown_name() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("x.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 { if #target_feature(\"avx-2\") { return 1; } return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "an unknown feature name must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unknown CPU feature `avx-2`"),
+        "expected E0903, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn target_cpu_x86_64_v3_fuses_an_f32x8_fma_into_one_vfmadd() {
+    // Without a tuning, x86_64 is SSE2: an 8-lane `fma` has no instruction
+    // and becomes a libm `fmaf` call per lane. `x86-64-v3` (AVX2+FMA) makes
+    // it one `vfmadd*ps` on a `ymm` register.
+    if !cfg!(target_arch = "x86_64") {
+        return;
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("k.cplus");
+    std::fs::write(
+        &src,
+        "export extern fn fma8(x: *f32, y: *f32, z: *f32, out: *f32) {\n\
+         let a: f32x8 = f32x8::load(x);\n\
+         let b: f32x8 = f32x8::load(y);\n\
+         let c: f32x8 = f32x8::load(z);\n\
+         a.fma(b, c).store(out);\n\
+         }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let asm = |flags: &[&str]| {
+        let out = Command::new(cpc)
+            .arg("--release")
+            .args(flags)
+            .arg("--emit-asm")
+            .arg(&src)
+            .output()
+            .expect("emit-asm");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let base = asm(&[]);
+    assert!(!base.contains("vfmadd"), "baseline must not use FMA3:\n{base}");
+    assert!(base.contains("fmaf"), "baseline lowers vector fma to fmaf calls:\n{base}");
+    let v3 = asm(&["--target-cpu=x86-64-v3"]);
+    assert!(v3.contains("vfmadd"), "x86-64-v3 must emit vfmadd:\n{v3}");
+    assert!(v3.contains("ymm"), "x86-64-v3 must keep f32x8 in one ymm register:\n{v3}");
+    assert!(!v3.contains("fmaf"), "x86-64-v3 must not call fmaf:\n{v3}");
+}
+
+#[test]
+fn target_cpu_flags_are_validated() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("x.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let run = |args: &[&str]| {
+        let out = Command::new(cpc)
+            .args(args)
+            .arg("--emit-ll")
+            .arg(&src)
+            .output()
+            .expect("invoke cpc");
+        assert!(!out.status.success(), "{args:?} must fail");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    assert!(run(&["--target-feature=avx2"]).contains("expects `+name` or `-name`"));
+    assert!(run(&["--target-cpu="]).contains("--target-cpu expects a CPU name"));
+    // RV32 pins its own -march in the spec; refused in either order.
+    for args in [
+        &["--target", "esp32c3-riscv32", "--target-cpu=native"][..],
+        &["--target-feature=+avx2", "--target", "esp32c3-riscv32"][..],
+    ] {
+        assert!(
+            run(args).contains("apply to x86_64 and aarch64 targets, not riscv32"),
+            "{args:?}"
+        );
     }
 }
 

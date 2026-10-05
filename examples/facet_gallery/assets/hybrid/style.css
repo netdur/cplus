@@ -1,0 +1,11 @@
+:root { color-scheme: dark; font-family: "Segoe UI", sans-serif; background: #182026; color: #f4f6f8; }
+body { margin: 0; padding: 24px 30px; }
+small { color: #9fbdcb; font-size: 11px; letter-spacing: .12em; }
+h1 { font-size: 25px; font-weight: 600; margin: 8px 0; }
+p { color: #bfcbd2; margin: 8px 0 18px; }
+.actions { display: flex; align-items: center; gap: 16px; }
+button { background: #b5e1f0; color: #132c38; border: 0; border-radius: 5px; padding: 9px 18px; font: 600 14px "Segoe UI", sans-serif; cursor: pointer; }
+button:hover { background: #d7f1fa; }
+#sent { color: #bfcbd2; font-size: 13px; }
+.message { border: 1px solid #3b4b55; border-radius: 6px; padding: 13px 16px; margin-top: 18px; }
+output { display: block; margin-top: 7px; white-space: pre-wrap; }

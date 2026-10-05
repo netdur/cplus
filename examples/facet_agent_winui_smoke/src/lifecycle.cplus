@@ -1,0 +1,142 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/list" as list;
+import "facet/collection" as collection;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "facet/mount" as mount;
+import "facet/component" as component;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "facet_winui/facet_winui" as host;
+import "facet_agent_winui/facet_agent_winui" as connector;
+import "./parity" as check;
+fn near(value: f64,expected: f64) -> bool {return value>=expected-1.0f64 && value<=expected+1.0f64;}
+struct Probe {remove_on_scroll: bool,height_calls: usize,thresholds: usize,appeared: usize,disappeared: usize,initial: usize,phase: u32,removed_sibling: bool,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn height_of(ref this,index: usize) -> f64 {this.height_calls=this.height_calls+1;return 30.0f64+(index%3) as f64*10.0f64;}
+    fn scroll_changed(ref this,sender: *u8) {if this.remove_on_scroll {this.remove_on_scroll=false;let old=mount::replace("rows",ui::label("Removed while scrolling",key:"rows").height(64.0f64));}}
+    fn threshold(ref this,sender: *u8) {this.thresholds=this.thresholds+1;}
+    fn native_scroll(ref this) -> native::IScrollViewer {return check::must::[native::IScrollViewer](native::IScrollViewer::query(check::object("rows")));}
+    fn grid(ref this) -> collection::Collection {return match collection::find("rows") {option::Option::Some(v)=>v,option::Option::None=>{assert false;#zero::[collection::Collection]()}};}
+    fn row(ref this,index: usize) -> core::Node {return ui::label("Row ${index}",key:"row-${index}");}
+    fn index(ref this,sender: *u8) -> usize {
+        let index=match component::item_index_of(sender) {option::Option::Some(v)=>v,option::Option::None=>{assert false;0 as usize}};
+        assert component::key_of(sender)=="row-${index}";assert index<40;return index;
+    }
+    fn appearing(ref this,sender: *u8) {
+        let index=this.index(sender);this.appeared=this.appeared+1;
+        if this.phase==2 {this.phase=3;let old=mount::replace("rows",ui::label("Removed during appearance",key:"rows").height(96.0f64));}
+    }
+    fn disappearing(ref this,sender: *u8) {
+        let index=this.index(sender);this.disappeared=this.disappeared+1;
+        if this.phase==1 && !this.removed_sibling {this.removed_sibling=true;let old=mount::replace("sibling",ui::label("Changed sibling",key:"sibling"));}
+        if this.phase==4 {this.phase=5;let old=mount::replace("rows",ui::label("Removed during disappearance",key:"rows").height(96.0f64));assert this.index(sender)==index;}
+    }
+    fn make_list(ref this) -> core::Node {return ui::list(key:"rows",count:40,row:this.row,row_height:32,on_item_appearing:this.appearing,on_item_disappearing:this.disappearing).height(96.0f64);}
+    fn build(ref this) -> core::Node {return @ui {column {this.make_list() label("Sibling",key:"sibling")}.padding(20.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.2f64,this.initial_check);}
+    fn initial_check(ref this) {
+        assert this.appeared>0 && this.appeared<12;assert this.disappeared==0;this.initial=this.appeared;
+        match list::find("rows") {option::Option::Some(v)=>{let changed=v.set_separator_color(vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64));},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.2f64,this.unchanged);
+    }
+    fn unchanged(ref this) {
+        assert this.appeared==this.initial && this.disappeared==0;this.phase=1;
+        match list::find("rows") {option::Option::Some(v)=>{let changed=v.scroll_to(20);},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.3f64,this.scrolled);
+    }
+    fn scrolled(ref this) {
+        assert this.removed_sibling;assert this.disappeared==this.initial;assert this.appeared>this.initial;
+        check::log("PASS: list lifecycle sender identity, recycling, no style duplicates and mutation continuation");
+        this.phase=2;match list::find("rows") {option::Option::Some(v)=>{let changed=v.scroll_to(0);},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.3f64,this.appearance_removed);
+    }
+    fn appearance_removed(ref this) {
+        assert this.phase==3;assert core::kind_of(check::node("rows"))==props::K_LABEL;
+        check::log("PASS: list removal from appearing callback cancels queued callbacks");
+        let old=mount::replace("rows",this.make_list());this.timer=services::after(0.3f64,this.second_list);
+    }
+    fn second_list(ref this) {
+        this.phase=4;match list::find("rows") {option::Option::Some(v)=>{let changed=v.scroll_to(25);},option::Option::None=>{assert false;}}
+        this.timer=services::after(0.3f64,this.disappearance_removed);
+    }
+    fn disappearance_removed(ref this) {
+        assert this.phase==5;assert core::kind_of(check::node("rows"))==props::K_LABEL;
+        check::log("PASS: list removal from disappearing callback preserves its row sender");
+        let old=mount::replace("rows",ui::collection(key:"rows",count:11,row:this.row,columns:2,remaining_threshold:1,on_remaining_items_threshold_reached:this.threshold,observe_scrolled:this.scroll_changed).height(64.0f64));let changed=this.grid().set_row_height_of(this.height_of).set_item_sizing(vocab::ItemSizing::MeasureAllItems);
+        this.timer=services::after(0.2f64,this.grid_measured);
+    }
+    fn grid_measured(ref this) {
+        assert near(check::must::[f64](this.native_scroll().extent_height()),270.0f64);assert this.height_calls==11;assert this.thresholds==0;
+        let host=check::must::[native::IContentControl](native::IContentControl::query(check::object("rows")));let panel=check::must::[native::IPanel](native::IPanel::query(check::must::[rt::Object](host.content())));let entries=check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));
+        let first=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(check::must::[rt::Object](entries.get_at(0))));let second=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(check::must::[rt::Object](entries.get_at(1))));assert check::must::[f64](first.height())==30.0f64;assert check::must::[f64](second.height())==40.0f64;
+        let changed=this.grid().scroll_to(6);this.timer=services::after(0.2f64,this.grid_scrolled);
+    }
+    fn grid_scrolled(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),140.0f64);assert this.height_calls==11;assert this.thresholds==1;
+        let changed=this.grid().set_item_sizing(vocab::ItemSizing::MeasureFirstItem).scroll_to(0);this.timer=services::after(0.2f64,this.grid_first);
+    }
+    fn grid_first(ref this) {
+        assert near(check::must::[f64](this.native_scroll().extent_height()),180.0f64);assert this.height_calls==12;
+        let changed=this.grid().set_columns(3).set_item_sizing(vocab::ItemSizing::MeasureAllItems);this.timer=services::after(0.2f64,this.grid_columns);
+    }
+    fn grid_columns(ref this) {
+        assert near(check::must::[f64](this.native_scroll().extent_height()),190.0f64);assert this.height_calls==23;
+        let changed=this.grid().scroll_to(100000);this.timer=services::after(0.2f64,this.grid_clamped);
+    }
+    fn grid_clamped(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),126.0f64);let changed=this.grid().set_count(0);this.timer=services::after(0.2f64,this.grid_empty);
+    }
+    fn grid_empty(ref this) {
+        assert near(check::must::[f64](this.native_scroll().extent_height()),0.0f64);assert near(check::must::[f64](this.native_scroll().vertical_offset()),0.0f64);
+        check::log("PASS: collection sizing, grid geometry, cached heights, threshold, column changes and empty reset");
+        let changed=this.grid().set_count(20).set_columns(1).set_item_sizing(vocab::ItemSizing::MeasureFirstItem).set_scroll_anchor(vocab::ScrollAnchor::KeepScrollOffset).scroll_to(10);this.timer=services::after(0.2f64,this.anchor_start);
+    }
+    fn anchor_start(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),300.0f64);
+        let changed=this.grid().set_scroll_anchor(vocab::ScrollAnchor::KeepItemsInView).insert_rows(0,2);this.timer=services::after(0.2f64,this.anchor_insert);
+    }
+    fn anchor_insert(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),360.0f64);
+        let changed=this.grid().remove_rows(0,3);this.timer=services::after(0.2f64,this.anchor_delete);
+    }
+    fn anchor_delete(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),270.0f64);
+        let changed=this.grid().insert_rows(16,1);this.timer=services::after(0.2f64,this.anchor_below);
+    }
+    fn anchor_below(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),270.0f64);
+        let changed=this.grid().set_scroll_anchor(vocab::ScrollAnchor::KeepScrollOffset).insert_rows(0,2);this.timer=services::after(0.2f64,this.anchor_offset);
+    }
+    fn anchor_offset(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),270.0f64);
+        let changed=this.grid().set_scroll_anchor(vocab::ScrollAnchor::KeepLastItemInView).scroll_to(21);this.timer=services::after(0.2f64,this.anchor_bottom);
+    }
+    fn anchor_bottom(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),596.0f64);
+        let changed=this.grid().insert_rows(22,3);this.timer=services::after(0.2f64,this.anchor_appended);
+    }
+    fn anchor_appended(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),686.0f64);
+        let changed=this.grid().scroll_to(5);this.timer=services::after(0.2f64,this.anchor_leave_end);
+    }
+    fn anchor_leave_end(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),150.0f64);
+        let changed=this.grid().insert_rows(25,2);this.timer=services::after(0.2f64,this.anchor_unpinned);
+    }
+    fn anchor_unpinned(ref this) {
+        assert near(check::must::[f64](this.native_scroll().vertical_offset()),150.0f64);check::log("PASS: item/offset/bottom anchors across insert, delete, append and unpinned updates");
+        this.remove_on_scroll=true;let changed=this.grid().scroll_to(7);this.timer=services::after(0.2f64,this.scroll_removed);
+    }
+    fn scroll_removed(ref this) {
+        assert !this.remove_on_scroll;assert core::kind_of(check::node("rows"))==props::K_LABEL;check::log("PASS: collection removal from scroll observer");this.passed=true;assert host::close().is_ok();
+    }
+}
+fn run() -> i32 {
+    let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();connector::enable();
+    assert host::run((*p).build(),"Facet WinUI list lifecycle",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;connector::disable();check::log("PASS: list lifecycle teardown");return 0;
+}

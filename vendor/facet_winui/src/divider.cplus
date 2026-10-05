@@ -1,0 +1,100 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/split" as split;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "./record" as record;
+import "./native" as native;
+import "./style" as style;
+struct State {thumb: rt::Object,line: rt::Object,token: ui::EventRegistrationToken,inserted: bool,sidebars: [rt::Object;2]}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn thickness(p: *split::SplitProps) -> f64 {
+    if (*p).collapsed_leading || (*p).collapsed_trailing {return 0.0f64;}
+    return if (*p).divider_thickness>0.0f64 {(*p).divider_thickness} else {0.0f64};
+}
+// Layout and drag share the same bounds. Subtract the divider from the extent
+// so trailing constraints describe the actual pane rather than pane plus gap.
+fn constrained(p: *split::SplitProps,extent: f64,wanted: f64) -> f64 {
+    var available=extent-thickness(p);if available<0.0f64 {available=0.0f64;}
+    var lo=if (*p).min_leading>0.0f64 {(*p).min_leading} else {0.0f64};
+    lo=split::floor_with_max(lo,(*p).max_trailing,available);
+    var hi=available;if (*p).min_trailing>0.0f64 {hi=hi-(*p).min_trailing;}
+    if (*p).max_leading>0.0f64 && hi>(*p).max_leading {hi=(*p).max_leading;}
+    var result=wanted;if result>hi {result=hi;}if result<lo {result=lo;}
+    // Impossible constraints prefer the leading floor, bounded by the host.
+    if result>available {result=available;}if result<0.0f64 {result=0.0f64;}
+    return result;
+}
+fn move_by(r: *record::View,delta: f64) {
+    let p: *split::SplitProps=(*core::node_data((*r).node)).props as *split::SplitProps;
+    if (*p).collapsed_leading || (*p).collapsed_trailing {return;}
+    let frame=(*(*r).node).frame();let horizontal=(*p).axis==split::SplitAxis::Columns;
+    let extent=if horizontal {frame.width} else {frame.height};var current=constrained(p,extent,(*p).position);
+    match core::child_of((*r).node,0) {option::Option::Some(child)=>{let f=(*child).frame();current=if horizontal {f.width} else {f.height};},option::Option::None=>{}}
+    // Multiple drag deltas may arrive before the next layout pass.
+    if (core::dirty_of((*r).node)&split::P_POSITION)!=0 {current=constrained(p,extent,(*p).position);}
+    let next=constrained(p,extent,current+delta);if next==current {return;}
+    (*p).position=next;core::touch((*r).node,split::P_POSITION);
+    let call: fn(*u8,*u8)=(*p).on_move;let context: *u8=(*p).ctx;if call!=props::no_handler {call(r as *u8,context);}
+}
+fn dragged(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View;let p: *split::SplitProps=(*core::node_data((*r).node)).props as *split::SplitProps;
+    let event: ui::IDragDeltaEventArgs=native::must::[ui::IDragDeltaEventArgs](ui::IDragDeltaEventArgs::query(args));
+    let delta: f64=if (*p).axis==split::SplitAxis::Columns {native::must::[f64](event.horizontal_change())} else {native::must::[f64](event.vertical_change())};
+    move_by(r,delta);return rt::Status {code:0};
+}
+fn attach(r: *record::View) {
+    let thumb: ui::Thumb=native::must::[ui::Thumb](ui::Thumb::new());let handler: ui::DragDeltaEventHandler=native::must::[ui::DragDeltaEventHandler](ui::DragDeltaEventHandler::new(dragged,r as *u8));let token: ui::EventRegistrationToken=native::must::[ui::EventRegistrationToken](thumb.add_drag_delta(handler.object()));
+    let line=native::must::[ui::Border](ui::Border::new());let visual=native::must::[ui::IUIElement](ui::IUIElement::query(line.object()));native::check(visual.set_is_hit_test_visible(false));
+    let owner: box::Box[State]=match box::new::[State](State {thumb:thumb.object(),line:line.object(),token:token,inserted:false,sidebars:#zero::[[rt::Object;2]]()}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();LIVE=LIVE+1;return;
+}
+// Sidebar is a presentation hint, not another layout owner. Use the same
+// theme resource as WinUI NavigationView's pane and retain the application's
+// native children. ThemeResource also supplies the high-contrast fallback.
+fn pane_roles(r: *record::View) {
+    let s=(*r).extra as *State;let p: *split::SplitProps=(*core::node_data((*r).node)).props as *split::SplitProps;let parent=(*(*r).node).frame();
+    var i: usize=0;while i<2 {
+        let role=if i==0 {(*p).role_leading} else {(*p).role_trailing};
+        var child: *core::Node=0 as *core::Node;if let option::Option::Some(n)=core::child_of((*r).node,i) {child=n;}
+        let visible=role==split::PaneRole::Sidebar && child.is_not_null() && (*core::node_data(child)).common.is_visible && core::display_of(child)!=flex::Display::None;
+        if visible && (*s).sidebars[i].is_null() {
+            let reader=native::must::[ui::IXamlReaderStatics](ui::XamlReader::i_xaml_reader_statics_factory());
+            (*s).sidebars[i]=native::must::[rt::Object](reader.load("<Border xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" Background=\"{ThemeResource NavigationViewDefaultPaneBackground}\" CornerRadius=\"8\" IsHitTestVisible=\"False\"/>"));
+            let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_z_index((*s).sidebars[i],-2147483647-1));
+            let a=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());native::check(a.set_accessibility_view((*s).sidebars[i],ui::accessibility_view_raw_value));
+            let panel=native::must::[ui::IPanel](ui::IPanel::query((*r).content));let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));native::check(children.append((*s).sidebars[i]));
+        }
+        if !(*s).sidebars[i].is_null() {
+            let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*s).sidebars[i]));native::check(visual.set_visibility(if visible {ui::visibility_visible} else {ui::visibility_collapsed}));
+            if visible {
+                let frame=(*child).frame();let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*s).sidebars[i]));native::check(element.set_width(frame.width));native::check(element.set_height(frame.height));
+                let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left((*s).sidebars[i],frame.left-parent.left));native::check(canvas.set_top((*s).sidebars[i],frame.top-parent.top));
+            }
+        }
+        i=i+1;
+    }
+}
+fn place(r: *record::View,width: f64,height: f64) {
+    let s: *State=(*r).extra as *State;let p: *split::SplitProps=(*core::node_data((*r).node)).props as *split::SplitProps;
+    if !(*s).inserted {let panel: ui::IPanel=native::must::[ui::IPanel](ui::IPanel::query((*r).content));let children: ui::IVector_Microsoft_UI_Xaml_UIElement=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));native::check(children.append((*s).line));native::check(children.append((*s).thumb));(*s).inserted=true;}
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*s).thumb));let horizontal: bool=(*p).axis==split::SplitAxis::Columns;
+    var position: f64=(*p).position;match core::child_of((*r).node,0) {option::Option::Some(child)=>{let f=(*child).frame();position=if horizontal {f.width} else {f.height};},option::Option::None=>{}}
+    let size=thickness(p);
+    let hit=if size>0.0f64 && size<6.0f64 {6.0f64} else {size};
+    native::check(element.set_min_width(0.0f64));native::check(element.set_min_height(0.0f64));
+    native::check(element.set_width(if horizontal {hit} else {width}));native::check(element.set_height(if horizontal {height} else {hit}));
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*s).thumb));native::check(visual.set_visibility(if size>0.0f64 {ui::visibility_visible} else {ui::visibility_collapsed}));
+    let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left((*s).thumb,if horizontal {position+(size-hit)/2.0f64} else {0.0f64}));native::check(canvas.set_top((*s).thumb,if horizontal {0.0f64} else {position+(size-hit)/2.0f64}));native::check(canvas.set_z_index((*s).thumb,100));
+    let control: ui::IControl=native::must::[ui::IControl](ui::IControl::query((*s).thumb));let clear=style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.0f64));native::check(control.set_background(clear));native::check(control.set_border_brush(clear));native::check(control.set_border_thickness(ui::Thickness {left:0.0f64,top:0.0f64,right:0.0f64,bottom:0.0f64}));
+    let line=native::must::[ui::IBorder](ui::IBorder::query((*s).line));native::check(line.set_background(style::brush(if (*p).divider_color.is_set() {(*p).divider_color} else {vocab::Color::outline()})));
+    let line_element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*s).line));native::check(line_element.set_width(if horizontal {size} else {width}));native::check(line_element.set_height(if horizontal {height} else {size}));
+    let line_visual=native::must::[ui::IUIElement](ui::IUIElement::query((*s).line));native::check(line_visual.set_visibility(if size>0.0f64 {ui::visibility_visible} else {ui::visibility_collapsed}));
+    native::check(canvas.set_left((*s).line,if horizontal {position} else {0.0f64}));native::check(canvas.set_top((*s).line,if horizontal {0.0f64} else {position}));native::check(canvas.set_z_index((*s).line,99));
+    let a: ui::IAutomationPropertiesStatics=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());native::check(a.set_name((*s).thumb,"Resize panes"));pane_roles(r);return;
+}
+fn release(r: *record::View) {let s: *State=(*r).extra as *State;let thumb: ui::IThumb=native::must::[ui::IThumb](ui::IThumb::query((*s).thumb));native::check(thumb.remove_drag_delta((*s).token));let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;LIVE=LIVE-1;return;}

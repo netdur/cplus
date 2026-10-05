@@ -1,0 +1,79 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/menu" as menu;
+import "facet/toolbar_item" as toolbar;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_agent/agent" as agent;
+import "facet_agent_winui/facet_agent_winui" as connector;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/command_strip" as strip;
+import "facet_winui/record" as record;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "./actions" as actions;
+fn tool(key: str) -> toolbar::ToolbarItem {return match toolbar::find(key) {option::Option::Some(v)=>v,option::Option::None=>{assert false;#zero::[toolbar::ToolbarItem]()}};}
+fn m(key: str) -> menu::Menu {return match menu::find(key) {option::Option::Some(v)=>v,option::Option::None=>{assert false;#zero::[menu::Menu]()}};}
+fn visual(key: str) -> native::IUIElement {return check::must::[native::IUIElement](native::IUIElement::query(check::object(key)));}
+fn left(key: str) -> f64 {return check::must::[f64](check::must::[native::ICanvasStatics](native::Canvas::i_canvas_statics_factory()).get_left(check::object(key)));}
+fn top(key: str) -> f64 {return check::must::[f64](check::must::[native::ICanvasStatics](native::Canvas::i_canvas_statics_factory()).get_top(check::object(key)));}
+fn before(a: str,b: str) {assert top(a)==top(b);assert left(a)<left(b);assert check::must::[i32](visual(a).tab_index())<check::must::[i32](visual(b).tab_index());}
+fn panel() -> rt::Object {return (*(core::view_of(check::node("d0")) as *record::View)).slot.clone();}
+fn private_command(expected: bool) {let nodes=agent::in_app().describe_ui();var found=false;var i: usize=0;while i<nodes.count() {if let option::Option::Some(n)=nodes.at_ptr(i) {if (*n).id.view()=="secret-tool" {found=true;assert (*n).readable!=expected;if expected {assert (*n).text.is_empty();}}}i=i+1;}assert found;}
+struct Probe {identity: usize,clicks: i32,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn clicked(ref this,sender: *u8) {this.clicks=this.clicks+1;assert mount::remove("primary");}
+    fn build(ref this) -> core::Node {
+        var private=@ui {column(key:"private") {toolbar_item("Secret",key:"secret-tool",placement:vocab::ToolbarPlacement::Secondary)}};
+        private.set_agent(vocab::Agent::Private);
+        var hidden=@ui {column(key:"hidden") {toolbar_item("Hidden",key:"hidden-tool")}};hidden.set_visible(false);
+        return @ui {column(key:"root") {
+            column(key:"menus") {menu("Low",key:"low",priority:-1) menu("First",key:"first",priority:5) menu("Tie",key:"tie",priority:5)}
+            column(key:"tools") {toolbar_item("Default zero",key:"d0") toolbar_item("Secondary",key:"secondary",placement:vocab::ToolbarPlacement::Secondary)
+                toolbar_item("Primary",key:"primary",placement:vocab::ToolbarPlacement::Primary,priority:5,on_clicked:this.clicked)
+                toolbar_item("Default one",key:"d1") toolbar_item("Sidebar",key:"sidebar",placement:vocab::ToolbarPlacement::Sidebar)}
+            private hidden text_field("Original",key:"editor")
+        }.padding(20.0f64)};
+    }
+    fn ready(ref this) {this.timer=services::after(0.3f64,this.initial);}
+    fn initial(ref this) {
+        before("first","tie");before("tie","low");before("sidebar","primary");before("primary","d0");before("d0","d1");before("d1","secondary");
+        assert top("d0")>top("first");assert top("root")>top("d0");assert check::must::[i32](visual("hidden-tool").visibility())==native::visibility_collapsed;
+        let first=match core::child_of(check::node("menus"),0) {option::Option::Some(v)=>v,option::Option::None=>{assert false;0 as *core::Node}};assert (*first).key()=="low";
+        private_command(true);this.identity=strip::identity(check::object("d1"));
+        let focus=check::must::[bool](visual("d1").focus(native::focus_state_programmatic));assert focus;
+        let edit=check::must::[native::ITextBox](native::ITextBox::query(check::object("editor")));assert edit.set_text("Retained").is_ok();
+        let a=m("low").set_priority(9223372036854775807i64);let b=tool("d1").set_placement(vocab::ToolbarPlacement::Primary).set_priority(9);
+        core::set_agent(check::node("private"),vocab::Agent::Open);this.timer=services::after(0.2f64,this.updated);
+    }
+    fn updated(ref this) {
+        before("low","first");before("sidebar","d1");before("d1","primary");assert strip::identity(check::object("d1"))==this.identity;
+        assert check::must::[i32](visual("d1").focus_state())!=native::focus_state_unfocused;private_command(false);
+        let edit=check::must::[native::ITextBox](native::ITextBox::query(check::object("editor")));assert check::must::[text::Text](edit.text())=="Retained";
+        let a=tool("d1").set_placement(vocab::ToolbarPlacement::Default).set_priority(0);let b=m("low").set_priority(5);
+        core::set_visible(check::node("hidden"),true);core::set_enabled(check::node("hidden"),false);this.timer=services::after(0.2f64,this.ties);
+    }
+    fn ties(ref this) {
+        before("low","first");before("first","tie");before("d0","d1");assert check::must::[i32](visual("hidden-tool").visibility())==native::visibility_visible;
+        assert !check::must::[bool](check::must::[native::IControl](native::IControl::query(check::object("hidden-tool"))).is_enabled());
+        let narrow=strip::layout(check::node("root"),panel(),140.0f64);assert narrow>150.0f64;
+        assert top("d1")>top("d0");core::touch(check::node("root"),0u64);
+        check::log("PASS: menu/toolbar placement, priority, stable ties, native identity/focus, inherited visibility/enabled/privacy and narrow wrapping");
+        actions::invoke("primary");assert this.clicks==1;this.timer=services::after(0.2f64,this.removed);
+    }
+    fn removed(ref this) {
+        assert !mount::remove("primary");assert mount::remove("menus");assert mount::remove("private");assert mount::remove("hidden");assert mount::remove("tools");this.timer=services::after(0.2f64,this.finish);
+    }
+    fn finish(ref this) {
+        assert top("root")==0.0f64;check::log("PASS: command removal from callback and empty strip restore content area");
+        var launcher=ui::menu("Live at close",key:"close-menu");assert launcher.add_child(ui::menu_item("Action",key:"close-action")).is_ok();
+        let old=mount::replace("editor",@ui {column {launcher toolbar_item("Live toolbar",key:"close-tool")}});this.timer=services::after(0.2f64,this.close_live);
+    }
+    fn close_live(ref this) {assert top("root")>0.0f64;this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();connector::enable();assert host::run((*p).build(),"Facet WinUI commands",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0 && host::live_subscriptions()==0;connector::disable();check::log("PASS: command strip teardown");return 0;}

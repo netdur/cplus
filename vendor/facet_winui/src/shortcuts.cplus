@@ -1,0 +1,68 @@
+import "stdlib/text" as text;
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./record" as record;
+import "./native" as native;
+import "./presentation" as presentation;
+fn key_code(key: str) -> i32 {
+    let owned=text::from_str(key).lowercased();let value=owned.view();
+    if value.count()==1 {match value.byte_at(0) {option::Option::Some(c)=>{if c>=97u8 && c<=122u8 {return c as i32-32;}if c>=48u8 && c<=57u8 {return c as i32;}},option::Option::None=>{}}}
+    if value.has_prefix("f") && value.count()>=2 && value.count()<=3 {
+        var number: i32=0;var i: usize=1;while i<value.count() {match value.byte_at(i) {option::Option::Some(c)=>{if c<48u8 || c>57u8 {return 0;}number=number*10+c as i32-48;},option::Option::None=>{return 0;}}i=i+1;}
+        if number>=1 && number<=24 {return 111+number;}
+    }
+    if value=="enter" || value=="return" {return 13;}if value=="escape" || value=="esc" {return 27;}if value=="space" {return 32;}if value=="tab" {return 9;}
+    if value=="backspace" {return 8;}if value=="delete" {return 46;}if value=="insert" {return 45;}if value=="home" {return 36;}if value=="end" {return 35;}
+    if value=="left" {return 37;}if value=="up" {return 38;}if value=="right" {return 39;}if value=="down" {return 40;}if value=="pageup" {return 33;}if value=="pagedown" {return 34;}return 0;
+}
+fn modifiers(value: vocab::KeyModifiers) -> u32 {return match value {vocab::KeyModifiers::Alt=>ui::virtual_key_modifiers_menu,vocab::KeyModifiers::Ctrl=>ui::virtual_key_modifiers_control,vocab::KeyModifiers::Shift=>ui::virtual_key_modifiers_shift,vocab::KeyModifiers::Cmd=>ui::virtual_key_modifiers_windows,vocab::KeyModifiers::Windows=>ui::virtual_key_modifiers_windows,_=>ui::virtual_key_modifiers_none};}
+struct State {object: rt::Object,collection: rt::Object,token: ui::EventRegistrationToken,opaque record: *record::View,call: fn(rt::Object,rt::Object,*u8)->rt::Status}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn entries(value: rt::Object) -> ui::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator {let visual=native::must::[ui::IUIElement](ui::IUIElement::query(value));return native::must::[ui::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator](ui::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator::query(native::must::[rt::Object](visual.keyboard_accelerators())));}
+fn invoked(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let s=ctx as *State;let r=(*s).record;var current=r;
+    while current.is_not_null() {let common=#addr_of((*core::node_data((*current).node)).common);if !(*common).is_enabled || !(*common).is_visible {return rt::Status {code:0};}current=(*current).parent as *record::View;}
+    let event=native::must::[ui::IKeyboardAcceleratorInvokedEventArgs](ui::IKeyboardAcceleratorInvokedEventArgs::query(args));native::check(event.set_handled(true));
+    let parent=(*r).parent as *record::View;var flyout=rt::Object::empty();
+    if (*parent).kind==props::K_MENU {let button=native::must::[ui::IButton](ui::IButton::query((*parent).object));flyout=native::must::[rt::Object](button.flyout());}
+    else {let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*parent).object));flyout=native::must::[rt::Object](visual.context_flyout());}
+    if !flyout.is_null() {let base=native::must::[ui::IFlyoutBase](ui::IFlyoutBase::query(flyout));native::check(base.hide());}
+    // The application may delete the action and this registration. No state
+    // is read after calling the regular action delivery path.
+    let call=(*s).call;return call((*r).object,args,r as *u8);
+}
+fn release(r: *record::View) {
+    if (*r).shortcut.is_null() {return;}
+    let owner: box::Box[State]=box::from_raw::[State]((*r).shortcut);(*r).shortcut=0 as *u8;let s=owner.ptr();
+    let accelerator=native::must::[ui::IKeyboardAccelerator](ui::IKeyboardAccelerator::query((*s).object));native::check(accelerator.remove_invoked((*s).token));LIVE=LIVE-1;
+    // During Window.Closed WinUI is already retiring its accelerator lists.
+    // Detach our callback, then let that native teardown own collection removal.
+    if presentation::is_shutting_down() {return;}
+    // Removing the registration breaks host ownership. Do not mutate ScopeOwner
+    // on a retiring accelerator: WinUI rejects that write during window close.
+    // The detached object and its scope reference drop with this state.
+    let list=native::must::[ui::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator](ui::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator::query((*s).collection));let identity=native::must::[rt::Object]((*s).object.query(rt::unknown_iid()));var i: u32=0;
+    while i<native::must::[u32](list.size()) {let entry=native::must::[rt::Object](list.get_at(i));if native::must::[rt::Object](entry.query(rt::unknown_iid())).raw()==identity.raw() {native::check(list.remove_at(i));break;}i=i+1;}
+}
+fn apply(r: *record::View,call: fn(rt::Object,rt::Object,*u8)->rt::Status) {
+    if (*r).kind!=props::K_CONTEXT_MENU_ITEM {return;}
+    let p: *props::ContextMenuItemProps=(*core::node_data((*r).node)).props as *props::ContextMenuItemProps;let key=key_code((*p).shortcut_key.view());let parent=(*r).parent as *record::View;
+    let item=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));
+    if key==0 || parent.is_null() {release(r);native::check(item.set_keyboard_accelerator_text_override(""));return;}
+    if (*r).shortcut.is_null() {
+        let accelerator=native::must::[ui::KeyboardAccelerator](ui::KeyboardAccelerator::new());let list=entries((*parent).object);
+        let owner=match box::new::[State](State {object:accelerator.object(),collection:list.object(),token:#zero::[ui::EventRegistrationToken](),record:r,call:call}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};let s=owner.ptr();
+        let handler=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Input_KeyboardAccelerator_Microsoft_UI_Xaml_Input_KeyboardAcceleratorInvokedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Input_KeyboardAccelerator_Microsoft_UI_Xaml_Input_KeyboardAcceleratorInvokedEventArgs::new(invoked,s as *u8));
+        (*s).token=native::must::[ui::EventRegistrationToken](accelerator.add_invoked(handler.object()));native::check(list.append(accelerator.object()));(*r).shortcut=owner.into_raw();LIVE=LIVE+1;
+    }
+    let s=(*r).shortcut as *State;let accelerator=native::must::[ui::IKeyboardAccelerator](ui::IKeyboardAccelerator::query((*s).object));native::check(accelerator.set_key(key));native::check(accelerator.set_modifiers(modifiers((*p).shortcut_modifiers)));native::check(accelerator.set_is_enabled((*core::node_data((*r).node)).common.is_enabled));
+    native::check(accelerator.set_scope_owner(if (*parent).kind==props::K_CONTEXT_MENU || (*parent).kind==props::K_SWIPEABLE {(*parent).object.clone()} else {rt::Object::empty()}));
+    let prefix=match (*p).shortcut_modifiers {vocab::KeyModifiers::Alt=>"Alt+",vocab::KeyModifiers::Ctrl=>"Ctrl+",vocab::KeyModifiers::Shift=>"Shift+",vocab::KeyModifiers::Cmd=>"Win+",vocab::KeyModifiers::Windows=>"Win+",_=>""};
+    var label=text::from_str(prefix);let appended=label.append(text::from_str((*p).shortcut_key.view()).uppercased().view());native::check(item.set_keyboard_accelerator_text_override(label.view()));
+}

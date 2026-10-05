@@ -5,20 +5,38 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/vocabulary" as vocab;
+import "facet/hybrid_web" as hybrid;
+import "facet/label" as label;
+import "facet/mount" as mount;
+import "stdlib/option" as option;
 import "../shell" as shell;
 
 struct WebDemo {
-    n: i32,
+    n: i32,received: i32,resources: i32,initializing: i32,initialized: i32,
 }
 
 impl WebDemo {
-    fn new() -> WebDemo { return WebDemo { n: 0 }; }
+    fn new() -> WebDemo { return #zero::[WebDemo](); }
+    fn status(ref this) {
+        if let option::Option::Some(l)=label::find("web:messages") {let changed=l.set_text("Page messages: ${this.received}");}
+        if let option::Option::Some(l)=label::find("web:resources") {let changed=l.set_text("Resources: ${this.resources}");}
+        if let option::Option::Some(l)=label::find("web:lifecycle") {let changed=l.set_text("Starting: ${this.initializing} / Ready: ${this.initialized}");}
+    }
+    fn starting(ref this,sender: *u8) {this.initializing=this.initializing+1;this.status();}
+    fn ready(ref this,sender: *u8) {this.initialized=this.initialized+1;this.status();}
+    fn message_received(ref this,sender: *u8) {this.received=this.received+1;this.status();}
+    fn resource(ref this,sender: *u8) {this.resources=this.resources+1;this.status();}
+    fn local(ref this,sender: *u8) {
+        this.n=0;this.received=0;this.resources=0;this.initializing=0;this.initialized=0;this.status();
+        let old=mount::replace("web:view",ui::hybrid_web(key:"web:view",hybrid_root:"assets/hybrid",default_file:"index.html",on_web_view_initializing:this.starting,on_web_view_initialized:this.ready,on_raw_message_received:this.message_received,on_web_resource_requested:this.resource).height(320.0f64).grow(1.0f64));
+    }
+    fn send(ref this,sender: *u8) {if let option::Option::Some(c)=hybrid::find("web:view") {this.n=this.n+1;let changed=c.send_message("Hello from Facet #${this.n}");}}
 }
 
 impl WebDemo: component::Component {
     fn build(ref this) -> core::Node {
         var body: core::Builder = core::Builder::new();
-        body.add(shell::caption("web  ·  WKWebView host"));
+        body.add(shell::caption("web  ·  native browser and local hybrid content"));
         body.add(ui::label(
             "source is a URL or HTML document string. Layout with grow/height; navigation callbacks optional.",
             key: "web:note",
@@ -27,6 +45,8 @@ impl WebDemo: component::Component {
             max_lines: 3,
             line_break: vocab::LineBreak::WordWrap,
         ));
+        body.add(@ui {row {button("Open local demo",key:"web:local",on_click:this.local) button("Send to page",key:"web:send",on_click:this.send)}.gap(10.0f64)});
+        body.add(@ui {row {label("Page messages: 0",key:"web:messages") label("Resources: 0",key:"web:resources") label("Starting: 0 / Ready: 0",key:"web:lifecycle")}.gap(16.0f64)});
         body.add(ui::web(
             "https://example.com",
             key: "web:view",

@@ -13760,6 +13760,15 @@ impl<'a> FnState<'a> {
             // value into the same span-keyed table `#env` uses, so the
             // lowering is identical for all three.
             "platform" | "arch" | "target" => Some(self.gen_intrinsic_env(span)),
+            // `#target_feature("avx2")` — an `i1` constant; sema has checked
+            // the name, so an unknown one cannot reach here.
+            "target_feature" => {
+                let on = match &args[0].kind {
+                    ExprKind::StrLit(n) => crate::target::cpu_feature_enabled(n).unwrap_or(false),
+                    _ => false,
+                };
+                Some((if on { "true" } else { "false" }.to_string(), Ty::Bool))
+            }
             "size_of" => Some(self.gen_intrinsic_size_of(type_args)),
             "align_of" => Some(self.gen_intrinsic_align_of(type_args)),
             // v0.0.12 G-028: `#zero::[T]()` — alloca a fresh T-sized slot,

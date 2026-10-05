@@ -13,15 +13,26 @@ import "facet/component" as component;
 import "facet/label" as label;
 import "facet/vocabulary" as vocab;
 import "facet/icons" as icons;
+import "facet/symbol" as symbol;
 import "stdlib/option" as option;
 import "../shell" as shell;
 
 struct Icons {
     clicks: i32,
+    bundled: bool,
 }
 
 impl Icons {
-    fn new() -> Icons { return Icons { clicks: 0 }; }
+    fn new() -> Icons { return Icons { clicks: 0,bundled:false }; }
+
+    fn switch_symbol(ref this,sender: *u8) {
+        this.bundled=!this.bundled;
+        if let option::Option::Some(v)=symbol::find("ico:system") {
+            if this.bundled {let changed=v.set_icon(icons::home).set_size(32.0f64).set_color(vocab::Color::primary());}
+            else {let changed=v.set_name("Print").set_size(48.0f64).set_color(vocab::Color::ink());}
+        }
+        if let option::Option::Some(v)=label::find("ico:system-status") {let changed=v.set_text(if this.bundled {"Bundled: home (32 pt)"} else {"Windows: Print (48 pt)"});}
+    }
 
     fn on_icon(ref this, sender: *u8) {
         this.clicks = this.clicks +% 1;
@@ -80,9 +91,18 @@ impl Icons: component::Component {
             color: vocab::Color::ink()));
         body.add(core::row(syms).gap(16.0));
 
+        body.add(shell::caption("Windows system symbols · native platform names"));
+        body.add(@ui {row {
+            symbol::system_symbol("Print",key:"ico:system",size:48.0f64)
+            symbol::system_symbol("Accept",key:"ico:accept",size:32.0f64,color:vocab::Color::primary())
+            symbol::system_symbol("BackToWindow",key:"ico:restore",size:32.0f64)
+            button("Switch system / bundled",key:"ico:switch",on_click:this.switch_symbol)
+        }.gap(16.0).align(flex::Align::Center)});
+        body.add(ui::label("Windows: Print (48 pt)",key:"ico:system-status"));
+
         return shell::panel(
             "Icons",
-            "Two icon systems: AppKit SF Symbols via icon_button(source), and Material codepoints via symbol(icons::…).",
+            "Bundled Material symbols work across platforms. System symbol names select the platform's own icons.",
             core::column(body).gap(12.0),
             howto: "ui::icon_button(\"gearshape\", key: \"k\", on_clicked: this.on_icon)\nui::symbol(icons::home, size: 24.0, color: Color::ink())",
         );

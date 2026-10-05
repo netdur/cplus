@@ -1,0 +1,2 @@
+// Test/discovery root; consumers normally import winrt/runtime.
+import "./runtime" as runtime;

@@ -662,6 +662,7 @@ fn core_tools() -> vec::Vec[json::Value] {
     var p_set_text: vec::Vec[json::Member] = no_props();
     p_set_text.append(prop("id", "string", "The node id of a text input."));
     p_set_text.append(prop("value", "string", "The text to place in it. An explicit empty string clears the field."));
+    p_set_text.append(prop("base_version", "number", "Optional edit version returned by read_text. Supply it when present; on version_conflict, read again before retrying."));
     out.append(tool("set_text",
         "Replace the contents of a text input. \"value\" is required: absent would read as an empty string and silently clear the field.",
         p_set_text, required2("id", "value")));
@@ -683,7 +684,7 @@ fn core_tools() -> vec::Vec[json::Value] {
     var p_readtext: vec::Vec[json::Member] = no_props();
     p_readtext.append(prop("id", "string", "Node id, from describe_ui."));
     out.append(tool("read_text",
-        "The WHOLE text of one node. `describe_ui` clips a long value and marks it `text_truncated` with a `text_len` — this is how you get the rest. A node behind a tier you cannot read answers the same empty string it does there: asking twice is not a way past the gate.",
+        "The WHOLE text of one node. `describe_ui` clips a long value and marks it `text_truncated` with a `text_len` — this is how you get the rest. A node behind a tier you cannot read answers the same empty string it does there: asking twice is not a way past the gate. When supported and readable, version is the stamp to pass to set_text.base_version.",
         p_readtext, required1("id")));
 
     var p_runs: vec::Vec[json::Member] = no_props();
@@ -1462,6 +1463,11 @@ fn route_verb(
                         m.append(member("id", jstr({ want.view() })));
                         m.append(member("text", jstr({ body.view() })));
                         m.append(member("readable", jbool({ (*n).readable })));
+                        if (*n).readable && vt.text_version.is_not_null() {
+                            if let option::Option::Some(version)=(vt.text_version)(surf,grant,want.view()) {
+                                m.append(member("version", jnum(version as f64)));
+                            }
+                        }
                         return ok_response(id, json::Value::Object(m));
                     }
                 }
@@ -1495,7 +1501,13 @@ fn route_verb(
         if !params.has("value") { return missing_param(id, "set_text", "value"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
         let value: text::Text = val_as_text(obj_get(params, "value"));
-        let base: u64 = val_as_number(obj_get(params, "base_version")) as u64;
+        var base: u64 = 0;
+        if params.has("base_version") {
+            guard let json::Value::Number(n) = obj_get(params, "base_version") else { return err_response(id, -32602.0f64, "base_version must be a nonnegative integer"); };
+            if n != n || n < 0.0f64 || n > 9007199254740991.0f64 { return err_response(id, -32602.0f64, "base_version is outside the exact integer range"); }
+            base = n as u64;
+            if (base as f64) != n { return err_response(id, -32602.0f64, "base_version must be an integer"); }
+        }
         let o: surface::Outcome = (vt.set_text)(surf, grant, { target }, { value }, base);
         return ok_response(id, outcome_result_for(o, { target.view() }));
     }
@@ -2282,6 +2294,9 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
                 if netsys::errno() == netsys::eintr() {
                     continue;               // the loop's park_begin re-checks
                 }
+                if #platform() == "windows" && netsys::errno() == netsys::eagain() {
+                    if netsys::wait_ready(fd, false, 100) >= 0 { continue; }
+                }
             }
             if n == 0 {
                 return - 1;
@@ -2302,10 +2317,15 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
 fn write_all(fd: i32, ptr: *u8, len: usize) -> bool {
     var off: usize = 0;
     while off < len {
+        if thread::park_begin() { thread::park_end(); return; }
         let w: isize = { netsys::send_fd(fd, ptr + off, len -% off) };
+        thread::park_end();
         if w <= 0 {
             if w < 0 {
                 if netsys::errno() == netsys::eintr() { continue; }
+                if #platform() == "windows" && netsys::errno() == netsys::eagain() {
+                    if netsys::wait_ready(fd, true, 100) >= 0 { continue; }
+                }
             }
             return false;
         }
@@ -2438,6 +2458,15 @@ fn bind_reason(code: i32) -> str {
 // Serve connections on an already-bound, already-listening fd until accept
 // fails or the thread is cancelled. `unlink_on_exit` is for the UDS side, whose
 // bound file has to go when the loop ends.
+// Optional synchronous hop for thread-affine backends. The callback owns ALL
+// protocol dispatch (including restoring/capturing client identity) on its
+// target thread. The transport itself never touches protocol globals here.
+struct DispatchReply { body: text::Text, client: text::Text }
+struct RequestDispatcher {
+    opaque context: *u8,
+    call: fn(*u8, str, str) -> DispatchReply,
+}
+
 fn accept_loop(
     surf: *u8,
     vt: backend::Backend,
@@ -2446,6 +2475,7 @@ fn accept_loop(
     fd: i32,
     unlink_on_exit: bool,
     http: bool = false,
+    dispatcher: RequestDispatcher = #zero::[RequestDispatcher](),
 ) -> i32 {
     // ONE THREAD, MANY CONNECTIONS.
     //
@@ -2522,6 +2552,11 @@ fn accept_loop(
                 // `nc`. See netsys::set_nosigpipe and
                 // demo/bugs/02-iris-terminated-without-crash-report.md.
                 let _np: i32 = netsys::set_nosigpipe(conn);
+                // Windows cannot interrupt a blocking recv/send with a signal.
+                // Nonblocking I/O plus bounded readiness waits lets shutdown
+                // cancel even a peer that stops halfway through its HTTP body.
+                let interruptible: i32 = netsys::make_interruptible(conn);
+                if interruptible != 0 { let closed: i32 = netsys::close_fd(conn); continue; }
                 if conns.count() >= MAX_CONNS {
                     // REFUSED, NOT QUEUED. The bug this loop exists to fix is a
                     // caller waiting forever on a door that never opens; a
@@ -2563,13 +2598,14 @@ fn accept_loop(
                 // THE CONNECTION'S OWN IDENTITY, restored before dispatch and
                 // taken back after: `initialize` writes the global, and that
                 // answer belongs to this connection alone.
-                adopt_client(name);
+                let dispatched: bool = http && dispatcher.call != (0 as fn(*u8, str, str) -> DispatchReply);
+                if !dispatched { adopt_client(name.clone()); }
                 if http {
-                    served = serve_http_once(surf, vt, sub, policy, cfd, head_buf, body_buf);
+                    served = serve_http_once(surf, vt, sub, policy, cfd, head_buf, body_buf, dispatcher, #addr_of(name));
                 } else {
                     served = serve_fd_once(surf, vt, sub, policy, cfd);
                 }
-                let after: text::Text = text::from_str(current_client());
+                let after: text::Text = if dispatched { name.clone() } else { text::from_str(current_client()) };
                 let _s: status::Status = conns.set(
                     McpConn { fd: cfd, client: after }, at: k);
                 if served == 1 { stop = true; }
@@ -2751,6 +2787,9 @@ fn read_exact(fd: i32, buf: *u8, len: usize) -> bool {
         if r <= 0 {
             if r < 0 {
                 if netsys::errno() == netsys::eintr() { continue; }
+                if #platform() == "windows" && netsys::errno() == netsys::eagain() {
+                    if netsys::wait_ready(fd, false, 100) >= 0 { continue; }
+                }
             }
             return false;
         }
@@ -2832,6 +2871,8 @@ fn serve_http_once(
     fd: i32,
     head_buf: *u8,
     body_buf: *u8,
+    dispatcher: RequestDispatcher = #zero::[RequestDispatcher](),
+    client: *text::Text = 0 as *text::Text,
 ) -> i32 {
     loop {
         let head: HttpHead = read_http_head(fd, head_buf, HTTP_MAX_HEAD);
@@ -2858,7 +2899,16 @@ fn serve_http_once(
         if !read_exact(fd, body_buf, head.content_length) { return 2; }
 
         let body: str = { #str_from_raw_parts(body_buf, head.content_length) };
-        let resp: text::Text = handle_request(surf, vt, sub, auth::serve(policy), body);
+        var resp: text::Text = text::new();
+        if dispatcher.call != (0 as fn(*u8, str, str) -> DispatchReply) {
+            assert client.is_not_null();
+            let reply: DispatchReply = (dispatcher.call)(dispatcher.context, body, (*client).view());
+            if thread::cancelled() { return 1; }
+            resp = reply.body.clone();
+            *client = reply.client.clone();
+        } else {
+            resp = handle_request(surf, vt, sub, auth::serve(policy), body);
+        }
         // A NOTIFICATION IS ENTITLED TO NO REPLY, and over HTTP that is 202 with
         // no body rather than silence — the client is waiting on a response
         // whatever happens, so silence would hang it.
@@ -3671,6 +3721,7 @@ fn fake_backend() -> backend::Backend {
         set_caret: fake_set_caret,
         read_runs: fake_read_runs,
         invoke_menu: fake_invoke_menu,
+        text_version: 0 as fn(*u8, auth::Grant, str) -> option::Option[u64],
     };
 }
 

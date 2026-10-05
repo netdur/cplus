@@ -1,0 +1,78 @@
+import "stdlib/text" as text;
+import "stdlib/result" as result;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/vocabulary" as vocab;
+import "./native" as native;
+import "./style" as style;
+extern fn WindowsCreateString(source: *u16, length: u32, value: *usize) -> i32;
+extern fn WindowsGetStringRawBuffer(value: usize,length: *u32) -> *u16;
+extern fn LCMapStringEx(locale: *u16,flags: u32,source: *u16,count: i32,destination: *u16,capacity: i32,version: *u8,reserved: *u8,sort: isize) -> i32;
+extern fn malloc(size: usize) -> *u8;
+extern fn free(value: *u8);
+// Windows Unicode casing, applied only to the displayed copy. The invariant
+// locale keeps a tree's presentation independent of the machine's locale.
+fn transformed(value: str,mode: vocab::TextTransform) -> text::Text {
+    if value.is_empty() || (mode!=vocab::TextTransform::Uppercase && mode!=vocab::TextTransform::Lowercase) {return text::from_str(value);}
+    let source=native::must::[rt::HString](rt::HString::new(value));var length: u32=0;
+    let input=WindowsGetStringRawBuffer(source.raw(),#addr_of(length));assert length<=2147483647u32;
+    var locale: u16=0;let flags: u32=if mode==vocab::TextTransform::Uppercase {0x200u32} else {0x100u32};
+    let count=LCMapStringEx(#addr_of(locale),flags,input,length as i32,0 as *u16,0,0 as *u8,0 as *u8,0);
+    assert count>0;let buffer=malloc((count as usize)*2);assert buffer.is_not_null();
+    let written=LCMapStringEx(#addr_of(locale),flags,input,length as i32,buffer as *u16,count,0 as *u8,0 as *u8,0);
+    assert written==count;var raw: usize=0;let status=rt::Status {code:WindowsCreateString(buffer as *u16,written as u32,#addr_of(raw))};free(buffer);native::check(status);
+    let result=rt::HString::adopt(raw);return native::must::[text::Text](result.to_text());
+}
+fn breaking(label: ui::ITextBlock,value: vocab::LineBreak) {
+    let wrap=value==vocab::LineBreak::WordWrap || value==vocab::LineBreak::CharacterWrap;
+    native::check(label.set_text_wrapping(if wrap {ui::text_wrapping_wrap} else {ui::text_wrapping_no_wrap}));
+    // WinUI exposes trailing ellipsis only; head/middle use that fallback.
+    native::check(label.set_text_trimming(if wrap || value==vocab::LineBreak::NoWrap {ui::text_trimming_none} else {ui::text_trimming_character_ellipsis}));
+}
+fn line_height(label: ui::ITextBlock,value: f64) {
+    native::check(label.set_line_height(if value>0.0f64 {value} else {0.0f64}));
+    native::check(label.set_line_stacking_strategy(if value>0.0f64 {ui::line_stacking_strategy_block_line_height} else {ui::line_stacking_strategy_max_height}));
+}
+fn alignment(value: vocab::TextAlign) -> i32 {
+    return match value {vocab::TextAlign::Center=>ui::text_alignment_center,vocab::TextAlign::End=>ui::text_alignment_right,vocab::TextAlign::Justify=>ui::text_alignment_justify,_=>ui::text_alignment_left};
+}
+fn decoration(value: vocab::TextDecoration) -> u32 {
+    return match value {vocab::TextDecoration::Underline=>ui::text_decorations_underline,vocab::TextDecoration::Strikethrough=>ui::text_decorations_strikethrough,_=>ui::text_decorations_none};
+}
+fn spacing(value: f64,size: f64) -> i32 {return (value*1000.0f64/size) as i32;}
+fn vertical(value: vocab::TextAlign) -> i32 {
+    return match value {vocab::TextAlign::Center=>ui::vertical_alignment_center,vocab::TextAlign::End=>ui::vertical_alignment_bottom,vocab::TextAlign::Justify=>ui::vertical_alignment_stretch,_=>ui::vertical_alignment_top};
+}
+fn horizontal(value: vocab::TextAlign) -> i32 {
+    return match value {vocab::TextAlign::Center=>ui::horizontal_alignment_center,vocab::TextAlign::End=>ui::horizontal_alignment_right,vocab::TextAlign::Justify=>ui::horizontal_alignment_stretch,_=>ui::horizontal_alignment_left};
+}
+fn clear(value: rt::Object,property: rt::Object) {
+    let target: ui::IDependencyObject=native::must::[ui::IDependencyObject](ui::IDependencyObject::query(value));native::check(target.clear_value(property));
+}
+fn glyph(code: u32) -> text::Text {
+    var units: [u16;2]=#zero::[[u16;2]](); var length: u32=1;
+    if code>65535u32 {units[0]=(55296u32+(code-65536u32)/1024u32) as u16; units[1]=(56320u32+(code-65536u32)%1024u32) as u16; length=2;}
+    else {units[0]=code as u16;}
+    var handle: usize=0; native::check(rt::Status {code:WindowsCreateString(#addr_of(units) as *u16,length,#addr_of(handle))});
+    let owned: rt::HString=rt::HString::adopt(handle); return native::must::[text::Text](owned.to_text());
+}
+fn font(name: str) -> rt::Object {
+    let factory: ui::IFontFamilyFactory=native::must::[ui::IFontFamilyFactory](ui::FontFamily::i_font_family_factory_factory());
+    return native::must::[rt::Object](factory.create_instance_with_name(name));
+}
+fn runs(label: ui::ITextBlock, spans: vocab::Spans) {
+    let collection: ui::IVector_Microsoft_UI_Xaml_Documents_Inline=native::must::[ui::IVector_Microsoft_UI_Xaml_Documents_Inline](ui::IVector_Microsoft_UI_Xaml_Documents_Inline::query(native::must::[rt::Object](label.inlines())));
+    native::check(collection.clear()); var i: usize=0;
+    while i<spans.count() {
+        let span: *vocab::TextSpan=spans.at(i);let run: ui::Run=native::must::[ui::Run](ui::Run::new());native::check(run.set_text((*span).text.view()));
+        let element: ui::ITextElement=native::must::[ui::ITextElement](ui::ITextElement::query(run.object()));
+        if (*span).font_size>0.0f64 {native::check(element.set_font_size((*span).font_size));}
+        native::check(element.set_font_weight(style::weight((*span).font_weight)));
+        native::check(element.set_font_style(if (*span).is_italic {ui::font_style_italic} else {ui::font_style_normal}));
+        if (*span).color.is_set() {native::check(element.set_foreground(style::brush((*span).color)));}
+        if (*span).font_family.count()>0 {native::check(element.set_font_family(font((*span).font_family.view())));}
+        native::check(element.set_text_decorations(decoration((*span).decoration)));
+        native::check(collection.append(run.object()));i=i+1;
+    }
+    return;
+}

@@ -1,0 +1,36 @@
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./native" as native;
+import "./record" as record;
+
+// Alignment padding belongs to the allocated frame, not intrinsic text size.
+fn measure(value: rt::Object, available: ui::Size) -> ui::Size {
+    let text=native::must::[ui::ITextBlock](ui::ITextBlock::query(value));
+    let padding=native::must::[ui::Thickness](text.padding());
+    if padding.top!=0.0f64 {native::check(text.set_padding(#zero::[ui::Thickness]()));}
+    let layout=native::must::[ui::IUIElement](ui::IUIElement::query(value));
+    native::check(layout.measure(available));
+    let size=native::must::[ui::Size](layout.desired_size());
+    if padding.top!=0.0f64 {native::check(text.set_padding(padding));}
+    return size;
+}
+fn place(r: *record::View,width: f64,height: f64) {
+    let p: *props::LabelProps=(*core::node_data((*r).node)).props as *props::LabelProps;
+    let value=(*r).object.clone();
+    let text=native::must::[ui::ITextBlock](ui::ITextBlock::query(value));
+    var top: f64=0.0f64;
+    if (*p).vertical_align==vocab::TextAlign::Center || (*p).vertical_align==vocab::TextAlign::End {
+        let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));
+        let old_height=native::must::[f64](element.height());
+        native::check(element.set_height(#bitcast::[f64](0x7ff8000000000000u64)));
+        let size=measure(value,ui::Size {width:width as f32,height:#bitcast::[f32](0x7f800000u32)});
+        native::check(element.set_height(old_height));
+        let free=height-size.height as f64;
+        if free>0.0f64 {top=if (*p).vertical_align==vocab::TextAlign::Center {free/2.0f64} else {free};}
+    }
+    let old=native::must::[ui::Thickness](text.padding());
+    if old.top!=top {native::check(text.set_padding(ui::Thickness {left:0.0f64,top:top,right:0.0f64,bottom:0.0f64}));}
+}

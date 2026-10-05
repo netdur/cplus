@@ -1,0 +1,80 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/window_chrome" as chrome;
+import "facet/vocabulary" as vocab;
+import "./native" as native;
+import "./record" as record;
+import "./style" as style;
+import "./typography" as typography;
+
+struct State {buttons: [rt::Object;3],clicks: [ui::EventRegistrationToken;3],watch: rt::Object,entered: ui::EventRegistrationToken,exited: ui::EventRegistrationToken,moved: ui::EventRegistrationToken,got_focus: ui::EventRegistrationToken,lost_focus: ui::EventRegistrationToken,hover: bool}
+// Both receive the buttons' own record, so the host can tell which window
+// they belong to.
+static ACTION: fn(i32,*u8)=0 as fn(i32,*u8);
+static WINDOW_STATE: fn(*u8)->i32=0 as fn(*u8)->i32;
+static LIVE: i64=0;
+fn install(action: fn(i32,*u8),state: fn(*u8)->i32) {ACTION=action;WINDOW_STATE=state;}
+fn subscriptions() -> i64 {return LIVE;}
+// No record: the active window's state (host_of_view falls back to it).
+fn window_state(r: *record::View=0 as *record::View) -> i32 {let read=WINDOW_STATE;return if read.is_not_null() {read(r as *u8)} else {ui::overlapped_presenter_state_restored};}
+fn state(r: *record::View) -> *State {return (*r).extra as *State;}
+fn refresh(r: *record::View) {
+    let s=state(r);let p: *chrome::WindowButtonsProps=(*core::node_data((*r).node)).props as *chrome::WindowButtonsProps;
+    var focused=false;var i: usize=0;while i<3 {let v=native::must::[ui::IUIElement](ui::IUIElement::query((*s).buttons[i]));let mode=native::must::[i32](v.focus_state());if mode==ui::focus_state_keyboard || mode==ui::focus_state_programmatic {focused=true;}i=i+1;}
+    let show=(*p).style!=chrome::ButtonStyle::OnHover || (*s).hover || focused;
+    let panel=native::must::[ui::IUIElement](ui::IUIElement::query((*r).content));native::check(panel.set_opacity(if show {1.0f64} else {0.0f64}));native::check(panel.set_is_hit_test_visible(show));
+    let maximized=window_state(r)==ui::overlapped_presenter_state_maximized;
+    let button=native::must::[ui::IContentControl](ui::IContentControl::query((*s).buttons[1]));let label=native::must::[ui::ITextBlock](ui::ITextBlock::query(native::must::[rt::Object](button.content())));
+    native::check(label.set_text(typography::glyph(if maximized {0xe923u32} else {0xe922u32}).view()));
+    let automation=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());native::check(automation.set_name((*s).buttons[1],if maximized {"Restore"} else {"Maximize"}));
+}
+fn pointer(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;let s=state(r);
+    let event=native::must::[ui::IPointerRoutedEventArgs](ui::IPointerRoutedEventArgs::query(args));let point=native::must::[ui::IPointerPoint](ui::IPointerPoint::query(native::must::[rt::Object](event.get_current_point((*s).watch))));let position=native::must::[ui::Point](point.position());
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*s).watch));let size=native::must::[ui::Size](visual.render_size());
+    (*s).hover=position.x>=0.0f32 && position.y>=0.0f32 && position.x<size.width && position.y<size.height;refresh(r);return rt::Status {code:0};
+}
+fn focus(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {refresh(ctx as *record::View);return rt::Status {code:0};}
+fn click(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;if !(*core::node_data((*r).node)).common.is_enabled {return rt::Status {code:0};}
+    let identity=native::must::[rt::Object](sender.query(rt::unknown_iid()));var i: usize=0;
+    while i<3 {let item=native::must::[rt::Object]((*state(r)).buttons[i].query(rt::unknown_iid()));if item.raw()==identity.raw() {let call=ACTION;if call.is_not_null() {call(i as i32,r as *u8);}return rt::Status {code:0};}i=i+1;}
+    return rt::Status {code:0};
+}
+fn watch(r: *record::View,value: rt::Object) {
+    let s=state(r);
+    if !(*s).watch.is_null() {let old=native::must::[ui::IUIElement](ui::IUIElement::query((*s).watch));native::check(old.remove_pointer_entered((*s).entered));native::check(old.remove_pointer_exited((*s).exited));native::check(old.remove_pointer_moved((*s).moved));LIVE=LIVE-3;}
+    (*s).watch=value.clone();(*s).hover=false;
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query(value));let handler=native::must::[ui::PointerEventHandler](ui::PointerEventHandler::new(pointer,r as *u8));
+    (*s).entered=native::must::[ui::EventRegistrationToken](visual.add_pointer_entered(handler.object()));(*s).exited=native::must::[ui::EventRegistrationToken](visual.add_pointer_exited(handler.object()));(*s).moved=native::must::[ui::EventRegistrationToken](visual.add_pointer_moved(handler.object()));LIVE=LIVE+3;refresh(r);
+}
+fn attach(r: *record::View) {
+    let owner=match box::new::[State](#zero::[State]()) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();let s=state(r);
+    let panel=native::must::[ui::Canvas](ui::Canvas::new());(*r).content=panel.object();
+    let frame=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(panel.object()));native::check(frame.set_width(138.0f64));native::check(frame.set_height(32.0f64));native::check(frame.set_horizontal_alignment(ui::horizontal_alignment_right));
+    let border=native::must::[ui::IBorder](ui::IBorder::query((*r).object));native::check(border.set_child(panel.object()));native::check(border.set_background(style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.0f64))));
+    let entries=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](native::must::[ui::IPanel](ui::IPanel::query(panel.object())).children())));
+    let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());let automation=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());
+    var i: usize=0;while i<3 {
+        let button=native::must::[ui::Button](ui::Button::new());(*s).buttons[i]=button.object();let frame=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(button.object()));native::check(frame.set_width(46.0f64));native::check(frame.set_height(32.0f64));native::check(frame.set_min_width(0.0f64));native::check(canvas.set_left(button.object(),i as f64*46.0f64));
+        let control=native::must::[ui::IControl](ui::IControl::query(button.object()));native::check(control.set_padding(#zero::[ui::Thickness]()));native::check(control.set_border_thickness(#zero::[ui::Thickness]()));native::check(control.set_corner_radius(#zero::[ui::CornerRadius]()));native::check(control.set_background(style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.0f64))));
+        let label=native::must::[ui::TextBlock](ui::TextBlock::new());let text=native::must::[ui::ITextBlock](ui::ITextBlock::query(label.object()));native::check(text.set_font_family(typography::font("Segoe Fluent Icons")));native::check(text.set_font_size(10.0f64));native::check(text.set_text(typography::glyph(if i==0 {0xe921u32} else if i==1 {0xe922u32} else {0xe8bbu32}).view()));
+        let content=native::must::[ui::IContentControl](ui::IContentControl::query(button.object()));native::check(content.set_content(label.object()));
+        let name=if i==0 {"Minimize"} else if i==1 {"Maximize"} else {"Close"};native::check(automation.set_name(button.object(),name));let key=(*(*r).node).key();let suffix=if i==0 {"minimize"} else if i==1 {"maximize"} else {"close"};native::check(automation.set_automation_id(button.object(),"${key}:${suffix}"));
+        let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(click,r as *u8));let base=native::must::[ui::IButtonBase](ui::IButtonBase::query(button.object()));(*s).clicks[i]=native::must::[ui::EventRegistrationToken](base.add_click(handler.object()));native::check(entries.append(button.object()));i=i+1;
+    }
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(focus,r as *u8));(*s).got_focus=native::must::[ui::EventRegistrationToken](visual.add_got_focus(handler.object()));(*s).lost_focus=native::must::[ui::EventRegistrationToken](visual.add_lost_focus(handler.object()));LIVE=LIVE+5;watch(r,(*r).object);
+}
+fn apply(r: *record::View) {
+    let d=core::node_data((*r).node);let p: *chrome::WindowButtonsProps=(*d).props as *chrome::WindowButtonsProps;let border=native::must::[ui::IBorder](ui::IBorder::query((*r).object));
+    let spacing=if (*p).spacing>0.0f64 {(*p).spacing} else {0.0f64};native::check(border.set_padding(ui::Thickness {left:0.0f64,top:0.0f64,right:spacing,bottom:0.0f64}));
+    var i: usize=0;while i<3 {let button=native::must::[ui::IControl](ui::IControl::query((*state(r)).buttons[i]));native::check(button.set_is_enabled((*d).common.is_enabled));i=i+1;}refresh(r);(*(*r).node).mark_content_changed();
+}
+fn release(r: *record::View) {
+    let s=state(r);let watched=native::must::[ui::IUIElement](ui::IUIElement::query((*s).watch));native::check(watched.remove_pointer_entered((*s).entered));native::check(watched.remove_pointer_exited((*s).exited));native::check(watched.remove_pointer_moved((*s).moved));
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(visual.remove_got_focus((*s).got_focus));native::check(visual.remove_lost_focus((*s).lost_focus));
+    var i: usize=0;while i<3 {let button=native::must::[ui::IButtonBase](ui::IButtonBase::query((*s).buttons[i]));native::check(button.remove_click((*s).clicks[i]));i=i+1;}LIVE=LIVE-8;(*r).extra=0 as *u8;let owner=box::from_raw::[State](s as *u8);
+}

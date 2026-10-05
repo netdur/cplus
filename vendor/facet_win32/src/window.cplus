@@ -36,6 +36,7 @@ import "facet/screen" as screen;
 import "facet/application" as app;
 import "facet/vocabulary" as vocab;
 import "win32/winuser" as u;
+import "win32/wingdi" as gdi;
 import "win32/libloaderapi" as ll;
 import "./sys" as sys;
 import "./paint" as paint;
@@ -53,6 +54,8 @@ import "./darkmode" as darkmode;
 import "./scroller" as scroller;
 import "./fonts" as fonts;
 import "./measure" as measure;
+import "./caption" as caption;
+import "./menustrip" as menustrip;
 
 fn hinstance() -> *u8 { return { ll::GetModuleHandleA(0 as *i8) }; }
 
@@ -78,6 +81,11 @@ static SHOULD_CLOSE_CTX: [usize; 16] = [0 as usize; 16];
 static WILL_CLOSE: [usize; 16] = [0 as usize; 16];
 static WILL_CLOSE_CTX: [usize; 16] = [0 as usize; 16];
 static OPEN_WINDOWS: i64 = 0 as i64;
+// A window that wears NO menu bar whatever the app menu says — a sheet. The
+// bar is per-window on this platform, so without this every alert opened with
+// the application's File/Edit bar across a 380-point dialog, and building it
+// reset the command table the main window's bar was answering through.
+static NO_MENU: [bool; 16] = [false; 16];
 
 fn free_slot() -> usize {
     var i: usize = 0 as usize;
@@ -148,7 +156,74 @@ fn refont_tree(n: *core::Node) {
 
 // ---- the shared WNDPROC ----------------------------------------------------------
 
+// AN IMAGE PAINTS OFF SCREEN AND LANDS IN ONE BLIT. Its paint was an erase to
+// the background (WM_ERASEBKGND) followed by a resampled StretchBlt of the
+// picture (WM_PAINT), and the moment between the two is a window showing no
+// picture at all. The compositor can present that moment, and a preview whose
+// window repainted on every status change flashed empty on every one of them.
+// So an image erases and draws into a bitmap of its own size, and the window
+// only ever receives the finished frame.
+fn is_buffered(n: *core::Node) -> bool {
+    if n == (0 as *core::Node) { return false; }
+    return core::kind_of(n) == props::K_IMAGE;
+}
+
+fn paint_buffered(hwnd: *u8, n: *core::Node, hdc: *u8) {
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(hwnd, #addr_of(r)) } == (0 as i32) { return; }
+    let width: i32 = r.right -% r.left;
+    let height: i32 = r.bottom -% r.top;
+    if width <= (0 as i32) || height <= (0 as i32) { return; }
+    let mem: *u8 = { gdi::CreateCompatibleDC(hdc) };
+    let bitmap: *u8 = if mem != (0 as *u8) { { gdi::CreateCompatibleBitmap(hdc, width, height) } } else { 0 as *u8 };
+    if bitmap == (0 as *u8) {
+        // No memory for the frame: paint directly, as every other node does.
+        if mem != (0 as *u8) { let _d: i32 = { gdi::DeleteDC(mem) }; }
+        paint::erase(hwnd, hdc);
+        controls::paint_node(hwnd, n, hdc);
+        return;
+    }
+    let previous: *u8 = { gdi::SelectObject(mem, bitmap) };
+    paint::erase(hwnd, mem);
+    controls::paint_node(hwnd, n, mem);
+    let srccopy: u32 = 0x00CC0020u32;
+    let _b: i32 = { gdi::BitBlt(hdc, 0 as i32, 0 as i32, width, height, mem, 0 as i32, 0 as i32, srccopy) };
+    let _s: *u8 = { gdi::SelectObject(mem, previous) };
+    let _o: i32 = { gdi::DeleteObject(bitmap) };
+    let _d: i32 = { gdi::DeleteDC(mem) };
+    return;
+}
+
 fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    // A BLENDED WINDOW'S CAPTION IS THE CONTENT — see `caption`. Three
+    // non-client messages, answered first because a panel inside the window
+    // asks the same hit-test question its top-level does.
+    if msg == (0x0083 as u32) {                       // WM_NCCALCSIZE
+        var nc: i64 = 0 as i64;
+        if w != (0 as u64) && caption::on_nccalcsize(hwnd, w, l, #addr_of(nc)) { return nc; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+    if msg == (0x0084 as u32) {                       // WM_NCHITTEST
+        var ht: i64 = 0 as i64;
+        if caption::on_nchittest(hwnd, l, #addr_of(ht)) { return ht; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+    // THE MENU BAR IN DARK MODE — user32 asks before it draws the bar, and
+    // `menus` answers only when the app is dark. See `menus`' dark-bar section.
+    if msg == (0x0091 as u32) || msg == (0x0092 as u32) {      // WM_UAHDRAWMENU / ITEM
+        if menus::on_uah(hwnd, msg, l) { return 1 as i64; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+    if msg == (0x0085 as u32) || msg == (0x0086 as u32) {      // WM_NCPAINT / WM_NCACTIVATE
+        let r: i64 = { u::DefWindowProcA(hwnd, msg, w, l) };
+        menus::paint_bar_rule(hwnd);
+        return r;
+    }
+    if msg == (0x00A1 as u32) || msg == (0x00A2 as u32) || msg == (0x00A3 as u32) {
+        if caption::on_nc_button(hwnd, msg, w) { return 0 as i64; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
     // A CONTROL NOTIFICATION. lParam IS the sending control's HWND for a
     // control notification and 0 for a menu or accelerator — which is how the
     // two are told apart, and why this package needs no per-control id table.
@@ -253,6 +328,11 @@ fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
         let hdc: *u8 = { u::BeginPaint(hwnd, #addr_of(ps)) };
         if hdc != (0 as *u8) {
             let pn: *core::Node = input::node_of_window(hwnd);
+            if is_buffered(pn) {
+                paint_buffered(hwnd, pn, hdc);
+                let _e: i32 = { u::EndPaint(hwnd, #addr_of(ps)) };
+                return 0 as i64;
+            }
             controls::paint_node(hwnd, pn, hdc);
             // THE ROW FURNITURE IS PAINTED HERE rather than in `paint_node`,
             // and the reason is a cycle: `recycler` imports `controls`, so
@@ -291,6 +371,11 @@ fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
     // over its old. wParam is the device context to paint into; returning
     // non-zero says the job is done and stops DefWindowProc redoing it.
     if msg == sys::wm_erasebkgnd() {
+        // A BUFFERED node erases inside its own paint instead — see
+        // `paint_buffered` — so answering "erased" here without touching a
+        // pixel is what keeps the old picture on screen until the new one is
+        // ready to replace it.
+        if is_buffered(input::node_of_window(hwnd)) { return 1 as i64; }
         paint::erase(hwnd, w as *u8);
         return 1 as i64;
     }
@@ -528,7 +613,8 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome,
                should_close: fn(*u8) -> bool = default_should_close,
                should_close_ctx: *u8 = 0 as *u8,
                will_close: fn(*u8) = default_will_close,
-               will_close_ctx: *u8 = 0 as *u8) -> *u8 {
+               will_close_ctx: *u8 = 0 as *u8,
+               menu_bar: bool = true) -> *u8 {
     if root == (0 as *core::Node) { return 0 as *u8; }
     let slot: usize = free_slot();
     if slot >= MAX_WINDOWS { return 0 as *u8; }
@@ -571,7 +657,16 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome,
     SHOULD_CLOSE_CTX[slot] = { #addr(should_close_ctx) };
     WILL_CLOSE[slot] = { #addr(will_close as *u8) };
     WILL_CLOSE_CTX[slot] = { #addr(will_close_ctx) };
+    NO_MENU[slot] = !menu_bar;
     OPEN_WINDOWS = OPEN_WINDOWS + (1 as i64);
+    // A BLENDED BAR OVER THE TREE'S OWN BUTTONS loses the caption — facet_gtk's
+    // rule (`blends_into_content`), answered in `caption`. Before the menu and
+    // before the window is shown, so neither the bar nor the first frame is
+    // laid out against a caption that is about to go.
+    if caption::blends_into_content(c.bar, caption::has_window_buttons(root),
+                                    toolbar::height_for(root) > (0.0f64)) {
+        caption::engage(win);
+    }
     // THE MENU BEFORE THE FIRST LAYOUT. A bar takes height off the client area,
     // so laying out first and adding it after would leave every node one bar
     // too low until something else forced a re-lay.
@@ -649,10 +744,12 @@ fn close_slot(slot: usize) {
     SHOULD_CLOSE_CTX[slot] = 0 as usize;
     WILL_CLOSE[slot] = 0 as usize;
     WILL_CLOSE_CTX[slot] = 0 as usize;
+    NO_MENU[slot] = false;
     if OPEN_WINDOWS > (0 as i64) { OPEN_WINDOWS = OPEN_WINDOWS - (1 as i64); }
     // A closed creation parent must stop being one — a control created after
     // this would be born to a dead window.
     controls::creation_parent_closed(win);
+    caption::release(win);
     if root != (0 as *core::Node) { mount::unmount(root); }
     if win != (0 as *u8) { let _d: i32 = { u::DestroyWindow(win) }; }
     return;
@@ -725,7 +822,10 @@ fn relayout(slot: usize, width: f64, height: f64) {
     // with no `toolbar_item` answers 0 here and every line below is the one it
     // was before the strip existed — which is the whole of why this is safe to
     // put in the hot path every window lays out through.
-    let tb: f64 = toolbar::height_for(root);
+    // A BLENDED window's menu bar is a strip in the client area — see
+    // `menustrip` — and comes off the top the same way. Never together with
+    // the toolbar strip: a tree with toolbar items does not blend (`caption`).
+    let tb: f64 = toolbar::height_for(root) + menustrip::height_for(WINDOWS[slot] as *u8);
     let content_h: f64 = lh - tb;
     { (*root).calculate_layout(width: lw, height: content_h) };
     { (*root).round_to_pixel(scale) };
@@ -750,7 +850,8 @@ fn relayout(slot: usize, width: f64, height: f64) {
     geometry::trace_tree(root, 0 as usize);
     // AFTER the layout: the strip is rebuilt from the tree, and the tree is
     // what the walk above has just finished settling.
-    if tb > (0.0f64) { toolbar::refresh(WINDOWS[slot] as *u8, root, lw); }
+    if toolbar::height_for(root) > (0.0f64) { toolbar::refresh(WINDOWS[slot] as *u8, root, lw); }
+    menustrip::place(WINDOWS[slot] as *u8, lw);
     return;
 }
 
@@ -1053,18 +1154,34 @@ fn app_appearance() -> vocab::Appearance { return APPEARANCE; }
 // does not compile.
 // The app menu, on every open window. An `AppMenu` is app-wide and the bar is
 // per-window on this platform, so "install" means "put it on all of them".
-static APP_MENU: usize = 0 as usize;
+//
+// A COPY, OWNED HERE — never the caller's pointer. The facade passes the
+// address of a local that is gone by the time the next window opens, and every
+// later `rebuild_menu` read it: `runtime::alert` from a click handler opens the
+// sheet's window, and qwen-image's release build crashed in `build_app_menu`
+// reading address 8 (a stale item count over a null buffer). See
+// `menus::copy_app_menu`.
+static APP_MENU: screen::AppMenu = #zero::[screen::AppMenu]();
+static HAS_APP_MENU: bool = false;
 
 fn install_app_menu(m: *screen::AppMenu) {
-    APP_MENU = { #addr(m as *u8) };
+    if m == (0 as *screen::AppMenu) { return; }
+    APP_MENU = menus::copy_app_menu(m);
+    HAS_APP_MENU = true;
     var i: usize = 0 as usize;
     while i < MAX_WINDOWS {
-        if ROOTS[i] != (0 as usize) {
-            menus::build_app_menu(WINDOWS[i] as *u8, m);
+        if ROOTS[i] != (0 as usize) && !NO_MENU[i] {
+            menus::build_app_menu(WINDOWS[i] as *u8, #addr_of(APP_MENU));
+            settle_bar(WINDOWS[i] as *u8);
         }
         i = i +% (1 as usize);
     }
     return;
+}
+
+fn app_menu_item_count() -> usize {
+    if !HAS_APP_MENU { return 0 as usize; }
+    return APP_MENU.items.count();
 }
 
 // A `menu` subtree changed under some node. The BAR is rebuilt whole rather
@@ -1080,18 +1197,32 @@ fn menus_changed() {
     return;
 }
 
+// A BLENDED window does not wear its bar: `menus` built it onto the window as
+// for any other, and it is moved from there to the window's strip. Detaching is
+// `SetMenu(win, NULL)`, which does not destroy it — the strip owns it now.
+fn settle_bar(win: *u8) {
+    if !caption::is_blended(win) { return; }
+    let bar: *u8 = { u::GetMenu(win) };
+    if bar != (0 as *u8) { let _s: i32 = { u::SetMenu(win, 0 as *u8) }; }
+    menustrip::adopt(win, bar);
+    return;
+}
+
 fn rebuild_menu(slot: usize) {
+    if NO_MENU[slot] { return; }
     let win: *u8 = WINDOWS[slot] as *u8;
     let root: *core::Node = ROOTS[slot] as *core::Node;
     // A DECLARED `menu` SUBTREE WINS over the app menu: it is the more specific
     // statement, and a screen that built its own bar meant that bar.
     if root != (0 as *core::Node) && menus::holds_a_menu(root) {
         menus::build_bar(win, root);
+        settle_bar(win);
         relayout_from_client(slot);
         return;
     }
-    if APP_MENU != (0 as usize) {
-        menus::build_app_menu(win, APP_MENU as *screen::AppMenu);
+    if HAS_APP_MENU {
+        menus::build_app_menu(win, #addr_of(APP_MENU));
+        settle_bar(win);
         relayout_from_client(slot);
     }
     return;
@@ -1200,5 +1331,50 @@ fn report_comctl_path() {
     if n == (0 as u32) { { path_free(buf) }; io::eprintln("[theme] comctl32 path unavailable"); return; }
     let p: str = { #str_from_raw_parts(buf, n as usize) };
     io::eprintln("[theme] comctl32 <- ${p}");
+    return;
+}
+
+// The facade's shape: the menu is a LOCAL of a function that has returned by
+// the time anything reads it again.
+fn install_menu_from_a_local() {
+    var m: screen::AppMenu = screen::app_menu("Probe");
+    m.add_item("File", "Quit Probe", "q", screen::menu_action_quit());
+    m.add_item("Edit", "Copy", "c", screen::menu_action_copy());
+    install_app_menu(#addr_of(m));
+    return;
+}
+
+// Reuse the stack the local lived in, so a held pointer reads garbage.
+fn scribble_the_stack() -> u64 {
+    var junk: [u64; 64] = [0xDEADBEEFDEADBEEF as u64; 64];
+    var sum: u64 = 0 as u64;
+    var i: usize = 0 as usize;
+    while i < (64 as usize) { sum = sum +% junk[i]; i = i +% (1 as usize); }
+    return sum;
+}
+
+#[test]
+fn the_app_menu_outlives_the_local_it_was_installed_from() {
+    install_menu_from_a_local();
+    let _s: u64 = scribble_the_stack();
+    assert app_menu_item_count() == (2 as usize);
+    match APP_MENU.items.at_ptr(0 as usize) {
+        option::Option[*screen::MenuItem]::Some(it) => {
+            assert { (*it).title }.view() == "Quit Probe";
+            assert { (*it).menu }.view() == "File";
+        }
+        option::Option[*screen::MenuItem]::None => { assert false; }
+    }
+    assert APP_MENU.title.view() == "Probe";
+    return;
+}
+
+#[test]
+fn a_sheet_opts_out_of_the_menu_bar() {
+    // `rebuild_menu` on a no-menu slot must not touch the window — the slot's
+    // window here is null, and building a bar for it would be the bug.
+    NO_MENU[3] = true;
+    rebuild_menu(3 as usize);
+    NO_MENU[3] = false;
     return;
 }

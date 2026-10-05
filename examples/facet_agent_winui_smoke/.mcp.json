@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "cplus": {
+      "command": "../../target/release/cpc.exe",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}

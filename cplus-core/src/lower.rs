@@ -238,6 +238,13 @@ struct Lower {
     /// arguments into positional order and to splice omitted defaults. Extern
     /// fns are absent.
     fn_params: std::collections::HashMap<String, Vec<ParamInfo>>,
+    /// Names bound locally (params, `let`, destructured fields, `for`
+    /// variables), one set per open scope of the body being lowered. An
+    /// `Ident` callee found here is a local value, not the free fn of the same
+    /// name in `fn_params`: `let run: fn(*u8) = job.run; run(p);` in facet's
+    /// services had facet_winui's `fn run(tree, title, w = .., h = ..)`
+    /// defaults spliced into it ("fn pointer `run` expects 1, got 4").
+    local_scopes: Vec<std::collections::HashSet<String>>,
     /// Parameters (receiver excluded) for every `impl` method, keyed by method
     /// name. A name may map to several overloads across types; for a `v.m(..)`
     /// call the labels / arity usually single one out (lower has no type info).
@@ -285,6 +292,7 @@ impl Lower {
             current_file: None,
             diags: vec![],
             fn_params: std::collections::HashMap::new(),
+            local_scopes: Vec::new(),
             method_params: std::collections::HashMap::new(),
             assoc_params: std::collections::HashMap::new(),
             default_splice_depth: 0,
@@ -387,7 +395,9 @@ impl Lower {
     /// exact-arity positional calls are left untouched.
     fn call_may_need_defaults(&self, callee: &Expr, n_args: usize) -> bool {
         match &callee.kind {
-            ExprKind::Ident(name) => self.fn_params.get(name).is_some_and(|p| p.len() > n_args),
+            ExprKind::Ident(name) => {
+                !self.is_local(name) && self.fn_params.get(name).is_some_and(|p| p.len() > n_args)
+            }
             ExprKind::Field { name, .. } => self
                 .method_params
                 .get(&name.name)
@@ -428,10 +438,23 @@ impl Lower {
         call_span: Span,
     ) {
         let candidates: Vec<Vec<ParamInfo>> = match &callee.kind {
+            // A local shadows the free fn of its name — sema handles the call.
+            ExprKind::Ident(name) if self.is_local(name) => return,
             ExprKind::Ident(name) => match self.fn_params.get(name) {
                 Some(p) => vec![p.clone()],
                 None => return, // unknown free fn / fn-pointer local — sema handles
             },
+            // An UNLABELLED method call is sema's: it may resolve to a builtin
+            // method no `impl` declares (`Iterator::next`, SIMD lane methods,
+            // `Future::wait`), so the declared candidates this pass knows are
+            // not all the candidates there are. Checking `it.next()` against a
+            // user's `fn next(ref this, step: u32)` reported "missing argument
+            // `step`" inside stdlib's iterator.cplus. Sema has the receiver's
+            // type: it splices that type's trailing defaults
+            // (`try_splice_method_defaults`) or reports the real arity error.
+            // A LABELLED call still names a declared parameter, so it stays
+            // here.
+            ExprKind::Field { .. } if arg_labels.iter().all(|label| label.is_none()) => return,
             ExprKind::Field { name, .. } => match self.method_params.get(&name.name) {
                 Some(c) => c.clone(),
                 None => return, // unknown method — sema handles
@@ -720,12 +743,30 @@ impl Lower {
         });
     }
 
+    fn is_local(&self, name: &str) -> bool {
+        self.local_scopes.iter().any(|s| s.contains(name))
+    }
+
+    fn bind_local(&mut self, name: &str) {
+        if let Some(s) = self.local_scopes.last_mut() {
+            s.insert(name.to_string());
+        }
+    }
+
+    /// Lower a fn body with its parameters in scope.
+    fn lower_body(&mut self, params: &[Param], body: &mut Block) {
+        self.local_scopes
+            .push(params.iter().map(|p| p.name.name.clone()).collect());
+        self.lower_block(body);
+        self.local_scopes.pop();
+    }
+
     fn lower_item(&mut self, it: &mut Item) {
         match &mut it.kind {
-            ItemKind::Function(f) => self.lower_block(&mut f.body),
+            ItemKind::Function(f) => self.lower_body(&f.params, &mut f.body),
             ItemKind::Impl(b) => {
                 for m in &mut b.methods {
-                    self.lower_block(&mut m.body);
+                    self.lower_body(&m.params, &mut m.body);
                 }
             }
             // Slice 7GEN.3: interface declarations have no bodies to
@@ -747,12 +788,14 @@ impl Lower {
     }
 
     fn lower_block(&mut self, b: &mut Block) {
+        self.local_scopes.push(Default::default());
         for s in &mut b.stmts {
             self.lower_stmt(s);
         }
         if let Some(tail) = &mut b.tail {
             self.lower_expr(tail);
         }
+        self.local_scopes.pop();
     }
 
     fn lower_stmt(&mut self, s: &mut Stmt) {
@@ -761,12 +804,20 @@ impl Lower {
         // outer one. After the recursion, take the outer node and replace
         // it with its match-using equivalent.
         match &mut s.kind {
-            StmtKind::Let { init, .. } => {
+            StmtKind::Let { init, name, .. } => {
                 if let Some(e) = init {
                     self.lower_expr(e);
                 }
+                let name = name.name.clone();
+                self.bind_local(&name);
             }
-            StmtKind::LetDestructure { init, .. } => self.lower_expr(init),
+            StmtKind::LetDestructure { init, fields, .. } => {
+                self.lower_expr(init);
+                let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+                for n in &names {
+                    self.bind_local(n);
+                }
+            }
             StmtKind::Return(opt) => {
                 if let Some(e) = opt {
                     self.lower_expr(e);
@@ -783,6 +834,7 @@ impl Lower {
                     update,
                     body,
                 } => {
+                    self.local_scopes.push(Default::default());
                     if let Some(init) = init {
                         self.lower_stmt(init);
                     }
@@ -793,10 +845,15 @@ impl Lower {
                         self.lower_expr(u);
                     }
                     self.lower_block(body);
+                    self.local_scopes.pop();
                 }
-                ForLoop::Range { iter, body, .. } => {
+                ForLoop::Range { iter, body, var } => {
                     self.lower_expr(iter);
+                    let mut scope = std::collections::HashSet::new();
+                    scope.insert(var.name.clone());
+                    self.local_scopes.push(scope);
                     self.lower_block(body);
+                    self.local_scopes.pop();
                 }
             },
             StmtKind::Expr(e) => self.lower_expr(e),
@@ -6037,6 +6094,66 @@ fn main() -> i32 { return 0; }\n";
                    }\n";
         let (_, diags) = run(bad);
         assert_eq!(first_codes(&diags), vec!["E1005"], "unknown label, named here");
+    }
+
+    /// A declared method is not the only method of its name: builtins such as
+    /// `Iterator::next` have no `impl` here. An unlabelled call is left to
+    /// sema, which knows the receiver, instead of being checked against the
+    /// one declaration this pass can see (that reported "missing argument
+    /// `step`" for stdlib's own `it.next()` once a user declared
+    /// `fn next(ref this, step: u32)`).
+    #[test]
+    fn an_unlabelled_method_call_is_sema_s_even_with_one_declaration() {
+        let src = "struct Counter { value: u32 }\n\
+                   impl Counter { fn next(ref this, step: u32) { this.value = this.value + step; } }\n\
+                   struct It { n: i32 }\n\
+                   fn main() -> i32 {\n\
+                       var it: It = It { n: 1 };\n\
+                       it.next();\n\
+                       return 0;\n\
+                   }\n";
+        let (_, diags) = run(src);
+        assert!(diags.is_empty(), "not lowering's to judge: {:?}", first_codes(&diags));
+    }
+
+    /// A local fn-pointer is not the free fn of the same name: the free fn's
+    /// defaults must not be spliced into a call through the local (facet's
+    /// `let run: fn(*u8) = job.run; run(p);` got facet_winui's
+    /// `fn run(.., w = .., h = ..)` defaults: "expects 1, got 4"). Once the
+    /// local's scope closes, the free fn's defaults apply again.
+    #[test]
+    fn a_local_shadows_a_free_fn_s_defaults() {
+        let src = "fn run(a: i32, b: i32 = 2, c: i32 = 3) -> i32 { return a + b + c; }
+                   fn one(p: i32) -> i32 { return p; }
+                   fn by_param(run: fn(i32) -> i32) -> i32 { return run(1); }
+                   fn main() -> i32 {
+                       {
+                           let run: fn(i32) -> i32 = one;
+                           let _x = run(1);
+                       }
+                       return run(1);
+                   }
+";
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "{:?}", first_codes(&diags));
+        struct Arities(Vec<usize>);
+        impl crate::ast::ExprRewriter for Arities {
+            fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+                if let ExprKind::Call { callee, args, .. } = &e.kind {
+                    if matches!(&callee.kind, ExprKind::Ident(n) if n == "run") {
+                        self.0.push(args.len());
+                    }
+                }
+                None
+            }
+        }
+        let mut seen = Arities(Vec::new());
+        for it in &prog.items {
+            if let ItemKind::Function(f) = &it.kind {
+                let _ = crate::ast::walk_block(&f.body, &mut seen);
+            }
+        }
+        assert_eq!(seen.0, vec![1, 1, 3], "param, block-local, then the free fn");
     }
 
     /// The dedup answers "provably the same value" and nothing else. An

@@ -1,0 +1,63 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/env" as env;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/hybrid_web" as hybrid;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/hybrid" as bridge;
+import "facet_winui/hybrid_files" as files;
+import "facet_winui/record" as record;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn cursor() -> hybrid::HybridWeb {return match hybrid::find("hybrid") {option::Option::Some(v)=>v,option::Option::None=>{assert false;#zero::[hybrid::HybridWeb]()}};}
+fn payload() -> str {return "Hello \"page\" \\ α世界\nsecond line";}
+struct Probe {stage: u32,initializing: u32,init_count: u32,resources: u32,ready: bool,echo: bool,missing: bool,override_seen: bool,removed: bool,passed: bool,timer: services::Cancellable,watchdog: services::Cancellable}
+impl Probe {
+    fn remove(ref this) {this.removed=true;let old=mount::replace("hybrid",ui::label("Removed",key:"hybrid"));this.timer=services::after(0.1f64,this.finish);}
+    fn starting(ref this,sender: *u8) {this.initializing=this.initializing+1;assert this.init_count==0;if env::has_var("CPLUS_HYBRID_REMOVE_START") {this.remove();}}
+    fn initialized(ref this,sender: *u8) {this.init_count=this.init_count+1;assert this.initializing==1;if env::has_var("CPLUS_HYBRID_REMOVE_READY") {this.remove();return;}let changed=cursor().send_message(payload());}
+    fn resource(ref this,sender: *u8) {
+        this.resources=this.resources+1;assert this.init_count==1;
+        let args=check::must::[native::ICoreWebView2WebResourceRequestedEventArgs](native::ICoreWebView2WebResourceRequestedEventArgs::query(rt::Object::retain(sender)));
+        let request=check::must::[native::ICoreWebView2WebResourceRequest](native::ICoreWebView2WebResourceRequest::query(check::must::[rt::Object](args.request())));let uri=check::must::[text::Text](request.uri());
+        if uri.view().has_suffix("override.txt") {
+            let response=check::must::[native::ICoreWebView2WebResourceResponse](native::ICoreWebView2WebResourceResponse::query(check::must::[rt::Object](args.response())));assert response.set_status_code(418).is_ok();
+        }
+        if env::has_var("CPLUS_HYBRID_REMOVE_RESOURCE") {this.remove();}
+    }
+    fn received(ref this,sender: *u8) {
+        let body=bridge::message(sender);check::log("HYBRID: ${body}");
+        if env::has_var("CPLUS_HYBRID_REMOVE_MESSAGE") {this.remove();return;}
+        if body.has_prefix("ready:") {
+            assert body==(if this.stage==0 || this.stage==4 {"ready:A:index"} else if this.stage==1 {"ready:A:alternate"} else {"ready:B:alternate"});this.ready=true;
+        }
+        if body.has_prefix("echo:") {assert body==(if this.stage==4 {text::from_str("echo:")} else {"echo:${payload()}"});this.echo=true;}
+        if body=="missing:404" {this.missing=true;}if body=="override:418" {this.override_seen=true;}
+    }
+    fn build(ref this) -> core::Node {return @ui {column {hybrid_web(key:"hybrid",hybrid_root:"out/hybrid-a",default_file:"index.html",on_web_view_initializing:this.starting,on_web_view_initialized:this.initialized,on_raw_message_received:this.received,on_web_resource_requested:this.resource).height(360.0f64)}.padding(16.0f64)};}
+    fn loaded(ref this) {if this.removed {this.timer=services::after(0.1f64,this.finish);} else {this.timer=services::after(0.1f64,this.poll);}this.watchdog=services::after(20.0f64,this.timeout);}
+    fn timeout(ref this) {check::log("FAIL: hybrid stage ${this.stage}, resources ${this.resources}, ready ${this.ready}, echo ${this.echo}");assert false;}
+    fn poll(ref this) {
+        if this.removed {return;}
+        if this.stage==0 && this.ready && this.echo && this.missing && this.override_seen {
+            assert this.resources>=5;check::log("PASS: local HTML/CSS/script resources, Unicode message roundtrip, queued send, 404 and response override");this.stage=1;this.ready=false;let changed=cursor().set_default_file("alternate.html");
+        } else if this.stage==1 && this.ready {this.stage=2;this.ready=false;let changed=cursor().set_hybrid_root("out/hybrid-b");}
+        else if this.stage==2 && this.ready {
+            check::log("PASS: live default-file and root changes load the new local document");this.stage=3;this.ready=false;let changed=cursor().set_hybrid_root("");
+        } else if this.stage==3 {
+            let r=core::view_of(check::node("hybrid")) as *record::View;let s=bridge::state(r);let engine=check::must::[native::ICoreWebView2](native::ICoreWebView2::query((*s).engine));let source=check::must::[text::Text](engine.source());
+            if source.view()=="about:blank" {this.stage=4;this.echo=false;let changed=cursor().set_hybrid_root("out/hybrid-a").set_default_file("index.html").send_message("");}
+        } else if this.stage==4 && this.ready && this.echo {check::log("PASS: clearing root blanks the view; restored root and empty raw messages work");this.remove();return;}
+        this.timer=services::after(0.1f64,this.poll);
+    }
+    fn finish(ref this) {assert this.removed;assert bridge::subscriptions()==0;this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {
+    assert files::relative("sub/hello world.html");assert !files::relative("../outside");assert !files::relative("C:/outside");assert !files::relative("a\\b");assert !files::relative("a/../b");assert !files::relative("a./b");
+    let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI hybrid web",on_ready:(*p).loaded).is_ok();assert (*p).passed;assert host::live_views()==0 && host::live_subscriptions()==0;check::log("PASS: hybrid callback removal and teardown");return 0;
+}

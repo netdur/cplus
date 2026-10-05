@@ -1,0 +1,52 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./record" as record;
+import "./native" as native;
+struct State {brush: rt::Object,bitmap: rt::Object,source: text::Text,playing: bool}
+fn apply(r: *record::View,uri: fn(str)->rt::Object) {
+    let p: *props::ImageProps=(*core::node_data((*r).node)).props as *props::ImageProps;
+    if (*r).extra.is_null() {
+        let brush=native::must::[ui::ImageBrush](ui::ImageBrush::new());
+        let owner=match box::new(State {brush:brush.object(),bitmap:rt::Object::empty(),source:text::new(),playing:false}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+        (*r).extra=owner.into_raw();
+    }
+    let s=(*r).extra as *State;let brush=native::must::[ui::IImageBrush](ui::IImageBrush::query((*s).brush));
+    let tile=native::must::[ui::ITileBrush](ui::ITileBrush::query((*s).brush));
+    native::check(tile.set_alignment_x(ui::alignment_x_center));native::check(tile.set_alignment_y(ui::alignment_y_center));
+    native::check(tile.set_stretch(if (*p).fit==vocab::ImageFit::Fill {ui::stretch_fill} else if (*p).fit==vocab::ImageFit::AspectFill {ui::stretch_uniform_to_fill} else if (*p).fit==vocab::ImageFit::Center {ui::stretch_none} else {ui::stretch_uniform}));
+    if (*s).source.view()!=(*p).source.view() {
+        if !(*s).bitmap.is_null() {let old=native::must::[ui::IBitmapImage](ui::IBitmapImage::query((*s).bitmap));native::check(old.stop());}
+        (*s).bitmap=rt::Object::empty();
+        if !(*p).source.is_empty() {
+            let bitmap=native::must::[ui::BitmapImage](ui::BitmapImage::new());native::check(bitmap.set_auto_play((*p).is_animation_playing));native::check(bitmap.set_uri_source(uri((*p).source.view())));(*s).bitmap=bitmap.object();
+        }
+        native::check(brush.set_image_source((*s).bitmap));(*s).source=text::from_str((*p).source.view());(*s).playing=(*p).is_animation_playing;
+    } else if !(*s).bitmap.is_null() && (*s).playing!=(*p).is_animation_playing {
+        let bitmap=native::must::[ui::IBitmapImage](ui::IBitmapImage::query((*s).bitmap));native::check(bitmap.set_auto_play((*p).is_animation_playing));
+        if (*p).is_animation_playing {native::check(bitmap.play());} else {native::check(bitmap.stop());};(*s).playing=(*p).is_animation_playing;
+    }
+    let host=native::must::[ui::IBorder](ui::IBorder::query((*r).object));native::check(host.set_background((*s).brush));
+}
+fn release(r: *record::View) {
+    if (*r).extra.is_null() {return;}let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;
+}
+
+extern fn GetFullPathNameW(path: *u16,count: u32,buffer: *u16,part: **u16) -> u32;
+extern fn WindowsGetStringRawBuffer(value: usize,length: *u32) -> *u16;
+extern fn WindowsCreateString(source: *u16,length: u32,value: *usize) -> i32;
+fn uri(source: str) -> rt::Object {
+    var address: text::Text=text::from_str(source);
+    if !source.has_prefix("https:") && !source.has_prefix("http:") && !source.has_prefix("ms-appx:") && !source.has_prefix("file:") {
+        let path: rt::HString=native::must::[rt::HString](rt::HString::new(source));var length: u32=0;let input: *u16=WindowsGetStringRawBuffer(path.raw(),#addr_of(length));
+        var buffer: [u16;32768]=#zero::[[u16;32768]]();let size: u32=GetFullPathNameW(input,32768,#addr_of(buffer) as *u16,0 as **u16);assert size>0 && size<32768;
+        var h: usize=0;native::check(rt::Status {code:WindowsCreateString(#addr_of(buffer) as *u16,size,#addr_of(h))});let owned: rt::HString=rt::HString::adopt(h);let full: text::Text=native::must::[text::Text](owned.to_text());
+        address=text::from_str("file:///");let _a=address.append(full.view());
+    }
+    let factory: ui::IUriRuntimeClassFactory=native::must::[ui::IUriRuntimeClassFactory](ui::Uri::i_uri_runtime_class_factory_factory());return native::must::[rt::Object](factory.create_uri(address.view()));
+}

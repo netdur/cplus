@@ -1,0 +1,205 @@
+import "stdlib/io" as io;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/vec" as vec;
+import "stdlib/thread" as thread;
+import "stdlib/env" as env;
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+import "winui/application" as application;
+import "agent_winui/agent_winui" as agent;
+import "agent_core/backend" as backend;
+import "agent_core/auth" as auth;
+import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
+import "agent_core/events" as events;
+import "agent_inapp/agent_inapp" as inapp;
+import "agent_mcp/agent_mcp" as mcp;
+import "agent_winui_mcp/agent_winui_mcp" as http;
+
+extern fn exit(code: i32);
+extern fn fflush(p: *u8) -> i32;
+extern fn Sleep(milliseconds: u32);
+static WINDOW: rt::Object=#zero::[rt::Object]();
+static PANEL: rt::Object=#zero::[rt::Object]();
+static BUTTON: rt::Object=#zero::[rt::Object]();
+static EDIT: rt::Object=#zero::[rt::Object]();
+static CHECK: rt::Object=#zero::[rt::Object]();
+static AGENT: agent::Surface=#zero::[agent::Surface]();
+static CLICKS: i32=0;
+static DID_RUN: bool=false;
+static SUCCESS: bool=false;
+static CLICK_TOKEN: ui::EventRegistrationToken=#zero::[ui::EventRegistrationToken]();
+static LOAD_TOKEN: ui::EventRegistrationToken=#zero::[ui::EventRegistrationToken]();
+
+fn must[T](take r: result::Result[T,rt::Error]) -> T {
+    match r { result::Result::Ok(v)=>{return v;},result::Result::Err(e)=>{io::println("ERROR: ${e.code}"); let _f: i32=fflush(0 as *u8); exit(1);} }
+    return #zero::[T]();
+}
+fn check(s: rt::Status) { if s.is_err() { io::println("STATUS: ${s.code}"); let _f: i32=fflush(0 as *u8); exit(1); } }
+fn expect(ok: bool, name: str) {
+    if !ok { io::println("FAIL: ${name}"); let _g: i32=fflush(0 as *u8); exit(1); }
+    io::println("PASS: ${name}"); let _f: i32=fflush(0 as *u8);
+}
+fn outcome(actual: surface::Outcome, wanted: surface::Outcome, name: str) { expect(surface::outcome_eq(actual,wanted),name); }
+fn children(o: rt::Object) -> ui::IVector_Microsoft_UI_Xaml_UIElement {
+    let p: ui::IPanel=must::[ui::IPanel](ui::IPanel::query(o));
+    return must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(must::[rt::Object](p.children())));
+}
+fn append(o: rt::Object, child: rt::Object) { let c: ui::IVector_Microsoft_UI_Xaml_UIElement=children(o); check(c.append(child)); }
+fn clicked(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status { CLICKS=CLICKS+1; return rt::Status {code:0}; }
+fn policy(req: auth::Request) -> auth::Grant { return auth::operator(); }
+fn http_policy(req: auth::Request) -> auth::Grant {
+    if req.client=="reader" { return auth::reader(); }
+    return auth::operator();
+}
+fn http_close(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    http::stop(); AGENT.close(); SUCCESS=true;
+    return must::[ui::IWindow](ui::IWindow::query(WINDOW)).close();
+}
+fn http_restart_run(ctx: *u8) -> rt::Status {
+    // Give the external test time to submit a request while this UI callback
+    // blocks delivery. Stop must join without waiting for that queued request.
+    io::println("HTTP: blocking UI before restart"); let f: i32=fflush(0 as *u8);
+    Sleep(600); http::stop();
+    let queue: rt::Object=must::[rt::Object](must::[ui::IWindow](ui::IWindow::query(WINDOW)).dispatcher_queue());
+    expect(http::start(#addr_of(AGENT),queue,"agent-winui-http-test",http_policy)>0,"HTTP restart after pending request cancellation");
+    return rt::Status {code:0};
+}
+fn http_restart(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let queue: rt::Object=must::[rt::Object](must::[ui::IWindow](ui::IWindow::query(WINDOW)).dispatcher_queue());
+    expect(must::[bool](agent::enqueue(queue,http_restart_run)),"queue HTTP restart");
+    return rt::Status {code:0};
+}
+fn find(nodes: vec::Vec[backend::UiNode],id: str) -> *backend::UiNode {
+    var i: usize=0; while i<nodes.count() { if let option::Option::Some(n)=nodes.at_ptr(i) { if (*n).id.view()==id { return n; } } i=i+1; }
+    return 0 as *backend::UiNode;
+}
+fn final_checks(ctx: *u8) -> rt::Status {
+    let vt: backend::Backend=agent::mcp_backend(); let p: *u8=#addr_of(AGENT) as *u8;
+    expect(CLICKS==1,"automation invoke delivered the actual Click event");
+    let edit: ui::ITextBox=must::[ui::ITextBox](ui::ITextBox::query(EDIT));
+    expect(must::[text::Text](edit.text())=="héllo 世界","Unicode value reached TextBox");
+    let version: u64=AGENT.text_version("edit"); expect(version>0,"TextChanging advances version synchronously");
+    var sub: events::Subscriber=events::subscriber(events::everything(),8);
+    let reply: text::Text=mcp::handle_request(p,vt,sub,auth::serve(policy),"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"read_text\",\"params\":{\"id\":\"edit\"}}");
+    expect(reply.contains("version") && reply.contains("héllo"),"MCP returns live text and edit version");
+    let inapp_version: option::Option[u64]=inapp::open(p,vt).text_version("edit");
+    expect(match inapp_version {option::Option::Some(v)=>v==version,option::Option::None=>false},"inapp reads the same edit version");
+    let request: text::Text="{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"set_text\",\"params\":{\"id\":\"edit\",\"value\":\"MCP edit\",\"base_version\":${version}}}";
+    let written: text::Text=mcp::handle_request(p,vt,sub,auth::serve(policy),request.view());
+    expect(written.contains("allowed") && must::[text::Text](edit.text())=="MCP edit","MCP read-version/write round trip");
+    let malformed: text::Text=mcp::handle_request(p,vt,sub,auth::serve(policy),"{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"set_text\",\"params\":{\"id\":\"edit\",\"value\":\"bad\",\"base_version\":1.5}}");
+    expect(malformed.contains("-32602") && must::[text::Text](edit.text())=="MCP edit","fractional version rejected without changing UI");
+    let tools_reply: text::Text=mcp::handle_request(p,vt,sub,auth::serve(policy),"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/list\",\"params\":{}}");
+    expect(tools_reply.contains("base_version"),"MCP tool schema advertises optimistic editing");
+    outcome((vt.set_text)(p,auth::operator(),"edit","stale",0),surface::Outcome::VersionConflict,"old version refuses overwrite");
+    check(edit.set_text("human edit"));
+    expect(AGENT.text_version("edit")>version,"application/user edits also advance version");
+    outcome((vt.set_text)(p,auth::operator(),"edit","stale",version),surface::Outcome::VersionConflict,"racing edit refuses overwrite");
+    outcome((vt.set_text)(p,auth::operator(),"edit","accepted",AGENT.text_version("edit")),surface::Outcome::Allowed,"fresh version writes");
+    check(edit.set_is_read_only(true));
+    outcome((vt.set_text)(p,auth::operator(),"edit","blocked",AGENT.text_version("edit")),surface::Outcome::NotActionable,"live read-only ceiling enforced");
+    check(edit.set_is_read_only(false));
+    let toggle: ui::IToggleButton=must::[ui::IToggleButton](ui::IToggleButton::query(CHECK));
+    let checked: ui::IReference_Bool=must::[ui::IReference_Bool](ui::IReference_Bool::query(must::[rt::Object](toggle.is_checked())));
+    expect(must::[bool](checked.value()),"ToggleProvider changed checkbox state");
+    check(children(PANEL).remove_at(0));
+    outcome((vt.click)(p,auth::operator(),"button"),surface::Outcome::NotFound,"detached control cannot receive actions");
+    check(must::[ui::IWindow](ui::IWindow::query(WINDOW)).set_content(rt::Object::empty()));
+    expect((vt.describe)(p,auth::operator()).count()==0,"empty window refreshes to empty surface");
+    outcome((vt.click)(p,auth::operator(),"check"),surface::Outcome::Stale,"no stale window tree survives");
+    AGENT.close(); SUCCESS=true;
+    io::println("PASS: agent_winui standalone, grants, patterns, versions, MCP and teardown"); let _f: i32=fflush(0 as *u8);
+    check(must::[ui::IWindow](ui::IWindow::query(WINDOW)).close()); return rt::Status {code:0};
+}
+fn run_checks(ctx: *u8) -> rt::Status {
+    let p: *u8=#addr_of(AGENT) as *u8; let vt: backend::Backend=agent::mcp_backend();
+    let nodes: vec::Vec[backend::UiNode]=(vt.describe_exposed)(p,auth::operator());
+    expect(find(nodes,"button").is_not_null(),"curated button discovered");
+    expect(find(nodes,"unexposed").is_null(),"AutomationId alone grants no exposure");
+    expect(find(nodes,"excluded-child").is_null(),"excluded ancestor hides pinned descendant");
+    let secret: *backend::UiNode=find(nodes,"secret-child"); expect(secret.is_not_null(),"protected node remains discoverable");
+    expect(!(*secret).readable && (*secret).text.is_empty() && (*secret).name.is_empty(),"protected ancestor redacts content");
+    let pass: *backend::UiNode=find(nodes,"password"); expect(pass.is_not_null() && !(*pass).readable && (*pass).text.is_empty(),"password is never read");
+    var i: usize=0; while i<nodes.count() { if let option::Option::Some(n)=nodes.at_ptr(i) { if let option::Option::Some(parent)=(*n).parent { assert parent<i; } } i=i+1; }
+    expect((vt.describe)(p,auth::nothing()).count()==0,"no grant returns no UI");
+    let full: vec::Vec[backend::UiNode]=(vt.describe)(p,auth::operator());
+    expect(full.count()>nodes.count(),"full tree includes template controls");
+    var j: usize=0; while j<full.count() { if let option::Option::Some(n)=full.at_ptr(j) { assert (*n).text.view()!="card secret" && (*n).name.view()!="card secret"; } j=j+1; }
+    outcome((vt.click)(p,auth::reader(),"button"),surface::Outcome::NeedsGrant,"reader cannot activate");
+    outcome((vt.click)(p,auth::operator(),"disabled"),surface::Outcome::NotActionable,"disabled control refused");
+    outcome((vt.click)(p,auth::operator(),"observe"),surface::Outcome::NotActionable,"observe-only control refused");
+    outcome((vt.set_text)(p,auth::operator(),"private","x",0),surface::Outcome::Forbidden,"private editor refuses ordinary grant");
+    outcome((vt.set_text)(p,auth::operator(),"protected","x",0),surface::Outcome::NeedsGrant,"protected editor needs wider grant");
+    outcome((vt.set_text)(p,auth::protected_operator(),"protected","approved",0),surface::Outcome::Allowed,"explicit protected grant works");
+    outcome((vt.set_text)(p,auth::operator(),"password","filled",0),surface::Outcome::Allowed,"password fill follows core policy");
+    expect(!((vt.hit_test)(p,auth::operator(),"button")).supported,"unsupported hit testing is explicit");
+    outcome((vt.navigate)(p,auth::operator(),"edit"),surface::Outcome::Allowed,"navigation focuses TextBox");
+    let session: inapp::Session=inapp::open(p,vt);
+    outcome(session.click("button"),surface::Outcome::Allowed,"shared agent_inapp invokes WinUI");
+    outcome(session.click("check"),surface::Outcome::Allowed,"checkbox pattern activation");
+    outcome(session.set_text("edit","héllo 世界"),surface::Outcome::Allowed,"Unicode write through shared inapp");
+    var sub: events::Subscriber=events::subscriber(events::everything(),8);
+    let reply: text::Text=mcp::handle_request(p,vt,sub,auth::serve(policy),"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\",\"params\":{}}");
+    expect(reply.contains("button") && !reply.contains("card secret"),"shared MCP describes/redacts WinUI");
+    let w: ui::IWindow=must::[ui::IWindow](ui::IWindow::query(WINDOW));
+    expect(must::[bool](agent::enqueue(must::[rt::Object](w.dispatcher_queue()),final_checks)),"dispatcher accepts next-stage checks"); return rt::Status {code:0};
+}
+fn loaded(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    if DID_RUN { return rt::Status {code:0}; } DID_RUN=true;
+    let w: ui::IWindow=must::[ui::IWindow](ui::IWindow::query(WINDOW));
+    if env::has_var("CPLUS_AGENT_HTTP_TEST") {
+        let queue: rt::Object=must::[rt::Object](w.dispatcher_queue());
+        let port: i32=http::start(#addr_of(AGENT),queue,"agent-winui-http-test",http_policy);
+        expect(port>0,"HTTP listener starts");
+        expect(http::start(#addr_of(AGENT),queue,"duplicate",http_policy)==-10,"duplicate listener rejected");
+        io::println("HTTP READY ${port}"); let f: i32=fflush(0 as *u8);
+        return rt::Status {code:0};
+    }
+    let worker: thread::JoinHandle[bool]=thread::spawn_with::[rt::Object,bool](must::[rt::Object](w.dispatcher_queue()),queue_checks);
+    expect(worker.join(),"worker dispatches request onto UI thread"); return rt::Status {code:0};
+}
+fn queue_checks(take queue: rt::Object) -> bool { return must::[bool](agent::enqueue(queue,run_checks)); }
+fn add_pin(o: rt::Object,id: str,policy_value: u32=0,observe: bool=false) { append(PANEL,o); check(AGENT.pin(o,id,policy_value,observe)); }
+fn launch(app: rt::Object,ctx: *u8) -> rt::Status {
+    let window: ui::Window=must::[ui::Window](ui::Window::new()); WINDOW=window.object(); check(window.set_title("agent_winui / standalone verification"));
+    let panel: ui::StackPanel=must::[ui::StackPanel](ui::StackPanel::new()); PANEL=panel.object();
+    AGENT=must::[agent::Surface](agent::open(WINDOW));
+    let button: ui::Button=must::[ui::Button](ui::Button::new()); BUTTON=button.object(); add_pin(BUTTON,"button");
+    let base: ui::IButtonBase=must::[ui::IButtonBase](ui::IButtonBase::query(BUTTON));
+    let click: ui::RoutedEventHandler=must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(clicked)); CLICK_TOKEN=must::[ui::EventRegistrationToken](base.add_click(click.object()));
+    let edit: ui::TextBox=must::[ui::TextBox](ui::TextBox::new()); EDIT=edit.object(); add_pin(EDIT,"edit");
+    let toggle: ui::CheckBox=must::[ui::CheckBox](ui::CheckBox::new()); CHECK=toggle.object(); add_pin(CHECK,"check");
+    let disabled: ui::Button=must::[ui::Button](ui::Button::new()); add_pin(disabled.object(),"disabled"); check(must::[ui::IControl](ui::IControl::query(disabled.object())).set_is_enabled(false));
+    let observe: ui::Button=must::[ui::Button](ui::Button::new()); add_pin(observe.object(),"observe",observe:true);
+    let unexposed: ui::Button=must::[ui::Button](ui::Button::new()); append(PANEL,unexposed.object());
+    let ids: ui::IAutomationPropertiesStatics=must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory()); check(ids.set_automation_id(unexposed.object(),"unexposed"));
+    let group: ui::StackPanel=must::[ui::StackPanel](ui::StackPanel::new()); add_pin(group.object(),"secret-group",identity::policy_protected());
+    let label: ui::TextBlock=must::[ui::TextBlock](ui::TextBlock::new()); check(label.set_text("card secret")); append(group.object(),label.object()); check(AGENT.pin(label.object(),"secret-child"));
+    let protected: ui::TextBox=must::[ui::TextBox](ui::TextBox::new()); add_pin(protected.object(),"protected",identity::policy_protected());
+    let private: ui::TextBox=must::[ui::TextBox](ui::TextBox::new()); add_pin(private.object(),"private",identity::policy_private());
+    let password: ui::PasswordBox=must::[ui::PasswordBox](ui::PasswordBox::new()); check(password.set_password("never-read-this")); add_pin(password.object(),"password");
+    let excluded: ui::StackPanel=must::[ui::StackPanel](ui::StackPanel::new()); add_pin(excluded.object(),"excluded",identity::policy_exclude());
+    let child: ui::Button=must::[ui::Button](ui::Button::new()); append(excluded.object(),child.object()); check(AGENT.pin(child.object(),"excluded-child"));
+    if env::has_var("CPLUS_AGENT_HTTP_TEST") {
+        let close_button: ui::Button=must::[ui::Button](ui::Button::new()); add_pin(close_button.object(),"close");
+        let cb: ui::IButtonBase=must::[ui::IButtonBase](ui::IButtonBase::query(close_button.object()));
+        let ct: ui::EventRegistrationToken=must::[ui::EventRegistrationToken](cb.add_click(must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(http_close)).object()));
+        let restart: ui::Button=must::[ui::Button](ui::Button::new()); add_pin(restart.object(),"restart");
+        let rb: ui::IButtonBase=must::[ui::IButtonBase](ui::IButtonBase::query(restart.object()));
+        let rtoken: ui::EventRegistrationToken=must::[ui::EventRegistrationToken](rb.add_click(must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(http_restart)).object()));
+    }
+    expect(AGENT.pin(child.object(),"button").is_err(),"duplicate id rejected");
+    let element: ui::IFrameworkElement=must::[ui::IFrameworkElement](ui::IFrameworkElement::query(PANEL)); let h: ui::RoutedEventHandler=must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(loaded)); LOAD_TOKEN=must::[ui::EventRegistrationToken](element.add_loaded(h.object()));
+    check(window.set_content(PANEL)); check(window.activate()); return rt::Status {code:0};
+}
+fn main() -> i32 {
+    check(rt::load_runtime("Microsoft.WindowsAppRuntime.dll")); let apt: rt::Apartment=must::[rt::Apartment](rt::Apartment::sta());
+    check(application::run(launch));
+    check(must::[ui::IButtonBase](ui::IButtonBase::query(BUTTON)).remove_click(CLICK_TOKEN));
+    check(must::[ui::IFrameworkElement](ui::IFrameworkElement::query(PANEL)).remove_loaded(LOAD_TOKEN));
+    EDIT=rt::Object::empty(); BUTTON=rt::Object::empty(); CHECK=rt::Object::empty(); PANEL=rt::Object::empty(); WINDOW=rt::Object::empty();
+    expect(SUCCESS,"all stages completed and closed cleanly"); return 0;
+}

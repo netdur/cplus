@@ -97,6 +97,36 @@ pub struct Manifest {
     /// function defined in *this* package (dependencies are exempt), turning
     /// the per-function opt-in into a project-wide CI gate.
     pub realtime_profile: Option<RealtimeProfile>,
+    /// `[windows] subsystem` — the PE subsystem a Windows app links with.
+    /// `Console` (the default) is a console program: launched from Explorer
+    /// it opens a console window beside anything it draws, and closing that
+    /// console kills it. `Windows` is a windowed (GUI) program: no console
+    /// is created, and it links with `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`
+    /// so `fn main` is still the entry (the GUI default would be `WinMain`).
+    pub windows_subsystem: WindowsSubsystem,
+}
+
+/// `[windows] subsystem = "console" | "windows"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowsSubsystem {
+    #[default]
+    Console,
+    Windows,
+}
+
+impl WindowsSubsystem {
+    /// The linker arguments (through the clang driver) for this subsystem.
+    /// Empty for the console default, which is what lld-link picks unasked.
+    pub fn link_args(self) -> Vec<String> {
+        match self {
+            WindowsSubsystem::Console => Vec::new(),
+            WindowsSubsystem::Windows => vec![
+                "-Wl,/SUBSYSTEM:WINDOWS".to_string(),
+                "-Wl,/ENTRY:mainCRTStartup".to_string(),
+            ],
+        }
+    }
 }
 
 /// v0.0.12 realtime Phase 8 — parsed `[profile.realtime]` table.
@@ -323,11 +353,17 @@ impl Manifest {
     /// The app entry a build for `platform` uses: the platform section's
     /// `entry` when one is declared, else the package-level entry. `None` on
     /// a platform the manifest names no entry for.
+    ///
+    /// The entry follows the same `_<platform>` override imports do: an
+    /// entry `src/main.cplus` resolves to `src/main_windows.cplus` on Windows
+    /// when that sibling exists. The base then counts as shadowed, not as an
+    /// orphan (W0005), exactly as an imported module's base does.
     pub fn entry_for(&self, platform: &str) -> Option<PathBuf> {
-        if let Some(p) = self.platform_entries.get(platform) {
-            return Some(p.clone());
-        }
-        self.entry.clone()
+        let declared = match self.platform_entries.get(platform) {
+            Some(p) => p.clone(),
+            None => self.entry.clone()?,
+        };
+        Some(crate::resolver::platform_variant_for(declared, platform))
     }
 
     /// Whether this package is an application — any entry, declared or the
@@ -761,6 +797,10 @@ struct RawManifest {
 struct RawPlatformSection {
     #[serde(default)]
     entry: Option<String>,
+    /// `[windows] subsystem` — see `Manifest::windows_subsystem`. Windows
+    /// only; under any other platform it is E0406.
+    #[serde(default)]
+    subsystem: Option<WindowsSubsystem>,
     #[serde(default)]
     dependencies: std::collections::BTreeMap<String, String>,
     /// `[android.maven]` — `"group:artifact" = "version"`. Android only;
@@ -1195,8 +1235,20 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         std::collections::BTreeMap::new();
     let mut maven: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
+    let mut windows_subsystem = WindowsSubsystem::default();
     for (platform, section) in sections {
         let Some(section) = section else { continue };
+        if let Some(s) = section.subsystem {
+            if platform != "windows" {
+                return Err(ManifestError::Parse {
+                    path: manifest_path.to_path_buf(),
+                    message: format!(
+                        "`subsystem` is a `[windows]` key (the PE subsystem); `[{platform}]` has no such setting"
+                    ),
+                });
+            }
+            windows_subsystem = s;
+        }
         // `[<platform>.maven]` — third-party AAR coordinates (`plans/aar.md`).
         // Validated here rather than ignored: the compiler links no Java, but
         // it is the one thing that reads every manifest, and a coordinate
@@ -1335,6 +1387,7 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         root,
         build,
         realtime_profile,
+        windows_subsystem,
     })
 }
 
@@ -1616,6 +1669,58 @@ mod tests {
         // Every platform resolves to the package-level entry.
         assert!(m.entry_for("macos").is_some());
         assert!(m.entry_for("ios").is_some());
+    }
+
+    #[test]
+    fn entry_takes_the_platform_variant_when_it_exists() {
+        // bugs/a-platform-variant-of-the-entry-file-is-ignored: the entry
+        // follows the `_<platform>` override imports follow.
+        let text = r#"
+            [package]
+            name = "hello"
+        "#;
+        let dir = fresh_dir("entry-variant");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src").join("main.cplus"), "fn main() -> i32 { return 0; }").unwrap();
+        std::fs::write(dir.join("src").join("main_windows.cplus"), "fn main() -> i32 { return 1; }").unwrap();
+        std::fs::write(dir.join("src").join("main_linux.cplus"), "fn main() -> i32 { return 2; }").unwrap();
+        let m = parse_in(&dir, text).unwrap();
+        assert!(m.entry_for("windows").unwrap().ends_with("src/main_windows.cplus"));
+        assert!(m.entry_for("linux").unwrap().ends_with("src/main_linux.cplus"));
+        // Android falls back to `_linux`, as imports do.
+        assert!(m.entry_for("android").unwrap().ends_with("src/main_linux.cplus"));
+        // No variant on disk: the declared file, as written.
+        assert!(m.entry_for("macos").unwrap().ends_with("src/main.cplus"));
+        // An explicitly declared variant is never double-suffixed.
+        let text = r#"
+            [package]
+            name = "hello"
+            entry = "src/main_windows.cplus"
+        "#;
+        let m = parse_in(&dir, text).unwrap();
+        assert!(m.entry_for("windows").unwrap().ends_with("src/main_windows.cplus"));
+    }
+
+    #[test]
+    fn windows_subsystem_key() {
+        // bugs/windows-gui-apps-are-console-subsystem.
+        let dir = fresh_dir("subsystem");
+        let m = parse_in(&dir, "[package]\nname = \"a\"\n").unwrap();
+        assert_eq!(m.windows_subsystem, WindowsSubsystem::Console);
+        assert!(m.windows_subsystem.link_args().is_empty());
+        let m = parse_in(&dir, "[package]\nname = \"a\"\n\n[windows]\nsubsystem = \"windows\"\n").unwrap();
+        assert_eq!(m.windows_subsystem, WindowsSubsystem::Windows);
+        assert_eq!(
+            m.windows_subsystem.link_args(),
+            vec!["-Wl,/SUBSYSTEM:WINDOWS", "-Wl,/ENTRY:mainCRTStartup"]
+        );
+        let m = parse_in(&dir, "[package]\nname = \"a\"\n\n[windows]\nsubsystem = \"console\"\n").unwrap();
+        assert_eq!(m.windows_subsystem, WindowsSubsystem::Console);
+        // A misspelled value and a non-Windows section are both E0406.
+        let e = parse_in(&dir, "[package]\nname = \"a\"\n\n[windows]\nsubsystem = \"gui\"\n").unwrap_err();
+        assert!(matches!(e, ManifestError::Parse { .. }), "got {e}");
+        let e = parse_in(&dir, "[package]\nname = \"a\"\n\n[linux]\nsubsystem = \"windows\"\n").unwrap_err();
+        assert!(e.to_string().contains("`[windows]` key"), "got {e}");
     }
 
     #[test]

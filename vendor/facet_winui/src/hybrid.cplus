@@ -1,0 +1,126 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/hybrid_web" as hybrid;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./record" as record;
+import "./native" as native;
+import "./scheduler" as scheduler;
+import "./hybrid_files" as files;
+import "./browser" as browser;
+struct Event {kind: u32,args: rt::Object,deferral: rt::Object,body: text::Text,source: text::Text}
+struct State {opaque host: *record::View,users: u32,disposed: bool,stage: u32,applied: bool,loaded: bool,awaiting_navigation: bool,navigation: u64,pending: u64,timer: u64,engine: rt::Object,environment: rt::Object,script: rt::Object,root: text::Text,origin: text::Text,events: vec::Vec[Event],message: ui::EventRegistrationToken,resource: ui::EventRegistrationToken}
+static LIVE: i64=0;
+static NEXT: u64=1;
+fn subscriptions() -> i64 {return LIVE;}
+fn state(r: *record::View) -> *State {return (*r).extra as *State;}
+fn props_of(s: *State) -> *props::HybridWebProps {return (*core::node_data((*(*s).host).node)).props as *props::HybridWebProps;}
+// Sender values are borrowed for the callback only. Copy message text if needed
+// later. Resource senders are native event args, retained with Object::retain.
+fn message(sender: *u8) -> str {return (*(sender as *text::Text)).view();}
+fn release_state(s: *State) {(*s).users=(*s).users-1;if (*s).users==0 {let owner: box::Box[State]=box::from_raw::[State](s as *u8);}}
+fn kick(s: *State) {if (*s).timer==0 && !(*s).disposed {(*s).timer=scheduler::after(0.01f64,dispatch,s as *u8);}}
+fn bridge() -> str {return "window.facet=window.facet||{};window.facet.postMessage=function(body){window.chrome.webview.postMessage(String(body));};window.chrome.webview.addEventListener('message',function(e){if(typeof window.facet.onmessage==='function')window.facet.onmessage(e.data);});";}
+fn flush(s: *State) {
+    if (*s).stage!=3 || (*s).disposed {return;}let p: *props::HybridWebProps=props_of(s);
+    let engine=native::must::[ui::ICoreWebView2](ui::ICoreWebView2::query((*s).engine));
+    if ((*s).pending&(hybrid::P_DEFAULT_FILE|hybrid::P_HYBRID_ROOT))!=0 {
+        (*s).pending=(*s).pending&~(hybrid::P_DEFAULT_FILE|hybrid::P_HYBRID_ROOT);(*s).loaded=false;(*s).awaiting_navigation=true;
+        (*s).root=files::full_path((*p).hybrid_root.view());let id=NEXT;NEXT=NEXT+1;(*s).origin="https://facet-${id}.invalid/";
+        if (*s).root.count()>0 && files::relative((*p).default_file.view()) {native::check(engine.navigate("${(*s).origin}${(*p).default_file}"));}
+        else {native::check(engine.navigate("about:blank"));}
+    }
+    if (*s).loaded && ((*s).pending&hybrid::P_SEND_MESSAGE)!=0 {(*s).pending=(*s).pending&~hybrid::P_SEND_MESSAGE;native::check(engine.post_web_message_as_string((*p).outgoing_message.view()));}
+}
+fn dispatch(ctx: *u8) {
+    let s=ctx as *State;(*s).timer=0;(*s).users=(*s).users+1;
+    if (*s).stage==0 {
+        (*s).stage=1;let p: *props::HybridWebProps=props_of(s);let call=(*p).on_web_view_initializing;let context=(*p).on_web_view_initializing_ctx;let sender=(*s).host;
+        if call!=props::no_handler {call(sender as *u8,context);}
+        if !(*s).disposed {let view=native::must::[ui::IWebView2](ui::IWebView2::query((*(*s).host).object));let operation=native::must::[rt::Object](view.ensure_core_web_view2_async());}
+    } else if (*s).stage==2 {
+        let info=native::must::[ui::IAsyncInfo](ui::IAsyncInfo::query((*s).script));let status=native::must::[i32](info.status());
+        if status==ui::async_status_started {kick(s);}
+        else {
+            let operation=native::must::[ui::IAsyncOperation_String](ui::IAsyncOperation_String::query((*s).script));let id=native::must::[text::Text](operation.get_results());(*s).script=rt::Object::empty();(*s).stage=3;
+            let p: *props::HybridWebProps=props_of(s);let call=(*p).on_web_view_initialized;let context=(*p).on_web_view_initialized_ctx;let sender=(*s).host;
+            if call!=props::no_handler {call(sender as *u8,context);}if !(*s).disposed {flush(s);}
+        }
+    } else if (*s).stage==3 {
+        flush(s);
+        if let option::Option::Some(event)=(*s).events.remove(0) {
+            if (*s).events.count()>0 {kick(s);}let p: *props::HybridWebProps=props_of(s);
+            let call=if event.kind==0 {(*p).on_raw_message_received} else {(*p).on_web_resource_requested};
+            let context=if event.kind==0 {(*p).on_raw_message_received_ctx} else {(*p).on_web_resource_requested_ctx};
+            var body=event.body.clone();
+            if call!=props::no_handler && (event.kind!=0 || event.source.view().has_prefix((*s).origin.view())) {call(if event.kind==0 {#addr_of(body) as *u8} else {event.args.raw()},context);}
+            if !(*s).disposed && !event.deferral.is_null() {native::check(native::must::[ui::IDeferral](ui::IDeferral::query(event.deferral)).complete());}
+        }
+    }
+    release_state(s);
+}
+fn received(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let s=ctx as *State;let event=native::must::[ui::ICoreWebView2WebMessageReceivedEventArgs](ui::ICoreWebView2WebMessageReceivedEventArgs::query(args));
+    let source=native::must::[text::Text](event.source());if !source.view().has_prefix((*s).origin.view()) {return rt::Status {code:0};}
+    let body=match event.try_get_web_message_as_string() {result::Result::Ok(v)=>v,result::Result::Err(e)=>native::must::[text::Text](event.web_message_as_json())};
+    assert (*s).events.append(Event {kind:0,args:rt::Object::empty(),deferral:rt::Object::empty(),body:body,source:source}).is_ok();kick(s);return rt::Status {code:0};
+}
+fn requested(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let s=ctx as *State;let event=native::must::[ui::ICoreWebView2WebResourceRequestedEventArgs](ui::ICoreWebView2WebResourceRequestedEventArgs::query(args));
+    let request=native::must::[ui::ICoreWebView2WebResourceRequest](ui::ICoreWebView2WebResourceRequest::query(native::must::[rt::Object](event.request())));
+    let address=native::must::[text::Text](request.uri());let method=native::must::[text::Text](request.method());
+    // The filter is restricted to our synthetic HTTPS hosts. Old navigations
+    // get a 404 after a root change instead of reading from the new directory.
+    native::check(event.set_response(files::response((*s).environment,(*s).root.view(),address.view(),(*s).origin.view(),method.view())));
+    let deferral=native::must::[rt::Object](event.get_deferral());
+    assert (*s).events.append(Event {kind:1,args:args.clone(),deferral:deferral,body:text::from_str(""),source:address}).is_ok();kick(s);return rt::Status {code:0};
+}
+fn initialized(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let s=ctx as *State;let view=native::must::[ui::IWebView2](ui::IWebView2::query(sender));let object=native::must::[rt::Object](view.core_web_view2());
+    if object.is_null() {return rt::Status {code:0};}if !(*s).engine.is_null() {return rt::Status {code:0};}
+    (*s).engine=object.clone();let engine=native::must::[ui::ICoreWebView2](ui::ICoreWebView2::query(object));
+    (*s).environment=native::must::[rt::Object](native::must::[ui::ICoreWebView2_2](ui::ICoreWebView2_2::query(object)).environment());
+    let a=native::must::[ui::TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_WebView2_Core_CoreWebView2WebMessageReceivedEventArgs](ui::TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_WebView2_Core_CoreWebView2WebMessageReceivedEventArgs::new(received,ctx));
+    let b=native::must::[ui::TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_WebView2_Core_CoreWebView2WebResourceRequestedEventArgs](ui::TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_WebView2_Core_CoreWebView2WebResourceRequestedEventArgs::new(requested,ctx));
+    (*s).message=native::must::[ui::EventRegistrationToken](engine.add_web_message_received(a.object()));(*s).resource=native::must::[ui::EventRegistrationToken](engine.add_web_resource_requested(b.object()));LIVE=LIVE+2;
+    native::check(engine.add_web_resource_requested_filter("https://facet-*.invalid/*",ui::core_web_view2_web_resource_context_all));
+    (*s).script=native::must::[rt::Object](engine.add_script_to_execute_on_document_created_async(bridge()));(*s).stage=2;kick(s);return rt::Status {code:0};
+}
+fn navigated(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let s=ctx as *State;let event=native::must::[ui::ICoreWebView2NavigationCompletedEventArgs](ui::ICoreWebView2NavigationCompletedEventArgs::query(args));
+    if (*s).awaiting_navigation || native::must::[u64](event.navigation_id())!=(*s).navigation {return rt::Status {code:0};}
+    let engine=native::must::[ui::ICoreWebView2](ui::ICoreWebView2::query((*s).engine));let source=native::must::[text::Text](engine.source());
+    (*s).loaded=native::must::[bool](event.is_success()) && source.view().has_prefix((*s).origin.view());kick(s);return rt::Status {code:0};
+}
+fn navigating(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let s=ctx as *State;let event=native::must::[ui::ICoreWebView2NavigationStartingEventArgs](ui::ICoreWebView2NavigationStartingEventArgs::query(args));let uri=native::must::[text::Text](event.uri());
+    if uri.view()!="about:blank" && !uri.view().has_prefix((*s).origin.view()) {native::check(event.set_cancel(true));}else {(*s).loaded=false;(*s).navigation=native::must::[u64](event.navigation_id());(*s).awaiting_navigation=false;}
+    return rt::Status {code:0};
+}
+fn apply(r: *record::View) {
+    let s=state(r);let dirty=core::dirty_of((*r).node);
+    if !(*s).applied {(*s).pending=hybrid::P_DEFAULT_FILE|hybrid::P_HYBRID_ROOT;(*s).applied=true;kick(s);}
+    else {(*s).pending=(*s).pending|(dirty&(hybrid::P_DEFAULT_FILE|hybrid::P_HYBRID_ROOT|hybrid::P_SEND_MESSAGE));}
+    flush(s);
+}
+fn attach(r: *record::View) {
+    let owner=match box::new::[State](#zero::[State]()) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};let s=owner.ptr();(*s).host=r;(*s).users=1;(*s).events=vec::new::[Event]();
+    let view=native::must::[ui::IWebView2](ui::IWebView2::query((*r).object));
+    let a=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_UI_Xaml_Controls_CoreWebView2InitializedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_UI_Xaml_Controls_CoreWebView2InitializedEventArgs::new(initialized,s as *u8));
+    let b=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2NavigationCompletedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2NavigationCompletedEventArgs::new(navigated,s as *u8));
+    let c=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2NavigationStartingEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView2_Core_CoreWebView2NavigationStartingEventArgs::new(navigating,s as *u8));
+    (*r).token=native::must::[ui::EventRegistrationToken](view.add_core_web_view2_initialized(a.object()));(*r).token2=native::must::[ui::EventRegistrationToken](view.add_navigation_completed(b.object()));(*r).token3=native::must::[ui::EventRegistrationToken](view.add_navigation_starting(c.object()));LIVE=LIVE+3;(*r).extra=owner.into_raw();
+}
+fn release(r: *record::View) {
+    let s=state(r);(*s).disposed=true;scheduler::cancel((*s).timer);(*s).timer=0;
+    let view=native::must::[ui::IWebView2](ui::IWebView2::query((*r).object));native::check(view.remove_core_web_view2_initialized((*r).token));native::check(view.remove_navigation_completed((*r).token2));native::check(view.remove_navigation_starting((*r).token3));LIVE=LIVE-3;
+    if !(*s).engine.is_null() {let engine=native::must::[ui::ICoreWebView2](ui::ICoreWebView2::query((*s).engine));native::check(engine.remove_web_message_received((*s).message));native::check(engine.remove_web_resource_requested((*s).resource));LIVE=LIVE-2;}
+    // Closing cancels outstanding WebView requests. Keep the state alive if an
+    // application callback is on the stack; dispatch releases its last borrow.
+    browser::close_view(r);(*s).events.remove_all();(*s).host=0 as *record::View;(*r).extra=0 as *u8;release_state(s);
+}

@@ -1,0 +1,46 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/services" as services;
+import "facet/mount" as mount;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+// Compare Facet's final automatic frame to the native post-template metrics.
+fn check_fit(key: str) {
+    let frame=(*check::node(key)).frame();let obj=check::object(key);
+    let element=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(obj));
+    let layout=check::must::[native::IUIElement](native::IUIElement::query(obj));
+    let nan=#bitcast::[f64](0x7ff8000000000000u64);
+    assert element.set_height(nan).is_ok();assert layout.measure(native::Size {width:frame.width as f32,height:1000.0f32}).is_ok();
+    let desired=check::must::[native::Size](layout.desired_size());assert frame.height>=32.0f64;assert frame.height+1.0f64>=desired.height as f64;assert frame.height<=desired.height as f64+1.0f64;
+    assert element.set_height(frame.height).is_ok();
+}
+fn check_width(key: str) {
+    let content=check::must::[native::IContentControl](native::IContentControl::query(check::object(key)));
+    let caption=check::must::[native::ITextBlock](native::ITextBlock::query(check::must::[rt::Object](content.content())));
+    assert !check::must::[bool](caption.is_text_trimmed());
+}
+struct Probe {passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn build(ref this) -> core::Node {return @ui {column {
+        button("Automatically sized button",key:"auto")
+        text_field("Automatically sized input",key:"input")
+        button("Explicit height",key:"fixed").height(48.0f64)
+        label("Visible label",key:"label")
+        row {button("First",key:"first") button("Second",key:"second") button("Third",key:"third")}.gap(8.0f64)
+    }.padding(20.0f64).gap(12.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.3f64,this.inspect);}
+    fn inspect(ref this) {
+        check_width("first");check_width("second");check_width("third");check_fit("auto");check_fit("input");assert (*check::node("fixed")).frame().height==48.0f64;
+        check::log("PASS: automatic control size uses loaded metrics; row captions do not truncate");
+        let old=mount::replace("auto",ui::button("Larger dynamically mounted button",key:"auto",font_size:28.0f64));this.timer=services::after(0.3f64,this.replaced);
+    }
+    fn replaced(ref this) {
+        check_fit("auto");assert (*check::node("auto")).frame().height>40.0f64;assert (*check::node("fixed")).frame().height==48.0f64;
+        check::log("PASS: dynamically mounted controls remeasure; explicit height is preserved");this.passed=true;assert host::close().is_ok();
+    }
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI layout",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: layout teardown");return 0;}

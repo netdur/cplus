@@ -1,0 +1,85 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/menu" as menu;
+import "facet/menu_item" as menu_item;
+import "facet/context_menu_item" as context_item;
+import "facet/toolbar_item" as toolbar_item;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "./actions" as actions;
+import "./texts" as texts;
+fn item(key: str) -> native::IMenuFlyoutItem {return check::must::[native::IMenuFlyoutItem](native::IMenuFlyoutItem::query(check::object(key)));}
+fn flyout(key: str="menu") -> native::IFlyoutBase {
+    if key=="menu" {let button=check::must::[native::IButton](native::IButton::query(check::object(key)));return check::must::[native::IFlyoutBase](native::IFlyoutBase::query(check::must::[rt::Object](button.flyout())));}
+    let visual=check::must::[native::IUIElement](native::IUIElement::query(check::object(key)));return check::must::[native::IFlyoutBase](native::IFlyoutBase::query(check::must::[rt::Object](visual.context_flyout())));
+}
+fn accelerators(key: str) -> native::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator {let visual=check::must::[native::IUIElement](native::IUIElement::query(check::object(if key=="ci" {"menu"} else {"context"})));return check::must::[native::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator](native::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator::query(check::must::[rt::Object](visual.keyboard_accelerators())));}
+fn accelerator(key: str) -> native::IKeyboardAccelerator {assert check::must::[u32](accelerators(key).size())==1;return check::must::[native::IKeyboardAccelerator](native::IKeyboardAccelerator::query(check::must::[rt::Object](accelerators(key).get_at(0))));}
+fn count(key: str) -> u32 {let fly=check::must::[native::IMenuFlyout](native::IMenuFlyout::query(flyout(key).object()));let entries=check::must::[native::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase](native::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase::query(check::must::[rt::Object](fly.items())));return check::must::[u32](entries.size());}
+struct Probe {clicks: i32,mode: i32,passed: bool,timer: services::Cancellable}
+impl Probe {
+    fn clicked(ref this,sender: *u8) {
+        this.clicks=this.clicks+1;let key=component::key_of(sender);
+        if this.mode==0 {assert key=="mi";let old=mount::replace("sibling",ui::label("Changed",key:"sibling"));}
+        if this.mode==1 {assert key=="ci";assert mount::remove("ci");}
+        if this.mode==2 {assert key=="tool";assert mount::remove("tool");}
+        if this.mode==3 {assert key=="cx";assert mount::remove("context");}
+    }
+    fn build(ref this) -> core::Node {
+        var launcher=ui::menu("Actions",key:"menu");
+        assert launcher.add_child(ui::menu_item("Menu action",key:"mi",icon:"trash",destructive:true,on_clicked:this.clicked)).is_ok();
+        assert launcher.add_child(ui::context_menu_item("Context action",key:"ci",shortcut:vocab::Shortcut::of("k",vocab::KeyModifiers::Ctrl),icon:"archivebox",on_clicked:this.clicked)).is_ok();
+        var context=ui::context_menu(key:"context").height(60.0f64);
+        assert context.add_child(ui::context_menu_item("Remove host",key:"cx",shortcut:vocab::Shortcut::of("F2"),on_clicked:this.clicked)).is_ok();
+        assert context.add_child(ui::label("Right click here",key:"body")).is_ok();
+        assert context.add_child(ui::menu_item("Last",key:"last")).is_ok();
+        return @ui {column {launcher toolbar_item("Toolbar action",key:"tool",icon:"star",destructive:true,on_clicked:this.clicked) context label("Sibling",key:"sibling")}.padding(20.0f64).gap(12.0f64)};
+    }
+    fn ready(ref this) {this.timer=services::after(0.3f64,this.initial);}
+    fn initial(ref this) {
+        assert check::must::[i32](accelerator("ci").key())==75;assert check::must::[u32](accelerator("ci").modifiers())==native::virtual_key_modifiers_control;assert check::must::[rt::Object](accelerator("ci").scope_owner()).is_null();
+        assert check::must::[i32](accelerator("cx").key())==113;let scope=check::must::[rt::Object](accelerator("cx").scope_owner());assert check::must::[rt::Object](scope.query(rt::unknown_iid())).raw()==check::must::[rt::Object](check::object("context").query(rt::unknown_iid())).raw();
+        assert count("menu")==2 && count("context")==2;let menu_frame=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(check::object("menu")));assert check::must::[f64](menu_frame.actual_width())>40.0f64;assert check::must::[f64](menu_frame.actual_height())>20.0f64;
+        assert check::must::[text::Text](item("mi").text())=="Menu action";assert !check::must::[rt::Object](item("mi").icon()).is_null();
+        let control=check::must::[native::IControl](native::IControl::query(check::object("mi")));let color=texts::brush_color(check::must::[rt::Object](control.foreground()));assert color.r>color.g;
+        if let option::Option::Some(v)=menu::find("menu") {let updated=v.set_text("Updated menu");assert v.count()==2;}
+        if let option::Option::Some(v)=menu_item::find("mi") {let updated=v.set_text("Updated action").set_icon("").set_destructive(false);}
+        if let option::Option::Some(v)=context_item::find("ci") {let updated=v.set_shortcut(vocab::Shortcut::of("F12",vocab::KeyModifiers::Alt)).set_text("Updated context").set_icon("star").set_destructive(true);}
+        if let option::Option::Some(v)=toolbar_item::find("tool") {let updated=v.set_text("Updated toolbar").set_icon("").set_destructive(false);}
+        this.timer=services::after(0.2f64,this.updated);
+    }
+    fn updated(ref this) {
+        assert check::must::[text::Text](item("ci").keyboard_accelerator_text_override())=="Alt+F12";
+        assert check::must::[i32](accelerator("ci").key())==123;assert check::must::[u32](accelerator("ci").modifiers())==native::virtual_key_modifiers_menu;
+        if let option::Option::Some(v)=context_item::find("ci") {let updated=v.set_shortcut(vocab::Shortcut::none());}
+        if let option::Option::Some(v)=context_item::find("cx") {let updated=v.set_shortcut(vocab::Shortcut::of("F99"));}
+        assert check::must::[text::Text](item("mi").text())=="Updated action";assert check::must::[rt::Object](item("mi").icon()).is_null();assert check::must::[text::Text](item("ci").text())=="Updated context";
+        let button=check::must::[native::IContentControl](native::IContentControl::query(check::object("menu")));let title=check::must::[native::IPropertyValue](native::IPropertyValue::query(check::must::[rt::Object](button.content())));assert check::must::[text::Text](title.get_string())=="Updated menu";
+        let control=check::must::[native::IControl](native::IControl::query(check::object("mi")));let color=texts::brush_color(check::must::[rt::Object](control.foreground()));assert color.r==color.g;
+        let toolbar=check::must::[native::IContentControl](native::IContentControl::query(check::object("tool")));let panel=check::must::[native::IPanel](native::IPanel::query(check::must::[rt::Object](toolbar.content())));let children=check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));assert check::must::[u32](children.size())==1;
+        let label=check::must::[native::ITextBlock](native::ITextBlock::query(check::must::[rt::Object](children.get_at(0))));assert check::must::[text::Text](label.text())=="Updated toolbar";
+        check::log("PASS: menu/context/toolbar native text, icon and destructive updates/reset, auto measurement and separate context content");
+        assert flyout().show_at(check::object("menu")).is_ok();this.timer=services::after(0.2f64,this.invoke_action);
+    }
+    fn invoke_action(ref this) {assert check::must::[u32](accelerators("cx").size())==0;if this.mode<2 {assert check::must::[u32](accelerators("ci").size())==0;}actions::invoke(if this.mode==0 {"mi"} else if this.mode==1 {"ci"} else if this.mode==2 {"tool"} else {"cx"});this.timer=services::after(0.2f64,this.after_action);}
+    fn after_action(ref this) {
+        assert this.clicks==this.mode+1;this.mode=this.mode+1;
+        if this.mode==1 {assert flyout().show_at(check::object("menu")).is_ok();this.timer=services::after(0.2f64,this.invoke_action);return;}
+        if this.mode==2 {assert count("menu")==1;if let option::Option::Some(v)=menu::find("menu") {assert v.count()==1;}this.timer=services::after(0.1f64,this.invoke_action);return;}
+        if this.mode==3 {assert flyout("context").show_at(check::object("context")).is_ok();this.timer=services::after(0.2f64,this.invoke_action);return;}
+        check::log("PASS: all three action callbacks, unrelated mutation, self-removal and context-host removal");
+        var remaining=ui::context_menu(key:"remaining");assert remaining.add_child(ui::label("Live shortcut at close")).is_ok();assert remaining.add_child(ui::context_menu_item("Still attached",shortcut:vocab::Shortcut::of("j",vocab::KeyModifiers::Ctrl))).is_ok();let old=mount::replace("sibling",remaining);this.timer=services::after(0.2f64,this.finish);
+    }
+    fn finish(ref this) {this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI menus",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: menu teardown");return 0;}

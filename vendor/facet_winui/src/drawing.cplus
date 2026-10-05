@@ -1,0 +1,76 @@
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/canvas" as canvas;
+import "facet/vocabulary" as vocab;
+import "./native" as native;
+import "./style" as style;
+import "./typography" as typography;
+import "./record" as record;
+fn point(p: vocab::Point) -> ui::Point {return ui::Point {x:p.x as f32,y:p.y as f32};}
+fn path(p: *vocab::Path) -> rt::Object {
+    let geometry: ui::PathGeometry=native::must::[ui::PathGeometry](ui::PathGeometry::new());
+    let figures: ui::IVector_Microsoft_UI_Xaml_Media_PathFigure=native::must::[ui::IVector_Microsoft_UI_Xaml_Media_PathFigure](ui::IVector_Microsoft_UI_Xaml_Media_PathFigure::query(native::must::[rt::Object](geometry.figures())));
+    var figure: rt::Object=rt::Object::empty();var i: usize=0;
+    while i<(*p).count() {
+        let step: vocab::PathSegment=(*p).at(i);
+        if step.op==vocab::PathOp::Move {let v: ui::PathFigure=native::must::[ui::PathFigure](ui::PathFigure::new());native::check(v.set_start_point(point(step.point)));native::check(v.set_is_filled(true));figure=v.object();native::check(figures.append(figure));}
+        else if !figure.is_null() {
+            let f: ui::IPathFigure=native::must::[ui::IPathFigure](ui::IPathFigure::query(figure));
+            let segments: ui::IVector_Microsoft_UI_Xaml_Media_PathSegment=native::must::[ui::IVector_Microsoft_UI_Xaml_Media_PathSegment](ui::IVector_Microsoft_UI_Xaml_Media_PathSegment::query(native::must::[rt::Object](f.segments())));
+            if step.op==vocab::PathOp::Close {native::check(f.set_is_closed(true));}
+            if step.op==vocab::PathOp::Line {let v: ui::LineSegment=native::must::[ui::LineSegment](ui::LineSegment::new());native::check(v.set_point(point(step.point)));native::check(segments.append(v.object()));}
+            if step.op==vocab::PathOp::Curve {let v: ui::BezierSegment=native::must::[ui::BezierSegment](ui::BezierSegment::new());native::check(v.set_point1(point(step.control1)));native::check(v.set_point2(point(step.control2)));native::check(v.set_point3(point(step.point)));native::check(segments.append(v.object()));}
+            if step.op==vocab::PathOp::Quad {let v: ui::QuadraticBezierSegment=native::must::[ui::QuadraticBezierSegment](ui::QuadraticBezierSegment::new());native::check(v.set_point1(point(step.control1)));native::check(v.set_point2(point(step.point)));native::check(segments.append(v.object()));}
+        }
+        i=i+1;
+    }
+    return geometry.object();
+}
+fn place(value: rt::Object,b: vocab::Rect) {
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));native::check(element.set_width(b.width));native::check(element.set_height(b.height));
+    let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left(value,b.x));native::check(canvas.set_top(value,b.y));return;
+}
+fn apply(r: *record::View) {
+    if (core::dirty_of((*r).node)&(canvas::P_DRAWABLE|canvas::P_REDRAW))!=0 {(*r).draw_pending=true;}
+}
+fn render(r: *record::View,width: f64,height: f64) {
+    if width<=0.0f64 || height<=0.0f64 {return;}
+    if !(*r).draw_pending && (*r).draw_width==width && (*r).draw_height==height {return;}
+    (*r).draw_pending=false;(*r).draw_width=width;(*r).draw_height=height;
+    let p: *props::CanvasProps=(*core::node_data((*r).node)).props as *props::CanvasProps;
+    var commands: vocab::Canvas=vocab::Canvas::of(vocab::Size {width:width,height:height});
+    (*p).drawable.draw(#addr_of(commands),vocab::Rect::of(0.0f64,0.0f64,width,height),(*p).drawable.ctx);
+    let panel: ui::IPanel=native::must::[ui::IPanel](ui::IPanel::query((*r).object));
+    let children: ui::IVector_Microsoft_UI_Xaml_UIElement=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));native::check(children.clear());
+    var fill: rt::Object=style::brush(vocab::Color::ink());var stroke: rt::Object=fill.clone();var text_color: rt::Object=fill.clone();var stroke_width: f64=1.0f64;var font_size: f64=14.0f64;var weight: vocab::FontWeight=vocab::FontWeight::Default;var opacity: f64=1.0f64;var i: usize=0;
+    while i<commands.count() {
+        let c: vocab::DrawCommand=commands.at(i);let op: vocab::DrawOp=c.op;var value: rt::Object=rt::Object::empty();var shape: bool=false;var filled: bool=false;var positioned: bool=false;
+        if op==vocab::DrawOp::SetFill {fill=style::brush(c.color);}
+        if op==vocab::DrawOp::SetFillBrush {fill=style::paint(commands.brush(c.aux as usize));}
+        if op==vocab::DrawOp::SetStroke {stroke=style::brush(c.color);}
+        if op==vocab::DrawOp::SetTextColor {text_color=style::brush(c.color);}
+        if op==vocab::DrawOp::SetStrokeWidth {stroke_width=c.stroke_width();}
+        if op==vocab::DrawOp::SetOpacity {opacity=c.opacity();}
+        if op==vocab::DrawOp::SetFont {font_size=c.font_size();weight=c.weight;}
+        if op==vocab::DrawOp::FillRect || op==vocab::DrawOp::DrawRect || op==vocab::DrawOp::FillRoundedRect || op==vocab::DrawOp::DrawRoundedRect {
+            let v: ui::Rectangle=native::must::[ui::Rectangle](ui::Rectangle::new());value=v.object();shape=true;positioned=true;filled=op==vocab::DrawOp::FillRect || op==vocab::DrawOp::FillRoundedRect;
+            if op==vocab::DrawOp::FillRoundedRect || op==vocab::DrawOp::DrawRoundedRect {native::check(v.set_radius_x(c.corner_radius()));native::check(v.set_radius_y(c.corner_radius()));}
+        }
+        if op==vocab::DrawOp::FillEllipse || op==vocab::DrawOp::DrawEllipse {let v: ui::Ellipse=native::must::[ui::Ellipse](ui::Ellipse::new());value=v.object();shape=true;positioned=true;filled=op==vocab::DrawOp::FillEllipse;}
+        if op==vocab::DrawOp::DrawLine {let v: ui::Line=native::must::[ui::Line](ui::Line::new());let a: vocab::Point=c.from();let b: vocab::Point=c.to();native::check(v.set_x1(a.x));native::check(v.set_y1(a.y));native::check(v.set_x2(b.x));native::check(v.set_y2(b.y));value=v.object();shape=true;}
+        if op==vocab::DrawOp::DrawPath || op==vocab::DrawOp::FillPath {let pth: *vocab::Path=commands.path(c.aux as usize);if pth.is_not_null() {let v: ui::Path=native::must::[ui::Path](ui::Path::new());native::check(v.set_data(path(pth)));value=v.object();shape=true;filled=op==vocab::DrawOp::FillPath;}}
+        if op==vocab::DrawOp::DrawText || op==vocab::DrawOp::DrawTextBlock {
+            let v: ui::TextBlock=native::must::[ui::TextBlock](ui::TextBlock::new());native::check(v.set_text(commands.text(c.aux as usize)));native::check(v.set_font_size(font_size));native::check(v.set_font_weight(style::weight(weight)));native::check(v.set_foreground(text_color));
+            native::check(v.set_text_alignment(if c.align==vocab::TextAlign::Center {ui::text_alignment_center} else if c.align==vocab::TextAlign::End {ui::text_alignment_right} else {ui::text_alignment_left}));value=v.object();positioned=true;
+        }
+        if !value.is_null() {
+            if shape {let s: ui::IShape=native::must::[ui::IShape](ui::IShape::query(value));if filled {native::check(s.set_fill(fill));} else {native::check(s.set_stroke(stroke));native::check(s.set_stroke_thickness(stroke_width));}}
+            if positioned {place(value,c.bounds);}
+            let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(value));native::check(element.set_is_hit_test_visible(false));native::check(element.set_opacity(opacity));native::check(children.append(value));
+        }
+        i=i+1;
+    }
+    return;
+}

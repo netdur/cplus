@@ -9841,6 +9841,11 @@ impl SemaCx<'_> {
             // is the only one that separates the iOS simulator from a device.
             "arch" => self.check_intrinsic_arch(type_args, args, ret_ty, span),
             "target" => self.check_intrinsic_target(type_args, args, ret_ty, span),
+            // `#target_feature("avx2")` — is that instruction-set extension
+            // enabled for this build (`--target-cpu` / `--target-feature`)?
+            // A `bool` constant, value-level like `#arch()`: both arms of the
+            // `if` compile, and the optimizer drops the dead one.
+            "target_feature" => self.check_intrinsic_target_feature(type_args, args, ret_ty, span),
             "size_of" => self.check_intrinsic_layout("size_of", type_args, args, ret_ty, span),
             "align_of" => self.check_intrinsic_layout("align_of", type_args, args, ret_ty, span),
             // v0.0.12 G-028 (llama.cplus G-026): `#zero::[T]()` returns a
@@ -10563,6 +10568,67 @@ impl SemaCx<'_> {
             ret_ty,
             span,
         )
+    }
+
+    /// `#target_feature("name") -> bool`. The name must be one
+    /// `target::CPU_FEATURES` lists for SOME architecture: a feature of
+    /// another arch is `false` rather than an error, so one kernel file can
+    /// ask about `avx2` and `dotprod` and build on both. Codegen re-asks
+    /// `target::cpu_feature_enabled`, which is cached, so the two agree.
+    fn check_intrinsic_target_feature(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err(
+                "E0903",
+                format!(
+                    "`#target_feature` takes no type arguments, got {}",
+                    type_args.len()
+                ),
+                span,
+            );
+        }
+        if ret_ty.is_some() {
+            self.err(
+                "E0903",
+                "`#target_feature` does not accept a `-> T` return-type ascription".to_string(),
+                span,
+            );
+        }
+        if args.len() != 1 {
+            self.err(
+                "E0903",
+                format!("`#target_feature` takes 1 argument, got {}", args.len()),
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return Ty::Bool;
+        }
+        let ExprKind::StrLit(name) = &args[0].kind else {
+            self.err(
+                "E0903",
+                "`#target_feature` argument must be a string literal".to_string(),
+                args[0].span,
+            );
+            return Ty::Bool;
+        };
+        if crate::target::cpu_feature_enabled(name).is_none() {
+            self.err(
+                "E0903",
+                format!(
+                    "unknown CPU feature `{name}` (known: {})",
+                    crate::target::cpu_feature_names()
+                ),
+                args[0].span,
+            );
+        }
+        Ty::Bool
     }
 
     /// Shared checker for the zero-argument target-fact intrinsics

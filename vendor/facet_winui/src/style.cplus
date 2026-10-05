@@ -1,0 +1,58 @@
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/vocabulary" as vocab;
+import "facet/theme" as theme;
+import "./native" as native;
+fn dark() -> bool { return true; }
+fn alpha(c: vocab::Color) -> f64 { return if c.token==255 || c.token==254 || c.a>0.0f64 {c.a} else {1.0f64}; }
+fn resolve(c: vocab::Color, depth: i32=6) -> vocab::Color {
+    if depth<=0 || c.token==0 || c.token==255 {return c;}
+    if c.token==254 {return vocab::Color::rgba(c.r2,c.g2,c.b2,c.a2);}
+    if c.is_theme_role() {
+        var slot: vocab::Color=theme::theme_slot(c.token); if !slot.is_set() {slot=theme::theme_fallback(c.token);}
+        var value: vocab::Color=resolve(slot,depth-1); value.a=value.a*alpha(c); return value;
+    }
+    if c.is_derived_ink() {
+        let b: vocab::Color=resolve(c.derived_ink_base(),depth-1); let luminance: f64=b.r*0.2126f64+b.g*0.7152f64+b.b*0.0722f64;
+        let value: f64=if luminance>0.55f64 {0.0f64} else {1.0f64}; return vocab::Color::rgba(value,value,value,alpha(c));
+    }
+    var value: f64=0.94f64;
+    if c.token==2 || c.token==9 || c.token==15 {value=0.65f64;}
+    if c.token==11 {value=0.13f64;} if c.token==12 {value=0.09f64;} if c.token==13 {value=0.17f64;}
+    if c.token==14 || c.token==19 {value=0.25f64;} if c.token==10 {value=0.32f64;}
+    if c.token==3 || c.token==6 || c.token==16 || c.token==17 || c.token==18 {return vocab::Color::rgba(0.35f64,0.55f64,0.95f64,alpha(c));}
+    if c.token==4 {return vocab::Color::rgba(0.95f64,0.3f64,0.28f64,alpha(c));}
+    if c.token==5 {return vocab::Color::rgba(0.2f64,0.8f64,0.4f64,alpha(c));}
+    if c.token==7 {return vocab::Color::rgba(1.0f64,0.6f64,0.1f64,alpha(c));}
+    if c.token==20 {return vocab::Color::rgba(1.0f64,0.85f64,0.2f64,alpha(c));}
+    if c.token==21 || c.token==24 {return vocab::Color::rgba(0.65f64,0.45f64,0.95f64,alpha(c));}
+    if c.token==22 {return vocab::Color::rgba(1.0f64,0.4f64,0.7f64,alpha(c));}
+    if c.token==23 {return vocab::Color::rgba(0.2f64,0.8f64,0.8f64,alpha(c));}
+    return vocab::Color::rgba(value,value,value,alpha(c));
+}
+fn channel(v: f64) -> u8 {return if v<=0.0f64 {0 as u8} else if v>=1.0f64 {255 as u8} else {(v*255.0f64+0.5f64) as u8};}
+fn brush(c: vocab::Color) -> rt::Object {
+    let value: vocab::Color=resolve(c); let b: ui::SolidColorBrush=native::must::[ui::SolidColorBrush](ui::SolidColorBrush::new());
+    native::check(b.set_color(ui::Color {a:channel(value.a),r:channel(value.r),g:channel(value.g),b:channel(value.b)})); return b.object();
+}
+fn weight(w: vocab::FontWeight) -> ui::FontWeight {
+    var value: u16=400;
+    if w==vocab::FontWeight::UltraLight {value=100;} if w==vocab::FontWeight::Thin {value=200;} if w==vocab::FontWeight::Light {value=300;}
+    if w==vocab::FontWeight::Medium {value=500;} if w==vocab::FontWeight::Semibold {value=600;} if w==vocab::FontWeight::Bold {value=700;}
+    if w==vocab::FontWeight::Heavy {value=800;} if w==vocab::FontWeight::Black {value=900;}
+    return ui::FontWeight {weight:value};
+}
+extern fn cos(value: f64) -> f64;
+extern fn sin(value: f64) -> f64;
+fn color(c: vocab::Color) -> ui::Color {let v: vocab::Color=resolve(c);return ui::Color {a:channel(v.a),r:channel(v.r),g:channel(v.g),b:channel(v.b)};}
+fn paint(value: vocab::Brush) -> rt::Object {
+    if !value.is_gradient {return brush(value.start);}
+    let b: ui::LinearGradientBrush=native::must::[ui::LinearGradientBrush](ui::LinearGradientBrush::new());
+    let angle: f64=value.angle*0.017453292519943295f64;let dx: f64=cos(angle)*0.5f64;let dy: f64=sin(angle)*0.5f64;
+    native::check(b.set_start_point(ui::Point {x:(0.5f64-dx) as f32,y:(0.5f64-dy) as f32}));native::check(b.set_end_point(ui::Point {x:(0.5f64+dx) as f32,y:(0.5f64+dy) as f32}));
+    let gradient: ui::IGradientBrush=native::must::[ui::IGradientBrush](ui::IGradientBrush::query(b.object()));
+    let stops: ui::IVector_Microsoft_UI_Xaml_Media_GradientStop=native::must::[ui::IVector_Microsoft_UI_Xaml_Media_GradientStop](ui::IVector_Microsoft_UI_Xaml_Media_GradientStop::query(native::must::[rt::Object](gradient.gradient_stops())));
+    let a: ui::GradientStop=native::must::[ui::GradientStop](ui::GradientStop::new());native::check(a.set_color(color(value.start)));native::check(a.set_offset(0.0f64));native::check(stops.append(a.object()));
+    let z: ui::GradientStop=native::must::[ui::GradientStop](ui::GradientStop::new());native::check(z.set_color(color(value.end)));native::check(z.set_offset(1.0f64));native::check(stops.append(z.object()));return b.object();
+}
+fn corners(v: vocab::Corners) -> ui::CornerRadius {return ui::CornerRadius {top_left:v.top_leading,top_right:v.top_trailing,bottom_right:v.bottom_trailing,bottom_left:v.bottom_leading};}

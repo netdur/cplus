@@ -1,0 +1,259 @@
+// facet_winui/dialogs - alerts, choices and prompts as facet trees in the
+// window they belong to.
+//
+// The trees are facet_win32's (which are facet_gtk's, which are AppKit's):
+// a dialog the platform draws has no keys, and an agent cannot answer what it
+// cannot address. ContentDialog is that kind of dialog. So the sheet is a
+// plain facet tree - `alert:title`, `alert:message`, `alert:primary`,
+// `alert:secondary`, `choose:opt:N`, `prompt:value` - shown on the active
+// window's modal layer (`facet_winui::present_layer`): a scrim over the
+// content that takes every press, with the tree centred on a card. It is
+// mounted like a window, so `find` and the agent surface reach it.
+//
+// NON-BLOCKING. The answer arrives on `on_answer` on a later turn: the button
+// that was pressed is unmounted with its tree, so the answer is not delivered
+// from inside its own click. `alert` is the blocking spelling and pumps the
+// message loop until the sheet answers.
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/box" as box;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/vocabulary" as vocab;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/text_field" as text_field;
+import "./facet_winui" as host;
+import "./scheduler" as scheduler;
+
+#[repr(C)] struct Msg { hwnd: usize, message: u32, w: u64, l: i64, time: u32, x: i32, y: i32, private: u32 }
+extern fn GetMessageW(msg: *Msg, hwnd: *u8, min: u32, max: u32) -> i32;
+extern fn TranslateMessage(msg: *Msg) -> i32;
+extern fn DispatchMessageW(msg: *Msg) -> i64;
+extern fn PostQuitMessage(code: i32);
+
+// ONE AT A TIME, as on Win32: a second sheet over the first would be
+// unanswerable, so it is refused rather than stacked.
+struct Sheet {
+    opaque root: *core::Node,
+    opaque window: *u8,
+    answer: fn(i32, *u8),
+    opaque answer_ctx: *u8,
+    typed: fn(str, *u8),
+    opaque typed_ctx: *u8,
+    chosen: i32,
+    // 0 alert, 1 choose, 2 prompt: what Enter and Escape mean.
+    kind: i32,
+    has_secondary: bool,
+}
+static LIVE: *Sheet=0 as *Sheet;
+
+fn no_typed(v: str, ctx: *u8) { return; }
+fn live() -> bool { return LIVE.is_not_null(); }
+
+fn alert_primary(sender: *u8, ctx: *u8) { answer_later(0); }
+fn alert_secondary(sender: *u8, ctx: *u8) { answer_later(1); }
+fn choose_pick(sender: *u8, ctx: *u8) { answer_later(ctx as usize as i32); }
+// The prompt's OK reads the field now, while the tree is still mounted.
+fn prompt_ok(sender: *u8, ctx: *u8) {
+    let s: *Sheet=LIVE;
+    if s.is_null() { return; }
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let typed: str=f.text();
+            let g: fn(str, *u8)=(*s).typed;
+            if g.is_not_null() { g(typed,(*s).typed_ctx); }
+        }
+        option::Option[text_field::TextField]::None => { }
+    }
+    answer_later(0);
+}
+fn prompt_cancel(sender: *u8, ctx: *u8) { answer_later(1); }
+
+// Record the answer and dismiss on the next turn: the click that chose it is
+// still running inside the tree that dismissing unmounts.
+fn answer_later(answer: i32) {
+    let s: *Sheet=LIVE;
+    if s.is_null() || (*s).chosen>=0 { return; }
+    (*s).chosen=answer;
+    let token: u64=scheduler::after(0.0f64,dismiss_now,s as *u8);
+    if token==0 { dismiss_now(s as *u8); }
+}
+fn dismiss_now(ctx: *u8) {
+    let s: *Sheet=ctx as *Sheet;
+    if s!=LIVE || s.is_null() { return; }
+    LIVE=0 as *Sheet;
+    host::dismiss_layer((*s).window);
+    // The answer goes out before the tree drops, as on every backend.
+    let f: fn(i32, *u8)=(*s).answer;
+    if f.is_not_null() { f((*s).chosen,(*s).answer_ctx); }
+    let tree: box::Box[core::Node]=box::from_raw::[core::Node]((*s).root as *u8);
+    let record: box::Box[Sheet]=box::from_raw::[Sheet](s as *u8);
+}
+// The window closed under the sheet: the layer is already unmounted. No
+// answer - nobody chose - and the records go.
+fn layer_gone(root: *u8) {
+    let s: *Sheet=LIVE;
+    if s.is_null() || (*s).root!=(root as *core::Node) { return; }
+    LIVE=0 as *Sheet;
+    if BLOCKING { BLOCKING=false; BLOCKING_ANSWER=-1; }
+    let tree: box::Box[core::Node]=box::from_raw::[core::Node]((*s).root as *u8);
+    let record: box::Box[Sheet]=box::from_raw::[Sheet](s as *u8);
+}
+
+// THE KEYBOARD ANSWERS THEM, as the facade documents: Return fires the
+// primary and Escape the secondary in `alert` and `prompt`. A `choose` binds
+// neither - its buttons are N equals with no default to pick.
+fn sheet_key(key: i32, ctx: *u8) -> bool {
+    let s: *Sheet=LIVE;
+    if s.is_null() || (*s).kind==1 { return false; }
+    if key==13 {
+        if (*s).kind==2 { prompt_ok(0 as *u8,0 as *u8); } else { answer_later(0); }
+        return true;
+    }
+    if key==27 && (*s).has_secondary { answer_later(1); return true; }
+    return false;
+}
+
+// ---- sizing: facet_win32's estimate, so the sheets match across backends ----
+fn message_lines(message: str) -> f64 {
+    if message=="" { return 0.0f64; }
+    let per_line: usize=53;
+    var total: f64=0.0f64;
+    let owner: text::Text=text::from_str(message);
+    let segments: vec::Vec[str]=owner.split("\n");
+    var i: usize=0;
+    while i<segments.count() {
+        if let option::Option::Some(seg)=segments.at(i) {
+            let n: usize=#str_len(seg);
+            var lines: usize=n/per_line;
+            if n%per_line!=0 { lines=lines+1; }
+            if lines==0 { lines=1; }
+            total=total+(lines as f64);
+        }
+        i=i+1;
+    }
+    return total;
+}
+fn message_height(message: str) -> f64 { return message_lines(message)*18.0f64; }
+fn capped(h: f64) -> f64 { return if h>560.0f64 {560.0f64} else {h}; }
+
+// ---- the trees: facet_win32's, verbatim ----------------------------------------
+fn alert_tree(title: str, message: str, primary: str, secondary: str) -> core::Node {
+    var b: core::Builder=core::Builder::new();
+    b.add(label::label(title,key:"alert:title",font_size:15.0f64,font_weight:vocab::FontWeight::Bold,text_align:vocab::TextAlign::Start));
+    if message!="" {
+        b.add(label::label(message,key:"alert:message",font_size:13.0f64,line_break:vocab::LineBreak::WordWrap,max_lines:0 as i64,text_align:vocab::TextAlign::Start));
+    }
+    var row: core::Builder=core::Builder::new();
+    if secondary!="" { row.add(button::button(secondary,key:"alert:secondary",on_click:alert_secondary)); }
+    row.add(button::button(primary,key:"alert:primary",on_click:alert_primary));
+    b.add(core::row(row,key:"alert:buttons").gap(8.0f64).justify(flex::Justify::FlexEnd));
+    return core::column(b,key:"alert").padding(20.0f64).gap(12.0f64);
+}
+fn choose_tree(title: str, message: str, take options: vec::Vec[text::Text]) -> core::Node {
+    var b: core::Builder=core::Builder::new();
+    b.add(label::label(title,key:"choose:title",font_size:15.0f64,font_weight:vocab::FontWeight::Bold,text_align:vocab::TextAlign::Start));
+    if message!="" {
+        b.add(label::label(message,key:"choose:message",font_size:13.0f64,line_break:vocab::LineBreak::WordWrap,max_lines:0 as i64,text_align:vocab::TextAlign::Start));
+    }
+    var col: core::Builder=core::Builder::new();
+    var i: usize=0;
+    while i<options.count() {
+        if let option::Option::Some(t)=options.at_ptr(i) {
+            let k: text::Text="choose:opt:${i}";
+            col.add(button::button((*t).view(),key:k.view(),on_click:choose_pick,on_click_ctx:i as *u8));
+        }
+        i=i+1;
+    }
+    b.add(core::column(col,key:"choose:options").gap(6.0f64));
+    return core::column(b,key:"choose").padding(20.0f64).gap(12.0f64);
+}
+fn prompt_tree(title: str, message: str, placeholder: str, primary: str, secondary: str) -> core::Node {
+    var b: core::Builder=core::Builder::new();
+    b.add(label::label(title,key:"prompt:title",font_size:15.0f64,font_weight:vocab::FontWeight::Bold,text_align:vocab::TextAlign::Start));
+    if message!="" {
+        b.add(label::label(message,key:"prompt:message",font_size:13.0f64,line_break:vocab::LineBreak::WordWrap,max_lines:0 as i64,text_align:vocab::TextAlign::Start));
+    }
+    b.add(text_field::text_field("",key:"prompt:value",placeholder:placeholder));
+    var row: core::Builder=core::Builder::new();
+    if secondary!="" { row.add(button::button(secondary,key:"prompt:cancel",on_click:prompt_cancel)); }
+    row.add(button::button(primary,key:"prompt:ok",on_click:prompt_ok));
+    b.add(core::row(row,key:"prompt:buttons").gap(8.0f64).justify(flex::Justify::FlexEnd));
+    return core::column(b,key:"prompt").padding(20.0f64).gap(12.0f64);
+}
+
+// Show `tree` on the active window. False, with the tree dropped, when there
+// is no window, a sheet is already up, or the layer refused it.
+fn present(take tree: core::Node, height: f64, on_answer: fn(i32, *u8), on_answer_ctx: *u8,
+           on_typed: fn(str, *u8), on_typed_ctx: *u8, kind: i32, has_secondary: bool, focus: str) -> bool {
+    if LIVE.is_not_null() { return false; }
+    let window: *u8=host::active_host();
+    if window.is_null() { return false; }
+    let root: *core::Node=match box::new::[core::Node](tree) {
+        option::Option::Some(b)=>{ b.into_raw() as *core::Node }, option::Option::None=>{ return false; }
+    };
+    let sheet: *Sheet=match box::new::[Sheet](Sheet {root:root,window:window,answer:on_answer,answer_ctx:on_answer_ctx,typed:on_typed,typed_ctx:on_typed_ctx,chosen:-1,kind:kind,has_secondary:has_secondary}) {
+        option::Option::Some(b)=>{ b.into_raw() as *Sheet }, option::Option::None=>{ let gone: box::Box[core::Node]=box::from_raw::[core::Node](root as *u8); return false; }
+    };
+    host::set_layer_gone(layer_gone);
+    LIVE=sheet;
+    if !host::present_layer(window,root,380.0f64,height,on_key:sheet_key) {
+        LIVE=0 as *Sheet;
+        let gone: box::Box[core::Node]=box::from_raw::[core::Node](root as *u8);
+        let record: box::Box[Sheet]=box::from_raw::[Sheet](sheet as *u8);
+        return false;
+    }
+    match core::find_in(root,focus) {
+        option::Option[*core::Node]::Some(n) => { host::focus_when_loaded(n); }
+        option::Option[*core::Node]::None => { }
+    }
+    return true;
+}
+
+fn alert_sheet(title: str, message: str, primary: str, secondary: str="",
+               on_answer: fn(i32, *u8)=0 as fn(i32, *u8), on_answer_ctx: *u8=0 as *u8) {
+    let shown: bool=present(alert_tree(title,message,primary,secondary),capped(116.0f64+message_height(message)),
+                            on_answer,on_answer_ctx,no_typed,0 as *u8,0,secondary!="","alert:primary");
+    return;
+}
+fn choose_sheet(title: str, message: str, take options: vec::Vec[text::Text],
+                on_answer: fn(i32, *u8)=0 as fn(i32, *u8), on_answer_ctx: *u8=0 as *u8) {
+    let n: f64=options.count() as f64;
+    let shown: bool=present(choose_tree(title,message,options),capped(78.0f64+(n*34.0f64)+message_height(message)),
+                            on_answer,on_answer_ctx,no_typed,0 as *u8,1,false,"choose:opt:0");
+    return;
+}
+fn prompt_sheet(title: str, message: str, placeholder: str, primary: str, secondary: str="",
+                on_typed: fn(str, *u8)=no_typed, on_typed_ctx: *u8=0 as *u8,
+                on_answer: fn(i32, *u8)=0 as fn(i32, *u8), on_answer_ctx: *u8=0 as *u8) {
+    let shown: bool=present(prompt_tree(title,message,placeholder,primary,secondary),capped(151.0f64+message_height(message)),
+                            on_answer,on_answer_ctx,on_typed,on_typed_ctx,2,secondary!="","prompt:value");
+    return;
+}
+
+// ---- the blocking spelling -------------------------------------------------------
+// The same sheet with a nested message loop held until it answers. XAML's
+// dispatcher rides the thread's Win32 queue, so the rest of the app keeps
+// drawing and the agent keeps being served. -1 when it could not be shown or
+// its window closed under it.
+static BLOCKING: bool=false;
+static BLOCKING_ANSWER: i32=-1;
+fn blocking_answer(a: i32, ctx: *u8) { BLOCKING_ANSWER=a; BLOCKING=false; }
+fn alert(title: str, message: str, primary: str, secondary: str="") -> i32 {
+    if BLOCKING { return -1; }
+    BLOCKING=true; BLOCKING_ANSWER=-1;
+    if !present(alert_tree(title,message,primary,secondary),capped(116.0f64+message_height(message)),blocking_answer,0 as *u8,no_typed,0 as *u8,0,secondary!="","alert:primary") {
+        BLOCKING=false; return -1;
+    }
+    var msg: Msg=#zero::[Msg]();
+    while BLOCKING {
+        let got: i32=GetMessageW(#addr_of(msg),0 as *u8,0,0);
+        if got==0 { PostQuitMessage(msg.w as i32); BLOCKING=false; break; }   // WM_QUIT: hand it back to the outer loop
+        if got<0 { BLOCKING=false; break; }
+        let _t: i32=TranslateMessage(#addr_of(msg));
+        let _d: i64=DispatchMessageW(#addr_of(msg));
+    }
+    return BLOCKING_ANSWER;
+}

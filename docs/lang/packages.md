@@ -88,6 +88,25 @@ One source tree, each platform its own path to an artifact:
 ios-arm64-simulator` stops at the archive and Xcode owns the link.
 Cross-target artifacts land in `target/<target-name>/<mode>/`.
 
+An entry also follows the `_<platform>` file override (§6), as an import
+does: with `src/main_windows.cplus` beside `src/main.cplus`, a Windows
+build enters at the former without any manifest line.
+
+**A Windows GUI app says so.** A self-linked Windows program is a console
+program by default: launched from Explorer it opens a console window
+beside anything it draws, and closing that console kills it. A windowed
+app sets
+
+```toml
+[windows]
+subsystem = "windows"     # default "console"
+```
+
+which links with `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`, so `fn main`
+is still the entry. The process then has no console: output still reaches
+a redirected stdout/stderr (a pipe, a file), and is dropped harmlessly
+when nothing is attached. `cpc test` is unaffected.
+
 **Declared platform entries scope the app.** The moment any `[<platform>]
 entry` exists, the `src/main.cplus` default stops applying elsewhere —
 building for a platform you didn't name is E0413, never a silent guess. An

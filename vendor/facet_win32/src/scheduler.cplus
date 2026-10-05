@@ -145,13 +145,44 @@ fn run_on_main(f: fn(*u8), ctx: *u8) {
 // the table without bound; the entries are tiny, but a table that only grows is
 // a leak whatever the constant is.
 //
-// THE SLOT IS THE TIMER ID, offset by one so that it is never zero —
-// `SetTimer` treats 0 as a valid id but `KillTimer` uses it as "no such timer",
-// and the ambiguity is not worth carrying.
+// THE ID IS THE SLOT PLUS A GENERATION. The low bits are the slot, offset by
+// one so that the id is never zero — `SetTimer` treats 0 as a valid id but
+// `KillTimer` uses it as "no such timer", and the ambiguity is not worth
+// carrying. The high bits count every arming, because reuse makes the slot
+// alone ambiguous: a polling callback that re-arms from inside itself gets the
+// slot it is standing in back, and when it stores the new handle over the old
+// one, the old handle's drop cancels by id. With the slot as the whole id that
+// cancel named the NEW timer and killed it, so the poll stopped after one turn.
+// A stale id now names a generation that is gone and is ignored.
 
-struct Timer { f: fn(*u8), ctx: usize, live: bool }
+struct Timer { f: fn(*u8), ctx: usize, live: bool, generation: u64 }
 
 static TIMERS: vec::Vec[Timer] = #zero::[vec::Vec[Timer]]();
+static TIMER_GENERATION: u64 = 0 as u64;
+
+const SLOT_BITS: u64 = 24u64;
+const SLOT_MASK: u64 = (1u64 << 24u64) - 1u64;
+
+fn timer_id(slot: usize, generation: u64) -> u64 {
+    return (generation << SLOT_BITS) | ((slot +% (1 as usize)) as u64);
+}
+
+// The live timer an id names, or None when the id is zero, out of range, or
+// from an earlier arming of its slot.
+fn live_timer(id: u64) -> option::Option[*Timer] {
+    let low: u64 = id & SLOT_MASK;
+    if low == (0 as u64) { return option::Option[*Timer]::None; }
+    let slot: usize = (low -% (1 as u64)) as usize;
+    match TIMERS.at_ptr(slot) {
+        option::Option[*Timer]::Some(t) => {
+            if { (*t).live } && { (*t).generation } == (id >> SLOT_BITS) {
+                return option::Option[*Timer]::Some(t);
+            }
+        }
+        option::Option[*Timer]::None => { }
+    }
+    return option::Option[*Timer]::None;
+}
 
 fn timer_slot() -> usize {
     var i: usize = 0 as usize;
@@ -164,13 +195,12 @@ fn timer_slot() -> usize {
         i = i +% (1 as usize);
     }
     let _e: status::Status = TIMERS.append(
-        Timer { f: 0 as fn(*u8), ctx: 0 as usize, live: false });
+        Timer { f: 0 as fn(*u8), ctx: 0 as usize, live: false, generation: 0 as u64 });
     return n;
 }
 
 fn fire_timer(id: u64) {
     if id == (0 as u64) { return; }
-    let slot: usize = (id as usize) -% (1 as usize);
     // ONE SHOT: the timer is killed before the callback, not after. A callback
     // is entitled to schedule another timer and would otherwise be handed back
     // the slot it is standing in — and a `cancel_after` from inside it must not
@@ -178,9 +208,8 @@ fn fire_timer(id: u64) {
     let _k: i32 = { u::KillTimer(pump(), id) };
     var f: fn(*u8) = 0 as fn(*u8);
     var c: *u8 = 0 as *u8;
-    match TIMERS.at_ptr(slot) {
+    match live_timer(id) {
         option::Option[*Timer]::Some(t) => {
-            if !{ (*t).live } { return; }
             f = { (*t).f };
             c = { (*t).ctx } as *u8;
             { (*t).live = false };
@@ -193,15 +222,18 @@ fn fire_timer(id: u64) {
 
 fn after(seconds: f64, f: fn(*u8), ctx: *u8) -> u64 {
     let slot: usize = timer_slot();
+    TIMER_GENERATION = TIMER_GENERATION +% (1 as u64);
+    let generation: u64 = TIMER_GENERATION;
     match TIMERS.at_ptr(slot) {
         option::Option[*Timer]::Some(t) => {
             { (*t).f = f };
             { (*t).ctx = { #addr(ctx) } };
             { (*t).live = true };
+            { (*t).generation = generation };
         }
         option::Option[*Timer]::None => { return 0 as u64; }
     }
-    let id: u64 = (slot +% (1 as usize)) as u64;
+    let id: u64 = timer_id(slot, generation);
     let ms: f64 = seconds * (1000.0 as f64);
     // `SetTimer` with an EXPLICIT id returns that id back — it only invents one
     // when the window is null. So the return is not the handle; the slot is.
@@ -210,14 +242,12 @@ fn after(seconds: f64, f: fn(*u8), ctx: *u8) -> u64 {
 }
 
 fn cancel_after(tag: u64) {
-    if tag == (0 as u64) { return; }
-    let slot: usize = (tag as usize) -% (1 as usize);
-    match TIMERS.at_ptr(slot) {
+    // A tag that already FIRED is not a timer any more, and neither is one
+    // whose slot has been armed again since. The live bit and the generation
+    // are the difference, and they are why cancelling twice, or cancelling
+    // after the fact, is quiet.
+    match live_timer(tag) {
         option::Option[*Timer]::Some(t) => {
-            // A tag that already FIRED is not a timer any more. The live bit is
-            // the difference and it is why cancelling twice, or cancelling
-            // after the fact, is quiet.
-            if !{ (*t).live } { return; }
             { (*t).live = false };
             let _k: i32 = { u::KillTimer(pump(), tag) };
         }
@@ -277,8 +307,31 @@ fn a_dead_timer_slot_is_reused() {
 fn a_timer_id_is_never_zero() {
     // `KillTimer` reads 0 as "no such timer", so a slot-0 timer with the
     // obvious id could never be cancelled. The +1 is what avoids it.
-    let slot: usize = 0 as usize;
-    let id: u64 = (slot +% (1 as usize)) as u64;
-    assert id != (0 as u64);
+    assert timer_id(0 as usize, 0 as u64) != (0 as u64);
+    return;
+}
+
+fn _no_timer_callback(ctx: *u8) { return; }
+
+#[test]
+fn a_stale_handle_does_not_cancel_the_timer_that_reused_its_slot() {
+    // The polling shape: a timer fires, its callback arms the next one (which
+    // lands in the slot just freed), and storing the new handle drops the old
+    // one, which cancels by its id. That cancel must not reach the new timer.
+    let first: u64 = after(60.0f64, _no_timer_callback, 0 as *u8);
+    fire_timer(first);
+    let second: u64 = after(60.0f64, _no_timer_callback, 0 as *u8);
+    assert (second & SLOT_MASK) == (first & SLOT_MASK);
+    assert second != first;
+    cancel_after(first);
+    match live_timer(second) {
+        option::Option[*Timer]::Some(_) => { }
+        option::Option[*Timer]::None => { assert false; }
+    }
+    cancel_after(second);
+    match live_timer(second) {
+        option::Option[*Timer]::Some(_) => { assert false; }
+        option::Option[*Timer]::None => { }
+    }
     return;
 }

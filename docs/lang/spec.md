@@ -729,6 +729,7 @@ resolved at type-check time:
 | `#platform()` | the target's platform name — one of `macos`, `linux`, `windows`, `ios`, `android`, `esp32`, `wasm` |
 | `#arch()` | the target's architecture — one of `aarch64`, `x86_64`, `xtensa`, `riscv32`, `wasm32` |
 | `#target()` | the target's spec name, e.g. `host`, `ios-arm64`, `ios-arm64-simulator` |
+| `#target_feature("NAME")` | `bool`: whether the instruction-set extension `NAME` is enabled for this build |
 
 Each is value-level: both arms of a conditional over one are compiled for
 every target, so no such conditional can suppress an import. Varying the
@@ -736,6 +737,13 @@ set of imports across platforms is the file-resolution rule of §3.1.
 `#arch()` is orthogonal to `#platform()` rather than a refinement of it,
 and `#target()` is the only one of the three that distinguishes an iOS
 simulator target from an iOS device target.
+
+`#target_feature("NAME")` takes one string literal naming a CPU feature
+(`avx2`, `fma`, `avx512f`, `neon`, `dotprod`, …) and is a `bool` constant:
+`true` when the backend may use that extension, as set by `--target-cpu` and
+`--target-feature`. A name that belongs to another architecture is `false`;
+a name no architecture defines is **E0903**. It is value-level like the
+three above.
 
 Three compile-time *file* builtins read at build time, resolving paths
 relative to the containing source file:

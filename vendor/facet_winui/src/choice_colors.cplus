@@ -1,0 +1,50 @@
+// Per-control resource overrides keep native pointer/pressed/disabled feedback.
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./native" as native;
+import "./style" as style;
+import "./record" as record;
+struct Palette {resources: ui::IMap_Object_Object,changed: bool}
+fn key(value: str) -> rt::Object {let f=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());return native::must::[rt::Object](f.create_string(value));}
+impl Palette {
+    fn new(value: rt::Object) -> Palette {let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));return Palette {resources:native::must::[ui::IMap_Object_Object](ui::IMap_Object_Object::query(native::must::[rt::Object](element.resources()))),changed:false};}
+    fn set_color(ref this,name: str,color: vocab::Color) {
+        let k=key(name);let exists=native::must::[bool](this.resources.has_key(k));
+        if !color.is_set() {if exists {native::check(this.resources.remove(k));this.changed=true;}return;}
+        let desired=style::color(color);
+        if exists {let brush=native::must::[ui::ISolidColorBrush](ui::ISolidColorBrush::query(native::must::[rt::Object](this.resources.lookup(k))));let old=native::must::[ui::Color](brush.color());if old.a==desired.a && old.r==desired.r && old.g==desired.g && old.b==desired.b {return;}}
+        let replaced=native::must::[bool](this.resources.insert(k,style::brush(color)));this.changed=true;
+    }
+    fn set_width(ref this,name: str,width: f64) {
+        let k=key(name);let exists=native::must::[bool](this.resources.has_key(k));
+        if width<=0.0f64 {if exists {native::check(this.resources.remove(k));this.changed=true;}return;}
+        if exists {let old=native::must::[ui::IPropertyValue](ui::IPropertyValue::query(native::must::[rt::Object](this.resources.lookup(k))));if native::must::[f64](old.get_double())==width {return;}}
+        let factory=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());let replaced=native::must::[bool](this.resources.insert(k,native::must::[rt::Object](factory.create_double(width))));this.changed=true;
+    }
+    fn commit(this,value: rt::Object) {
+        if !this.changed {return;}
+        // ThemeResource references are resolved by the template. Recreate only
+        // when an override changes, keeping the control, value and handlers.
+        let control=native::must::[ui::IControl](ui::IControl::query(value));let template=native::must::[rt::Object](control.template());
+        if !template.is_null() {native::check(control.set_template(rt::Object::empty()));native::check(control.set_template(template));let applied=native::must::[bool](control.apply_template());}
+    }
+}
+fn apply(r: *record::View) {
+    let raw=(*core::node_data((*r).node)).props;var palette=Palette::new((*r).object);
+    if (*r).kind==props::K_TOGGLE {let p: *props::ToggleProps=raw as *props::ToggleProps;
+        palette.set_color("ToggleSwitchFillOff",(*p).off_color);palette.set_color("ToggleSwitchFillOn",(*p).on_color);
+        palette.set_color("ToggleSwitchKnobFillOff",(*p).thumb_color);palette.set_color("ToggleSwitchKnobFillOn",(*p).thumb_color);
+    }
+    if (*r).kind==props::K_CHECKBOX {let p: *props::CheckboxProps=raw as *props::CheckboxProps;
+        palette.set_color("CheckBoxCheckBackgroundStrokeUnchecked",(*p).color);
+        palette.set_color("CheckBoxCheckBackgroundStrokeChecked",(*p).color);palette.set_color("CheckBoxCheckBackgroundFillChecked",(*p).color);
+    }
+    if (*r).kind==props::K_RADIO {let p: *props::RadioProps=raw as *props::RadioProps;
+        palette.set_color("RadioButtonOuterEllipseStroke",(*p).border_color);palette.set_color("RadioButtonOuterEllipseCheckedStroke",(*p).border_color);
+        palette.set_width("RadioButtonBorderThemeThickness",(*p).border_width);
+    }
+    palette.commit((*r).object);
+}

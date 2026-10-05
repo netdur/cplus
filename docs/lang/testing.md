@@ -156,6 +156,16 @@ Exit status is **0** when everything passed and **2** when anything failed
 {"passed":2,"failed":0}
 ```
 
+When the test binary does not finish (a crash, or on Windows a DLL it
+imports is missing), `cpc test` says so on stderr, decoding a Windows
+NTSTATUS such as `0xC0000135` (STATUS_DLL_NOT_FOUND) or `0xC0000005`
+(access violation), and exits non-zero. With `--json` the final line is
+then a summary that carries the reason instead of counts:
+
+```json
+{"passed":null,"failed":null,"error":"the test binary exited with 0xC0000135 (STATUS_DLL_NOT_FOUND): ..."}
+```
+
 **Run the suite in both modes.** Debug traps on overflow and release wraps;
 `--release` also turns on optimizations that have caught real miscompiles
 here. A green debug suite is half the evidence.

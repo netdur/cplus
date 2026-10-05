@@ -1,0 +1,296 @@
+// Shared WinRT ABI support. No WinUI or Facet dependency.
+import "stdlib/result" as result;
+import "stdlib/text" as text;
+import "stdlib/atomic" as atomic;
+
+extern fn malloc(size: usize) -> *u8;
+extern fn free(memory: *u8);
+extern fn memset(memory: *u8, value: i32, size: usize) -> *u8;
+extern fn RoInitialize(kind: i32) -> i32;
+extern fn RoUninitialize();
+extern fn RoGetActivationFactory(name: usize, iid: *Guid, out: *usize) -> i32;
+extern fn RoActivateInstance(name: usize, out: *usize) -> i32;
+extern fn WindowsCreateString(source: *u16, length: u32, out: *usize) -> i32;
+extern fn WindowsDeleteString(value: usize) -> i32;
+extern fn WindowsGetStringRawBuffer(value: usize, length: *u32) -> *u16;
+extern fn WindowsDuplicateString(value: usize, out: *usize) -> i32;
+extern fn MultiByteToWideChar(page: u32, flags: u32, source: *u8, length: i32, out: *u16, capacity: i32) -> i32;
+extern fn WideCharToMultiByte(page: u32, flags: u32, source: *u16, length: i32, out: *u8, capacity: i32, replacement: *u8, used_replacement: *i32) -> i32;
+extern fn GetLastError() -> u32;
+extern fn LoadLibraryW(name: *u16) -> *u8;
+extern fn CoTaskMemAlloc(size: usize) -> *u8;
+extern fn CoTaskMemFree(memory: *u8);
+
+#[repr(C)]
+struct Guid { a: u32, b: u16, c: u16, d: [u8; 8] }
+struct Error { code: i32 }
+struct Status { code: i32 }
+impl Status { fn is_ok(this) -> bool { return this.code >= 0; } fn is_err(this) -> bool { return this.code < 0; } }
+fn error_from_win32() -> Error { return Error { code: (GetLastError() | 0x80070000 as u32) as i32 }; }
+fn no_interface() -> i32 { return 0x80004002 as i32; }
+fn pointer_error() -> i32 { return 0x80004003 as i32; }
+fn out_of_memory() -> i32 { return 0x8007000e as i32; }
+fn unknown_iid() -> Guid { return Guid { a: 0, b: 0, c: 0, d: [192 as u8,0 as u8,0 as u8,0 as u8,0 as u8,0 as u8,0 as u8,70 as u8] }; }
+fn inspectable_iid() -> Guid { return Guid { a: 0xaf86e2e0 as u32, b: 0xb12d as u16, c: 0x4c6a as u16, d: [156 as u8,90 as u8,215 as u8,170 as u8,101 as u8,16 as u8,30 as u8,144 as u8] }; }
+fn agile_iid() -> Guid { return Guid {a:0x94ea2b94 as u32,b:0xe9cc as u16,c:0x49e0 as u16,d:[192 as u8,255 as u8,238 as u8,100 as u8,202 as u8,143 as u8,91 as u8,144 as u8]}; }
+fn guid_equal(a: Guid, b: Guid) -> bool {
+    if a.a != b.a || a.b != b.b || a.c != b.c { return false; }
+    var i: usize = 0; while i < 8 { if a.d[i] != b.d[i] { return false; } i = i+1; } return true;
+}
+fn read_pointer(object: *u8, offset: usize) -> *u8 { return *((object + offset) as *usize) as *u8; }
+fn write_pointer(object: *u8, offset: usize, value: *u8) { *((object + offset) as *usize) = value as usize; return; }
+fn slot(object: *u8, index: usize) -> *u8 { return read_pointer(read_pointer(object, 0), index * 8); }
+fn add_ref(object: *u8) {
+    if object == (0 as *u8) { return; }
+    let f: fn(*u8) -> u32 = slot(object, 1) as fn(*u8) -> u32; let _count: u32 = f(object); return;
+}
+fn release(object: *u8) {
+    if object == (0 as *u8) { return; }
+    let f: fn(*u8) -> u32 = slot(object, 2) as fn(*u8) -> u32; let _count: u32 = f(object); return;
+}
+// A move-only owning COM reference. adopt consumes one +1 ABI reference;
+// retain copies a borrowed reference. A zero handle explicitly represents ABI null.
+struct Object { _handle: usize }
+impl Object {
+    fn adopt(pointer: *u8) -> Object { return Object { _handle: pointer as usize }; }
+    fn retain(pointer: *u8) -> Object { add_ref(pointer); return Object::adopt(pointer); }
+    fn empty() -> Object { return Object { _handle: 0 }; }
+    fn raw(this) -> *u8 { return this._handle as *u8; }
+    fn is_null(this) -> bool { return this._handle == 0; }
+    fn clone(this) -> Object { return Object::retain(this.raw()); }
+    fn drop(ref this) { release(this._handle as *u8); this._handle = 0; return; }
+    fn query(this, iid: Guid) -> result::Result[Object, Error] {
+        if this.is_null() { return result::Result[Object, Error]::Err(Error { code: pointer_error() }); }
+        var id: Guid = iid; var out: usize = 0;
+        let f: fn(*u8, *Guid, *usize) -> i32 = slot(this.raw(), 0) as fn(*u8, *Guid, *usize) -> i32;
+        let hr: i32 = f(this.raw(), #addr_of(id), #addr_of(out));
+        if hr < 0 { return result::Result[Object, Error]::Err(Error { code: hr }); }
+        if out == 0 { return result::Result[Object, Error]::Err(Error { code: pointer_error() }); }
+        return result::Result[Object, Error]::Ok(Object::adopt(out as *u8));
+    }
+    fn query_nullable(this, iid: Guid) -> result::Result[Object, Error] {
+        if this.is_null() { return result::Result[Object, Error]::Ok(Object::empty()); }
+        return this.query(iid);
+    }
+}
+struct HString { _handle: usize }
+impl HString {
+    fn adopt(value: usize) -> HString { return HString { _handle: value }; }
+    fn raw(this) -> usize { return this._handle; }
+    fn drop(ref this) { let _hr: i32 = WindowsDeleteString(this._handle); this._handle = 0; return; }
+    fn new(value: str) -> result::Result[HString, Error] {
+        if #str_len(value) == 0 { return result::Result[HString, Error]::Ok(HString::adopt(0)); }
+        if #str_len(value) > 2147483647 as usize { return result::Result[HString, Error]::Err(Error { code: 0x80070057 as i32 }); }
+        let n: i32 = MultiByteToWideChar(65001, 8, #str_ptr(value), #str_len(value) as i32, 0 as *u16, 0);
+        if n == 0 { return result::Result[HString, Error]::Err(error_from_win32()); }
+        let buffer: *u8 = malloc((n as usize) * 2);
+        if buffer == (0 as *u8) { return result::Result[HString, Error]::Err(Error { code: out_of_memory() }); }
+        let copied: i32 = MultiByteToWideChar(65001, 8, #str_ptr(value), #str_len(value) as i32, buffer as *u16, n);
+        if copied != n { let error: Error=error_from_win32(); free(buffer); return result::Result[HString, Error]::Err(error); }
+        var out: usize = 0; let hr: i32 = WindowsCreateString(buffer as *u16, n as u32, #addr_of(out)); free(buffer);
+        if hr < 0 { return result::Result[HString, Error]::Err(Error { code: hr }); }
+        return result::Result[HString, Error]::Ok(HString::adopt(out));
+    }
+    fn to_text(this) -> result::Result[text::Text, Error] {
+        var length: u32 = 0; let wide: *u16 = WindowsGetStringRawBuffer(this._handle, #addr_of(length));
+        if length == 0 { let empty: text::Text = ""; return result::Result[text::Text, Error]::Ok(empty); }
+        if length > 2147483647 as u32 { return result::Result[text::Text, Error]::Err(Error { code: 0x80070057 as i32 }); }
+        let size: i32 = WideCharToMultiByte(65001, 128, wide, length as i32, 0 as *u8, 0, 0 as *u8, 0 as *i32);
+        if size == 0 { return result::Result[text::Text, Error]::Err(error_from_win32()); }
+        let buffer: *u8 = malloc(size as usize);
+        if buffer == (0 as *u8) { return result::Result[text::Text, Error]::Err(Error { code: out_of_memory() }); }
+        let copied: i32 = WideCharToMultiByte(65001, 128, wide, length as i32, buffer, size, 0 as *u8, 0 as *i32);
+        if copied != size { let error: Error=error_from_win32(); free(buffer); return result::Result[text::Text, Error]::Err(error); }
+        let view: str = #str_from_raw_parts(buffer, size as usize);
+        let owned: text::Text = text::from_str(view); free(buffer); return result::Result[text::Text, Error]::Ok(owned);
+    }
+}
+// Apartment lifetime must enclose all owned WinRT objects on that thread.
+struct Apartment { _initialized: bool }
+impl Apartment {
+    fn sta() -> result::Result[Apartment, Error] {
+        if #platform() != "windows" || #arch() != "x86_64" { return result::Result[Apartment, Error]::Err(Error { code: 0x80004001 as i32 }); }
+        let hr: i32 = RoInitialize(0);
+        if hr < 0 { return result::Result[Apartment, Error]::Err(Error { code: hr }); }
+        return result::Result[Apartment, Error]::Ok(Apartment { _initialized: true });
+    }
+    fn drop(ref this) { if this._initialized { RoUninitialize(); this._initialized = false; } return; }
+}
+fn activation_factory(name: str, iid: Guid) -> result::Result[Object, Error] {
+    let hs: HString = match HString::new(name) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[Object, Error]::Err(e); } };
+    var id: Guid = iid; var out: usize = 0;
+    let hr: i32 = RoGetActivationFactory(hs.raw(), #addr_of(id), #addr_of(out));
+    if hr < 0 { return result::Result[Object, Error]::Err(Error { code: hr }); }
+    return result::Result[Object, Error]::Ok(Object::adopt(out as *u8));
+}
+fn activate(name: str) -> result::Result[Object, Error] {
+    let hs: HString = match HString::new(name) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[Object, Error]::Err(e); } };
+    var out: usize = 0; let hr: i32 = RoActivateInstance(hs.raw(), #addr_of(out));
+    if hr < 0 { return result::Result[Object, Error]::Err(Error { code: hr }); }
+    return result::Result[Object, Error]::Ok(Object::adopt(out as *u8));
+}
+struct Composition { _object: Object, _inner: Object }
+impl Composition {
+    fn object(this) -> Object { return this._object.clone(); }
+    fn inner(this) -> Object { return this._inner.clone(); }
+}
+fn compose(name: str, iid: Guid, method: usize, outer: *u8) -> result::Result[Composition, Error] {
+    let factory: Object = match activation_factory(name, iid) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[Composition, Error]::Err(e); } };
+    var inner: usize = 0; var instance: usize = 0;
+    let f: fn(*u8, *u8, *usize, *usize) -> i32 = slot(factory.raw(), method) as fn(*u8, *u8, *usize, *usize) -> i32;
+    let hr: i32 = f(factory.raw(), outer, #addr_of(inner), #addr_of(instance));
+    if hr < 0 { return result::Result[Composition, Error]::Err(Error { code: hr }); }
+    return result::Result[Composition, Error]::Ok(Composition { _object: Object::adopt(instance as *u8), _inner: Object::adopt(inner as *u8) });
+}
+// Process-lifetime module load, as required by the SDK's self-contained initializer.
+fn load_runtime(path: str) -> Status {
+    if #str_len(path)==0 || #str_len(path)>2147483647 as usize { return Status {code:0x80070057 as i32}; }
+    let n: i32 = MultiByteToWideChar(65001, 8, #str_ptr(path), #str_len(path) as i32, 0 as *u16, 0);
+    if n == 0 { return Status { code: error_from_win32().code }; }
+    let buffer: *u8 = malloc((n as usize + 1) * 2);
+    if buffer == (0 as *u8) { return Status { code: out_of_memory() }; }
+    let copied: i32 = MultiByteToWideChar(65001, 8, #str_ptr(path), #str_len(path) as i32, buffer as *u16, n);
+    if copied!=n { let error: Error=error_from_win32(); free(buffer); return Status {code:error.code}; }
+    *((buffer as *u16) + (n as usize)) = 0;
+    let module: *u8 = LoadLibraryW(buffer as *u16);
+    if module == (0 as *u8) { let error: Error=error_from_win32(); free(buffer); return Status { code: error.code }; }
+    free(buffer);
+    return Status { code: 0 };
+}
+
+// Delegate layout (x64): table ptr, atomic refcount + padding, IID,
+// callback code, borrowed context, then the inline four-slot IUnknown table.
+// IAgileObject is opt-in; threading/marshalling remains the caller's contract.
+fn delegate_query(self: *u8, id: *Guid, out: *usize) -> i32 {
+    if out == (0 as *usize) { return pointer_error(); }
+    *out = 0;
+    if guid_equal(*id, unknown_iid()) || guid_equal(*id, *((self+16) as *Guid)) || (*((self+12) as *u32)!=0 && guid_equal(*id,agile_iid())) {
+        *out = self as usize; let _n: u32 = delegate_add_ref(self); return 0;
+    }
+    return no_interface();
+}
+fn delegate_add_ref(self: *u8) -> u32 {
+    return (atomic::fetch_add_i32((self+8) as *i32, 1, atomic::Ordering::Relaxed) + 1) as u32;
+}
+fn delegate_release(self: *u8) -> u32 {
+    let remaining: i32 = atomic::fetch_sub_i32((self+8) as *i32, 1, atomic::Ordering::AcqRel) - 1;
+    if remaining == 0 { free(self); } return remaining as u32;
+}
+// agile is an explicit caller promise about callback/context threading. Needed
+// by DispatcherQueue; ordinary control handlers keep the non-agile default.
+fn delegate(iid: Guid, invoke: *u8, callback: *u8, context: *u8, agile: bool=false) -> result::Result[Object, Error] {
+    let memory: *u8 = malloc(80);
+    if memory == (0 as *u8) { return result::Result[Object, Error]::Err(Error { code: out_of_memory() }); }
+    let _p: *u8 = memset(memory, 0, 80);
+    let table: *u8 = memory+48; write_pointer(memory,0,table); *((memory+8) as *i32)=1;
+    *((memory+12) as *u32)=if agile {1 as u32} else {0 as u32};
+    *((memory+16) as *Guid)=iid; write_pointer(memory,32,callback); write_pointer(memory,40,context);
+    let query: fn(*u8,*Guid,*usize)->i32=delegate_query;
+    let retain: fn(*u8)->u32=delegate_add_ref; let dispose: fn(*u8)->u32=delegate_release;
+    write_pointer(table,0,query as *u8); write_pointer(table,8,retain as *u8);
+    write_pointer(table,16,dispose as *u8); write_pointer(table,24,invoke);
+    return result::Result[Object, Error]::Ok(Object::adopt(memory));
+}
+fn delegate_callback(object: *u8) -> *u8 { return read_pointer(object,32); }
+fn delegate_context(object: *u8) -> *u8 { return read_pointer(object,40); }
+
+// IReference<interface/delegate> has the six IInspectable slots, then Value.
+// The generated binding supplies the parameterized IID. The box owns one
+// reference to its value; it deliberately makes no agility promise.
+fn _box_query(self: *u8,id: *Guid,out: *usize) -> i32 {
+    if out.is_null() {return pointer_error();};*out=0;
+    if id.is_null() {return pointer_error();}
+    if guid_equal(*id,unknown_iid()) || guid_equal(*id,inspectable_iid()) || guid_equal(*id,*((self+16) as *Guid)) {
+        *out=self as usize;let count=delegate_add_ref(self);return 0;
+    }
+    return no_interface();
+}
+fn _box_release(self: *u8) -> u32 {
+    let remaining=atomic::fetch_sub_i32((self+8) as *i32,1,atomic::Ordering::AcqRel)-1;
+    if remaining==0 {release(read_pointer(self,32));free(self);}return remaining as u32;
+}
+fn _box_iids(self: *u8,count: *u32,out: *usize) -> i32 {
+    if count.is_null() || out.is_null() {return pointer_error();};*count=0;*out=0;
+    let memory=CoTaskMemAlloc(16);if memory.is_null() {return out_of_memory();}
+    *(memory as *Guid)=*((self+16) as *Guid);*count=1;*out=memory as usize;return 0;
+}
+fn _box_name(self: *u8,out: *usize) -> i32 {if out.is_null() {return pointer_error();};*out=0;return 0;}
+fn _box_trust(self: *u8,out: *i32) -> i32 {if out.is_null() {return pointer_error();};*out=0;return 0;}
+fn _box_value(self: *u8,out: *usize) -> i32 {
+    if out.is_null() {return pointer_error();}let value=read_pointer(self,32);add_ref(value);*out=value as usize;return 0;
+}
+fn box_interface(value: Object,reference_iid: Guid) -> result::Result[Object,Error] {
+    let memory=malloc(96);if memory.is_null() {return result::Result[Object,Error]::Err(Error {code:out_of_memory()});}
+    let cleared=memset(memory,0,96);let table=memory+40;write_pointer(memory,0,table);*((memory+8) as *i32)=1;
+    *((memory+16) as *Guid)=reference_iid;add_ref(value.raw());write_pointer(memory,32,value.raw());
+    let query: fn(*u8,*Guid,*usize)->i32=_box_query;let retain: fn(*u8)->u32=delegate_add_ref;let dispose: fn(*u8)->u32=_box_release;
+    let iids: fn(*u8,*u32,*usize)->i32=_box_iids;let name: fn(*u8,*usize)->i32=_box_name;let trust: fn(*u8,*i32)->i32=_box_trust;let get: fn(*u8,*usize)->i32=_box_value;
+    write_pointer(table,0,query as *u8);write_pointer(table,8,retain as *u8);write_pointer(table,16,dispose as *u8);
+    write_pointer(table,24,iids as *u8);write_pointer(table,32,name as *u8);write_pointer(table,40,trust as *u8);write_pointer(table,48,get as *u8);
+    return result::Result[Object,Error]::Ok(Object::adopt(memory));
+}
+
+#[test]
+fn winrt_boxed_delegate_abi_and_ownership() {
+    let invoke: fn(*u8)->i32=_test_invoke;
+    var delegate_id=unknown_iid();delegate_id.a=71;var box_id=unknown_iid();box_id.a=72;
+    let value=match delegate(delegate_id,invoke as *u8,0 as *u8,0 as *u8) {result::Result::Ok(v)=>v,result::Result::Err(e)=>{assert false;return;}};
+    {
+        let boxed=match box_interface(value,box_id) {result::Result::Ok(v)=>v,result::Result::Err(e)=>{assert false;return;}};
+        assert *((value.raw()+8) as *i32)==2;
+        let inspectable=match boxed.query(inspectable_iid()) {result::Result::Ok(v)=>v,result::Result::Err(e)=>{assert false;return;}};
+        let reference=match inspectable.query(box_id) {result::Result::Ok(v)=>v,result::Result::Err(e)=>{assert false;return;}};
+        assert reference.raw()==boxed.raw();
+        match boxed.query(delegate_id) {result::Result::Err(e)=>{assert e.code==no_interface();},result::Result::Ok(v)=>{assert false;}}
+        match boxed.query(agile_iid()) {result::Result::Err(e)=>{assert e.code==no_interface();},result::Result::Ok(v)=>{assert false;}}
+        let get: fn(*u8,*usize)->i32=slot(reference.raw(),6) as fn(*u8,*usize)->i32;var raw: usize=0;
+        assert get(reference.raw(),#addr_of(raw))==0;
+        {let returned=Object::adopt(raw as *u8);assert returned.raw()==value.raw();assert *((value.raw()+8) as *i32)==3;}
+        assert *((value.raw()+8) as *i32)==2;
+        let iids: fn(*u8,*u32,*usize)->i32=slot(inspectable.raw(),3) as fn(*u8,*u32,*usize)->i32;
+        var count: u32=0;var ids: usize=0;assert iids(inspectable.raw(),#addr_of(count),#addr_of(ids))==0;assert count==1;assert guid_equal(*(ids as *Guid),box_id);CoTaskMemFree(ids as *u8);
+    }
+    assert *((value.raw()+8) as *i32)==1;
+}
+
+#[test]
+fn winrt_hstring_utf8_roundtrip() {
+    let h: HString = match HString::new("C+ — 日本語 🪟") { result::Result::Ok(v)=>{v}, result::Result::Err(e)=>{assert e.code==0; return;} };
+    let value: text::Text = match h.to_text() { result::Result::Ok(v)=>{v}, result::Result::Err(e)=>{assert e.code==0; return;} };
+    assert value.view()=="C+ — 日本語 🪟";
+    let empty: HString = HString::adopt(0);
+    let empty_text: text::Text = match empty.to_text() { result::Result::Ok(v)=>{v}, result::Result::Err(e)=>{assert e.code==0; return;} };
+    assert empty_text.count()==0;
+}
+#[test]
+fn winrt_com_guid_layout() { assert #size_of::[Guid]()==16; assert #align_of::[Guid]()==4; }
+fn _test_invoke(self: *u8) -> i32 { return 0; }
+#[test]
+fn winrt_delegate_identity_and_rejection() {
+    let invoke: fn(*u8)->i32=_test_invoke;
+    // Arbitrary stable delegate IID; it must not also claim IInspectable.
+    var id: Guid=unknown_iid(); id.a=42;
+    let d: Object=match delegate(id,invoke as *u8,0 as *u8,0 as *u8) { result::Result::Ok(v)=>{v}, result::Result::Err(e)=>{assert e.code==0; return;} };
+    let identity: Object=match d.query(unknown_iid()) { result::Result::Ok(v)=>{v}, result::Result::Err(e)=>{assert e.code==0; return;} };
+    assert identity.raw()==d.raw();
+    match d.query(inspectable_iid()) { result::Result::Ok(v)=>{assert v.is_null();}, result::Result::Err(e)=>{assert e.code==no_interface();} }
+    // The original owner plus QI identity are alive. Cloning adds exactly one
+    // reference, and leaving scope releases it without consuming either owner.
+    assert *((d.raw()+8) as *i32)==2;
+    { let copy: Object=d.clone(); assert copy.raw()==d.raw(); assert *((d.raw()+8) as *i32)==3; }
+    assert *((d.raw()+8) as *i32)==2;
+    var rejected: usize=123; var unsupported: Guid=inspectable_iid();
+    assert delegate_query(d.raw(),#addr_of(unsupported),#addr_of(rejected))==no_interface();
+    assert rejected==0;
+    match d.query(agile_iid()) { result::Result::Ok(v)=>{assert false;},result::Result::Err(e)=>{assert e.code==no_interface();} }
+}
+#[test]
+fn winrt_agile_delegate_opt_in() {
+    let invoke: fn(*u8)->i32=_test_invoke;
+    var id: Guid=unknown_iid(); id.a=43;
+    let d: Object=match delegate(id,invoke as *u8,0 as *u8,0 as *u8,agile:true) { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{assert false; return;} };
+    let agile: Object=match d.query(agile_iid()) { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{assert false; return;} };
+    let identity: Object=match agile.query(unknown_iid()) { result::Result::Ok(v)=>{v},result::Result::Err(e)=>{assert false; return;} };
+    assert identity.raw()==d.raw();
+    match d.query(inspectable_iid()) { result::Result::Ok(v)=>{assert false;},result::Result::Err(e)=>{assert e.code==no_interface();} }
+}

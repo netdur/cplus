@@ -489,6 +489,173 @@ pub fn active_triple() -> Option<String> {
     spliced_triple(&spec, over.as_deref())
 }
 
+/// `--target-cpu` / `--target-feature`: which instruction-set extensions the
+/// backend may use. Empty (the default) is the target's baseline — on x86_64
+/// that is SSE2 only, so an `f32x8` is split into two SSE halves and a
+/// vector `fma` is a libm call per lane. `x86-64-v3` (or `native` on a
+/// Haswell-or-later host) is what turns those into AVX2 and `vfmadd`.
+///
+/// Process-global and written once by the driver before codegen, like
+/// [`ACTIVE`]. It is also part of every prebuilt slice's fingerprint: under
+/// AVX an `f32x8` argument travels in a `ymm` register, without it in memory,
+/// so an archive compiled with different features is a different ABI.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct CpuTuning {
+    /// `-march=` on x86_64, `-mcpu=` on aarch64. `native` is the host CPU.
+    pub cpu: Option<String>,
+    /// LLVM feature names with their sign, in command-line order:
+    /// `+avx2`, `+fma`, `-avx512f`.
+    pub features: Vec<String>,
+}
+
+impl CpuTuning {
+    pub fn is_empty(&self) -> bool {
+        self.cpu.is_none() && self.features.is_empty()
+    }
+}
+
+static CPU_TUNING: Mutex<CpuTuning> = Mutex::new(CpuTuning {
+    cpu: None,
+    features: Vec::new(),
+});
+
+/// Install the driver's `--target-cpu` / `--target-feature` choice.
+pub fn set_cpu_tuning(t: CpuTuning) {
+    *CPU_TUNING.lock().unwrap() = t;
+}
+
+pub fn cpu_tuning() -> CpuTuning {
+    CPU_TUNING.lock().unwrap().clone()
+}
+
+/// The clang arguments that carry `t` for `arch`, or why it cannot be carried.
+/// Only x86_64 and aarch64 take a tuning: RV32 already pins its `-march` in
+/// the spec, Xtensa comes from esp-clang, and wasm32 has no CPU to name.
+pub fn cpu_tuning_clang_args(t: &CpuTuning, arch: TargetArch) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    if t.is_empty() {
+        return Ok(args);
+    }
+    let cpu_flag = match arch {
+        TargetArch::X86_64 => "-march",
+        TargetArch::Aarch64 => "-mcpu",
+        other => {
+            return Err(format!(
+                "--target-cpu/--target-feature apply to x86_64 and aarch64 targets, not {}",
+                arch_name(other)
+            ))
+        }
+    };
+    if let Some(cpu) = &t.cpu {
+        args.push(format!("{cpu_flag}={cpu}"));
+    }
+    // `-Xclang -target-feature` rather than `-mavx2`-style driver flags:
+    // it takes LLVM's own feature names, for every arch, with no table of
+    // driver spellings to keep in step.
+    for f in &t.features {
+        args.push("-Xclang".to_string());
+        args.push("-target-feature".to_string());
+        args.push("-Xclang".to_string());
+        args.push(f.clone());
+    }
+    Ok(args)
+}
+
+/// The names `#target_feature("...")` accepts: `(arch, feature, macro)`.
+/// `feature` is the LLVM / `--target-feature` spelling; `macro` is what
+/// clang predefines when the feature is on, which is how the driver's probe
+/// answers the question for `native` and named CPUs without a table of CPUs.
+pub const CPU_FEATURES: &[(&str, &str, &str)] = &[
+    ("x86_64", "sse3", "__SSE3__"),
+    ("x86_64", "ssse3", "__SSSE3__"),
+    ("x86_64", "sse4.1", "__SSE4_1__"),
+    ("x86_64", "sse4.2", "__SSE4_2__"),
+    ("x86_64", "popcnt", "__POPCNT__"),
+    ("x86_64", "avx", "__AVX__"),
+    ("x86_64", "avx2", "__AVX2__"),
+    ("x86_64", "fma", "__FMA__"),
+    ("x86_64", "f16c", "__F16C__"),
+    ("x86_64", "bmi", "__BMI__"),
+    ("x86_64", "bmi2", "__BMI2__"),
+    ("x86_64", "lzcnt", "__LZCNT__"),
+    ("x86_64", "avxvnni", "__AVXVNNI__"),
+    ("x86_64", "avx512f", "__AVX512F__"),
+    ("x86_64", "avx512bw", "__AVX512BW__"),
+    ("x86_64", "avx512dq", "__AVX512DQ__"),
+    ("x86_64", "avx512vl", "__AVX512VL__"),
+    ("x86_64", "avx512vnni", "__AVX512VNNI__"),
+    ("x86_64", "avx512bf16", "__AVX512BF16__"),
+    ("x86_64", "avx512fp16", "__AVX512FP16__"),
+    ("aarch64", "neon", "__ARM_NEON"),
+    ("aarch64", "fp16", "__ARM_FEATURE_FP16_VECTOR_ARITHMETIC"),
+    ("aarch64", "dotprod", "__ARM_FEATURE_DOTPROD"),
+    ("aarch64", "i8mm", "__ARM_FEATURE_MATMUL_INT8"),
+    ("aarch64", "bf16", "__ARM_FEATURE_BF16"),
+    ("aarch64", "sve", "__ARM_FEATURE_SVE"),
+    ("aarch64", "sve2", "__ARM_FEATURE_SVE2"),
+];
+
+/// Every distinct name in [`CPU_FEATURES`], for diagnostics.
+pub fn cpu_feature_names() -> String {
+    let mut names: Vec<&str> = CPU_FEATURES.iter().map(|(_, n, _)| *n).collect();
+    names.dedup();
+    names.join(", ")
+}
+
+/// The driver's probe: clang's predefined macros for the active target and
+/// tuning, or `None` when clang could not be asked. Installed by `cpc`; a
+/// host without one (`cpc check`, the LSP, unit tests) answers from the
+/// baseline plus the explicit `--target-feature` list instead.
+static FEATURE_PROBE: std::sync::OnceLock<fn() -> Option<String>> = std::sync::OnceLock::new();
+static PROBED_MACROS: std::sync::OnceLock<Option<std::collections::BTreeSet<String>>> =
+    std::sync::OnceLock::new();
+
+pub fn set_feature_probe(probe: fn() -> Option<String>) {
+    let _ = FEATURE_PROBE.set(probe);
+}
+
+/// Is `name` enabled for the active target and tuning? `None` when `name` is
+/// not in [`CPU_FEATURES`] at all — a typo, which sema reports. A name that
+/// belongs to another architecture is `Some(false)`, so one source can ask
+/// about `avx2` and `dotprod` and build for both.
+pub fn cpu_feature_enabled(name: &str) -> Option<bool> {
+    if !CPU_FEATURES.iter().any(|(_, n, _)| *n == name) {
+        return None;
+    }
+    let arch = active_arch();
+    let Some(&(_, _, mac)) = CPU_FEATURES.iter().find(|(a, n, _)| *a == arch && *n == name) else {
+        return Some(false);
+    };
+    let probed = PROBED_MACROS.get_or_init(|| {
+        let text = (FEATURE_PROBE.get()?)()?;
+        Some(
+            text.lines()
+                .filter_map(|l| l.strip_prefix("#define "))
+                .filter_map(|l| l.split_whitespace().next())
+                .map(str::to_string)
+                .collect(),
+        )
+    });
+    if let Some(macros) = probed {
+        return Some(macros.contains(mac));
+    }
+    Some(baseline_feature(arch, name, &cpu_tuning()))
+}
+
+/// The no-probe answer: the arch baseline (NEON is architectural on aarch64;
+/// nothing in the x86_64 table is in the SSE2 baseline), then the explicit
+/// `--target-feature` list in order. A `--target-cpu` cannot be expanded
+/// without clang, so it contributes nothing here.
+fn baseline_feature(arch: &str, name: &str, t: &CpuTuning) -> bool {
+    let mut on = arch == "aarch64" && name == "neon";
+    for f in &t.features {
+        if f.get(1..) == Some(name) {
+            on = f.starts_with('+');
+        }
+    }
+    on
+}
+
 /// Install the target the driver resolved from `--target`. Call before any
 /// `codegen::generate*`. Defaults to [`HOST`] when never called.
 pub fn set_active_target(t: TargetSpec) {
@@ -850,6 +1017,52 @@ mod tests {
         // Other tests must not mutate the global (they use the `*_for`
         // helpers with explicit specs), so the default is observable here.
         assert!(active_target().is_host());
+    }
+
+    fn tuning(cpu: Option<&str>, features: &[&str]) -> CpuTuning {
+        CpuTuning {
+            cpu: cpu.map(str::to_string),
+            features: features.iter().map(|f| f.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn cpu_tuning_maps_to_march_on_x86_and_mcpu_on_aarch64() {
+        assert!(cpu_tuning_clang_args(&CpuTuning::default(), TargetArch::Riscv32)
+            .unwrap()
+            .is_empty());
+        let t = tuning(Some("x86-64-v3"), &["-fma"]);
+        assert_eq!(
+            cpu_tuning_clang_args(&t, TargetArch::X86_64).unwrap(),
+            ["-march=x86-64-v3", "-Xclang", "-target-feature", "-Xclang", "-fma"]
+        );
+        assert_eq!(
+            cpu_tuning_clang_args(&tuning(Some("apple-m1"), &[]), TargetArch::Aarch64).unwrap(),
+            ["-mcpu=apple-m1"]
+        );
+        for arch in [TargetArch::Riscv32, TargetArch::Xtensa, TargetArch::Wasm32] {
+            assert!(cpu_tuning_clang_args(&t, arch).is_err());
+        }
+    }
+
+    #[test]
+    fn without_a_probe_features_are_the_baseline_plus_the_explicit_list() {
+        assert!(!baseline_feature("x86_64", "avx2", &CpuTuning::default()));
+        assert!(baseline_feature("aarch64", "neon", &CpuTuning::default()));
+        let t = tuning(None, &["+avx2", "+fma", "-avx2"]);
+        assert!(!baseline_feature("x86_64", "avx2", &t), "the last mention wins");
+        assert!(baseline_feature("x86_64", "fma", &t));
+        // A named CPU cannot be expanded without clang.
+        assert!(!baseline_feature("x86_64", "avx2", &tuning(Some("x86-64-v3"), &[])));
+    }
+
+    #[test]
+    fn every_feature_name_is_listed_once_per_arch() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (arch, name, _) in CPU_FEATURES {
+            assert!(ARCHES.contains(arch), "{arch}");
+            assert!(seen.insert((*arch, *name)), "{arch}/{name} listed twice");
+        }
     }
 }
 

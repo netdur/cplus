@@ -1,0 +1,108 @@
+// Label-sized HTML fragments, rendered as native selectable TextBlock runs.
+// This is deliberately not a browser: CSS, images, tables and active links
+// remain unsupported. Unknown tags keep their text; scripts/styles are hidden.
+import "stdlib/text" as text;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/vocabulary" as vocab;
+import "./native" as native;
+import "./typography" as typography;
+fn byte(value: str,index: usize) -> u8 {return *(#str_ptr(value)+index);}
+fn slice(value: str,start: usize,end: usize) -> str {return #str_from_raw_parts(#str_ptr(value)+start,end-start);}
+fn space(c: u8) -> bool {return c==32 || c==9 || c==10 || c==13 || c==12;}
+fn lower(c: u8) -> u8 {return if c>=65 && c<=90 {c+32} else {c};}
+fn same(value: str,other: str) -> bool {
+    if #str_len(value)!=#str_len(other) {return false;}
+    var i: usize=0;while i<#str_len(value) {if lower(byte(value,i))!=byte(other,i) {return false;}i=i+1;}return true;
+}
+fn digit(c: u8) -> u32 {return if c>=48 && c<=57 {(c-48) as u32} else if lower(c)>=97 && lower(c)<=102 {(lower(c)-87) as u32} else {99u32};}
+fn entity(value: str) -> u32 {
+    if value=="amp" {return 38;}if value=="lt" {return 60;}if value=="gt" {return 62;}if value=="quot" {return 34;}if value=="apos" {return 39;}if value=="nbsp" {return 160;}
+    if value=="copy" {return 169;}if value=="reg" {return 174;}if value=="hellip" {return 8230;}if value=="ndash" {return 8211;}if value=="mdash" {return 8212;}if value=="bull" {return 8226;}
+    if #str_len(value)<2 || byte(value,0)!=35 {return 0;}
+    var i: usize=1;var base: u32=10;if lower(byte(value,i))==120 {base=16;i=i+1;}if i==#str_len(value) {return 0;}
+    var code: u32=0;while i<#str_len(value) {let d=digit(byte(value,i));if d>=base || code>1114111u32/base {return 65533;}code=code*base+d;i=i+1;}
+    return if code==0 || code>1114111 || (code>=55296 && code<=57343) {65533u32} else {code};
+}
+struct Format {weight: u16,italic: i32,decoration: u32,size: f64,mono: bool,pre: bool,hidden: bool}
+struct Frame {tag: i32,format: Format}
+struct Writer {collection: ui::IVector_Microsoft_UI_Xaml_Documents_Inline,buffer: text::Text,format: Format,transform: vocab::TextTransform,wrote: bool,pending_space: bool,last_break: bool}
+impl Writer {
+    fn flush(ref this) {
+        if #str_len(this.buffer.view())==0 {return;}
+        let run=native::must::[ui::Run](ui::Run::new());native::check(run.set_text(typography::transformed(this.buffer.view(),this.transform).view()));
+        let element=native::must::[ui::ITextElement](ui::ITextElement::query(run.object()));
+        native::check(element.set_font_weight(ui::FontWeight {weight:this.format.weight}));native::check(element.set_font_style(this.format.italic));native::check(element.set_text_decorations(this.format.decoration));native::check(element.set_font_size(this.format.size));
+        if this.format.mono {native::check(element.set_font_family(typography::font("Consolas")));}
+        native::check(this.collection.append(run.object()));this.buffer.remove_all();
+    }
+    fn append(ref this,value: str) {assert this.buffer.append(value).is_ok();this.wrote=true;this.last_break=false;}
+    fn content(ref this,value: str) {
+        if this.format.hidden {return;}var i: usize=0;var start: usize=0;
+        while i<#str_len(value) {
+            if !this.format.pre && space(byte(value,i)) {
+                if i>start {if this.pending_space {this.append(" ");this.pending_space=false;}this.append(slice(value,start,i));}
+                this.pending_space=this.wrote && !this.last_break;i=i+1;start=i;
+            } else {i=i+1;}
+        }
+        if i>start {if this.pending_space {this.append(" ");this.pending_space=false;}this.append(slice(value,start,i));}
+    }
+    fn line(ref this,force: bool) {
+        if this.format.hidden {return;}this.pending_space=false;
+        if force || (this.wrote && !this.last_break) {this.append("\n");this.last_break=true;}
+    }
+}
+fn tag_id(name: str) -> i32 {
+    if same(name,"b") || same(name,"strong") {return 1;}if same(name,"i") || same(name,"em") {return 2;}if same(name,"u") {return 3;}if same(name,"s") || same(name,"strike") || same(name,"del") {return 4;}
+    if same(name,"code") || same(name,"tt") {return 5;}if same(name,"pre") {return 6;}if same(name,"p") {return 7;}if same(name,"div") {return 8;}if same(name,"li") {return 9;}
+    if #str_len(name)==2 && lower(byte(name,0))==104 && byte(name,1)>=49 && byte(name,1)<=54 {return 10+(byte(name,1)-49) as i32;}
+    if same(name,"script") {return 20;}if same(name,"style") {return 21;}if same(name,"head") {return 22;}if same(name,"span") {return 23;}if same(name,"a") {return 24;}return 0;
+}
+fn block(tag: i32) -> bool {return tag>=6 && tag<=15;}
+fn apply(label: ui::ITextBlock,markup: str,transform: vocab::TextTransform) {
+    let collection=native::must::[ui::IVector_Microsoft_UI_Xaml_Documents_Inline](ui::IVector_Microsoft_UI_Xaml_Documents_Inline::query(native::must::[rt::Object](label.inlines())));native::check(collection.clear());
+    let base=Format {weight:native::must::[ui::FontWeight](label.font_weight()).weight,italic:native::must::[i32](label.font_style()),decoration:native::must::[u32](label.text_decorations()),size:native::must::[f64](label.font_size()),mono:false,pre:false,hidden:false};
+    var writer=Writer {collection:collection,buffer:text::new(),format:base,transform:transform,wrote:false,pending_space:false,last_break:false};
+    // Fixed-depth stack bounds resource use for malformed input. Excess opening
+    // tags remain transparent; no recursion or native markup evaluation occurs.
+    var stack: [Frame;64]=#zero::[[Frame;64]]();var depth: usize=0;var i: usize=0;var start: usize=0;
+    while i<#str_len(markup) {
+        let c=byte(markup,i);
+        if c==38 && !writer.format.hidden {
+            writer.content(slice(markup,start,i));var end=i+1;while end<#str_len(markup) && end-i<32 && byte(markup,end)!=59 && !space(byte(markup,end)) && byte(markup,end)!=60 {end=end+1;}
+            let code=if end<#str_len(markup) && byte(markup,end)==59 {entity(slice(markup,i+1,end))} else {0u32};
+            if code!=0 {writer.content(typography::glyph(code).view());i=end+1;}else{writer.content("&");i=i+1;}start=i;
+        } else if c==60 {
+            if i+4<=#str_len(markup) && slice(markup,i,i+4)=="<!--" {
+                writer.content(slice(markup,start,i));i=i+4;while i+3<=#str_len(markup) && slice(markup,i,i+3)!="-->" {i=i+1;}i=if i+3<=#str_len(markup) {i+3} else {#str_len(markup)};start=i;
+            } else {
+                var end=i+1;var quote: u8=0;
+                while end<#str_len(markup) {let q=byte(markup,end);if quote!=0 {if q==quote {quote=0;}}else if q==34 || q==39 {quote=q;}else if q==62 {break;}end=end+1;}
+                // No closing delimiter remains: keep the entire suffix literal
+                // in one pass instead of rescanning it at every '<'.
+                if end==#str_len(markup) {i=end;break;}
+                var n=i+1;let closing=n<end && byte(markup,n)==47;if closing {n=n+1;}let first=n;
+                while n<end && ((lower(byte(markup,n))>=97 && lower(byte(markup,n))<=122) || (byte(markup,n)>=48 && byte(markup,n)<=57)) {n=n+1;}
+                if n==first {i=i+1;continue;}
+                let name=slice(markup,first,n);let tag=tag_id(name);
+                // Raw-text elements only recognize their own closing tag.
+                if writer.format.hidden && !(closing && depth>0 && stack[depth-1].tag==tag) {i=end+1;continue;}
+                writer.content(slice(markup,start,i));writer.flush();
+                if closing {
+                    var found=depth;while found>0 {found=found-1;if stack[found].tag==tag && tag!=0 {if block(tag) {writer.line(false);writer.flush();}writer.format=stack[found].format;depth=found;break;}}
+                } else if same(name,"br") {writer.line(true);}
+                else if tag!=0 && depth<64 {
+                    if block(tag) {writer.line(false);writer.flush();}
+                    stack[depth]=Frame {tag:tag,format:writer.format};depth=depth+1;
+                    if tag==1 {writer.format.weight=700;}if tag==2 {writer.format.italic=ui::font_style_italic;}if tag==3 {writer.format.decoration=writer.format.decoration | ui::text_decorations_underline;}if tag==4 {writer.format.decoration=writer.format.decoration | ui::text_decorations_strikethrough;}
+                    if tag==5 || tag==6 {writer.format.mono=true;}if tag==6 {writer.format.pre=true;}if tag>=10 && tag<=15 {writer.format.weight=700;writer.format.size=base.size*(2.0f64-((tag-10) as f64)*0.2f64);}
+                    if tag>=20 && tag<=22 {writer.format.hidden=true;}
+                    if tag==9 {writer.content("• ");}
+                    if end>i && byte(markup,end-1)==47 {depth=depth-1;writer.format=stack[depth].format;}
+                }
+                i=end+1;start=i;
+            }
+        } else {i=i+1;}
+    }
+    writer.content(slice(markup,start,i));writer.flush();
+}

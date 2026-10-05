@@ -209,4 +209,7 @@ struct Backend {
     // will not do is open menus for exploration — the item either exists and is
     // enabled, or the answer is NotFound / NotActionable.
     invoke_menu: fn(*u8, auth::Grant, str) -> surface::Outcome,
+    // Optional version reader for optimistic text edits. None means no version
+    // is available (including a refused read); consumers must not invent zero.
+    text_version: fn(*u8, auth::Grant, str) -> option::Option[u64],
 }

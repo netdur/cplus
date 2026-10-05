@@ -1,0 +1,82 @@
+// Native collection drag/drop reports flat indexes; the application owns order.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/collection" as collection;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./record" as record;
+import "./native" as native;
+import "./scheduler" as scheduler;
+struct State {from: i64,pending_from: i64,pending_to: i64,timer: u64,target: fn(*record::View,f64,f64)->i64,group: fn(*record::View,usize)->i64,over: ui::EventRegistrationToken,drop: ui::EventRegistrationToken}
+struct Row {opaque host: *record::View,index: usize,object: rt::Object,start: ui::EventRegistrationToken,end: ui::EventRegistrationToken}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn state(r: *record::View) -> *State {return (*r).reorder as *State;}
+fn enabled(r: *record::View) -> bool {let p=(*core::node_data((*r).node)).props as *props::CollectionProps;return (*p).reorderable_items_view.can_reorder_items && (*core::node_data((*r).node)).common.is_enabled;}
+// A drop can be delivered before the next layout/sync pass. Never report an
+// index pair against data or policy that the application has already changed.
+fn invalidated(r: *record::View) -> bool {return (core::dirty_of((*r).node)&(collection::P_CAN_REORDER_ITEMS|collection::P_CAN_MIX_GROUPS|collection::P_IS_GROUPED|collection::P_GROUP_COUNT|collection::P_GROUP|collection::P_COUNT|collection::P_ROW|collection::P_INVALIDATE_ROW|collection::P_SPLICE_ROWS|collection::P_COLUMNS|collection::P_ITEM_SIZING|props::C_IS_ENABLED))!=0;}
+fn cancel(r: *record::View) {let s=state(r);(*s).from=-1;(*s).pending_from=-1;(*s).pending_to=-1;scheduler::cancel((*s).timer);(*s).timer=0;}
+fn begin(r: *record::View,index: usize) -> bool {let s=state(r);if !enabled(r) || invalidated(r) || (*s).timer!=0 || (*s).group(r,index)<0 {return false;};(*s).from=index as i64;return true;}
+fn accepts(r: *record::View,to: i64) -> bool {
+    let s=state(r);if !enabled(r) || invalidated(r) || (*s).from<0 || to<0 || to==(*s).from {return false;}
+    let source=(*s).group(r,(*s).from as usize);let destination=(*s).group(r,to as usize);if source<0 || destination<0 {return false;}
+    let p=(*core::node_data((*r).node)).props as *props::CollectionProps;
+    return (*p).reorderable_items_view.can_mix_groups || source==destination;
+}
+fn deliver(ctx: *u8) {
+    let r=ctx as *record::View;let s=state(r);(*s).timer=0;
+    let from=(*s).pending_from;let to=(*s).pending_to;(*s).pending_from=-1;(*s).pending_to=-1;
+    if !enabled(r) || invalidated(r) || from<0 || to<0 {return;}
+    let p=(*core::node_data((*r).node)).props as *props::CollectionProps;
+    (*p).reorder_from=from;(*p).reorder_to=to;
+    let call=(*p).reorderable_items_view.on_reorder_completed;let context=(*p).reorderable_items_view.on_reorder_completed_ctx;
+    // No row or host access after an application callback: it may replace either.
+    if call!=props::no_handler {call(ctx,context);}
+}
+fn commit(r: *record::View,to: i64) -> bool {
+    if !accepts(r,to) {return false;}let s=state(r);(*s).pending_from=(*s).from;(*s).pending_to=to;(*s).from=-1;
+    (*s).timer=scheduler::after(0.0f64,deliver,r as *u8);return true;
+}
+fn starting(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let row=ctx as *Row;let event=native::must::[ui::IDragStartingEventArgs](ui::IDragStartingEventArgs::query(args));
+    if !begin((*row).host,(*row).index) {native::check(event.set_cancel(true));return rt::Status {code:0};}
+    native::check(event.set_allowed_operations(ui::data_package_operation_move_value));
+    let data=native::must::[ui::IDataPackage](ui::IDataPackage::query(native::must::[rt::Object](event.data())));
+    native::check(data.set_requested_operation(ui::data_package_operation_move_value));native::check(data.set_text("Facet collection item"));return rt::Status {code:0};
+}
+fn ended(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {let row=ctx as *Row;(*state((*row).host)).from=-1;return rt::Status {code:0};}
+fn target(r: *record::View,event: ui::IDragEventArgs) -> i64 {let point=native::must::[ui::Point](event.get_position((*r).content));return (*state(r)).target(r,point.x as f64,point.y as f64);}
+fn over(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;let event=native::must::[ui::IDragEventArgs](ui::IDragEventArgs::query(args));
+    native::check(event.set_accepted_operation(if accepts(r,target(r,event)) {ui::data_package_operation_move_value} else {ui::data_package_operation_none}));native::check(event.set_handled(true));return rt::Status {code:0};
+}
+fn dropped(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r=ctx as *record::View;let event=native::must::[ui::IDragEventArgs](ui::IDragEventArgs::query(args));let accepted=commit(r,target(r,event));
+    native::check(event.set_accepted_operation(if accepted {ui::data_package_operation_move_value} else {ui::data_package_operation_none}));native::check(event.set_handled(true));return rt::Status {code:0};
+}
+fn attach(r: *record::View,target: fn(*record::View,f64,f64)->i64,group: fn(*record::View,usize)->i64) {
+    let owner=match box::new::[State](State {from:-1,pending_from:-1,pending_to:-1,timer:0,target:target,group:group,over:#zero::[ui::EventRegistrationToken](),drop:#zero::[ui::EventRegistrationToken]()}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).reorder=owner.into_raw();
+    let element=native::must::[ui::IUIElement](ui::IUIElement::query((*r).content));native::check(element.set_allow_drop(true));
+    let a=native::must::[ui::DragEventHandler](ui::DragEventHandler::new(over,r as *u8));let b=native::must::[ui::DragEventHandler](ui::DragEventHandler::new(dropped,r as *u8));
+    (*state(r)).over=native::must::[ui::EventRegistrationToken](element.add_drag_over(a.object()));(*state(r)).drop=native::must::[ui::EventRegistrationToken](element.add_drop(b.object()));LIVE=LIVE+2;
+}
+fn row(r: *record::View,index: usize,value: rt::Object) -> *u8 {
+    let owner=match box::new::[Row](Row {host:r,index:index,object:value.clone(),start:#zero::[ui::EventRegistrationToken](),end:#zero::[ui::EventRegistrationToken]()}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return 0 as *u8;}};let row=owner.ptr();
+    let element=native::must::[ui::IUIElement](ui::IUIElement::query(value));native::check(element.set_can_drag(enabled(r)));
+    let a=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_DragStartingEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_DragStartingEventArgs::new(starting,row as *u8));
+    let b=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_DropCompletedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_DropCompletedEventArgs::new(ended,row as *u8));
+    (*row).start=native::must::[ui::EventRegistrationToken](element.add_drag_starting(a.object()));(*row).end=native::must::[ui::EventRegistrationToken](element.add_drop_completed(b.object()));LIVE=LIVE+2;return owner.into_raw();
+}
+fn apply_row(ctx: *u8) {if ctx.is_null() {return;}let row=ctx as *Row;let element=native::must::[ui::IUIElement](ui::IUIElement::query((*row).object));native::check(element.set_can_drag(enabled((*row).host)));}
+fn release_row(ctx: *u8) {
+    if ctx.is_null() {return;}let owner: box::Box[Row]=box::from_raw::[Row](ctx);let row=owner.ptr();
+    if (*state((*row).host)).from==(*row).index as i64 {(*state((*row).host)).from=-1;}
+    let element=native::must::[ui::IUIElement](ui::IUIElement::query((*row).object));native::check(element.remove_drag_starting((*row).start));native::check(element.remove_drop_completed((*row).end));LIVE=LIVE-2;
+}
+fn release(r: *record::View) {
+    cancel(r);let element=native::must::[ui::IUIElement](ui::IUIElement::query((*r).content));native::check(element.remove_drag_over((*state(r)).over));native::check(element.remove_drop((*state(r)).drop));LIVE=LIVE-2;
+    let owner: box::Box[State]=box::from_raw::[State]((*r).reorder);(*r).reorder=0 as *u8;
+}
