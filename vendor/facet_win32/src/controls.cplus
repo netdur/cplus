@@ -2230,14 +2230,17 @@ fn draw_window_buttons(v: *u8, n: *core::Node, hdc: *u8) {
     let cell: i32 = (wb_cell_w() * scale) as i32;
     if cell <= (0 as i32) { return; }
 
-    // The glyph colour follows the window text colour so the group reads on both
+    // The glyph colour follows what it is drawn over, so the group reads on both
     // a light and a dark bar without this control owning a palette.
     //
     // A PEN PER PAINT, created and destroyed here: `paint` caches BRUSHES
     // because a fill happens on every control, and one cached pen for one
     // control would be a second cache to invalidate when the system colours
     // change. Three strokes are not worth that.
-    let ink: u32 = { u::GetSysColor(8 as i32) };            // COLOR_WINDOWTEXT
+    // INK OVER WHAT IS BEHIND, not COLOR_WINDOWTEXT: the system colour stays
+    // black in a dark app (dark mode is an application opt-in), so the glyphs
+    // vanished into a dark header — seen in the blended-bar probe.
+    let ink: u32 = paint::ink_over(paint::effective_bg(v));
     var width: i32 = (1.0f64 * scale) as i32;
     if width < (1 as i32) { width = 1 as i32; }
     let pen: *u8 = { gdi::CreatePen(0 as i32, width, ink) };   // PS_SOLID

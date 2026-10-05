@@ -34,6 +34,7 @@ import "win32/winuser" as u;
 import "./sys" as sys;
 import "./controls" as controls;
 import "./subclass" as subclass;
+import "./caption" as caption;
 import "./paint" as paint;
 import "./anim" as anim;
 import "./drawing" as drawing;
@@ -262,6 +263,9 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // hooked — see `subclass`. Installed here rather than in `configure`
     // because it is a once-per-window act and `configure` runs on every apply.
     if wants_subclass(core::kind_of(n)) { subclass::install(v); }
+    // A label answers its own hit test, so in a blended window's drag region it
+    // has to be told to step aside — see `caption`'s label section.
+    if core::kind_of(n) == props::K_LABEL { caption::install_label(v); }
     // Configure it WHOLE — the same call apply makes, with every bit set.
     configure(v, n, paint::all_bits());
     // EVERY CONTROL WEARS A REAL FONT, whether or not its kind has a

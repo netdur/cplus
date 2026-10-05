@@ -648,6 +648,51 @@ fn build_app_menu(win: *u8, m: *screen::AppMenu) {
     return;
 }
 
+// A DEEP COPY of an app menu, for the window tier to OWN.
+//
+// The facade hands `install_app_menu` the address of a LOCAL — `bar` in
+// facet_runtime's `open_owned_window` — and the bar has to be rebuilt later,
+// whenever another window opens or a `menu` subtree changes. Holding that
+// address was a use-after-return: by the next `open_window` the local had
+// been dropped and its stack reused, so `build_app_menu` walked whatever was
+// there. In qwen-image's release build that was an item count with a null
+// buffer, and `runtime::alert` (which opens a window) died reading address 8.
+//
+// Every field is a value: three Texts, cloned, and plain words — the handler
+// pointers and their ctx are the application's and outlive the menu anyway.
+fn copy_app_menu(m: *screen::AppMenu) -> screen::AppMenu {
+    var out: screen::AppMenu = screen::empty_app_menu();
+    if m == (0 as *screen::AppMenu) { return out; }
+    out.title = { (*m).title }.clone();
+    let items: *vec::Vec[screen::MenuItem] = #addr_of((*m).items);
+    let n: usize = { (*items).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*items).at_ptr(i) } {
+            option::Option[*screen::MenuItem]::Some(it) => {
+                let _a: status::Status = out.items.append(screen::MenuItem {
+                    menu: { (*it).menu }.clone(),
+                    title: { (*it).title }.clone(),
+                    key: { (*it).key }.clone(),
+                    shift: { (*it).shift },
+                    alt: { (*it).alt },
+                    action: { (*it).action },
+                    is_enabled: { (*it).is_enabled },
+                    enabled_ctx: { (*it).enabled_ctx },
+                    title_of: { (*it).title_of },
+                    title_ctx: { (*it).title_ctx },
+                    is_separator: { (*it).is_separator },
+                    on_click: { (*it).on_click },
+                    click_ctx: { (*it).click_ctx },
+                });
+            }
+            option::Option[*screen::MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
 fn already_made(made: vec::Vec[text::Text], group: str) -> bool {
     var i: usize = 0 as usize;
     let n: usize = made.count();
@@ -684,6 +729,211 @@ fn fill_group(popup: *u8, items: *vec::Vec[screen::MenuItem], group: str) {
         }
         i = i +% (1 as usize);
     }
+    return;
+}
+
+// ---- the menu BAR in dark mode ---------------------------------------------------
+//
+// THE POPUPS ARE ALREADY DARK and need nothing here: `darkmode::install` calls
+// uxtheme's `SetPreferredAppMode(AllowDark)` (ordinal 135) and
+// `FlushMenuThemes` (136), and every top-level window is allowed dark
+// (`AllowDarkModeForWindow`, 133) as it is made. Measured on
+// `playground/win32_bugs_probe`: File's drop-down draws dark.
+//
+// THE BAR IS NOT, and no public switch makes it so — `DWMWA_USE_IMMERSIVE_DARK_MODE`
+// stops at the caption, and the bar is drawn by user32 into the non-client area
+// from the classic `COLOR_MENU`. What every dark Win32 application does
+// (Explorer, Notepad++, the win32-darkmode sample) is answer two UNDOCUMENTED
+// messages user32 sends to the window before it draws the bar itself:
+//
+//   WM_UAHDRAWMENU      (0x91) "paint the bar's background" — lParam is a
+//                       UAHMENU { HMENU hmenu; HDC hdc; DWORD dwFlags; }.
+//   WM_UAHDRAWMENUITEM  (0x92) "paint one item" — lParam is a UAHDRAWMENUITEM:
+//                       a DRAWITEMSTRUCT (64 bytes on x64), then the UAHMENU at
+//                       64 (hmenu 64, hdc 72), then a UAHMENUITEM whose first
+//                       field, the item's POSITION, is at 88.
+//
+// Returning non-zero says "drawn". Both are answered ONLY in dark mode and not in
+// high contrast; a light app returns false from every function here and user32
+// draws exactly what it always drew.
+//
+// One more thing user32 paints that the messages do not cover: a single
+// light line under the bar, at the client area's top edge, drawn on every
+// WM_NCPAINT and WM_NCACTIVATE. `paint_bar_rule` covers it after the default
+// has run — the same patch the sample applies.
+
+fn wm_uahdrawmenu() -> u32 { return 0x0091 as u32; }
+fn wm_uahdrawmenuitem() -> u32 { return 0x0092 as u32; }
+
+fn uah_off_hmenu() -> usize { return 64 as usize; }
+fn uah_off_hdc() -> usize { return 72 as usize; }
+fn uah_off_position() -> usize { return 88 as usize; }
+
+// DRAWITEMSTRUCT.itemState bits as they arrive for a menu-bar item.
+fn ods_selected_bit() -> u32 { return 0x0001 as u32; }
+fn ods_grayed_bit() -> u32 { return 0x0002 as u32; }
+fn ods_disabled_bit() -> u32 { return 0x0004 as u32; }
+fn ods_hotlight_bit() -> u32 { return 0x0040 as u32; }
+fn ods_inactive_bit() -> u32 { return 0x0080 as u32; }
+fn ods_noaccel_bit() -> u32 { return 0x0100 as u32; }
+
+fn dark_bar() -> bool { return paint::dark_controls(); }
+
+// The bar's ground is the WINDOW's — the same `effective_bg` the content erases
+// with — so the bar reads as part of the window rather than as a strip across
+// it. Hot and pressed are the two steps lighter Explorer uses.
+fn bar_ground(win: *u8) -> u32 { return paint::effective_bg(win); }
+fn bar_hot() -> u32 { return paint::colorref(0.24f64, 0.24f64, 0.24f64); }
+fn bar_pressed() -> u32 { return paint::colorref(0.30f64, 0.30f64, 0.30f64); }
+fn bar_text() -> u32 { return paint::colorref(0.95f64, 0.95f64, 0.95f64); }
+fn bar_text_disabled() -> u32 { return paint::colorref(0.47f64, 0.47f64, 0.47f64); }
+
+// The item's ground for its state. Pressed (the menu is open) wins over hot.
+fn item_ground(win: *u8, state: u32) -> u32 {
+    if (state & ods_selected_bit()) != (0 as u32) { return bar_pressed(); }
+    if (state & ods_hotlight_bit()) != (0 as u32) { return bar_hot(); }
+    return bar_ground(win);
+}
+
+fn item_ink(state: u32) -> u32 {
+    if (state & (ods_grayed_bit() | ods_disabled_bit())) != (0 as u32) {
+        return bar_text_disabled();
+    }
+    // An INACTIVE window's bar is dimmed by user32 in light mode; the same cue
+    // here, or a dark app's bar would look focused whichever window was.
+    if (state & ods_inactive_bit()) != (0 as u32) { return bar_text_disabled(); }
+    return bar_text();
+}
+
+// The bar's rect in WINDOW coordinates, which is what the window DC uses.
+fn bar_rect(win: *u8, out: *u::tagRECT) -> bool {
+    var mbi: u::tagMENUBARINFO = #zero::[u::tagMENUBARINFO]();
+    mbi.cbSize = #size_of::[u::tagMENUBARINFO]() as u32;
+    // OBJID_MENU is -3.
+    if { u::GetMenuBarInfo(win, 0 -% (3 as i32), 0 as i32, #addr_of(mbi)) } == (0 as i32) {
+        return false;
+    }
+    var wr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetWindowRect(win, #addr_of(wr)) } == (0 as i32) { return false; }
+    { (*out).left = mbi.rcBar.left -% wr.left };
+    { (*out).top = mbi.rcBar.top -% wr.top };
+    { (*out).right = mbi.rcBar.right -% wr.left };
+    { (*out).bottom = mbi.rcBar.bottom -% wr.top };
+    return true;
+}
+
+fn fill_with(hdc: *u8, r: *u::tagRECT, c: u32) {
+    let b: *u8 = paint::brush_for(c);
+    if b == (0 as *u8) { return; }
+    let _f: i32 = { u::FillRect(hdc, r, b) };
+    return;
+}
+
+// WM_UAHDRAWMENU and WM_UAHDRAWMENUITEM. False means "not ours": a light app,
+// or a message too malformed to read, and the caller passes it to the default.
+fn on_uah(win: *u8, msg: u32, l: i64) -> bool {
+    if !dark_bar() { return false; }
+    let p: *u8 = l as *u8;
+    if p == (0 as *u8) { return false; }
+    if msg == wm_uahdrawmenu() {
+        let hdc: *u8 = read_ptr_at(p, 8 as usize);
+        if hdc == (0 as *u8) { return false; }
+        var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                         right: 0 as i32, bottom: 0 as i32 };
+        if !bar_rect(win, #addr_of(r)) { return false; }
+        fill_with(hdc, #addr_of(r), bar_ground(win));
+        return true;
+    }
+    if msg == wm_uahdrawmenuitem() {
+        let hmenu: *u8 = read_ptr_at(p, uah_off_hmenu());
+        let hdc: *u8 = read_ptr_at(p, uah_off_hdc());
+        if hmenu == (0 as *u8) || hdc == (0 as *u8) { return false; }
+        let state: u32 = read_u32_at(p, di_off_state());
+        let pos: u32 = read_u32_at(p, uah_off_position());
+        var r: u::tagRECT = u::tagRECT {
+            left: read_u32_at(p, di_off_rect()) as i32,
+            top: read_u32_at(p, di_off_rect() +% (4 as usize)) as i32,
+            right: read_u32_at(p, di_off_rect() +% (8 as usize)) as i32,
+            bottom: read_u32_at(p, di_off_rect() +% (12 as usize)) as i32,
+        };
+        fill_with(hdc, #addr_of(r), item_ground(win, state));
+        var buf: [u16; 256] = [0 as u16; 256];
+        // MF_BYPOSITION (0x400): the UAH item names its POSITION, not an id —
+        // a popup on the bar has no command id at all.
+        let n: i32 = { u::GetMenuStringW(hmenu, pos, { #addr_of(buf[0]) } as *u16,
+                                         255 as i32, 0x0400 as u32) };
+        if n > (0 as i32) {
+            let _m: i32 = { gdi::SetBkMode(hdc, 1 as i32) };          // TRANSPARENT
+            let _c: u32 = { gdi::SetTextColor(hdc, item_ink(state)) };
+            // DT_CENTER | DT_VCENTER | DT_SINGLELINE, and DT_HIDEPREFIX while
+            // the keyboard cues are off — the underline appears with Alt, as
+            // it does on a light bar.
+            var flags: u32 = 0x0025 as u32;
+            if (state & ods_noaccel_bit()) != (0 as u32) { flags = flags | (0x00100000 as u32); }
+            let _d: i32 = { u::DrawTextW(hdc, { #addr_of(buf[0]) } as *u16, n, #addr_of(r), flags) };
+        }
+        return true;
+    }
+    return false;
+}
+
+// The light rule user32 draws under the bar, over-painted in the bar's ground.
+// Called after the default WM_NCPAINT / WM_NCACTIVATE has drawn it.
+fn paint_bar_rule(win: *u8) {
+    if !dark_bar() { return; }
+    // GetMenu on a CHILD answers its control id, not a menu.
+    if { u::GetAncestor(win, 2 as u32) } != win { return; }
+    if { u::GetMenu(win) } == (0 as *u8) { return; }
+    var cr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(win, #addr_of(cr)) } == (0 as i32) { return; }
+    let _m: i32 = { u::MapWindowPoints(win, 0 as *u8, #addr_of(cr) as *u::tagPOINT, 2 as u32) };
+    var wr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetWindowRect(win, #addr_of(wr)) } == (0 as i32) { return; }
+    var line: u::tagRECT = u::tagRECT {
+        left: cr.left -% wr.left, top: (cr.top -% wr.top) -% (1 as i32),
+        right: cr.right -% wr.left, bottom: cr.top -% wr.top,
+    };
+    let hdc: *u8 = { u::GetWindowDC(win) };
+    if hdc == (0 as *u8) { return; }
+    fill_with(hdc, #addr_of(line), bar_ground(win));
+    let _r: i32 = { u::ReleaseDC(win, hdc) };
+    return;
+}
+
+#[test]
+fn the_uah_item_layout_follows_the_drawitemstruct() {
+    // DRAWITEMSTRUCT is 64 bytes on x64 (its rcItem at 40 and itemData at 56
+    // are what `draw_menu_item` already reads), so the UAHMENU that follows it
+    // starts at 64 and its HDC at 72; the UAHMENUITEM after the 24-byte UAHMENU
+    // starts at 88 with the item's position.
+    assert di_off_rect() == (40 as usize);
+    assert di_off_data() == (56 as usize);
+    assert uah_off_hmenu() == (64 as usize);
+    assert uah_off_hdc() == uah_off_hmenu() +% (8 as usize);
+    assert uah_off_position() == uah_off_hmenu() +% (24 as usize);
+    return;
+}
+
+#[test]
+fn a_light_app_leaves_the_bar_to_user32() {
+    let was: bool = paint::is_dark();
+    paint::set_dark(false);
+    var junk: [u8; 128] = [0 as u8; 128];
+    assert !on_uah(0 as *u8, wm_uahdrawmenu(), { #addr(#addr_of(junk[0])) } as i64);
+    assert !on_uah(0 as *u8, wm_uahdrawmenuitem(), { #addr(#addr_of(junk[0])) } as i64);
+    paint::set_dark(was);
+    return;
+}
+
+#[test]
+fn an_open_menu_reads_pressed_and_a_disabled_one_dim() {
+    assert item_ground(0 as *u8, ods_selected_bit() | ods_hotlight_bit()) == bar_pressed();
+    assert item_ground(0 as *u8, ods_hotlight_bit()) == bar_hot();
+    assert item_ink(ods_grayed_bit()) == bar_text_disabled();
+    assert item_ink(0 as u32) == bar_text();
     return;
 }
 

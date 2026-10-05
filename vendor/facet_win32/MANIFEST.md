@@ -382,10 +382,29 @@ everything else disagrees with ITSELF: light panels, dark cards, black text on
 the dark ones. `paint::sys_or_dark` is the fix, and it keeps reading the system
 palette under HIGH CONTRAST, where the system genuinely does lead.
 
-Two things stay light and both are the system's own drawing:
+What was left light, and what still is — each the system's own drawing:
 
-**The MENU BAR.** `DefWindowProc` draws it and it is not appearance-aware;
-every dark Win32 application owner-draws its own. This package has not.
+**The MENU BAR — DARK NOW (2026-10-05), by two routes.** `DefWindowProc` draws
+it from `COLOR_MENU` and no public switch reaches it. On a CAPTIONED window,
+user32 first sends the undocumented `WM_UAHDRAWMENU` (0x91) and
+`WM_UAHDRAWMENUITEM` (0x92), and `menus::on_uah` answers them in dark mode —
+bar ground from the window's `effective_bg`, hot / pressed one and two steps
+lighter, titles drawn with `DrawTextW` in the menu DC's own font — and
+`paint_bar_rule` covers the one light rule user32 draws under the bar on
+WM_NCPAINT / WM_NCACTIVATE. The UAHDRAWMENUITEM layout is the DRAWITEMSTRUCT
+(64 bytes) then the UAHMENU (hmenu 64, hdc 72) then the item position at 88.
+Measured on screen: a column through the bar and the content reads
+(33,33,33) top to bottom, no light rule. On a light system both handlers
+answer false and user32 draws exactly what it drew before.
+
+A window WITHOUT a caption gets no UAH messages at all — counted, a dozen per
+paint with WS_CAPTION and none without — so a `Bar::Blended` window, whose
+caption `caption.cplus` removes, carries its bar as a client-area strip
+instead (`menustrip.cplus`, see §2's window-chrome entry).
+
+The drop-down POPUPS were already dark through `SetPreferredAppMode(AllowDark)`
+and `AllowDarkModeForWindow` — measured with File open, from the bar and from
+the strip.
 
 **A `scroll`'s own scroll-bar track.** Measured: a window's own `WS_VSCROLL` is
 drawn by the classic non-client renderer, and no part-list on the window
@@ -413,11 +432,14 @@ owner-draw (a combo that measures items, which is the popup owner-draw wall
 recorded in §2 — worth a retest now the creation-parent bug is fixed, but a
 larger piece). Left light and recorded rather than made worse.
 
-**A POPUP MENU.** `FlushMenuThemes` (ordinal 136) is called and the menu still
-comes up light — measured, with a context menu open on a dark window. A dark
-popup menu is owner-drawn in every application that has one, which is the same
-trade as the menu bar: this package would take over the check column, the
-submenu arrow and the keyboard highlight for every item to change a background.
+**A POPUP MENU — re-measured 2026-10-05: a menu BAR's drop-down is DARK.** This
+entry recorded a light popup, measured with a CONTEXT menu open; the bar's
+File menu on the same build is dark (`playground/win32_bugs_probe`), and the
+context-menu case was not re-measured, so the old reading — `FlushMenuThemes`
+(ordinal 136) called and the menu still light — stands only for that. If it
+holds, the answer is not owner-drawing every item (which would take over the
+check column, the submenu arrow and the keyboard highlight to change a
+background) but finding what the context-menu path skips that the bar's does.
 The destructive-item row below is deliberately NOT that — it owner-draws one
 item and leaves the system's colours around it.
 
@@ -1741,8 +1763,76 @@ The two menu-adjacent kinds that are still panels. A toolbar is a rebar or a
 `ToolbarWindow32`; `window_chrome` is the caption buttons, which on Windows are
 the system's unless the window is frameless.
 
+**`Bar::Blended` over the tree's own `window_buttons()` drops the caption —
+BUILT 2026-10-05** (`caption.cplus`). facet_gtk's rule, verbatim
+(`blends_into_content`): Blended, a `window_buttons` node anywhere in the tree,
+no toolbar items. Before, `style_for` treated Blended as Native and such a
+window showed TWO sets of buttons, the system's in the caption and the app's in
+its header. Now:
+
+* **WS_CAPTION is cleared** (WS_THICKFRAME, WS_SYSMENU and the box bits stay),
+  and WM_NCCALCSIZE starts the proposed rect one frame higher so the content
+  begins at the window's top edge (a maximised window keeps its frame, which is
+  what keeps its top row on the monitor). The usual recipe — keep WS_CAPTION,
+  stretch the client over it — was MEASURED and rejected: DWM drew its own
+  three caption glyphs into the strip the menu bar leaves, and the menu bar
+  itself was positioned from caption metrics, under the content. The price of
+  clearing the bit is the minimise / maximise animation; the actions all work.
+* **`DwmExtendFrameIntoClientArea` with a 1px top margin** keeps the shadow and
+  the rounded corners (seen on screen).
+* **WM_NCHITTEST, answered by the content.** One function (`caption::zone`)
+  decides for the top-level and for every panel inside it; a panel answers
+  HTTRANSPARENT for anything caption-shaped so the question reaches the
+  top-level. Measured with `SendMessage(WM_NCHITTEST)` down the window chain:
+  top edge → HTTOP; a `.window_drag()` row's padding and its label → HTCAPTION
+  (a label is a STATIC with SS_NOTIFY, so `caption::install_label` subclasses
+  it for this one message); the tree's maximise glyph → HTMAXBUTTON, which is
+  what shows the Windows 11 snap-layouts flyout; close / minimise glyphs, a
+  button in the header, the body → HTCLIENT. HTMAXBUTTON's press is swallowed
+  and its release sends SC_MAXIMIZE / SC_RESTORE — driven: IsZoomed went
+  false → true → false, the maximised content starting at the monitor's top.
+* **The menu bar becomes a strip** across the top of the client area
+  (`menustrip.cplus`), because a captionless window's bar is drawn by the
+  classic renderer and cannot be made dark (§1, dark controls). The strip draws
+  the HMENU's titles in the window's own ground and ink, opens each popup with
+  `TrackPopupMenuEx`, and its empty run is part of the drag region. Driven:
+  File opened dark, Down+Enter fired `File > Open` through `menus::fire`.
+
+Still DEBT in that strip: **keyboard access** — F10 and Alt+letter reach a bar
+user32 owns, and a blended window's bar is not one — and sliding from one open
+menu to the next with the button held. The window-buttons group still draws no
+hover highlight of its own.
+
 Menus themselves landed — see §1's HMENU row — and so did dialogs and the
 runtime facade, which this row used to say blocked everything.
+
+### The file choosers — the folder picker is BUILT; open and save are on the old door
+
+`choose_directory` answered `None` without opening anything until 2026-10-05,
+so an application's "Choose Folder" button read as a cancel. It is
+`IFileOpenDialog` with `FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM |
+FOS_NOCHANGEDIR | FOS_PATHMUSTEXIST` now, owned by the active window (falling
+back to the first open one), and the path comes back through
+`IShellItem::GetDisplayName(SIGDN_FILESYSPATH)` as UTF-8.
+
+It is COM by vtable index, and the indices were measured in a C# harness before
+the C+ was written: IUnknown `Release` 2, IModalWindow `Show` 3, IFileDialog
+`SetOptions` 9 / `GetOptions` 10 / `SetFolder` 12 / `GetFolder` 13 /
+`SetFileName` 15 / `GetFileName` 16 / `SetTitle` 17 / `GetResult` 20,
+IShellItem `GetDisplayName` 5. Each was checked by a round trip (GetOptions read
+back what SetOptions wrote, 0x1808 → 0x1868; GetFolder answered the folder
+SetFolder was given), not by counting a header. Driven in
+`playground/win32_bugs_probe`: a cancel answers `0x800704C7` and `None`; a pick
+of a folder named `pick me ü` answered its full path with the `ü` as `C3 BC`.
+`FOS_FORCEFILESYSTEM` is what refuses "This PC" and libraries — a virtual
+folder has no path to hand back.
+
+`choose_file` and `choose_save_path` are still `GetOpenFileNameA` /
+`GetSaveFileNameA`. That is debt rather than decision: the same COM dialog
+(`IFileOpenDialog` without `FOS_PICKFOLDERS`, `IFileSaveDialog` for save) would
+lift the 1024-byte path cap and the ANSI codepage, and give the modern dialog.
+Not done here because their callers are not broken, and the type filter would
+need `SetFileTypes` (index 4) measured first.
 
 ### The ceiling, stated once
 

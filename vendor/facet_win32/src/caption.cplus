@@ -1,0 +1,484 @@
+// facet_win32/caption — a `Bar::Blended` window that draws its OWN buttons.
+//
+// `Bar::Blended` means the bar shares the content's surface. On GTK a blended
+// window whose tree holds a `window_buttons` node drops its header bar
+// altogether (facet_gtk `window::blends_into_content`), because the tree has
+// already drawn the close / minimise / maximise group and a second set from the
+// window manager would be one too many. This file is the same decision on
+// Win32, where "dropping the header" is three messages rather than a widget:
+//
+//   WS_CAPTION      OFF. The window keeps WS_THICKFRAME, WS_SYSMENU and the
+//                   minimise / maximise box bits, so it still resizes, snaps,
+//                   minimises from the taskbar and has a system menu — but the
+//                   window manager draws no caption and no caption buttons.
+//   WM_NCCALCSIZE   the TOP resize frame goes too, when there is no menu bar:
+//                   the default is asked to lay the window out as if it began
+//                   one frame higher, so the content starts at the window's top
+//                   edge. With a menu bar the default stands (see
+//                   `on_nccalcsize`). Left, right and bottom borders stay.
+//   WM_NCHITTEST    the content answers what the caption used to: HTTOP along
+//                   the top edge (resize), HTCAPTION over `.window_drag()`
+//                   regions (move, double-click maximise, drag-to-snap),
+//                   HTMAXBUTTON over the tree's maximise glyph — which is what
+//                   makes Windows 11 show the SNAP LAYOUTS flyout when the
+//                   pointer rests there.
+//   DwmExtendFrameIntoClientArea
+//                   one pixel of frame into the client, so DWM keeps drawing
+//                   the SHADOW and the rounded corners for a window whose
+//                   non-client area is (nearly) gone.
+//
+// WHY WS_CAPTION GOES RATHER THAN BEING CALCULATED AWAY, which is the usual
+// recipe (Windows Terminal's): MEASURED, with the caption bit kept and the
+// client stretched over it, DWM still draws its own minimise / maximise /
+// close glyphs into whatever non-client strip is left — and an application
+// menu bar IS such a strip. The result was the system's three buttons drawn
+// over the menu bar and the menu itself not drawn at all. Every
+// `facet_runtime` app has a menu bar (the facade always installs one), so the
+// recipe that only works without one is the wrong default. The cost of
+// dropping the bit is the minimise / maximise ANIMATION, which DWM ties to
+// WS_CAPTION; the actions themselves all still work.
+//
+// THE HIT TEST HAS TO BE TWO-SIDED. The content is child windows — panels and
+// controls — and Windows asks the DEEPEST window under the pointer first. So a
+// panel of ours that is in a drag region answers HTTRANSPARENT, which hands
+// the question to the window beneath it, and eventually the top-level answers
+// HTCAPTION. A BUTTON in the same header answers HTCLIENT as it always does
+// and stays clickable. One function (`zone`) decides for both sides.
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/screen" as screen;
+import "facet/gestures" as gestures;
+import "facet/window_chrome" as chrome;
+import "win32/winuser" as u;
+import "./input" as input;
+import "./controls" as controls;
+import "./menustrip" as menustrip;
+
+// ---- which windows ------------------------------------------------------------
+
+static BLENDED: [usize; 16] = [0 as usize; 16];
+
+fn mark(w: *u8, on: bool) {
+    var i: usize = 0 as usize;
+    while i < (16 as usize) {
+        if BLENDED[i] == { #addr(w) } {
+            if !on { BLENDED[i] = 0 as usize; }
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    if !on { return; }
+    i = 0 as usize;
+    while i < (16 as usize) {
+        if BLENDED[i] == (0 as usize) { BLENDED[i] = { #addr(w) }; return; }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn is_blended(w: *u8) -> bool {
+    if w == (0 as *u8) { return false; }
+    var i: usize = 0 as usize;
+    while i < (16 as usize) {
+        if BLENDED[i] == { #addr(w) } { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// ---- the decision, mirrored from facet_gtk ------------------------------------
+
+// Does this tree draw its OWN close / minimise / maximise group? facet_gtk's
+// `chrome::has_window_buttons`, the same walk.
+fn has_window_buttons(n: *core::Node) -> bool {
+    if n == (0 as *core::Node) { return false; }
+    if core::kind_of(n) == chrome::K_WINDOW_BUTTONS { return true; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if has_window_buttons(c) { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// facet_gtk's `blends_into_content`, verbatim in meaning: only a `Blended` bar,
+// only when the tree draws its own buttons, and not when it declares toolbar
+// items — a toolbar needs the bar it would otherwise sit in.
+fn blends_into_content(bar: screen::Bar, draws_own_buttons: bool, has_toolbar: bool) -> bool {
+    return match bar {
+        screen::Bar::Blended => draws_own_buttons && !has_toolbar,
+        screen::Bar::Native => false,
+        screen::Bar::Hidden => false,
+        screen::Bar::Custom => false,
+    };
+}
+
+// ---- metrics --------------------------------------------------------------------
+
+fn sm_cysizeframe() -> i32 { return 33 as i32; }
+fn sm_cxsizeframe() -> i32 { return 32 as i32; }
+fn sm_cxpaddedborder() -> i32 { return 92 as i32; }
+
+fn dpi_of(w: *u8) -> u32 {
+    let d: u32 = { u::GetDpiForWindow(w) };
+    if d == (0 as u32) { return 96 as u32; }
+    return d;
+}
+
+// The resize border's thickness, which is also how far a MAXIMISED window
+// hangs off the monitor on each side.
+fn frame_y(w: *u8) -> i32 {
+    let d: u32 = dpi_of(w);
+    return { u::GetSystemMetricsForDpi(sm_cysizeframe(), d) }
+         +% { u::GetSystemMetricsForDpi(sm_cxpaddedborder(), d) };
+}
+
+fn frame_x(w: *u8) -> i32 {
+    let d: u32 = dpi_of(w);
+    return { u::GetSystemMetricsForDpi(sm_cxsizeframe(), d) }
+         +% { u::GetSystemMetricsForDpi(sm_cxpaddedborder(), d) };
+}
+
+// The TOP resize band, inside the content now: the sizing frame alone (4px at
+// 100%), without the padded border, because it lies over the menu bar's top
+// edge when there is one and a fatter band would eat the bar's clicks.
+fn top_band(w: *u8) -> i32 {
+    return { u::GetSystemMetricsForDpi(sm_cysizeframe(), dpi_of(w)) };
+}
+
+// ---- WM_NCCALCSIZE ---------------------------------------------------------------
+
+// Answers the message for a blended window; false leaves it to the default.
+// `l` points at NCCALCSIZE_PARAMS when `w` is TRUE and at a bare RECT when it is
+// FALSE — rgrc[0] is the first member either way, so one cast serves both.
+//
+// A MENU BAR KEEPS THE TOP FRAME. Measured: the default positions the bar from
+// the window's own frame metrics, not from the rect it is handed, so moving the
+// client up into the frame leaves the bar painted where the frame was — under
+// the content, half hidden. With a bar, the default's answer stands (a thin
+// frame strip, then the bar, then the content); without one, the proposed rect
+// is started one frame higher, the frame falls above the window, and the
+// content starts at its top edge.
+fn on_nccalcsize(hwnd: *u8, w: u64, l: i64, result: *i64) -> bool {
+    if !is_blended(hwnd) { return false; }
+    if { u::GetMenu(hwnd) } != (0 as *u8) { return false; }
+    let rc: *u::tagRECT = l as *u::tagRECT;
+    if rc == (0 as *u::tagRECT) { return false; }
+    // A MAXIMISED window hangs off the monitor by its frame on every side, so
+    // there the frame is exactly what keeps the top row on screen: left alone.
+    if { u::IsZoomed(hwnd) } == (0 as i32) {
+        { (*rc).top = { (*rc).top } -% frame_y(hwnd) };
+    }
+    let _d: i64 = { u::DefWindowProcA(hwnd, 0x0083 as u32, w, l) };
+    { *result = 0 as i64 };
+    return true;
+}
+
+// ---- the zone under the pointer -----------------------------------------------
+
+fn ht_transparent() -> i64 { return (0 as i64) -% (1 as i64); }
+fn ht_client() -> i64 { return 1 as i64; }
+fn ht_caption() -> i64 { return 2 as i64; }
+fn ht_maxbutton() -> i64 { return 9 as i64; }
+fn ht_top() -> i64 { return 12 as i64; }
+fn ht_topleft() -> i64 { return 13 as i64; }
+fn ht_topright() -> i64 { return 14 as i64; }
+
+fn ga_root() -> u32 { return 2 as u32; }
+
+fn lo_signed(l: i64) -> i32 {
+    let v: i32 = (l & (0xFFFF as i64)) as i32;
+    if v >= (0x8000 as i32) { return v -% (0x10000 as i32); }
+    return v;
+}
+
+fn hi_signed(l: i64) -> i32 {
+    let v: i32 = ((l >> (16 as i64)) & (0xFFFF as i64)) as i32;
+    if v >= (0x8000 as i32) { return v -% (0x10000 as i32); }
+    return v;
+}
+
+// The deepest VISIBLE window under a screen point, starting from `top`.
+fn deepest_at(top: *u8, x: i32, y: i32) -> *u8 {
+    var cur: *u8 = top;
+    var depth: i32 = 0 as i32;
+    while depth < (64 as i32) {
+        var pt: u::tagPOINT = u::tagPOINT { x: x, y: y };
+        let _s: i32 = { u::ScreenToClient(cur, #addr_of(pt)) };
+        // CWP_SKIPINVISIBLE (1) | CWP_SKIPTRANSPARENT (4).
+        let next: *u8 = { u::ChildWindowFromPointEx(cur, pt, 5 as u32) };
+        if next == (0 as *u8) || next == cur { return cur; }
+        cur = next;
+        depth = depth +% (1 as i32);
+    }
+    return cur;
+}
+
+fn class_is(w: *u8, name: str) -> bool {
+    var buf: [u8; 64] = [0; 64];
+    let n: i32 = { u::GetClassNameA(w, { #addr_of(buf[0]) } as *i8, 64 as i32) };
+    if n <= (0 as i32) { return false; }
+    return { #str_from_raw_parts({ #addr_of(buf[0]) }, n as usize) } == name;
+}
+
+// Is the window under the pointer part of a drag region? Only OUR panels and
+// static text can be — a button, an edit, a list stay what they are, however
+// deep in a `.window_drag()` row they sit. Walking up, the first node that says
+// anything decides: `drags_window` is a drag; any other gesture set is the
+// application's own pointer handling and wins.
+fn in_drag_region(top: *u8, hit: *u8) -> bool {
+    if hit != top && !class_is(hit, "FacetWin32Panel") && !class_is(hit, "Static") {
+        return false;
+    }
+    var cur: *u8 = hit;
+    while cur != (0 as *u8) {
+        let n: *core::Node = input::node_of_window(cur);
+        if n != (0 as *core::Node) {
+            if chrome::drags_window(n) { return true; }
+            if gestures::gestures_of(n) != (0 as *gestures::Gestures) { return false; }
+        }
+        if cur == top { return false; }
+        cur = { u::GetParent(cur) };
+    }
+    return false;
+}
+
+// What the CAPTION would have answered at this screen point, or HTCLIENT.
+fn zone(top: *u8, x: i32, y: i32) -> i64 {
+    var wr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetWindowRect(top, #addr_of(wr)) } == (0 as i32) { return ht_client(); }
+    let zoomed: bool = { u::IsZoomed(top) } != (0 as i32);
+    // THE TOP RESIZE EDGE. The client now starts at the window's top, so the
+    // band the sizing border used to own is content — and it is given back.
+    if !zoomed && y < wr.top +% top_band(top) {
+        let fx: i32 = frame_x(top);
+        if x < wr.left +% (fx *% (2 as i32)) { return ht_topleft(); }
+        if x >= wr.right -% (fx *% (2 as i32)) { return ht_topright(); }
+        return ht_top();
+    }
+    let hit: *u8 = deepest_at(top, x, y);
+    if hit == (0 as *u8) { return ht_client(); }
+    // THE MENU STRIP is the caption's row too: its titles are clicks, the run
+    // after them moves the window — as the empty end of a real caption does.
+    if menustrip::is_strip(hit) {
+        var sp: u::tagPOINT = u::tagPOINT { x: x, y: y };
+        let _m: i32 = { u::ScreenToClient(hit, #addr_of(sp)) };
+        if menustrip::item_at(hit, sp.x) >= (0 as i32) { return ht_client(); }
+        return ht_caption();
+    }
+    let n: *core::Node = input::node_of_window(hit);
+    if n != (0 as *core::Node) && core::kind_of(n) == chrome::K_WINDOW_BUTTONS {
+        // HTMAXBUTTON over the maximise glyph only. Close and minimise stay the
+        // control's own clicks: answering HTCLOSE would hand the press to
+        // DefWindowProc, which paints a classic button over ours to track it.
+        var pt: u::tagPOINT = u::tagPOINT { x: x, y: y };
+        let _s: i32 = { u::ScreenToClient(hit, #addr_of(pt)) };
+        if controls::wb_hit(hit, pt.x) == (1 as i32) { return ht_maxbutton(); }
+        return ht_client();
+    }
+    if in_drag_region(top, hit) { return ht_caption(); }
+    return ht_client();
+}
+
+// WM_NCHITTEST, for the top-level AND for every panel of ours inside it.
+fn on_nchittest(hwnd: *u8, l: i64, result: *i64) -> bool {
+    let top: *u8 = { u::GetAncestor(hwnd, ga_root()) };
+    if !is_blended(top) { return false; }
+    let x: i32 = lo_signed(l);
+    let y: i32 = hi_signed(l);
+    if hwnd != top {
+        // A child hands anything caption-shaped to the window beneath it.
+        let z: i64 = zone(top, x, y);
+        if z == ht_client() { return false; }
+        { *result = ht_transparent() };
+        return true;
+    }
+    // The top-level. The top resize band FIRST — it overlies the menu bar's
+    // top edge, which the default would otherwise call HTMENU. Then the
+    // default, which knows the side and bottom borders and the menu bar.
+    let z: i64 = zone(top, x, y);
+    if z == ht_top() || z == ht_topleft() || z == ht_topright() {
+        { *result = z };
+        return true;
+    }
+    let d: i64 = { u::DefWindowProcA(hwnd, 0x0084 as u32, 0 as u64, l) };
+    if d != ht_client() { { *result = d }; return true; }
+    { *result = z };
+    return true;
+}
+
+// ---- a LABEL in a drag region ------------------------------------------------------
+//
+// Every label is a STATIC with SS_NOTIFY (`controls`' label section says why), so
+// it answers WM_NCHITTEST with HTCLIENT itself and the question never reaches
+// the panel behind it — measured on the probe: the header's padding dragged the
+// window and its title text did not. A STATIC is comctl32's window, not ours,
+// so the only way to change its answer is to sit in front of its procedure.
+// This subclass does exactly that and nothing else: one message, and only in a
+// blended window — every other message, and every label anywhere else, goes
+// straight to the original procedure.
+
+fn prop_label_old() -> *u8 { return { #str_ptr("facet-caption-oldproc\0") }; }
+
+fn label_proc_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, i64) -> i64 = label_proc;
+    return f as *u8;
+}
+
+fn label_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    let old: *u8 = { u::GetPropA(hwnd, prop_label_old() as *i8) };
+    if old == (0 as *u8) { return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+    if msg == (0x0084 as u32) {
+        var r: i64 = 0 as i64;
+        if on_nchittest(hwnd, l, #addr_of(r)) { return r; }
+    }
+    if msg == (0x0082 as u32) {                       // WM_NCDESTROY
+        let _o: i64 = { u::SetWindowLongPtrA(hwnd, 0 -% (4 as i32), old as i64) };
+        let _r: *u8 = { u::RemovePropA(hwnd, prop_label_old() as *i8) };
+    }
+    return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+}
+
+// Installed once per label window, at creation — the window it ends up in may
+// not be blended yet (or ever), which `on_nchittest` asks per message.
+fn install_label(v: *u8) {
+    if v == (0 as *u8) { return; }
+    if { u::GetPropA(v, prop_label_old() as *i8) } != (0 as *u8) { return; }
+    let old: i64 = { u::SetWindowLongPtrA(v, 0 -% (4 as i32), label_proc_addr() as i64) };
+    if old == (0 as i64) { return; }
+    let _p: i32 = { u::SetPropA(v, prop_label_old() as *i8, old as *u8) };
+    return;
+}
+
+// ---- the maximise button's press ------------------------------------------------
+//
+// HTMAXBUTTON makes the press arrive as WM_NCLBUTTONDOWN on the top-level, and
+// the default for that is a modal tracking loop that draws a CLASSIC maximise
+// button over the content. So the press is swallowed and the RELEASE does the
+// toggle, which is also when a real caption button acts.
+fn on_nc_button(hwnd: *u8, msg: u32, w: u64) -> bool {
+    if !is_blended(hwnd) { return false; }
+    if (w as i64) != ht_maxbutton() { return false; }
+    if msg == (0x00A1 as u32) || msg == (0x00A3 as u32) { return true; }   // NCLBUTTONDOWN / DBLCLK
+    if msg == (0x00A2 as u32) {                                           // NCLBUTTONUP
+        let zoomed: bool = { u::IsZoomed(hwnd) } != (0 as i32);
+        // SC_RESTORE / SC_MAXIMIZE, through WM_SYSCOMMAND so the window manager
+        // animates it exactly as it would its own button.
+        let cmd: u64 = if zoomed { 0xF120 as u64 } else { 0xF030 as u64 };
+        let _r: i64 = { u::SendMessageA(hwnd, 0x0112 as u32, cmd, 0 as i64) };
+        return true;
+    }
+    return false;
+}
+
+// ---- turning it on ----------------------------------------------------------------
+
+struct Margins { left: i32, right: i32, top: i32, bottom: i32 }
+
+fn ws_caption() -> i64 { return 0x00C00000 as i64; }
+fn ws_thickframe() -> i64 { return 0x00040000 as i64; }
+
+#[link_name = "DwmExtendFrameIntoClientArea"]
+extern fn dwm_extend_frame(hwnd: *u8, m: *Margins) -> i32;
+
+// Called once the window has a slot (so the WNDPROC can answer for it) and
+// before it is shown. The frame change re-runs WM_NCCALCSIZE with this window
+// now marked; the size is then corrected so the CLIENT is the size that was
+// asked for — the caption's height was in the outer size and is not any more.
+fn engage(hwnd: *u8) {
+    if hwnd == (0 as *u8) { return; }
+    var before: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                          right: 0 as i32, bottom: 0 as i32 };
+    let _b: i32 = { u::GetClientRect(hwnd, #addr_of(before)) };
+    mark(hwnd, true);
+    // WS_CAPTION off, WS_THICKFRAME on — see the header for the measurement
+    // that decided it. GWL_STYLE is -16.
+    let style: i64 = { u::GetWindowLongPtrA(hwnd, 0 -% (16 as i32)) };
+    let _x: i64 = { u::SetWindowLongPtrA(hwnd, 0 -% (16 as i32),
+                                         (style & ~ws_caption()) | ws_thickframe()) };
+    // ONE PIXEL, top. -1 on every side ("sheet of glass") would make every
+    // pixel GDI paints with a zero alpha byte — all of them — show the frame
+    // through; one row is the least that keeps the shadow.
+    var m: Margins = Margins { left: 0 as i32, right: 0 as i32, top: 1 as i32, bottom: 0 as i32 };
+    let _e: i32 = { dwm_extend_frame(hwnd, #addr_of(m)) };
+    // SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+    let _f: i32 = { u::SetWindowPos(hwnd, 0 as *u8, 0 as i32, 0 as i32, 0 as i32, 0 as i32,
+                                    0x0037 as u32) };
+    var after: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                         right: 0 as i32, bottom: 0 as i32 };
+    let _a: i32 = { u::GetClientRect(hwnd, #addr_of(after)) };
+    // Both axes: the caption was height, and a frame without a caption is not
+    // the same width as one with — measured, 2px wider here at 100%.
+    let grew_w: i32 = (after.right -% after.left) -% (before.right -% before.left);
+    let grew_h: i32 = (after.bottom -% after.top) -% (before.bottom -% before.top);
+    if grew_w != (0 as i32) || grew_h != (0 as i32) {
+        var wr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                          right: 0 as i32, bottom: 0 as i32 };
+        let _w: i32 = { u::GetWindowRect(hwnd, #addr_of(wr)) };
+        // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+        let _s: i32 = { u::SetWindowPos(hwnd, 0 as *u8, 0 as i32, 0 as i32,
+                                        (wr.right -% wr.left) -% grew_w,
+                                        (wr.bottom -% wr.top) -% grew_h, 0x0016 as u32) };
+    }
+    return;
+}
+
+fn release(hwnd: *u8) { mark(hwnd, false); return; }
+
+#[test]
+fn only_a_blended_bar_over_its_own_buttons_drops_the_caption() {
+    // facet_gtk's table, row for row.
+    assert blends_into_content(screen::Bar::Blended, true, false);
+    assert !blends_into_content(screen::Bar::Blended, false, false);
+    assert !blends_into_content(screen::Bar::Blended, true, true);
+    assert !blends_into_content(screen::Bar::Native, true, false);
+    assert !blends_into_content(screen::Bar::Hidden, true, false);
+    assert !blends_into_content(screen::Bar::Custom, true, false);
+    return;
+}
+
+#[test]
+fn a_tree_with_window_buttons_is_found_at_any_depth() {
+    var inner: core::Builder = core::Builder::new();
+    inner.add(chrome::window_buttons(key: "wb"));
+    var outer: core::Builder = core::Builder::new();
+    outer.add(core::row(inner, key: "header"));
+    var root: core::Node = core::column(outer, key: "root");
+    assert has_window_buttons(#addr_of(root));
+    var bare: core::Builder = core::Builder::new();
+    var plain: core::Node = core::column(bare, key: "plain");
+    assert !has_window_buttons(#addr_of(plain));
+    assert !has_window_buttons(0 as *core::Node);
+    return;
+}
+
+#[test]
+fn the_window_list_marks_and_forgets() {
+    let w: *u8 = 0x1234 as *u8;
+    assert !is_blended(w);
+    mark(w, true);
+    assert is_blended(w);
+    mark(w, true);
+    mark(w, false);
+    assert !is_blended(w);
+    assert !is_blended(0 as *u8);
+    return;
+}
+
+#[test]
+fn a_hit_coordinate_is_sign_extended() {
+    // A second monitor LEFT of the primary has negative x, and WM_NCHITTEST
+    // packs it as a 16-bit two's complement word.
+    let l: i64 = ((0x0010 as i64) << (16 as i64)) | (0xFFF6 as i64);
+    assert lo_signed(l) == (0 -% (10 as i32));
+    assert hi_signed(l) == (16 as i32);
+    return;
+}
