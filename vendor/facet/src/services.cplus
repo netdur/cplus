@@ -251,6 +251,7 @@ fn pump_async(ctx: *u8) {
 extern fn pipe(fds: *i32) -> i32;
 extern fn close(fd: i32) -> i32;
 extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+#[link_name = "fcntl"] extern fn fcntl_worker_test(fd: i32, cmd: i32, ...) -> i32;
 
 // The handoff crossing to the worker thread is a CONCRETE struct: the typed
 // input and fn ride as boxed raw pointers, reclaimed by the run_worker[I, O]
@@ -268,7 +269,10 @@ fn run_worker[I: Send, O: Send](take h: WorkerHandoff) -> i32 {
     match box::new::[O](out) {
         option::Option[box::Box[O]]::Some(b) => {
             var slot: *u8 = b.into_raw();
-            let _w: isize = { write(h.write_fd, #addr_of(slot) as *u8, 8 as usize) };
+            let written: isize = { write(h.write_fd, #addr_of(slot) as *u8, 8 as usize) };
+            // A cancelled receiver may have closed its end. The result is
+            // still ours until the whole pointer has reached that receiver.
+            if written != 8 { let _reclaim = box::from_raw::[O](slot); }
         }
         option::Option[box::Box[O]]::None => { }
     }
@@ -282,6 +286,7 @@ fn run_worker[I: Send, O: Send](take h: WorkerHandoff) -> i32 {
 fn worker_start[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> i32 {
     var fds: [i32; 2] = [0, 0];
     let _p: i32 = { pipe(#addr_of(fds) as *i32) };
+    let _np: i32 = platform_sys::prepare_worker_pipe(fds[1]);
     let input_raw: usize = match box::new::[I](input) {
         option::Option[box::Box[I]]::Some(b) => { b.into_raw() } as usize,
         option::Option[box::Box[I]]::None => 0 as usize,
@@ -1419,4 +1424,35 @@ fn a_dropped_subscription_stops_delivery_to_a_dead_watcher() {
     assert IDX_SEEN == (1 as i64);          // nothing delivered to the dead watcher
     assert INDEXER.hits == (4 as i64);      // but the service still ran
     uninstall_scheduler();
+}
+
+// A worker finishing after its receiver has gone must neither terminate the
+// host nor leak the undelivered owned result.
+struct WorkerResultProbe { marker: i32 }
+static WORKER_RESULT_DROPS: i32 = 0;
+impl WorkerResultProbe {
+    fn drop(ref this) { WORKER_RESULT_DROPS = WORKER_RESULT_DROPS + 1; }
+}
+fn worker_probe(take input: i32) -> WorkerResultProbe { return WorkerResultProbe { marker: input }; }
+#[test]
+fn a_worker_result_with_a_closed_receiver_is_reclaimed_on_macos() {
+    if #platform() != "macos" { return; }
+    WORKER_RESULT_DROPS = 0;
+    var fds: [i32; 2] = [-1, -1];
+    assert { pipe(#addr_of(fds) as *i32) } == 0;
+    assert platform_sys::prepare_worker_pipe(fds[1]) == 0;
+    assert { fcntl_worker_test(fds[1], 74) } == 1; // F_GETNOSIGPIPE
+    let _closed = { close(fds[0]) };
+    let input = match box::new::[i32](7) {
+        option::Option::Some(b) => b.into_raw(), option::Option::None => 0 as *u8,
+    };
+    let f: fn(take i32) -> WorkerResultProbe = worker_probe;
+    let work = match box::new::[fn(take i32) -> WorkerResultProbe](f) {
+        option::Option::Some(b) => b.into_raw(), option::Option::None => 0 as *u8,
+    };
+    assert input.is_not_null(); assert work.is_not_null();
+    let _finished = run_worker::[i32, WorkerResultProbe](WorkerHandoff {
+        input_raw: input as usize, f_raw: work as usize, write_fd: fds[1],
+    });
+    assert WORKER_RESULT_DROPS == 1;
 }

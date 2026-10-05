@@ -2334,13 +2334,13 @@ fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>)
                             },
                             span: m.span,
                         };
-                        // A modifier is either a `take self -> Node` BUILDER
-                        // (`.width`/`.grow`/…, returns a new item) or a `ref self`
+                        // A modifier is either a `take this -> Node` BUILDER
+                        // (`.width`/`.grow`/…, returns a new item) or a `ref this`
                         // MUTATOR (`.set_pad`/`.boost`/…, mutates in place, returns
                         // unit). We can't tell them apart HERE — the receiver type
                         // and the method's return type aren't resolved until sema.
                         // So always thread the result — `__i = __i.m(..)`. For a
-                        // builder that re-inits the temp after the take-self move
+                        // builder that re-inits the temp after the take-this move
                         // (they compose in one chain); for a mutator the RHS is
                         // unit, and sema recognizes a `__builder_item` reassign from
                         // a unit-returning call as the in-place mutation it is (no
@@ -3668,7 +3668,7 @@ fn d_method(
         },
         is_declaration: false,
         span,
-        is_pub: false,
+        is_export: false,
         attributes: Vec::new(),
         is_async: false,
         is_gen: false,
@@ -3698,10 +3698,9 @@ fn d_other_param(self_ty: Type, span: Span) -> Param {
     Param {
         name: d_ident("other", span),
         ty: self_ty,
-        mutable: false,
-        move_: false,
+        is_ref: false,
+        is_take: false,
         restrict: false,
-        borrow_: false,
         default: None,
         span,
     }
@@ -3776,7 +3775,7 @@ impl Lower {
                     body,
                     is_declaration: false,
                     span: im.span,
-                    is_pub: false,
+                    is_export: false,
                     attributes: Vec::new(),
                     is_async: false,
                     is_gen: false,
@@ -4330,7 +4329,7 @@ impl Lower {
                 is_extern: false,
                 is_declaration: false,
                 is_variadic: false,
-                is_pub: f.is_pub,
+                is_export: f.is_export,
                 // The attributes ride with the entry: `#[test]` is what the
                 // runner discovers, and a contract on `main` judges the value
                 // the program exits with.
@@ -4340,7 +4339,7 @@ impl Lower {
                 is_gen: false,
             };
             f.name.name = body_name;
-            f.is_pub = false;
+            f.is_export = false;
             wrappers.push((
                 idx,
                 Item {
@@ -5003,7 +5002,7 @@ fn main() -> i32 { return 0; }\n";
             panic!("expected field target");
         };
         assert_eq!(fld.name, "font");
-        // __i = __i.pad(3);  — a non-`set_` modifier is a `take self -> Node`
+        // __i = __i.pad(3);  — a non-`set_` modifier is a `take this -> Node`
         // builder, so its result threads back into the item temp (this is what
         // lets builders and `.set_*` mutators compose in one chain).
         let StmtKind::Expr(reassign) = &b.stmts[3].kind else {
@@ -5707,7 +5706,7 @@ fn main() -> i32 { return 0; }\n";
         let body = fn_named(&prog, "__async_main");
         assert!(body.is_async, "the user's body keeps its async");
         assert!(body.attributes.is_empty());
-        assert!(!body.is_pub);
+        assert!(!body.is_export);
         // The wrapper sits right after its body.
         let names: Vec<&str> = prog
             .items
@@ -5735,8 +5734,8 @@ fn main() -> i32 { return 0; }\n";
         assert!(body.is_async && body.attributes.is_empty());
         // `export` follows the entry too; the body is private either way.
         let u = fn_named(&prog, "u");
-        assert!(u.is_pub && !u.is_async);
-        assert!(!fn_named(&prog, "__async_u").is_pub);
+        assert!(u.is_export && !u.is_async);
+        assert!(!fn_named(&prog, "__async_u").is_export);
     }
 
     #[test]

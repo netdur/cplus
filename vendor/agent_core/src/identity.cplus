@@ -847,7 +847,22 @@ impl Registry {
     // drop (see the ordering rule at the top of this file).
     fn push_node(ref this, take id: text::Text, role: Role, parent: option::Option[usize], exposed: bool) -> usize {
         let node_id: usize = this.ids.count();
-        this.ids.append(id);
+        if this.index.contains_key(id.view()) {
+            // Repeated component keys in independent windows must never replace
+            // the first window's address. Qualify the duplicate by its window.
+            var owner = this.root();
+            var next = parent;
+            while let option::Option::Some(p) = next {
+                owner = p;
+                if role_eq(this.role_of(p), Role::Window) { break; }
+                next = this.parent_of(p);
+            }
+            let prefix: str = this.id_view(owner);
+            let qualified: text::Text = "${prefix}/${id}";
+            if this.index.contains_key(qualified.view()) {
+                this.ids.append("${qualified}#${node_id}");
+            } else { this.ids.append(text::from_str(qualified.view())); }
+        } else { this.ids.append(id); }
         this.index.insert(this.id_view(node_id), node_id);
         this.roles.append(role);
         this.parents.append(parent);
@@ -1605,4 +1620,17 @@ fn tier_capabilities_are_distinct_per_tier() {
     assert act_caps_for_tier(tier_private()) == (auth::cap_act() | auth::cap_act_private());
     assert stricter_tier(tier_open(), tier_private()) == tier_private();
     assert stricter_tier(tier_private(), tier_protected()) == tier_private();
+}
+
+#[test]
+fn repeated_keys_in_two_windows_keep_both_addresses() {
+    var r = new();
+    let a = r.add_child(r.root(), option::Option[str]::Some("window-a"), Role::Window);
+    let b = r.add_child(r.root(), option::Option[str]::Some("window-b"), Role::Window);
+    let first = r.add_child(a, option::Option[str]::Some("save"), Role::Input);
+    let second = r.add_child(b, option::Option[str]::Some("save"), Role::Input);
+    assert r.resolved_id(first) == "save";
+    assert r.resolved_id(second) == "window-b/save";
+    match r.lookup("save") { option::Option::Some(n) => { assert n == first; } option::Option::None => { assert false; } }
+    match r.lookup("window-b/save") { option::Option::Some(n) => { assert n == second; } option::Option::None => { assert false; } }
 }

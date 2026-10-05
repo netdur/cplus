@@ -169,6 +169,9 @@ fn value_text(v: insp::Value) -> text::Text {
 // ---- the component -----------------------------------------------------------
 
 struct Inspector {
+    editing: text::Text, last_announced: text::Text,
+    // Borrowed from the containing window; scopes repeated inspector keys.
+    opaque within: *core::Node,
     backend: insp::Backend,
     // The last snapshot, in document order with parent links.
     rows: vec::Vec[insp::Node],
@@ -221,6 +224,8 @@ struct Inspector {
 
 fn new(take backend: insp::Backend, hide_self: bool = true) -> Inspector {
     return Inspector {
+        editing: text::new(), last_announced: text::new(),
+        within: 0 as *core::Node,
         backend: backend,
         rows: vec::new::[insp::Node](),
         selected: insp::Handle::none(),
@@ -280,7 +285,7 @@ fn on_select(st: *Inspector, f: fn(str, *u8), ctx: *u8 = 0 as *u8) {
 fn note_fault(st: *Inspector, why: str) {
     if st.is_null() { return; }
     { (*st).last_fault = text::from_str(why) };
-    say(why);
+    say(st, why);
     let f: fn(str, *u8) = { (*st).fault_fn };
     if f.is_not_null() { f(why, { (*st).fault_ctx }); }
 }
@@ -293,13 +298,13 @@ fn clear_fault(st: *Inspector) {
 // ANNOUNCED ONLY WHEN IT CHANGED. `connect` disconnects first, and a host that
 // heard "selection cleared" on the way into a successful attach would flicker
 // its own chrome for a selection that was never there.
-static LAST_ANNOUNCED: text::Text = #zero::[text::Text]();
+
 
 fn announce_selection(st: *Inspector) {
     if st.is_null() { return; }
     let id: text::Text = { (*st).selection() };
-    if id.view() == LAST_ANNOUNCED.view() { return; }
-    LAST_ANNOUNCED = id.clone();
+    if id.view() == (*st).last_announced.view() { return; }
+    (*st).last_announced = id.clone();
     let f: fn(str, *u8) = { (*st).select_fn };
     if f.is_null() { return; }
     f(id.view(), { (*st).select_ctx });
@@ -744,15 +749,15 @@ impl Inspector {
 
 // ---- writing the panel -------------------------------------------------------
 
-fn set_label(key: text::Text, to: str) {
-    match label::find(key.view()) {
+fn set_label(st: *Inspector, key: text::Text, to: str) {
+    match label::find(key.view(), within: (*st).within) {
         option::Option[label::Label]::Some(l) => { let _x: label::Label = l.set_text(to); }
         option::Option::None => { }
     }
 }
 
-fn set_field(key: text::Text, to: str) {
-    match tfield::find(key.view()) {
+fn set_field(st: *Inspector, key: text::Text, to: str) {
+    match tfield::find(key.view(), within: (*st).within) {
         option::Option[tfield::TextField]::Some(f) => {
             let _x: tfield::TextField = f.set_text(to);
         }
@@ -760,15 +765,15 @@ fn set_field(key: text::Text, to: str) {
     }
 }
 
-fn field_text(key: text::Text) -> text::Text {
-    return match tfield::find(key.view()) {
+fn field_text(st: *Inspector, key: text::Text) -> text::Text {
+    return match tfield::find(key.view(), within: (*st).within) {
         option::Option[tfield::TextField]::Some(f) => text::from_str(f.text()),
         option::Option::None => text::new(),
     };
 }
 
-fn set_row_title(key: text::Text, to: str) {
-    match tbutton::find(key.view()) {
+fn set_row_title(st: *Inspector, key: text::Text, to: str) {
+    match tbutton::find(key.view(), within: (*st).within) {
         option::Option[tbutton::TextButton]::Some(b) => {
             let _x: tbutton::TextButton = b.set_title(to);
         }
@@ -787,8 +792,8 @@ fn set_row_title(key: text::Text, to: str) {
 // `parked_display` — that field belongs to `switch_to`'s park/re-attach, and
 // borrowing it here would couple the panel to an outlet mechanism it does not
 // use.
-fn show_node(key: text::Text, on: bool) {
-    let n: *core::Node = mount::node(key.view());
+fn show_node(st: *Inspector, key: text::Text, on: bool) {
+    let n: *core::Node = mount::node(key.view(), within: (*st).within);
     if n.is_null() { return; }
     core::set_visible(n, on);
     if on { core::set_display(n, flex::Display::Flex); }
@@ -802,10 +807,10 @@ fn show_node(key: text::Text, on: bool) {
 // where typing `120` gives you `021`. Naming the row that is mid-edit is
 // cheaper than teaching the painter about focus, and it is exact: it is the row
 // whose keystroke caused this paint.
-static EDITING: text::Text = #zero::[text::Text]();
 
-fn say(msg: str) {
-    set_label(text::from_str("insp:status"), msg);
+
+fn say(st: *Inspector, msg: str) {
+    set_label(st, text::from_str("insp:status"), msg);
 }
 
 // ---- the row -----------------------------------------------------------------
@@ -992,7 +997,7 @@ fn rebuild_tree(st: *Inspector) {
     var model: ftree::TreeNode = build_model(st);
     { (*st).shown = model_count(#addr_of(model)) };
 
-    match ftree::find("insp:tree") {
+    match ftree::find("insp:tree", within: (*st).within) {
         option::Option[ftree::Tree]::Some(t) => {
             // Read the CURRENT expansion off the control first — the user's
             // own clicks on the disclosure triangles live there, not here.
@@ -1020,17 +1025,17 @@ fn paint_props(st: *Inspector) {
     let names: vec::Vec[str] = tree::declared_names();
 
     if h.is_none() {
-        set_label(text::from_str("insp:headline"), "nothing selected");
-        set_label(text::from_str("insp:trail"), "");
+        set_label(st, text::from_str("insp:headline"), "nothing selected");
+        set_label(st, text::from_str("insp:trail"), "");
         var i: usize = 0;
         while i < names.count() {
             match names.at(i) {
-                option::Option[str]::Some(nm) => { show_node(joined("insp:r:", nm), false); }
+                option::Option[str]::Some(nm) => { show_node(st, joined("insp:r:", nm), false); }
                 option::Option::None => { }
             }
             i = i +% 1;
         }
-        set_label(text::from_str("insp:computed"), "");
+        set_label(st, text::from_str("insp:computed"), "");
         return;
     }
 
@@ -1042,15 +1047,15 @@ fn paint_props(st: *Inspector) {
                 let _a: status::Status = head.append("  #");
                 let _b2: status::Status = head.append({ d.node }.key.view());
             }
-            set_label(text::from_str("insp:headline"), head.view());
+            set_label(st, text::from_str("insp:headline"), head.view());
 
             match { (*st).index_of_handle(h) } {
                 option::Option[usize]::Some(at) => {
                     let t: text::Text = { (*st).trail(at) };
-                    set_label(text::from_str("insp:trail"), t.view());
+                    set_label(st, text::from_str("insp:trail"), t.view());
                 }
                 option::Option::None => {
-                    set_label(text::from_str("insp:trail"), "");
+                    set_label(st, text::from_str("insp:trail"), "");
                 }
             }
 
@@ -1077,14 +1082,14 @@ fn paint_props(st: *Inspector) {
                             }
                             j = j +% 1;
                         }
-                        show_node(joined("insp:r:", nm), found);
+                        show_node(st, joined("insp:r:", nm), found);
                         if found {
-                            paint_editor(nm, shown_value.view());
+                            paint_editor(st, nm, shown_value.view());
                             // Overridden is marked by the NAME, not by colour
                             // alone: a mark nobody can see is not a mark.
                             var nm_text: text::Text = text::from_str(nm);
                             if over { let _c: status::Status = nm_text.append("  *"); }
-                            set_label(joined("insp:n:", nm), nm_text.view());
+                            set_label(st, joined("insp:n:", nm), nm_text.view());
                             // ALWAYS REACHABLE, not only when overridden.
                             //
                             // Its job is "put this field back to the truth",
@@ -1099,7 +1104,7 @@ fn paint_props(st: *Inspector) {
                             //
                             // The `*` on the name is what marks an override;
                             // the button never carried that alone.
-                            show_node(joined("insp:x:", nm), true);
+                            show_node(st, joined("insp:x:", nm), true);
                         }
                     }
                     option::Option::None => { }
@@ -1136,11 +1141,11 @@ fn paint_props(st: *Inspector) {
                 }
                 l = l +% 1;
             }
-            set_label(text::from_str("insp:computed"), comp.view());
+            set_label(st, text::from_str("insp:computed"), comp.view());
         }
         option::Option::None => {
-            set_label(text::from_str("insp:headline"), "stale - refresh");
-            set_label(text::from_str("insp:trail"), "");
+            set_label(st, text::from_str("insp:headline"), "stale - refresh");
+            set_label(st, text::from_str("insp:trail"), "");
         }
     }
 }
@@ -1187,7 +1192,7 @@ fn say_counts(st: *Inspector) {
         let _d: status::Status = msg.append({ ((total -% shown) as i64) }.to_text().view());
         let _e: status::Status = msg.append(" are the panel's own)");
     }
-    say(msg.view());
+    say(st, msg.view());
 }
 
 // ---- handlers ----------------------------------------------------------------
@@ -1214,7 +1219,7 @@ fn on_tree_select(n: *ftree::TreeNode, ctx: *u8) {
         }
         i = i +% 1;
     }
-    if found.is_none() { say("that node is gone - refresh"); return; }
+    if found.is_none() { say(st, "that node is gone - refresh"); return; }
 
     { (*st).selected = found };
     let b: insp::Backend = { (*st).backend };
@@ -1250,11 +1255,11 @@ fn current_declared(b: insp::Backend, h: insp::Handle, prop: str) -> insp::Value
 fn on_commit(sender: *u8, ctx: *u8) {
     let st: *Inspector = ctx as *Inspector;
     let h: insp::Handle = { (*st).selected };
-    if h.is_none() { say("nothing selected"); return; }
+    if h.is_none() { say(st, "nothing selected"); return; }
 
     let prop: text::Text = key_tail(component::key_of(sender));
     if prop.is_empty() { return; }
-    let typed: text::Text = field_text(joined("insp:f:", prop.view()));
+    let typed: text::Text = field_text(st, joined("insp:f:", prop.view()));
 
     let b: insp::Backend = { (*st).backend };
     let current: insp::Value = current_declared(b, h, prop.view());
@@ -1262,13 +1267,13 @@ fn on_commit(sender: *u8, ctx: *u8) {
     match tree::parse_as(current, typed.view()) {
         option::Option[insp::Value]::Some(v) => {
             let r: insp::Outcome = b.set_now(h, prop.view(), v);
-            say(r.describe());
+            say(st, r.describe());
             paint_props(st);
         }
         option::Option::None => {
             // The refusal is visible and the field goes back to the truth,
             // rather than sitting there showing something that was never set.
-            say("could not read that value");
+            say(st, "could not read that value");
             paint_props(st);
         }
     }
@@ -1297,7 +1302,7 @@ fn on_typed(sender: *u8, ctx: *u8) {
 
     let prop: text::Text = key_tail(component::key_of(sender));
     if prop.is_empty() { return; }
-    let typed: text::Text = field_text(joined("insp:f:", prop.view()));
+    let typed: text::Text = field_text(st, joined("insp:f:", prop.view()));
 
     let b: insp::Backend = { (*st).backend };
     let current: insp::Value = current_declared(b, h, prop.view());
@@ -1311,13 +1316,13 @@ fn on_typed(sender: *u8, ctx: *u8) {
                 var m: text::Text = prop.clone();
                 let _s: status::Status = m.append(" = ");
                 let _t: status::Status = m.append(typed.view());
-                say(m.view());
-                // The row being typed into is left alone — see `EDITING`.
-                EDITING = prop.clone();
+                say(st, m.view());
+                // The row being typed into is left alone — see `(*st).editing`.
+                (*st).editing = prop.clone();
                 paint_props(st);
-                EDITING = text::new();
+                (*st).editing = text::new();
                 } else {
-                say(r.describe());
+                say(st, r.describe());
             }
         }
         option::Option::None => {
@@ -1325,7 +1330,7 @@ fn on_typed(sender: *u8, ctx: *u8) {
             // seeing the moment it is made rather than at Return.
             var m: text::Text = prop.clone();
             let _a: status::Status = m.append(": not a value for this property");
-            say(m.view());
+            say(st, m.view());
         }
     }
 }
@@ -1337,7 +1342,7 @@ fn on_reset_one(sender: *u8, ctx: *u8) {
     let prop: text::Text = key_tail(component::key_of(sender));
     let b: insp::Backend = { (*st).backend };
     let r: insp::Outcome = b.reset_now(h, prop.view());
-    say(r.describe());
+    say(st, r.describe());
     paint_props(st);
 }
 
@@ -1353,7 +1358,7 @@ fn on_reset_one(sender: *u8, ctx: *u8) {
 fn on_copy_changes(_sender: *u8, ctx: *u8) {
     let st: *Inspector = ctx as *Inspector;
     if !tree::can_copy() {
-        say("no clipboard on this platform");
+        say(st, "no clipboard on this platform");
         return;
     }
     // THROUGH THE VTABLE, like every other read this panel makes. It used to
@@ -1369,18 +1374,18 @@ fn on_copy_changes(_sender: *u8, ctx: *u8) {
     let cs: vec::Vec[insp::Change] = (b.changes)(b.surface);
     let n: usize = cs.count();
     if n == 0 {
-        say("nothing changed yet");
+        say(st, "nothing changed yet");
         return;
     }
     let body: text::Text = insp::changes_text(cs);
     if !tree::copy_text(body.view()) {
-        say("copy failed");
+        say(st, "copy failed");
         return;
     }
     var msg: text::Text = text::from_str("copied ");
     let _a: status::Status = msg.append((n as i64).to_text().view());
     let _b: status::Status = msg.append(if n == 1 { " change" } else { " changes" });
-    say(msg.view());
+    say(st, msg.view());
 }
 
 fn on_reset_all(_sender: *u8, ctx: *u8) {
@@ -1397,7 +1402,7 @@ fn on_reset_all(_sender: *u8, ctx: *u8) {
         }
         i = i +% 1;
     }
-    say("overrides reset");
+    say(st, "overrides reset");
     paint_props(st);
 }
 
@@ -1532,7 +1537,7 @@ fn enum_spelling_at(prop: str, index: i64) -> text::Text {
 
 fn write_prop(st: *Inspector, prop: str, take v: insp::Value) {
     let h: insp::Handle = { (*st).selected };
-    if h.is_none() { say("nothing selected"); return; }
+    if h.is_none() { say(st, "nothing selected"); return; }
     let b: insp::Backend = { (*st).backend };
     let r: insp::Outcome = b.set_now(h, prop, v);
     // A REFUSAL IS A FAULT, and it is the one a host most needs: a rejected
@@ -1540,7 +1545,7 @@ fn write_prop(st: *Inspector, prop: str, take v: insp::Value) {
     // sentence saying why never reaches anyone. `Ok` clears whatever the last
     // one was, so a host's notice does not outlive its cause.
     if r == insp::Outcome::Ok { clear_fault(st); } else { note_fault(st, r.describe()); }
-    say(r.describe());
+    say(st, r.describe());
     paint_props(st);
     if r == insp::Outcome::Ok { announce_change(st, prop); }
 }
@@ -1550,7 +1555,7 @@ fn on_toggle(sender: *u8, ctx: *u8) {
     let prop: text::Text = key_tail(component::key_of(sender));
     if prop.is_empty() { return; }
     let key: text::Text = joined("insp:f:", prop.view());
-    match cbox::find(key.view()) {
+    match cbox::find(key.view(), within: (*st).within) {
         option::Option[cbox::Checkbox]::Some(c) => {
             write_prop(st, prop.view(), insp::Value::Bool(c.on()));
         }
@@ -1563,7 +1568,7 @@ fn on_pick(sender: *u8, ctx: *u8) {
     let prop: text::Text = key_tail(component::key_of(sender));
     if prop.is_empty() { return; }
     let key: text::Text = joined("insp:f:", prop.view());
-    match popup::find(key.view()) {
+    match popup::find(key.view(), within: (*st).within) {
         option::Option[popup::Popup]::Some(p) => {
             let word: text::Text = enum_spelling_at(prop.view(), p.selected_index());
             if word.is_empty() { return; }
@@ -1578,7 +1583,7 @@ fn on_slide(sender: *u8, ctx: *u8) {
     let prop: text::Text = key_tail(component::key_of(sender));
     if prop.is_empty() { return; }
     let key: text::Text = joined("insp:f:", prop.view());
-    match slider::find(key.view()) {
+    match slider::find(key.view(), within: (*st).within) {
         option::Option[slider::Slider]::Some(sl) => {
             write_prop(st, prop.view(), insp::Value::Num(sl.value()));
         }
@@ -1590,14 +1595,14 @@ fn on_slide(sender: *u8, ctx: *u8) {
 // form is what a text box shows and what the other three parse back out of —
 // one rendering, three readers, so a slider and a box can never disagree about
 // what the value is.
-fn paint_editor(prop: str, shown: str) {
-    if !EDITING.is_empty() {
-        if EDITING.view() == prop { return; }
+fn paint_editor(st: *Inspector, prop: str, shown: str) {
+    if !(*st).editing.is_empty() {
+        if (*st).editing.view() == prop { return; }
     }
     let key: text::Text = joined("insp:f:", prop);
     let kind: u32 = editor_for(prop);
     if kind == ED_BOOL {
-        match cbox::find(key.view()) {
+        match cbox::find(key.view(), within: (*st).within) {
             option::Option[cbox::Checkbox]::Some(c) => {
                 let _x: cbox::Checkbox = c.set_on(shown == "true");
             }
@@ -1606,7 +1611,7 @@ fn paint_editor(prop: str, shown: str) {
         return;
     }
     if kind == ED_ENUM {
-        match popup::find(key.view()) {
+        match popup::find(key.view(), within: (*st).within) {
             option::Option[popup::Popup]::Some(p) => {
                 let at: i64 = enum_index_of(prop, shown);
                 // A spelling the set does not contain leaves the popup where it
@@ -1619,7 +1624,7 @@ fn paint_editor(prop: str, shown: str) {
         return;
     }
     if kind == ED_RANGE {
-        match slider::find(key.view()) {
+        match slider::find(key.view(), within: (*st).within) {
             option::Option[slider::Slider]::Some(sl) => {
                 match shown.to_f64() {
                     option::Option[f64]::Some(x) => {
@@ -1632,7 +1637,7 @@ fn paint_editor(prop: str, shown: str) {
         }
         return;
     }
-    set_field(key, shown);
+    set_field(st, key, shown);
 }
 
 // Which rows the arrows are worth wiring: the ones holding a number. A string,
@@ -1645,14 +1650,14 @@ fn steps_by_arrow(prop: str) -> bool {
     };
 }
 
-fn focused_prop() -> text::Text {
+fn focused_prop(st: *Inspector) -> text::Text {
     let names: vec::Vec[str] = tree::declared_names();
     var i: usize = 0;
     while i < names.count() {
         match names.at(i) {
             option::Option[str]::Some(nm) => {
                 let k: text::Text = joined("insp:f:", nm);
-                let n: *core::Node = mount::node(k.view());
+                let n: *core::Node = mount::node(k.view(), within: (*st).within);
                 if n.is_not_null() {
                     if core::is_focused(n) { return text::from_str(nm); }
                 }
@@ -1698,7 +1703,7 @@ fn on_arrow(event: *u8, ctx: *u8) -> bool {
     // sender, so the row is found by asking which field has focus — exact, and
     // it needs no per-row context or remembered state that could go stale
     // between focusing a field and pressing a key in it.
-    let prop: text::Text = focused_prop();
+    let prop: text::Text = focused_prop(st);
     if prop.is_empty() { return false; }
 
     // Against the value as it stands, so holding the key accumulates instead of
@@ -1709,11 +1714,11 @@ fn on_arrow(event: *u8, ctx: *u8) -> bool {
     match moved {
         option::Option[insp::Value]::Some(v) => {
             let r: insp::Outcome = b.set_now(h, prop.view(), v);
-            if !r.is_ok() { say(r.describe()); return true; }
+            if !r.is_ok() { say(st, r.describe()); return true; }
             var m: text::Text = prop.clone();
             let _s: status::Status = m.append(" = ");
             let _t: status::Status = m.append(value_text(current_declared(b, h, prop.view())).view());
-            say(m.view());
+            say(st, m.view());
             paint_props(st);
             return true;
         }
@@ -1778,6 +1783,7 @@ fn prop_row(prop: str, me: *u8) -> core::Node {
                        on_submit: on_commit, on_submit_ctx: me,
                        on_text_changed: on_typed, on_text_changed_ctx: me)
     };
+    core::set_accessibility_label(#addr_of(field), prop);
     core::set_grow(#addr_of(field), 1.0);
     // OPT IN TO THE ARROWS, on the rows where a step means something. The
     // backend forwards Up/Down only to a field carrying a key gesture, so this
@@ -1906,7 +1912,7 @@ fn attach(st: *Inspector) {
     // in `build`, because a node has to be mounted before it can be addressed.
     var missed: bool = false;
     if { (*st).hide_self } {
-        let own: *core::Node = mount::node("insp:root");
+        let own: *core::Node = mount::node("insp:root", within: (*st).within);
         tree::mark_self(own);
         // A host that called `attach` before its tree was mounted gets a panel
         // that lists its own controls. Silently listing itself would look like
@@ -1914,7 +1920,7 @@ fn attach(st: *Inspector) {
         missed = own.is_null();
     }
     refresh(st);
-    if missed { say("attached before mount: the panel is listing itself"); }
+    if missed { say(st, "attached before mount: the panel is listing itself"); }
 }
 
 fn detach(st: *Inspector) {

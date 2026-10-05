@@ -507,17 +507,8 @@ pub struct StructDef {
 #[derive(Debug, Clone)]
 pub struct ParamSig {
     pub ty: Ty,
-    pub mutable: bool,
-    pub move_: bool,
-    /// v0.0.9 follow-up: `x: T` — explicit shared by-value
-    /// parameter. Phase 5 mechanism plumbing — propagates `Param.borrow_`
-    /// from the AST so call-site logic can opt out of the future
-    /// "move-by-default for non-Copy" behaviour. Today this flag is
-    /// purely informational; the default at call sites remains
-    /// "shared, no consume". When the Phase 5 flip lands, an unmarked
-    /// non-Copy param will consume the caller's binding *unless*
-    /// `borrow_` is set.
-    pub borrow_: bool,
+    pub is_ref: bool,
+    pub is_take: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2576,11 +2567,6 @@ impl TypeShape for SemaCx<'_> {
 pub struct StaticInfo {
     /// Resolved type of the static (what the user wrote after `:`).
     pub ty: Ty,
-    /// Carried from the AST static def. Since v0.0.24 #9 every `static` is
-    /// mutable and access is bare (no `static mut` spelling, no `unsafe` gate
-    /// on read/write), so this flag no longer gates anything; it is retained
-    /// for codegen's mutability metadata.
-    pub is_mut: bool,
     /// Initializer expression, post-lower-validation. Always one of
     /// the literal shapes accepted by `lower::is_const_initializer`.
     pub init: Expr,
@@ -2840,7 +2826,7 @@ impl SemaCx<'_> {
             if Self::is_ctx_first_handler(&params[i].ty)
                 && params
                     .get(i + 1)
-                    .is_some_and(|p| Self::is_raw_u8(&p.ty) && !p.move_)
+                    .is_some_and(|p| Self::is_raw_u8(&p.ty) && !p.is_take)
                 && self.span_is_in_local_package(params[i].name.span)
             {
                 let name = params[i].name.name.clone();
@@ -2876,7 +2862,7 @@ impl SemaCx<'_> {
                 continue;
             }
             // A `take`/`ref` handler is not a wired handler; skip.
-            if params[i].move_ || params[i].mutable {
+            if params[i].is_take || params[i].is_ref {
                 continue;
             }
             // An adjacent `*u8` — defaulted or not — means the author already
@@ -2891,7 +2877,7 @@ impl SemaCx<'_> {
             // all, where nothing in the source hints the convention exists.
             let next_is_ctx = params
                 .get(i + 1)
-                .is_some_and(|p| Self::is_raw_u8(&p.ty) && !p.move_);
+                .is_some_and(|p| Self::is_raw_u8(&p.ty) && !p.is_take);
             if next_is_ctx {
                 continue;
             }
@@ -3079,9 +3065,8 @@ impl SemaCx<'_> {
             FnSig {
                 params: vec![ParamSig {
                     ty: Ty::I32,
-                    mutable: false,
-                    move_: false,
-                    borrow_: false,
+                    is_ref: false,
+                    is_take: false,
                 }],
                 return_type: Ty::Unit,
                 is_variadic: false,
@@ -3392,7 +3377,7 @@ impl SemaCx<'_> {
                         is_drop: false,
                         is_watched,
                         is_repr_c,
-                        is_pub: s.is_pub,
+                        is_pub: s.is_export,
                         // Slice 4C: an item's origin_file is set by the
                         // resolver. For struct fields' pub gate we want
                         // the file the struct was *declared* in, not
@@ -3835,7 +3820,7 @@ impl SemaCx<'_> {
                         f.name.span,
                     );
                 }
-                fields.push((f.name.name.clone(), ty, f.is_pub));
+                fields.push((f.name.name.clone(), ty, !f.name.name.starts_with('_')));
             }
             self.structs[id.0 as usize].fields = fields;
             self.pop_type_params();
@@ -4075,7 +4060,7 @@ impl SemaCx<'_> {
     /// a struct so the name is the only type-uniform thing to hand over; no
     /// return type because the barrier sits mid-statement.
     fn watch_hook_shape_of(&self, sig: &MethodSig, self_id: Option<StructId>) -> Option<HookShape> {
-        if !matches!(sig.receiver, Some(Receiver::Mut)) {
+        if !matches!(sig.receiver, Some(Receiver::Ref)) {
             return None;
         }
         if !matches!(sig.return_type, Ty::Unit) {
@@ -4232,9 +4217,8 @@ impl SemaCx<'_> {
                                 crate::ast::TypeKind::Path(n) if n == "str" => Ty::Str,
                                 _ => Ty::Error,
                             },
-                            mutable: p.mutable,
-                            move_: p.move_,
-                            borrow_: p.borrow_,
+                            is_ref: p.is_ref,
+                            is_take: p.is_take,
                         })
                         .collect(),
                     return_type: match &m.return_type {
@@ -4737,8 +4721,8 @@ impl SemaCx<'_> {
             .iter()
             .map(|p| self.subst_ty_deep(&p.ty, &subst))
             .collect();
-        let param_takes: Vec<bool> = gsig.params.iter().map(|p| p.move_).collect();
-        let param_refs: Vec<bool> = gsig.params.iter().map(|p| p.mutable).collect();
+        let param_takes: Vec<bool> = gsig.params.iter().map(|p| p.is_take).collect();
+        let param_refs: Vec<bool> = gsig.params.iter().map(|p| p.is_ref).collect();
         let return_type = Box::new(self.subst_ty_deep(&gsig.return_type, &subst));
         Ty::FnPtr {
             params,
@@ -5043,7 +5027,7 @@ impl SemaCx<'_> {
         // v0.0.24 #9: only a `take` param owns its value and runs its drop in
         // the callee (mirrors codegen `effective_move`). A bare param is a
         // read-only borrow — the caller drops it, so no teardown happens here.
-        param.move_ && matches!(ty, Ty::Struct(_) | Ty::Enum(_)) && !self.is_copy(ty)
+        param.is_take && matches!(ty, Ty::Struct(_) | Ty::Enum(_)) && !self.is_copy(ty)
     }
 
     /// v0.0.15 `#[no_alloc]` drop-glue, temporary arm: does this expression
@@ -5170,9 +5154,8 @@ impl SemaCx<'_> {
                     .iter()
                     .map(|p| ParamSig {
                         ty: self.resolve_type(&p.ty),
-                        mutable: p.mutable,
-                        move_: p.move_,
-                        borrow_: p.borrow_,
+                        is_ref: p.is_ref,
+                        is_take: p.is_take,
                     })
                     .collect();
                 let declared_ret = match &m.return_type {
@@ -5232,7 +5215,7 @@ impl SemaCx<'_> {
                 // `compute_struct_copy_flags`. See
                 // `docs/compiler/design/phase3-drop.md`.
                 if m.name.name == "drop" {
-                    let recv_ok = matches!(m.receiver, Some(Receiver::Mut));
+                    let recv_ok = matches!(m.receiver, Some(Receiver::Ref));
                     let no_extra_params = params.is_empty();
                     let no_return = matches!(return_type, Ty::Unit);
                     if !recv_ok || !no_extra_params || !no_return {
@@ -5536,9 +5519,8 @@ impl SemaCx<'_> {
                 .iter()
                 .map(|p| ParamSig {
                     ty: self.resolve_type(&p.ty),
-                    mutable: p.mutable,
-                    move_: p.move_,
-                    borrow_: p.borrow_,
+                    is_ref: p.is_ref,
+                    is_take: p.is_take,
                 })
                 .collect();
             let return_type = match &m.return_type {
@@ -5616,19 +5598,18 @@ impl SemaCx<'_> {
                     method_subst.insert(gp.clone(), arg.clone());
                 }
                 let resolved_params: Vec<ParamSig> = {
-                    let raw: Vec<(Ty, bool, bool, bool)> = t
+                    let raw: Vec<(Ty, bool, bool)> = t
                         .params
                         .iter()
-                        .map(|p| (p.ty.clone(), p.mutable, p.move_, p.borrow_))
+                        .map(|p| (p.ty.clone(), p.is_ref, p.is_take))
                         .collect();
                     raw.into_iter()
-                        .map(|(ty, mutable, move_, borrow_)| {
+                        .map(|(ty, is_ref, is_take)| {
                             let s = self.subst_ty_deep(&ty, &method_subst);
                             ParamSig {
                                 ty: s,
-                                mutable,
-                                move_,
-                                borrow_,
+                                is_ref,
+                                is_take,
                             }
                         })
                         .collect()
@@ -5675,9 +5656,8 @@ impl SemaCx<'_> {
                 .iter()
                 .map(|p| ParamSig {
                     ty: self.resolve_type(&p.ty),
-                    mutable: p.mutable,
-                    move_: p.move_,
-                    borrow_: p.borrow_,
+                    is_ref: p.is_ref,
+                    is_take: p.is_take,
                 })
                 .collect();
             let declared_ret = match &m.return_type {
@@ -5876,9 +5856,8 @@ impl SemaCx<'_> {
                 .iter()
                 .map(|p| ParamSig {
                     ty: self.resolve_type(&p.ty),
-                    mutable: p.mutable,
-                    move_: p.move_,
-                    borrow_: p.borrow_,
+                    is_ref: p.is_ref,
+                    is_take: p.is_take,
                 })
                 .collect();
             let declared_ret = match &m.return_type {
@@ -6002,9 +5981,8 @@ impl SemaCx<'_> {
             let params: Vec<ParamSig> = if *has_other {
                 vec![ParamSig {
                     ty: Ty::Param("Self".to_string()),
-                    mutable: false,
-                    move_: false,
-                    borrow_: false,
+                    is_ref: false,
+                    is_take: false,
                 }]
             } else {
                 Vec::new()
@@ -6066,9 +6044,8 @@ impl SemaCx<'_> {
                     .iter()
                     .map(|p| ParamSig {
                         ty: self.resolve_type(&p.ty),
-                        mutable: p.mutable,
-                        move_: p.move_,
-                        borrow_: p.borrow_,
+                        is_ref: p.is_ref,
+                        is_take: p.is_take,
                     })
                     .collect();
                 let return_type = match &m.return_type {
@@ -6694,7 +6671,7 @@ impl SemaCx<'_> {
             // `ref this` mutates the caller's value; `take this` owns the
             // value, so writing to it is legal too (mirrors the generic
             // path — the two method-check paths must agree).
-            let mutable = matches!(rcv, Receiver::Mut | Receiver::Move);
+            let mutable = matches!(rcv, Receiver::Ref | Receiver::Take);
             self.scopes.last_mut().unwrap().insert(
                 "self".to_string(),
                 LocalInfo {
@@ -6705,13 +6682,13 @@ impl SemaCx<'_> {
                     assigned: true,
                     // `take this` owns the value inside the body; `this` / `ref
                     // this` borrow it (the caller still owns and drops it).
-                    owns_value: matches!(rcv, Receiver::Move),
+                    owns_value: matches!(rcv, Receiver::Take),
                 },
             );
         }
         for (param, psig) in m.params.iter().zip(sig.params.iter()) {
             // E0334: `ref` and `take` are mutually exclusive ownership markers.
-            if param.mutable && param.move_ {
+            if param.is_ref && param.is_take {
                 self.err("E0334",
                     "parameter cannot have both `ref` and `take`; these markers are mutually exclusive".to_string(),
                     param.span);
@@ -6730,12 +6707,12 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            let param_owns_value = param.move_ || self.is_copy(&psig.ty);
+            let param_owns_value = param.is_take || self.is_copy(&psig.ty);
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
                     ty: psig.ty.clone(),
-                    mutable: param.mutable,
+                    mutable: param.is_ref,
                     moved: false,
                     moved_at: None,
                     assigned: true,
@@ -6797,7 +6774,7 @@ impl SemaCx<'_> {
         self.current_fn_is_async = false;
         self.scopes.push(HashMap::new());
         if let Some(rcv) = sig.receiver {
-            let mutable = matches!(rcv, Receiver::Mut | Receiver::Move);
+            let mutable = matches!(rcv, Receiver::Ref | Receiver::Take);
             self.scopes.last_mut().unwrap().insert(
                 "self".to_string(),
                 LocalInfo {
@@ -6807,13 +6784,13 @@ impl SemaCx<'_> {
                     moved_at: None,
                     assigned: true,
                     // Mirrors the struct/enum paths; moot for a Copy view.
-                    owns_value: matches!(rcv, Receiver::Move),
+                    owns_value: matches!(rcv, Receiver::Take),
                 },
             );
         }
         for (param, psig) in m.params.iter().zip(sig.params.iter()) {
             // E0334: `ref` and `take` are mutually exclusive ownership markers.
-            if param.mutable && param.move_ {
+            if param.is_ref && param.is_take {
                 self.err("E0334",
                     "parameter cannot have both `ref` and `take`; these markers are mutually exclusive".to_string(),
                     param.span);
@@ -6825,12 +6802,12 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            let param_owns_value = param.move_ || self.is_copy(&psig.ty);
+            let param_owns_value = param.is_take || self.is_copy(&psig.ty);
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
                     ty: psig.ty.clone(),
-                    mutable: param.mutable,
+                    mutable: param.is_ref,
                     moved: false,
                     moved_at: None,
                     assigned: true,
@@ -6915,7 +6892,7 @@ impl SemaCx<'_> {
         // destructor, where the receiver is being torn down already. An allocating
         // teardown of an owned `this` violates `#[no_alloc]`.
         if fn_no_alloc {
-            if let Some(Receiver::Move) = sig.receiver {
+            if let Some(Receiver::Take) = sig.receiver {
                 let self_ty = Ty::Struct(struct_id);
                 if m.name.name != "drop" && !self.no_alloc_safe_drop(&self_ty) {
                     self.err(
@@ -6936,7 +6913,7 @@ impl SemaCx<'_> {
         // the two method-check paths must agree). Bare `this` stays
         // read-only.
         if let Some(rcv) = sig.receiver {
-            let mutable = matches!(rcv, Receiver::Mut | Receiver::Move);
+            let mutable = matches!(rcv, Receiver::Ref | Receiver::Take);
             self.scopes.last_mut().unwrap().insert(
                 "self".to_string(),
                 LocalInfo {
@@ -6947,7 +6924,7 @@ impl SemaCx<'_> {
                     assigned: true,
                     // `take this` owns the value inside the body; `this` / `ref
                     // this` borrow it (the caller still owns and drops it).
-                    owns_value: matches!(rcv, Receiver::Move),
+                    owns_value: matches!(rcv, Receiver::Take),
                 },
             );
         }
@@ -6971,7 +6948,7 @@ impl SemaCx<'_> {
                 );
             }
             // E0334: `ref` and `take` are mutually exclusive ownership markers.
-            if param.mutable && param.move_ {
+            if param.is_ref && param.is_take {
                 self.err(
                     "E0334",
                     "parameter cannot have both `ref` and `take`; these markers are mutually exclusive".to_string(),
@@ -6986,12 +6963,12 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            let param_owns_value = param.move_ || self.is_copy(&psig.ty);
+            let param_owns_value = param.is_take || self.is_copy(&psig.ty);
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
                     ty: psig.ty.clone(),
-                    mutable: param.mutable,
+                    mutable: param.is_ref,
                     moved: false,
                     moved_at: None,
                     assigned: true,
@@ -7080,9 +7057,8 @@ impl SemaCx<'_> {
                 .iter()
                 .map(|p| ParamSig {
                     ty: self.resolve_type(&p.ty),
-                    mutable: p.mutable,
-                    move_: p.move_,
-                    borrow_: p.borrow_,
+                    is_ref: p.is_ref,
+                    is_take: p.is_take,
                 })
                 .collect();
             let declared_ret = match &f.return_type {
@@ -7347,7 +7323,6 @@ impl SemaCx<'_> {
                         s.name.name.clone(),
                         StaticInfo {
                             ty: declared,
-                            is_mut: s.is_mut,
                             init: s.value.clone(),
                             decl_span: s.name.span,
                         },
@@ -8402,7 +8377,7 @@ impl SemaCx<'_> {
             return;
         };
         // E0359 — `export` rejection.
-        if f.is_pub {
+        if f.is_export {
             self.err(
                 "E0359",
                 "test functions cannot be `export`; tests are project-internal".to_string(),
@@ -8443,7 +8418,7 @@ impl SemaCx<'_> {
         if !f.is_extern && !f.is_declaration {
             self.check_handler_ctx_slots(&f.params);
         }
-        if f.is_pub {
+        if f.is_export {
             self.check_extern_export_signature(f);
             // Fall through to the normal body-checking path below.
         } else if f.is_extern {
@@ -8529,7 +8504,7 @@ impl SemaCx<'_> {
                 );
             }
             // E0334: `ref` and `take` are mutually exclusive ownership markers.
-            if param.mutable && param.move_ {
+            if param.is_ref && param.is_take {
                 self.err(
                     "E0334",
                     "parameter cannot have both `ref` and `take`; these markers are mutually exclusive".to_string(),
@@ -8573,7 +8548,7 @@ impl SemaCx<'_> {
             if f.is_async {
                 let pty = &psig.ty;
                 let is_borrow_shape = matches!(pty, Ty::Str | Ty::Slice(_));
-                let is_mut_pointer_passed = param.mutable && !param.move_ && !self.is_copy(pty);
+                let is_mut_pointer_passed = param.is_ref && !param.is_take && !self.is_copy(pty);
                 if is_borrow_shape {
                     self.err(
                         "E0900",
@@ -8595,12 +8570,12 @@ impl SemaCx<'_> {
                     );
                 }
             }
-            let param_owns_value = param.move_ || self.is_copy(&psig.ty);
+            let param_owns_value = param.is_take || self.is_copy(&psig.ty);
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
                     ty: psig.ty.clone(),
-                    mutable: param.mutable,
+                    mutable: param.is_ref,
                     moved: false,
                     moved_at: None,
                     assigned: true,
@@ -13115,9 +13090,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                             a,
                             &ParamSig {
                                 ty: p.clone(),
-                                mutable: param_refs.get(i).copied().unwrap_or(false),
-                                move_: param_takes.get(i).copied().unwrap_or(false),
-                                borrow_: false,
+                                is_ref: param_refs.get(i).copied().unwrap_or(false),
+                                is_take: param_takes.get(i).copied().unwrap_or(false),
                             },
                         );
                     }
@@ -13223,9 +13197,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                             a,
                             &ParamSig {
                                 ty: p.clone(),
-                                mutable: param_refs.get(i).copied().unwrap_or(false),
-                                move_: param_takes.get(i).copied().unwrap_or(false),
-                                borrow_: false,
+                                is_ref: param_refs.get(i).copied().unwrap_or(false),
+                                is_take: param_takes.get(i).copied().unwrap_or(false),
                             },
                         );
                     }
@@ -14011,9 +13984,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             &args[0],
             &ParamSig {
                 ty: i_ty.clone(),
-                mutable: false,
-                move_: true,
-                borrow_: false,
+                is_ref: false,
+                is_take: true,
             },
         );
         // The thread takes ownership of the input (consumed above, `move_:
@@ -14207,8 +14179,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 let sig = self.fns.get(fname)?;
                 Some(Ty::FnPtr {
                     params: sig.params.iter().map(|sp| sp.ty.clone()).collect(),
-                    param_takes: sig.params.iter().map(|sp| sp.move_).collect(),
-                    param_refs: sig.params.iter().map(|sp| sp.mutable).collect(),
+                    param_takes: sig.params.iter().map(|sp| sp.is_take).collect(),
+                    param_refs: sig.params.iter().map(|sp| sp.is_ref).collect(),
                     return_type: Box::new(sig.return_type.clone()),
                 })
             })
@@ -14555,7 +14527,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             return false;
         };
-        if matches!(rcv, Receiver::Mut) && !self.is_writable_place_quiet(receiver) {
+        if matches!(rcv, Receiver::Ref) && !self.is_writable_place_quiet(receiver) {
             self.err(
                 "E0328",
                 format!(
@@ -14568,7 +14540,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // v0.0.28: `ref this` is pointer-passed, so calling one on a packed
         // field hands the method a misaligned receiver — the same escape a
         // `ref` argument makes, one syntax over.
-        if matches!(rcv, Receiver::Mut) {
+        if matches!(rcv, Receiver::Ref) {
             if let Some((code, msg)) = self.unaddressable_field(receiver) {
                 self.err(code, msg, receiver.span);
             }
@@ -14578,7 +14550,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // runs the shared move/borrow path, so a borrowed/Drop-field/raw-deref
         // receiver is the same E0337/E0509 here as at any other consuming site,
         // and a fresh rvalue receiver passes through.
-        if matches!(rcv, Receiver::Move) && !self.is_copy(recv_ty) {
+        if matches!(rcv, Receiver::Take) && !self.is_copy(recv_ty) {
             self.consume_place(receiver, recv_ty);
         }
         if args.len() != sig.params.len() {
@@ -14641,9 +14613,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             let expected = ParamSig {
                 ty: self.subst_ty_deep(&psig.ty, subst),
-                mutable: psig.mutable,
-                move_: psig.move_,
-                borrow_: psig.borrow_,
+                is_ref: psig.is_ref,
+                is_take: psig.is_take,
             };
             self.check_arg_with_move(&args[idx], &expected);
             idx += 1;
@@ -17556,7 +17527,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             self.bound_ref_arg_spans.insert(args[i].span);
             match msig.receiver {
                 Some(Receiver::Read) => {}
-                Some(Receiver::Mut) => {
+                Some(Receiver::Ref) => {
                     // Statics are always mutable (v0.0.24 #9), and a place
                     // reached through a raw-ptr deref is runtime-writable;
                     // `is_writable_place_quiet` covers locals (`var` yes,
@@ -17575,7 +17546,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         continue;
                     }
                 }
-                Some(Receiver::Move) => {
+                Some(Receiver::Take) => {
                     self.err(
                         "E0822",
                         format!(
@@ -17599,7 +17570,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             }
             if !msig.generic_params.is_empty()
-                || msig.params.iter().any(|p| p.move_ || p.mutable)
+                || msig.params.iter().any(|p| p.is_take || p.is_ref)
                 || takes_any
             {
                 self.err(
@@ -17632,7 +17603,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             let ctx_param_ok = matches!(
                 params.get(i + 1),
-                Some(p) if matches!(&p.ty, Ty::RawPtr(inner) if **inner == Ty::U8) && !p.move_
+                Some(p) if matches!(&p.ty, Ty::RawPtr(inner) if **inner == Ty::U8) && !p.is_take
             );
             if !ctx_param_ok {
                 // The fix is in the CALLEE, which the author of this call
@@ -17753,9 +17724,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if self.bound_ref_arg_spans.contains(&arg.span) {
             return true;
         }
-        !expected.mutable
-            && !expected.borrow_
-            && !expected.move_
+        !expected.is_ref
+            && !expected.is_take
             && self.is_str_lit_to_lang_string(arg, &expected.ty)
     }
 
@@ -17787,14 +17757,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // v0.0.28: a `ref` parameter is pointer-passed, so the argument's
         // address is taken whether or not the source says so. A bitfield or a
         // packed field has none to give.
-        if expected.mutable && !expected.move_ && !expected.borrow_ {
+        if expected.is_ref && !expected.is_take {
             if let Some((code, msg)) = self.unaddressable_field(arg) {
                 self.err(code, msg, arg.span);
             }
         }
-        if expected.mutable
-            && !expected.move_
-            && !expected.borrow_
+        if expected.is_ref
+            && !expected.is_take
             && !self.is_writable_place_quiet(arg)
         {
             self.err(
@@ -17817,9 +17786,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     fn subst_param_sig(&mut self, param: &ParamSig, subst: &HashMap<String, Ty>) -> ParamSig {
         ParamSig {
             ty: self.subst_ty_deep(&param.ty, subst),
-            mutable: param.mutable,
-            move_: param.move_,
-            borrow_: param.borrow_,
+            is_ref: param.is_ref,
+            is_take: param.is_take,
         }
     }
 
@@ -17842,7 +17810,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             return;
         }
         // v0.0.24 de-Rust (#9 stage 3e): only `take` consumes; bare borrows.
-        if expected.move_ {
+        if expected.is_take {
             self.reject_partial_move_of_drop(arg, &expected.ty);
             self.mark_moved_through_wrappers(arg, &expected.ty);
         }
@@ -18831,7 +18799,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         .map(|i| i.ty.clone())
                         .unwrap_or(Ty::Error);
                     if target_ty != Ty::Error {
-                        // TEXT.R1: `let mut s: Text; s = "lit";` — the literal
+                        // TEXT.R1: `var s: Text; s = "lit";` — the literal
                         // constructs an owned Text; don't run the str-vs-struct
                         // check that would reject it.
                         if !self.is_str_lit_to_lang_string(value, &target_ty) {
@@ -19140,7 +19108,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     if !self.type_param_in_scope("Self") {
                         self.err(
                             "E0508",
-                            "`Self` is only valid inside an `interface` or `impl` body".to_string(),
+                            "`This` is only valid inside an `interface` or `impl` body".to_string(),
                             t.span,
                         );
                         return Ty::Error;
@@ -19335,7 +19303,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             seen.insert(f.name.name.clone(), ());
             let resolved = self.resolve_field_type_with_subst(&f.ty, &subst);
-            fields.push((f.name.name.clone(), resolved, f.is_pub));
+            fields.push((f.name.name.clone(), resolved, !f.name.name.starts_with('_')));
         }
         let mangled = mangle_generic_struct_name(name, &arg_tys, &self.structs, &self.enums);
         let id = StructId(self.structs.len() as u32);
@@ -19360,7 +19328,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // answer off the post-mono AST.
             is_watched: template.attributes.iter().any(|a| a.path.name == "watch"),
             is_repr_c: false, // generic instantiations don't inherit repr(C); revisit when use case appears
-            is_pub: template.is_pub,
+            is_pub: template.is_export,
             // Inherit the template's declaring file so cross-file `_`-field
             // privacy (E0403) fires on generic instantiations just like concrete
             // structs. Without this, `Vec[i32]._ptr` would be reachable anywhere.
@@ -19396,19 +19364,18 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // (e.g. `fn new(v: T) -> Box[T]` inside `impl Box[T]`)
                 // get their inner T substituted at instantiation time.
                 let resolved_params: Vec<ParamSig> = {
-                    let raw: Vec<(Ty, bool, bool, bool)> = t
+                    let raw: Vec<(Ty, bool, bool)> = t
                         .params
                         .iter()
-                        .map(|p| (p.ty.clone(), p.mutable, p.move_, p.borrow_))
+                        .map(|p| (p.ty.clone(), p.is_ref, p.is_take))
                         .collect();
                     raw.into_iter()
-                        .map(|(ty, mutable, move_, borrow_)| {
+                        .map(|(ty, is_ref, is_take)| {
                             let s = self.subst_ty_deep(&ty, &method_subst);
                             ParamSig {
                                 ty: s,
-                                mutable,
-                                move_,
-                                borrow_,
+                                is_ref,
+                                is_take,
                             }
                         })
                         .collect()
@@ -20256,19 +20223,18 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 method_subst.insert(gp.clone(), arg.clone());
             }
             let resolved_params: Vec<ParamSig> = {
-                let raw: Vec<(Ty, bool, bool, bool)> = t
+                let raw: Vec<(Ty, bool, bool)> = t
                     .params
                     .iter()
-                    .map(|p| (p.ty.clone(), p.mutable, p.move_, p.borrow_))
+                    .map(|p| (p.ty.clone(), p.is_ref, p.is_take))
                     .collect();
                 raw.into_iter()
-                    .map(|(ty, mutable, move_, borrow_)| {
+                    .map(|(ty, is_ref, is_take)| {
                         let s = self.subst_ty_deep(&ty, &method_subst);
                         ParamSig {
                             ty: s,
-                            mutable,
-                            move_,
-                            borrow_,
+                            is_ref,
+                            is_take,
                         }
                     })
                     .collect()
@@ -20564,8 +20530,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // borrows, `fn(take R)` consumes, `fn(ref R)` writes back.
         let bad = sig.params.iter().enumerate().find_map(|(i, p)| {
             let want_ref = expected_refs.get(i).copied().unwrap_or(false);
-            if p.mutable != want_ref {
-                let msg = if p.mutable {
+            if p.is_ref != want_ref {
+                let msg = if p.is_ref {
                     "is `ref` (write-back, pointer-passed), but the expected fn-pointer slot is not `ref` — write `fn(ref R)`"
                 } else {
                     "is not `ref`, but the expected fn-pointer slot is `fn(ref R)` — make it a `ref` parameter"
@@ -20576,8 +20542,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 return None;
             }
             let want_take = expected_takes.get(i).copied().unwrap_or(false);
-            if p.move_ != want_take {
-                let msg = if p.move_ {
+            if p.is_take != want_take {
+                let msg = if p.is_take {
                     "is `take` (consumes ownership), but the expected fn-pointer borrows it — write `fn(take R)`"
                 } else {
                     "is a read-only borrow, but the expected fn-pointer consumes it (`fn(take R)`) — make it a `take` parameter"
@@ -20601,9 +20567,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let param_takes: Vec<bool> = if expected_takes.len() == params.len() {
             expected_takes
         } else {
-            sig.params.iter().map(|p| p.move_).collect()
+            sig.params.iter().map(|p| p.is_take).collect()
         };
-        let param_refs: Vec<bool> = sig.params.iter().map(|p| p.mutable).collect();
+        let param_refs: Vec<bool> = sig.params.iter().map(|p| p.is_ref).collect();
         Some(Ty::FnPtr {
             params,
             param_takes,
@@ -20698,8 +20664,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // lowers to `i32*`, not `i32`).
                 let bad = sig.params.iter().enumerate().find_map(|(i, p)| {
                     let want_ref = expected_refs.get(i).copied().unwrap_or(false);
-                    if p.mutable != want_ref {
-                        let msg = if p.mutable {
+                    if p.is_ref != want_ref {
+                        let msg = if p.is_ref {
                             "is `ref` (write-back, pointer-passed), but the expected fn-pointer slot is not `ref` — write `fn(ref R)`"
                         } else {
                             "is not `ref`, but the expected fn-pointer slot is `fn(ref R)` — make it a `ref` parameter"
@@ -20713,8 +20679,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         return None; // Copy: no ownership, fits any slot
                     }
                     let want_take = expected_takes.get(i).copied().unwrap_or(false);
-                    if p.move_ != want_take {
-                        let msg = if p.move_ {
+                    if p.is_take != want_take {
+                        let msg = if p.is_take {
                             "is `take` (consumes ownership), but the expected fn-pointer borrows it — write `fn(take R)`"
                         } else {
                             "is a read-only borrow, but the expected fn-pointer consumes it (`fn(take R)`) — make it a `take` parameter"
@@ -20739,9 +20705,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 let param_takes: Vec<bool> = if expected_takes.len() == params.len() {
                     expected_takes
                 } else {
-                    sig.params.iter().map(|p| p.move_).collect()
+                    sig.params.iter().map(|p| p.is_take).collect()
                 };
-                let param_refs: Vec<bool> = sig.params.iter().map(|p| p.mutable).collect();
+                let param_refs: Vec<bool> = sig.params.iter().map(|p| p.is_ref).collect();
                 return Ty::FnPtr {
                     params,
                     param_takes,
@@ -22550,13 +22516,10 @@ fn method_sig_matches(
         return false;
     }
     for (a, b) in iface.params.iter().zip(impl_.params.iter()) {
-        if a.mutable != b.mutable {
+        if a.is_ref != b.is_ref {
             return false;
         }
-        if a.move_ != b.move_ {
-            return false;
-        }
-        if a.borrow_ != b.borrow_ {
+        if a.is_take != b.is_take {
             return false;
         }
         if !ty_eq_modulo_self(structs, enums, &a.ty, &b.ty, target, designated_string) {
@@ -31437,7 +31400,7 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
 
     #[test]
     fn text_reassign_str_literal_coerces() {
-        // TEXT.R1 at the assignment site: `let mut s: Text = "a"; s = "b";`
+        // TEXT.R1 at the assignment site: `var s: Text = "a"; s = "b";`
         // builds — the literal constructs an owned Text, matching the
         // `let`-init coercion. Before the fix this was E0302 (str vs struct).
         assert_clean(

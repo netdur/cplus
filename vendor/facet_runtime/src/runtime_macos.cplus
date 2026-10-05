@@ -1032,6 +1032,7 @@ fn open_owned_window(n: nav_model::Navigator) -> bool {
     if sb.is_not_null() { bar.extend((*sb).menu_items()); }
     host::install_app_menu(#addr_of(bar));
     let w = host::open_window(root, windows::chrome(n),
+        should_close: windows::should_close, should_close_ctx: s as *u8,
         will_close: windows::closing, will_close_ctx: s as *u8);
     if w.is_null() { return false; }
     windows::named(n);
@@ -1056,6 +1057,8 @@ fn keyed_windows_reuse_instances_and_navigate_independently() {
     guard let option::Option[window::Window]::Some(two) = a.open_window("note", key: "two") else {
         assert false; one.close(); app::release_current(); return;
     };
+    assert one.activate();
+    assert two.activate();
     assert one.name() == "note";
     assert one.title().view() == "Note window";
     assert windows::chrome(one.nav()).width == 920.0f64;
@@ -1104,6 +1107,55 @@ fn keyed_windows_reuse_instances_and_navigate_independently() {
     assert !two.is_live();
     settle_and_teardown(0 as *core::Node);
     assert app::window_count() == (0 as usize);
+    app::release_current();
+}
+
+struct ClosePolicyProbe {
+    window: window::Window,
+    allow: bool,
+    calls: i64,
+}
+fn close_policy_probe(ctx: *u8) -> bool {
+    let p = ctx as *ClosePolicyProbe;
+    (*p).calls = (*p).calls + (1 as i64);
+    // Reentrant closing and navigation must not dispose this borrowed owner.
+    assert !(*p).window.close();
+    assert !(*p).window.nav().push("page");
+    return (*p).allow;
+}
+#[test]
+fn close_policy_is_per_instance_and_precedes_native_teardown() {
+    backend::install();
+    windows::install(windows::Driver { open: open_owned_window, run: run_owned_loop,
+        external_loop: false, single_window: false });
+    let a = App::new("Close policy test");
+    let d = a.window("note", navigation::test_shell);
+    assert d.route("page", navigation::test_page);
+    app::make_current(a._p);
+    guard let option::Option[window::Window]::Some(one) = a.open_window("note", key: "one") else {
+        assert false; app::release_current(); return;
+    };
+    guard let option::Option[window::Window]::Some(two) = a.open_window("note", key: "two") else {
+        assert false; one.close(); app::release_current(); return;
+    };
+    var probe = ClosePolicyProbe { window: one, allow: false, calls: 0 as i64 };
+    assert one.on_should_close(close_policy_probe, #addr_of(probe) as *u8);
+    let s = nav_model::session(a._p, one.nav().id);
+    assert !windows::should_close(s as *u8);
+    assert !one.close();
+    assert !one.request_close();
+    assert probe.calls == (3 as i64);
+    assert one.is_live() && two.is_live();
+    assert one.nav().push("page");
+    // Another instance retains its default policy and closes independently.
+    assert two.close();
+    assert one.is_live() && !two.is_live();
+    probe.allow = true;
+    assert one.request_close();
+    assert probe.calls == (4 as i64);
+    assert !one.is_live();
+    assert !one.on_should_close(close_policy_probe, #addr_of(probe) as *u8);
+    settle_and_teardown(0 as *core::Node);
     app::release_current();
 }
 

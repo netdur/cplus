@@ -1431,6 +1431,7 @@ extern fn msg_void_rect_v(recv: *u8, sel: *u8, r: rt::Rect);
 // front and deaf.
 fn activate_window(win: *u8) {
     if win.is_null() { return; }
+    ak::Application::shared_application().activate_ignoring_other_apps(true);
     { rt::msg_void_id(win, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), 0 as *u8) };
 }
 
@@ -1491,12 +1492,9 @@ fn wh_observe_density(root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Can
     return wh_observe(root, "NSWindowDidChangeBackingPropertiesNotification", cb, ctx);
 }
 
-// `request_close` is deliberately NOT filled. AppKit's `performClose:` asks the
-// delegate through `windowShouldClose:`, but what facet needs asked is the
-// SCREEN — and `Screen` has no `should_close` yet (plans/nav-windows.md step
-// 5). A null slot makes `request_close` fall through to `close`, which is the
-// honest behaviour until the screen can answer: nothing can refuse, so nothing
-// pretends to.
+// The shared Window cursor checks its optional instance policy before close.
+// Native performClose: asks the same policy through the delegate installed by
+// facet_runtime. Leave request_close null to avoid asking the policy twice.
 fn window_host() -> app_window::WindowHost {
     var h: app_window::WindowHost = app_window::empty_host();
     h.frame = wh_frame;

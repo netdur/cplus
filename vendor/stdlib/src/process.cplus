@@ -236,6 +236,11 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
     let out_p: Pipe = make_pipe();
     let err_p: Pipe = make_pipe();
     if !in_p.ok || !out_p.ok || !err_p.ok { return option::Option[Child]::None; }
+    // Darwin pipe writes must report EPIPE when the child exits first.
+    // F_SETNOSIGPIPE is descriptor-scoped; the host keeps its signal policy.
+    if fcntl(in_p.write, 73 as i32, 1 as i32) != (0 as i32) {
+        return option::Option[Child]::None;
+    }
 
     // File actions redirect the child's 0/1/2 onto our pipe ends. The pipe fds are
     // CLOEXEC, so every OTHER inherited fd closes at exec; dup2 clears CLOEXEC on
@@ -417,4 +422,17 @@ fn the_current_process_has_an_id_and_it_is_stable() {
     let a: i32 = current_id();
     assert a > (0 as i32);
     assert current_id() == a;
+}
+
+#[test]
+fn writing_stdin_after_the_child_exits_reports_a_broken_pipe() {
+    var argv = vec::new::[text::Text]();
+    argv.append(text::from_str("/bin/sh"));
+    argv.append(text::from_str("-c"));
+    argv.append(text::from_str("exit 0"));
+    guard let option::Option[Child]::Some(child) = spawn(argv) else { assert false; return; };
+    var c = child;
+    assert c.wait() == (0 as i32);
+    assert c.write_stdin("after exit") == (-1 as isize);
+    c.close_stdin();
 }

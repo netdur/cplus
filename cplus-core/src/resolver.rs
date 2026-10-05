@@ -1982,7 +1982,7 @@ fn private_reason(name: &str) -> &'static str {
 
 fn extern_stays_global(f: &Function) -> bool {
     f.is_extern
-        && (f.is_pub
+        && (f.is_export
             || f.name
                 .name
                 .starts_with(crate::mangling::RUNTIME_ABI_PREFIX))

@@ -19146,3 +19146,39 @@ fn a_none_collection_stays_unselectable_through_the_first_mount() {
     assert AGENT_PICKS == (0 as i64);
     mount::unmount(p);
 }
+
+#[test]
+fn an_outline_item_from_a_replaced_root_never_reaches_the_row_builder() {
+    backend::install();
+    var t: core::Node = identity_tree();
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    let old: *u8 = rt::retain(recycler::tree_child_of_root(v, 1 as i64));
+    assert old.is_not_null();
+    let ov: *u8 = recycler::table_of(v);
+    var fresh: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    fresh.add_child(tree::TreeNode::new("new alpha", id: "alpha"));
+    match tree::from(tp) {
+        option::Option::Some(h) => { let _replaced = h.set_root(fresh); }
+        option::Option::None => { assert false; }
+    }
+    assert recycler::unbox_item(ov, old).is_null();
+    assert recycler::tree_view_for_item_body(ov, old).is_null();
+    assert recycler::tree_child_count_imp(0 as *u8, 0 as *u8, ov, old) == 0;
+    views::apply(0 as *u8, tp);
+    let current: *u8 = recycler::tree_child_of_root(v, 0 as i64);
+    assert current.is_not_null();
+    assert current != old;
+    let model: *tree::TreeNode = recycler::unbox_item(ov, current);
+    assert model.is_not_null();
+    assert { (*model).label_of() } == "new alpha";
+    // Reusing the outline for another facet node also changes its model,
+    // even when both trees have only their initial root.
+    var replacement: core::Node = identity_tree();
+    recycler::apply_recycling_tree(v, #addr_of(replacement), tree::P_ROOT);
+    assert recycler::unbox_item(ov, old).is_null();
+    assert recycler::tree_view_for_item_body(ov, old).is_null();
+    rt::release(old);
+}

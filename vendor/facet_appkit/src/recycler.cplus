@@ -3804,7 +3804,7 @@ fn tree_selection_changed_from(ov: *u8) {
     let row: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
     if row < (0 as i64) { { (*p).selected = text::new() }; return; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
-    let tn: *tree::TreeNode = unbox_item(item);
+    let tn: *tree::TreeNode = unbox_item(ov, item);
     if tn.is_not_null() {
         { (*p).selected = text::from_str({ (*tn).id.view() }) };
     }
@@ -3821,7 +3821,7 @@ fn tree_notify_expanded(v: *u8, row: i64) {
     { (*s).syncing = true };
     { rt::msg_void_id(ov, rt::sel(#str_ptr("expandItem:\0")), item) };
     { (*s).syncing = false };
-    let tn: *tree::TreeNode = unbox_item(item);
+    let tn: *tree::TreeNode = unbox_item(ov, item);
     if tn.is_null() { return; }
     { (*s).expanded_by_user = true };
     match tree::from({ (*s).node }) {
@@ -3968,6 +3968,7 @@ fn make_cell(v: *u8) -> *u8 {
 fn tree_source_key() -> *u8 { return { 29033 as *u8 }; }
 fn tree_agent_pin_key() -> *u8 { return { 29034 as *u8 }; }
 fn item_node_key() -> *u8 { return { 29035 as *u8 }; }
+fn item_generation_key() -> *u8 { return { 29039 as *u8 }; }
 
 struct TreeSource {
     opaque node: *core::Node,      // the facet tree node, for props
@@ -4069,6 +4070,9 @@ fn forget_items(ov: *u8) {
 
 fn box_item(ov: *u8, node: *tree::TreeNode) -> *u8 {
     if node.is_null() { return 0 as *u8; }
+    let p: *tree::TreeProps = props_for(ov);
+    if p.is_null() { return 0 as *u8; }
+    let generation: u64 = { (*p).root_generation };
     let map: *u8 = item_map(ov);
     // No map is no worse than this function has ever been: a fresh box still
     // names the right node, it is only AppKit's memory of it that suffers.
@@ -4076,11 +4080,14 @@ fn box_item(ov: *u8, node: *tree::TreeNode) -> *u8 {
                                     rt::sel(#str_ptr("valueWithPointer:\0")), node as *u8) };
     if map.is_not_null() && key.is_not_null() {
         let hit: *u8 = { rt::msg_id_id(map, rt::sel(#str_ptr("objectForKey:\0")), key) };
-        if hit.is_not_null() { return hit; }
+        if hit.is_not_null() {
+            if { synth::get_associated(hit, item_generation_key()) as u64 } == generation { return hit; }
+        }
     }
     let obj: *u8 = { rt::alloc_init(#str_ptr("NSObject\0")) };
     if obj.is_null() { return 0 as *u8; }
     synth::set_associated(obj, item_node_key(), node as *u8);
+    synth::set_associated(obj, item_generation_key(), generation as *u8);
     if map.is_not_null() && key.is_not_null() {
         // The map owns it, which is what makes the box outlive the call that
         // made it — an autoreleased one could not be handed back later.
@@ -4094,15 +4101,22 @@ fn box_item(ov: *u8, node: *tree::TreeNode) -> *u8 {
 #[link_name = "objc_msgSend"]
 extern fn msg_id_ptr(recv: *u8, sel: *u8, p: *u8) -> *u8;
 
-fn unbox_item(item: *u8) -> *tree::TreeNode {
+fn unbox_item(ov: *u8, item: *u8) -> *tree::TreeNode {
     if item.is_null() { return 0 as *tree::TreeNode; }
+    let p: *tree::TreeProps = props_for(ov);
+    if p.is_null() { return 0 as *tree::TreeNode; }
+    // AppKit can vend an old item during a deferred display pass, even after
+    // reloadData. Read the generation before touching its borrowed node.
+    if { synth::get_associated(item, item_generation_key()) as u64 } != { (*p).root_generation } {
+        return 0 as *tree::TreeNode;
+    }
     return { synth::get_associated(item, item_node_key()) as *tree::TreeNode };
 }
 
 // nil is the ROOT — AppKit's own convention, and it matches facet's: the root
 // is the container, not a row.
 fn item_or_root(ov: *u8, item: *u8) -> *tree::TreeNode {
-    if item.is_not_null() { return unbox_item(item); }
+    if item.is_not_null() { return unbox_item(ov, item); }
     let p: *tree::TreeProps = props_for(ov);
     if p.is_null() { return 0 as *tree::TreeNode; }
     return { #addr_of((*p).root) };
@@ -4142,7 +4156,7 @@ fn tree_child_imp(self_obj: *u8, cmd: *u8, ov: *u8, index: i64, item: *u8) -> *u
 // tree built without ever setting `is_branch` — every tree that existed before
 // the flag did — answers exactly as it did.
 fn tree_expandable_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> i8 {
-    let n: *tree::TreeNode = unbox_item(item);
+    let n: *tree::TreeNode = unbox_item(ov, item);
     if n.is_null() { return 0 as i8; }
     if { (*n).is_branch } { return 1 as i8; }
     if { (*n).child_count() } > (0 as usize) { return 1 as i8; }
@@ -4169,7 +4183,7 @@ fn tree_height_body(ov: *u8, item: *u8) -> f64 {
     if p.is_null() { return outline_default_row_height(ov); }
     let fh: f64 = { (*p).row_height } as f64;
     if fh >= 1.0f64 { return fh; }
-    let n: *tree::TreeNode = unbox_item(item);
+    let n: *tree::TreeNode = unbox_item(ov, item);
     if n.is_null() { return outline_default_row_height(ov); }
     var row: core::Node = tree_row_node(n, p);
     tree_bind_into(p, n, #addr_of(row));
@@ -4324,7 +4338,7 @@ fn tag_tree_row(ov: *u8, item: *u8, cell: *u8) {
     let f: fn(*tree::TreeNode, *u8) -> text::Text = { (*p).row_id };
     // Against `no_row_id` by NAME, like every other absent handler here.
     if f == tree::no_row_id { return; }
-    let n: *tree::TreeNode = unbox_item(item);
+    let n: *tree::TreeNode = unbox_item(ov, item);
     if n.is_null() { return; }
     let id: text::Text = f(n, { (*p).row_id_ctx });
     ak::Accessibility::from_raw(cell).set_accessibility_identifier(id.view());
@@ -4353,7 +4367,7 @@ fn tree_row_identity(p: *tree::TreeProps, n: *tree::TreeNode) -> text::Text {
 fn tree_view_for_item_body(ov: *u8, item: *u8) -> *u8 {
     let p: *tree::TreeProps = props_for(ov);
     if p.is_null() { return 0 as *u8; }
-    let n: *tree::TreeNode = unbox_item(item);
+    let n: *tree::TreeNode = unbox_item(ov, item);
     if n.is_null() { return 0 as *u8; }
     let w: f64 = column_width(ov);
 
@@ -4513,7 +4527,7 @@ fn tree_expansion_changed(note: *u8, now_expanded: bool) {
     if { (*s).syncing } { return; }
     let item: *u8 = tree_notified_item(note);
     if item.is_null() { return; }
-    let tn: *tree::TreeNode = unbox_item(item);
+    let tn: *tree::TreeNode = unbox_item(ov, item);
     if tn.is_null() { return; }
     let n: *core::Node = { (*s).node };
     match tree::from(n) {
@@ -4639,7 +4653,7 @@ fn tree_selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     if h == tree::no_select { return; }
     if row < (0 as i64) { return; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
-    let tn: *tree::TreeNode = unbox_item(item);
+    let tn: *tree::TreeNode = unbox_item(ov, item);
     if tn.is_null() { return; }
     h(tn, { (*p).on_select_ctx });
 }
@@ -4676,7 +4690,7 @@ fn ids_selected(ov: *u8) -> vocab::TextList {
     var row: u64 = { rt::msg_u64(set, rt::sel(#str_ptr("firstIndex\0"))) };
     while row != end {
         let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row as i64) };
-        let tn: *tree::TreeNode = unbox_item(item);
+        let tn: *tree::TreeNode = unbox_item(ov, item);
         if tn.is_not_null() {
             let id: str = { (*tn).id.view() };
             if id != "" { let _a: status::Status = out.add(id); }
@@ -4715,7 +4729,7 @@ fn select_by_ids(ov: *u8, sel: *vocab::TextList) {
     var any: bool = false;
     while i < rows {
         let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), i) };
-        let tn: *tree::TreeNode = unbox_item(item);
+        let tn: *tree::TreeNode = unbox_item(ov, item);
         if tn.is_not_null() {
             if { (*sel).has({ (*tn).id.view() }) } {
                 { rt::msg_void_u64(set, rt::sel(#str_ptr("addIndex:\0")), i as u64) };
@@ -5052,7 +5066,7 @@ fn find_item(ov: *u8, n: *tree::TreeNode) -> *u8 {
     var i: i64 = 0 as i64;
     while i < count {
         let it: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), i) };
-        if unbox_item(it) == n { return it; }
+        if unbox_item(ov, it) == n { return it; }
         i = i + (1 as i64);
     }
     return 0 as *u8;
@@ -5076,7 +5090,7 @@ fn tree_fill_into(v: *u8, cell: *u8, row: i64) {
     if item.is_null() { return; }
     let p: *tree::TreeProps = props_for(ov);
     if p.is_null() { return; }
-    let n: *tree::TreeNode = unbox_item(item);
+    let n: *tree::TreeNode = unbox_item(ov, item);
     if n.is_null() { return; }
     let existing: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
     if existing.is_not_null() && tree_has_bind(p) {

@@ -250,8 +250,8 @@ fn replace_child(parent: *core::Node, at: usize, take child: core::Node)
 
 // The keyed form, which is what an application actually holds: it knows the
 // child's key, not its index.
-fn replace(key: str, take child: core::Node) -> option::Option[core::Node] {
-    let old: *core::Node = node(key);
+fn replace(key: str, take child: core::Node, within: *core::Node = 0 as *core::Node) -> option::Option[core::Node] {
+    let old: *core::Node = node(key, within: within);
     if old.is_null() { return option::Option[core::Node]::None; }
     var parent: *core::Node = 0 as *core::Node;
     match parent_of(old) {

@@ -156,8 +156,8 @@ pub enum TokenKind {
     Use,
     Mod,
     Import,
-    SelfLower,
-    SelfUpper,
+    ThisLower,
+    ThisUpper,
     Defer,
     Try,
     Break,
@@ -1074,8 +1074,8 @@ impl<'a> Lexer<'a> {
             // longer accepted — they lex as plain identifiers and are rejected
             // downstream (the receiver parser and `This`-type path emit a
             // "use `this`/`This`" hint).
-            "this" => TokenKind::SelfLower,
-            "This" => TokenKind::SelfUpper,
+            "this" => TokenKind::ThisLower,
+            "This" => TokenKind::ThisUpper,
             "defer" => TokenKind::Defer,
             "try" => TokenKind::Try,
             "break" => TokenKind::Break,

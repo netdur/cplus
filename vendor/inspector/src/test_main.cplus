@@ -4525,3 +4525,27 @@ fn an_unreadable_target_is_refused_with_a_reason() {
     assert SEEN_FAULT.contains("nothing is listening");
 }
 
+
+#[test]
+fn two_embedded_inspectors_paint_only_their_own_property_fields_and_status() {
+    fresh(); mount::uninstall(); mount::install(mount::fr_renderer());
+    var a = widget::new(insp::Backend::none(), hide_self: false);
+    var b = widget::new(insp::Backend::none(), hide_self: false);
+    var first = a.build(); var second = b.build();
+    assert mount::mount(#addr_of(first)); assert mount::mount(#addr_of(second));
+    a.within = #addr_of(first); b.within = #addr_of(second);
+    widget::paint_editor(#addr_of(a), "text", "project A");
+    widget::paint_editor(#addr_of(b), "text", "project B");
+    assert widget::field_text(#addr_of(a), "insp:f:text".to_text()) == "project A";
+    assert widget::field_text(#addr_of(b), "insp:f:text".to_text()) == "project B";
+    widget::say(#addr_of(a), "A status"); widget::say(#addr_of(b), "B status");
+    if let option::Option::Some(l) = label::find("insp:status", within: #addr_of(first)) { assert l.text() == "A status"; }
+    else { assert false; }
+    if let option::Option::Some(l) = label::find("insp:status", within: #addr_of(second)) { assert l.text() == "B status"; }
+    else { assert false; }
+    // Typing in one inspector cannot suppress repaint in the other.
+    a.editing = "text".to_text();
+    widget::paint_editor(#addr_of(b), "text", "new B");
+    assert widget::field_text(#addr_of(b), "insp:f:text".to_text()) == "new B";
+    mount::unmount(#addr_of(second)); mount::unmount(#addr_of(first));
+}

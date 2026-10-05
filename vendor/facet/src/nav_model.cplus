@@ -72,6 +72,9 @@ struct Session {
     busy: bool,
     ready: bool,
     closing: bool,
+    // Optional, borrowed for this window's lifetime. It runs before teardown.
+    should_close: fn(*u8) -> bool,
+    opaque should_close_ctx: *u8,
 }
 struct Registry {
     definitions: vec::Vec[Definition],

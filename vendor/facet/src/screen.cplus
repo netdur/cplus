@@ -329,11 +329,23 @@ impl Chrome {
         min_zoom: f64 = 1.0f64,
         max_zoom: f64 = 4.0f64,
     ) -> Chrome {
+        // THE INITIAL SIZE IS CLAMPED INTO [min, max]. No backend does it:
+        // AppKit, GTK and Win32 all open the window at exactly `width` x
+        // `height` and apply the floor only once the user resizes, and they
+        // lay the first frame out at that size too. The defaults alone hit
+        // it — 480x360 under an 800x600 floor. The ceiling is applied first
+        // so that, if the two cross, the floor wins (zero = unset on both).
+        var w: f64 = width;
+        var h: f64 = height;
+        if max_width > 0.0f64 && w > max_width { w = max_width; }
+        if max_height > 0.0f64 && h > max_height { h = max_height; }
+        if min_width > 0.0f64 && w < min_width { w = min_width; }
+        if min_height > 0.0f64 && h < min_height { h = min_height; }
         return Chrome {
             title_text: text::from_str(title),
             subtitle_text: text::from_str(subtitle),
-            width: width,
-            height: height,
+            width: w,
+            height: h,
             min_width: min_width,
             min_height: min_height,
             bar: bar,
@@ -745,11 +757,10 @@ impl SbtScreen: Screen {
 fn chrome_defaults_and_overrides() {
     let d: Chrome = Chrome::new();
     assert d.title() == "facet";
-    assert sc_approx(d.width, 480.0f64);
-    assert sc_approx(d.height, 360.0f64);
-    // The floor a window gets without asking. NOTE the interaction with the
-    // default SIZE above: 480x360 is below it, so `Chrome::new()` with no size
-    // describes a window the platform will open at the floor instead.
+    // The floor a window gets without asking — and the default 480x360 is
+    // below it, so the size comes out clamped up to the floor.
+    assert sc_approx(d.width, 800.0f64);
+    assert sc_approx(d.height, 600.0f64);
     assert sc_approx(d.min_width, 800.0f64);
     assert sc_approx(d.min_height, 600.0f64);
     match d.bar { Bar::Native => { } Bar::Blended => { assert false; } Bar::Hidden => { assert false; } Bar::Custom => { assert false; } }
@@ -769,6 +780,29 @@ fn chrome_defaults_and_overrides() {
     assert c.minimizable == false;
     assert c.max_width == 1200.0f64;
     assert c.zoomable == false;
+}
+
+#[test]
+fn chrome_clamps_initial_size_into_min_max() {
+    // Below the floor: raised, per axis.
+    let lo: Chrome = Chrome::new(width: 300.0f64, height: 200.0f64, min_width: 640.0f64, min_height: 480.0f64);
+    assert sc_approx(lo.width, 640.0f64);
+    assert sc_approx(lo.height, 480.0f64);
+    // Above the ceiling: lowered.
+    let hi: Chrome = Chrome::new(width: 2000.0f64, height: 1500.0f64, max_width: 1200.0f64, max_height: 900.0f64);
+    assert sc_approx(hi.width, 1200.0f64);
+    assert sc_approx(hi.height, 900.0f64);
+    // Zero is unset: nothing to clamp against.
+    let free: Chrome = Chrome::new(width: 300.0f64, height: 200.0f64, min_width: 0.0f64, min_height: 0.0f64);
+    assert sc_approx(free.width, 300.0f64);
+    assert sc_approx(free.height, 200.0f64);
+    // Crossed bounds: the floor wins.
+    let crossed: Chrome = Chrome::new(width: 500.0f64, min_width: 900.0f64, max_width: 700.0f64);
+    assert sc_approx(crossed.width, 900.0f64);
+    // In range: untouched.
+    let ok: Chrome = Chrome::new(width: 1024.0f64, height: 768.0f64);
+    assert sc_approx(ok.width, 1024.0f64);
+    assert sc_approx(ok.height, 768.0f64);
 }
 
 #[test]

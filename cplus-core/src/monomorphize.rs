@@ -312,7 +312,7 @@ pub fn monomorphize(
                 span: Span::new(0, 0),
             },
             variants,
-            is_pub: true,
+            is_export: true,
             attributes: Vec::new(),
             generic_params: Vec::new(),
         };
@@ -326,14 +326,13 @@ pub fn monomorphize(
         let fields: Vec<StructField> = info
             .fields
             .iter()
-            .map(|(name, ty, is_pub)| StructField {
+            .map(|(name, ty, _)| StructField {
                 name: Ident {
                     name: name.clone(),
                     span: Span::new(0, 0),
                 },
                 ty: ty_to_type_ast(ty, type_name_of),
                 span: Span::new(0, 0),
-                is_pub: *is_pub,
                 attributes: Vec::new(),
                 // Accountability (E0510) is checked on the pre-mono source struct
                 // in sema; this post-mono copy never re-runs the check, so the
@@ -350,7 +349,7 @@ pub fn monomorphize(
             // A union is never generic (sema rejects `union U[T]`), so an
             // instantiation is never one.
             is_union: false,
-            is_pub: true,
+            is_export: true,
             // OBS.1: carry the template's attributes onto the instantiation.
             // Codegen re-derives type-level flags (`#[lang]`, `#[watch]`)
             // from this AST; dropping them here made every generic
@@ -1487,10 +1486,9 @@ fn synthesize_fn(
             .map(|p| Param {
                 name: p.name.clone(),
                 ty: subst_type_ast(&p.ty, subst, type_name_of, struct_lookup),
-                mutable: p.mutable,
-                move_: p.move_,
+                is_ref: p.is_ref,
+                is_take: p.is_take,
                 restrict: p.restrict,
-                borrow_: p.borrow_,
                 // A default value on the SIGNATURE is not needed on a
                 // synthesized instance: splicing happens at the call site, in
                 // three places that divide the work by what each pass knows —
@@ -1517,7 +1515,7 @@ fn synthesize_fn(
             struct_lookup,
         ),
         is_declaration: template.is_declaration,
-        is_pub: template.is_pub,
+        is_export: template.is_export,
         is_extern: template.is_extern,
         is_variadic: template.is_variadic,
         attributes: template.attributes.clone(),

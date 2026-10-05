@@ -88,6 +88,8 @@ struct Session {
     // Whether this shell was handed the OSC 133 shim. Answered from the
     // INSTALLATION, not from having seen a mark — see `start`.
     _marks: bool,
+    // The generated zsh shim can set aside the edit buffer for managed runs.
+    _run_prefix: bool,
 }
 
 // WIFEXITED / WEXITSTATUS, plus the 128+signal convention a shell itself
@@ -232,6 +234,13 @@ fn marks_rc() -> text::Text {
     let _w: status::Status = t.append("    precmd_functions+=(__cplus_precmd)\n");
     let _x: status::Status = t.append("  fi\n");
     let _y: status::Status = t.append("fi\n");
+    // A private editor binding avoids assuming the user's Ctrl-U/Ctrl-K keys.
+    // push-input preserves the entire draft, including a secondary prompt,
+    // and reloads it after the managed command has finished. Install after
+    // each real rc file so a login keymap cannot undo the binding.
+    let _prepare: status::Status = t.append("__cplus_prepare_run() { zle .push-input; zle -K main; }\n");
+    let _widget: status::Status = t.append("zle -N __cplus_prepare_run\n");
+    let _keys: status::Status = t.append("for __cplus_map in emacs viins vicmd main; do bindkey -M \"$__cplus_map\" '\\e[991~' __cplus_prepare_run; done\nunset __cplus_map\n");
     return t;
 }
 
@@ -620,6 +629,7 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
         _reaped: false,
         _status: -1 as i32,
         _marks: marks,
+        _run_prefix: marks && shell_text.has_suffix("zsh"),
     });
 }
 
@@ -633,6 +643,12 @@ impl Session {
     // has actually arrived — which is one prompt too late for a caller that
     // runs a command immediately.
     fn expects_marks(this) -> bool { return this._marks; }
+
+    // Only send a private key to a shell whose generated rc installed it.
+    fn managed_prefix(this) -> str {
+        if this._run_prefix { return "\x1b[991~"; }
+        return "";
+    }
 
     fn read_into(this, buffer: *u8, capacity: usize) -> ReadResult {
         if this._closed || capacity == (0 as usize) { return ReadResult::Closed; }

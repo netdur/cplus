@@ -4984,3 +4984,20 @@ fn a_selection_named_at_construction_is_the_whole_state_not_half_of_it() {
         option::Option[list::List]::None => { assert false; }
     }
 }
+
+#[test]
+fn replacing_a_shared_key_respects_the_requested_window() {
+    app::reset_default_for_tests(); mount::uninstall(); mount::install(mount::fr_renderer());
+    var a: facet::Builder = facet::Builder::new();
+    a.add(facet::column(facet::Builder::new(), key: "shared"));
+    var first = facet::column(a, key: "first");
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::column(facet::Builder::new(), key: "shared"));
+    var second = facet::column(b, key: "second");
+    assert mount::mount(#addr_of(first)); assert mount::mount(#addr_of(second));
+    let _old = mount::replace("shared", facet::column(facet::Builder::new(), key: "changed"), within: #addr_of(second));
+    assert mount::node("shared", within: #addr_of(first)).is_not_null();
+    assert mount::node("shared", within: #addr_of(second)).is_null();
+    assert mount::node("changed", within: #addr_of(second)).is_not_null();
+    mount::unmount(#addr_of(second)); mount::unmount(#addr_of(first));
+}

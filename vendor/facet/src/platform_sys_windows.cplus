@@ -31,3 +31,5 @@ extern fn SwitchToThread() -> i32;
 fn ui_thread_id() -> u64 { return { GetCurrentThreadId() } as u64; }
 
 fn yield_once() { let _r: i32 = { SwitchToThread() }; return; }
+
+fn prepare_worker_pipe(fd: i32) -> i32 { return 0; }

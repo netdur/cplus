@@ -1304,7 +1304,7 @@ fn generate_inner(
                     // `call fastcc` against it is an ABI mismatch. It must use
                     // the default cc, matching the archive that defines it.
                     if f.generic_params.is_empty()
-                        && !f.is_pub
+                        && !f.is_export
                         && !f.is_extern
                         && !f.is_declaration
                         && f.name.name != "main"
@@ -1324,7 +1324,7 @@ fn generate_inner(
                         // This set is consulted by BOTH the definition site and every
                         // call site, so excluding them here keeps the two symmetric.
                         if m.generic_params.is_empty()
-                            && !m.is_pub
+                            && !m.is_export
                             && !m.is_declaration
                             && m.name.name != "drop"
                             && !lib_public_name(is_lib, &m.name.name)
@@ -1516,7 +1516,7 @@ fn generate_inner(
     // item order after the resolver merge.
     for item in &program.items {
         if let ItemKind::Function(f) = &item.kind {
-            if f.is_extern && f.is_pub && f.generic_params.is_empty() {
+            if f.is_extern && f.is_export && f.generic_params.is_empty() {
                 let sym = sigs
                     .get(&f.name.name)
                     .and_then(|s| s.link_name.clone())
@@ -2156,7 +2156,7 @@ impl ParamAbi {
         let ty = ty_from(&p.ty, types);
         let mode = if effective_move(p, &ty, types) {
             ParamMode::Take
-        } else if p.mutable {
+        } else if p.is_ref {
             ParamMode::Ref
         } else {
             ParamMode::Borrow
@@ -2186,8 +2186,8 @@ impl ParamAbi {
 fn receiver_mode(r: Receiver) -> ParamMode {
     match r {
         Receiver::Read => ParamMode::Borrow,
-        Receiver::Mut => ParamMode::Ref,
-        Receiver::Move => ParamMode::Take,
+        Receiver::Ref => ParamMode::Ref,
+        Receiver::Take => ParamMode::Take,
     }
 }
 
@@ -3379,9 +3379,9 @@ fn param_passes_by_ptr(p: &ParamAbi, t: &TypeTable) -> bool {
 /// `Vec[T]` and other generic owning containers are `Ty::Struct` after
 /// monomorphization, so they are already covered by the struct arm.
 fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
-    // v0.0.24 de-Rust (#9 stage 3e): only `take` (move_) transfers ownership; a
+    // v0.0.24 de-Rust (#9 stage 3e): only `take` transfers ownership; a
     // bare `x: T` is a read-only borrow (pointer-passed, caller keeps the drop).
-    p.move_ && matches!(ty, Ty::Struct(_) | Ty::Enum(_) | Ty::String) && !is_copy_ty(ty, t)
+    p.is_take && matches!(ty, Ty::Struct(_) | Ty::Enum(_) | Ty::String) && !is_copy_ty(ty, t)
 }
 
 /// issue-03: the per-emitter facts a parameter classification depends on.
@@ -3492,7 +3492,7 @@ fn sret_fragment_for(inner: &str, size: u64, align: u64, name: &str) -> String {
 /// function is cpc-internal, keeps its raw aggregate return, and stays
 /// musttail-able).
 ///
-/// The definition asks `f.is_extern && f.is_pub` where this asks
+/// The definition asks `f.is_extern && f.is_export` where this asks
 /// `sig.is_extern`: an extern IMPORT is a declaration, and its return travels
 /// by the C ABI whether or not the import was written `pub`.
 fn call_wants_c_abi_ret(sig: &FnSig, symbol: &str, md: &ModuleMetadata, types: &TypeTable) -> bool {
@@ -4545,7 +4545,7 @@ fn scan_moves_in_expr(
                     // optimization).
                     for sdef in &types.struct_defs {
                         if let Some(mi) = sdef.methods.get(&m.name) {
-                            if matches!(mi.receiver, Some(crate::ast::Receiver::Move)) {
+                            if matches!(mi.receiver, Some(crate::ast::Receiver::Take)) {
                                 set.insert(recv.clone());
                             }
                         }
@@ -4559,7 +4559,7 @@ fn scan_moves_in_expr(
                     // fine). Same conservative walk, same safety argument.
                     for edef in &types.enum_defs {
                         if let Some(mi) = edef.methods.get(&m.name) {
-                            if matches!(mi.receiver, Some(crate::ast::Receiver::Move)) {
+                            if matches!(mi.receiver, Some(crate::ast::Receiver::Take)) {
                                 set.insert(recv.clone());
                             }
                         }
@@ -6625,8 +6625,7 @@ fn emit_shader_blob_globals(
 /// by `lower::is_const_initializer` and type-checked by sema) into an
 /// LLVM constant operand and writes:
 ///
-///   - `@NAME = constant <ty> <lit>` when `info.is_mut == false`
-///   - `@NAME = global   <ty> <lit>` when `info.is_mut == true`
+///   - `@NAME = global <ty> <lit>` (every `static` is mutable since v0.0.24)
 ///
 /// `str`-typed statics are rejected in sema (panic here since sema
 /// should have caught it) — string-fat-pointer initialization requires
@@ -6716,7 +6715,7 @@ fn emit_statics(
                 let bytes_sym = format!("{qname}.bytes");
                 let bytes_len = emit_cstr(out, &bytes_sym, s);
                 let str_len = bytes_len.saturating_sub(1); // emit_cstr adds NUL terminator
-                let storage = if info.is_mut { "global" } else { "constant" };
+                let storage = "global";
                 let linkage = static_linkage(qname);
                 out.push_str(&format!(
                     "@{qname} = {linkage}{storage} {{ ptr, {us} }} {{ ptr @{bytes_sym}, i64 {str_len} }}\n"
@@ -6740,7 +6739,7 @@ fn emit_statics(
                 "<cpc-bug:static-initializer-has-no-constant-form>".to_string()
             }
         };
-        let storage = if info.is_mut { "global" } else { "constant" };
+        let storage = "global";
         let linkage = static_linkage(qname);
         out.push_str(&format!(
             "@{qname} = {linkage}{storage} {lltype} {llvalue}\n"
@@ -7339,12 +7338,12 @@ fn gen_function(
     // on C+ fns whose call sites the borrow checker has analyzed.
     //
     // Phase 5 Slice 5.C: `export extern fn name(...) { body }` is the export
-    // form (definition). Parser sets `is_pub` only on that shape. Fall
+    // form (definition). Parser sets `is_export` only on that shape. Fall
     // through to normal `define` emission for those — they're regular
     // function bodies that happen to commit to a stable C-callable
     // name. Slice 5.D will adjust the LLVM signature to match the
     // platform C ABI for value-passed aggregates.
-    if f.is_extern && !f.is_pub {
+    if f.is_extern && !f.is_export {
         // Slice 10.FFI.4: some C symbols are already declared in the
         // codegen preamble (printf for `println`, memcmp for `str ==`).
         // Re-declaring them would clash at link time; skip if the
@@ -7501,7 +7500,7 @@ fn gen_function(
     // this is an `export extern fn` export. Indirect returns flow through the
     // existing Slice 1D `sret` path; ≤16-byte aggregate returns coerce
     // to integer-class types; scalar returns pass through.
-    let is_c_export = f.is_extern && f.is_pub;
+    let is_c_export = f.is_extern && f.is_export;
     // C-ABI unification (returns): a by-value COPY struct return uses the C-ABI
     // classification (coerce ≤16B / sret >16B), matching clang, so a fn-pointer
     // returning a struct is a real C function pointer. Gated on `!fastcc`: a
@@ -7653,7 +7652,7 @@ fn gen_function(
             .next()
             .unwrap_or(&f.name.name)
             .starts_with('_');
-    let linkage = if f.name.name == "main" || f.is_pub || f.is_declaration {
+    let linkage = if f.name.name == "main" || f.is_export || f.is_declaration {
         ""
     } else if lib_public || identity_matters {
         "weak_odr "
@@ -7980,7 +7979,7 @@ fn gen_async_method(
     let future_ret_ty = sig.return_type.clone();
     let future_llvm = llvm_ty(&future_ret_ty, types);
 
-    let linkage = if m.is_pub { "" } else { "internal " };
+    let linkage = if m.is_export { "" } else { "internal " };
     // v0.0.8 fix C: non-export async method → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&mangled)
@@ -8228,7 +8227,7 @@ fn gen_gen_method(
     let iter_ret_ty = sig.return_type.clone();
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
-    let linkage = if m.is_pub { "" } else { "internal " };
+    let linkage = if m.is_export { "" } else { "internal " };
     // v0.0.8 fix C: non-export gen method → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&mangled)
@@ -8449,7 +8448,7 @@ fn gen_gen_function(
     let (_inner_size, inner_align) = static_layout(&inner_ty, types).unwrap_or((8, 8));
     let iter_ret_ty = sig.return_type.clone();
 
-    let linkage = if f.name.name == "main" || f.is_pub {
+    let linkage = if f.name.name == "main" || f.is_export {
         ""
     } else {
         "internal "
@@ -8627,7 +8626,7 @@ fn gen_async_function(
     let (inner_size, inner_align) = static_layout(&inner_ty, types).unwrap_or((8, 8));
     let future_ret_ty = sig.return_type.clone();
 
-    let linkage = if f.name.name == "main" || f.is_pub {
+    let linkage = if f.name.name == "main" || f.is_export {
         ""
     } else {
         "internal "
@@ -8923,7 +8922,7 @@ fn gen_enum_method(
     // method was emitted as a define with the synthesized empty body — a
     // function whose whole body is a trap. `Status.is_ok` was the crash.
     let lib_public = lib_public_name(is_lib, &m.name.name);
-    let linkage = if m.is_pub {
+    let linkage = if m.is_export {
         ""
     } else if lib_public {
         "weak_odr "
@@ -9028,7 +9027,7 @@ fn gen_enum_method(
         // take d: H)` leaked the payload and `d` alike (a caller-side double
         // drop of the moved-out shell happened to hide the payload half).
         // bugs/closed/a-take-this-method-on-an-enum-drops-nothing-it-owns.md
-        if matches!(rcv, Receiver::Move) && !state.in_destructor && state.needs_drop(&enum_ty) {
+        if matches!(rcv, Receiver::Take) && !state.in_destructor && state.needs_drop(&enum_ty) {
             state.register_drop_kind("self", &recv_name, DropKind::Enum(enum_id), true);
         }
         next_idx += 1;
@@ -9107,7 +9106,7 @@ fn gen_gen_enum_method(
     let iter_ret_ty = sig.return_type.clone();
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
-    let linkage = if m.is_pub { "" } else { "internal " };
+    let linkage = if m.is_export { "" } else { "internal " };
     // v0.0.8 fix C: non-export gen enum method → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&mangled)
@@ -9577,7 +9576,7 @@ fn gen_method(
     // because both consult this same emptiness.
     let cc_prefix = if is_drop_method {
         ""
-    } else if !m.is_pub && md.is_fastcc(&mangled) {
+    } else if !m.is_export && md.is_fastcc(&mangled) {
         "fastcc "
     } else {
         ""
@@ -9603,7 +9602,7 @@ fn gen_method(
     // the method is reachable from a consumer's object AND so the copy the
     // consumer compiled from a verbatim generic module merges with this one
     // instead of colliding. Mirrors `gen_fn` exactly.
-    let linkage = if m.is_pub && !is_drop_method {
+    let linkage = if m.is_export && !is_drop_method {
         ""
     } else if lib_public {
         "weak_odr "
@@ -9759,7 +9758,7 @@ fn gen_method(
             // the destructor — see `in_destructor` above). For `this` /
             // `ref this` the receiver is non-owning (post-§2.8a
             // pointer-pass), so no drop.
-            if matches!(rcv, Receiver::Move) && !state.in_destructor {
+            if matches!(rcv, Receiver::Take) && !state.in_destructor {
                 // v0.0.14 auto field-drop: extend beyond explicit-`drop` structs
                 // to any owning aggregate (owning fields / owning enum payloads).
                 match &struct_ty {
@@ -9860,7 +9859,7 @@ fn gen_method(
         // receivers become by-value — a by-value receiver isn't a pointer
         // anyway. So the Mut/Move match already excludes the by-value
         // path.)
-        if matches!(rcv, Receiver::Mut | Receiver::Move) {
+        if matches!(rcv, Receiver::Ref | Receiver::Take) {
             // The receiver is `%1` when the method returns via sret, since
             // `%0` is then the sret slot — the same offset the prologue
             // applies. A hard-coded 0 handed the receiver's scope to the
@@ -9924,13 +9923,13 @@ fn gen_builtin_method(
     let recv_ty = crate::sema::builtin_impl_ty(bt).expect("builtin target implies a Ty");
 
     let lib_public = lib_public_name(is_lib, &m.name.name);
-    let cc_prefix = if !m.is_pub && md.is_fastcc(&mangled) {
+    let cc_prefix = if !m.is_export && md.is_fastcc(&mangled) {
         "fastcc "
     } else {
         ""
     };
     let fn_attrs = inline_fn_attr(&m.attributes);
-    let linkage = if m.is_pub {
+    let linkage = if m.is_export {
         ""
     } else if lib_public {
         "weak_odr "
@@ -18313,7 +18312,7 @@ impl<'a> FnState<'a> {
                 .expect("sema validated")
                 .clone();
             // Move-receiver flip mirrors the struct path below.
-            if matches!(info.receiver, Some(Receiver::Move)) {
+            if matches!(info.receiver, Some(Receiver::Take)) {
                 if let ExprKind::Ident(n) = &receiver.kind {
                     self.mark_moved(n);
                 }
@@ -18377,7 +18376,7 @@ impl<'a> FnState<'a> {
         // slot above, so drop it at end of statement. A `take this` (Move) receiver
         // is consumed by the callee (never registered); a place receiver (a named
         // local/field) is owned by its binding, not by us.
-        if !matches!(rcv, Receiver::Move)
+        if !matches!(rcv, Receiver::Take)
             && !Self::is_place_expr(receiver)
             && self.needs_drop(&recv_ty)
         {
@@ -18489,7 +18488,7 @@ impl<'a> FnState<'a> {
 
         // `take this` consumes the receiver: flip its drop flag if the
         // receiver expression was a plain Ident bound as a Drop value.
-        if matches!(rcv, Receiver::Move) {
+        if matches!(rcv, Receiver::Take) {
             if let ExprKind::Ident(name) = &receiver.kind {
                 self.mark_moved(name);
             }
@@ -19219,9 +19218,9 @@ impl<'a> FnState<'a> {
                 None => {
                     // A void RHS. A desugared builder-block MUTATOR modifier
                     // (`__builder_item = __builder_item.m(args)` where `m` is
-                    // `ref self -> ()`) that sema accepted as an in-place mutation:
+                    // `ref this -> ()`) that sema accepted as an in-place mutation:
                     // `gen_expr` above already emitted the call, which mutated the
-                    // item through its `ref self` receiver — there is no value to
+                    // item through its `ref this` receiver — there is no value to
                     // store. Sema only permits a unit RHS here for the
                     // `__builder_item` temp, so this can't silently drop a real
                     // store in user code.
@@ -28684,7 +28683,7 @@ fn main() -> i32 {\n\
 
     #[test]
     fn method_mut_self_plus_mut_param_get_scopes() {
-        // `ref this` (Receiver::Mut → noalias-shaped) and a non-Copy ref
+        // `ref this` (Receiver::Ref → noalias-shaped) and a non-Copy ref
         // param both participate, with a non-Copy local as the sound
         // disjointness partner (bug-03).
         let ir = gen_src(

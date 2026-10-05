@@ -463,8 +463,8 @@ fn ends_operand(t: Option<&TokenKind>) -> bool {
         t,
         Some(
             Ident(_)
-                | SelfLower
-                | SelfUpper
+                | ThisLower
+                | ThisUpper
                 | Int(..)
                 | Float(..)
                 | Str(..)
@@ -547,7 +547,7 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
     if matches!(curr, LParen | LBracket)
         && matches!(
             prev,
-            Ident(_) | SelfLower | SelfUpper | RParen | RBracket | RBrace | Int(..) | Float(..)
+            Ident(_) | ThisLower | ThisUpper | RParen | RBracket | RBrace | Int(..) | Float(..)
         ) {
             return false;
         }

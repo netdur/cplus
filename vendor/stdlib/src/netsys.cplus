@@ -46,7 +46,7 @@ fn so_nosigpipe() -> i32 { return 0x1022 as i32; }
 // PER SOCKET, deliberately — not a process-wide `signal(SIGPIPE, SIG_IGN)`.
 // A library that changes global signal disposition makes that decision for
 // the whole program, including code that never asked. Darwin has the
-// socket-scoped answer (`SO_NOSIGPIPE`), Linux has the call-scoped one
+// socket-scoped answer (`SO_NOSIGPIPE`) plus call-scoped `MSG_NOSIGNAL`; Linux has the call-scoped one
 // (`MSG_NOSIGNAL`, applied inside `send_fd` there), and Windows has no
 // SIGPIPE at all. Each platform's variant of this file implements whichever
 // it has, so callers get one portable line.
@@ -117,6 +117,7 @@ fn sa_family_byte1() -> u8 { return 2 as u8; }
 // Winsock (recv/send/closesocket/ioctlsocket) instead.
 extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn send(fd: i32, buf: *u8, count: usize, flags: i32) -> isize;
 extern fn close(fd: i32) -> i32;
 extern fn setsockopt(fd: i32, level: i32, optname: i32, optval: *u8, optlen: u32) -> i32;
 // fcntl is variadic in libc — the third arg is read from the variadic area,
@@ -129,7 +130,9 @@ fn recv_fd(fd: i32, buf: *u8, count: usize) -> isize {
 }
 
 fn send_fd(fd: i32, buf: *u8, count: usize) -> isize {
-    return { write(fd, buf, count) };
+    // Every send owns its signal policy, including a freshly accepted socket
+    // that has not had SO_NOSIGPIPE configured. Darwin supports MSG_NOSIGNAL.
+    return { send(fd, buf, count, 0x80000 as i32) };
 }
 
 fn close_fd(fd: i32) -> i32 {

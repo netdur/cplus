@@ -39,6 +39,7 @@ import "agent_core/surface" as surface;
 import "agent_core/auth" as auth;
 import "agent_core/events" as events;
 import "agent_core/backend" as mcpb;
+import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 
 fn null() -> *u8 {
@@ -82,6 +83,48 @@ fn perform_on_main(target: *u8, action: *u8, arg: *u8) {
         arg,
         1,
     );
+}
+
+// A focused NSTextField borrows the window's field editor. Write both copies
+// on the main thread so ending editing cannot restore the previous string.
+// A click gives its window the keyboard, just as a mouse click does.
+fn cplus_activate_owner(view: *u8, _cmd: *u8, unused: *u8) {
+    let w = rt::msg_id(view, rt::sel(#str_ptr("window\0")));
+    if w.is_null() { return; }
+    ak::Application::shared_application().activate_ignoring_other_apps(true);
+    rt::msg_void_id(w, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), null());
+}
+fn activate_owner_on_main(view: *u8) {
+    let cls = rt::get_class(#str_ptr("NSView\0"));
+    rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentActivateOwner:\0")), cplus_activate_owner, #str_ptr("v@:@\0"));
+    perform_on_main(view, rt::sel(#str_ptr("cplusAgentActivateOwner:\0")), null());
+}
+
+fn cplus_set_text_value(view: *u8, _cmd: *u8, value: *u8) {
+    // Popups select by item title; setStringValue: changes no selection.
+    // The ordinary value-control notification below then tells the app.
+    if is_kind(view, #str_ptr("NSPopUpButton\0")) {
+        rt::msg_void_id(view, rt::sel(#str_ptr("selectItemWithTitle:\0")), value);
+        return;
+    }
+    if is_kind(view, #str_ptr("NSTextView\0")) {
+        rt::msg_void_id(view, rt::sel(#str_ptr("setString:\0")), value);
+        return;
+    }
+    rt::msg_void_id(view, rt::sel(#str_ptr("setStringValue:\0")), value);
+    if responds_to(view, #str_ptr("currentEditor\0")) {
+        let editor = rt::msg_id(view, rt::sel(#str_ptr("currentEditor\0")));
+        if editor.is_not_null() {
+            rt::msg_void_id(editor, rt::sel(#str_ptr("setString:\0")), value);
+        }
+    }
+}
+fn ensure_text_method() {
+    let cls = rt::get_class(#str_ptr("NSView\0"));
+    if cls.is_not_null() {
+        rt::add_method_action(cls, rt::sel(#str_ptr("cplusSetTextValue:\0")),
+            cplus_set_text_value, #str_ptr("v@:@\0"));
+    }
 }
 
 // scroll_to passes an NSRect (a struct), which performSelectorOnMainThread
@@ -1045,11 +1088,13 @@ fn view_a11y_string(view: *u8, prop: str) -> text::Text {
 //           behind them is the desync that made `set_text` a bug once already.
 fn click_part(v: *u8, part: u32) -> surface::Outcome {
     if part == PART_SEARCH {
+        activate_owner_on_main(v);
         ensure_send_action_method();
         perform_on_main(v, rt::sel(#str_ptr("cplusAgentSendAction:\0")), null());
         return surface::Outcome::Allowed;
     }
     if part == PART_CLEAR {
+        activate_owner_on_main(v);
         perform_on_main(v, rt::sel(#str_ptr("setStringValue:\0")), bridge::nsstring(""));
         notify_text_changed_on_main(v);
         // The cancel glyph also RUNS the (now empty) search — that is what
@@ -1065,6 +1110,7 @@ fn click_part(v: *u8, part: u32) -> surface::Outcome {
         // cell's own `performClick:` takes.
         let table: *u8 = enclosing_table(v);
         if is_null(table) { return surface::Outcome::NotActionable; }
+        if can_select_row_of(v) { activate_owner_on_main(v); }
         if toggle_expand_row(table, v) { return surface::Outcome::Allowed; }
         return surface::Outcome::NotActionable;
     }
@@ -1827,6 +1873,7 @@ impl Surface {
                     if select_row_of(v) { return surface::Outcome::Allowed; }
                     return surface::Outcome::NoHandler;
                 }
+                activate_owner_on_main(v);
                 perform_on_main(v, rt::sel(#str_ptr("performClick:\0")), null());
                 return surface::Outcome::Allowed;
             }
@@ -1932,12 +1979,8 @@ impl Surface {
                 // sets its content via `setString:`, NSControl via
                 // `setStringValue:` (which a scroll view silently ignores).
                 let tv: *u8 = text_target(v);
-                let sel_name: *u8 = if is_kind(tv, #str_ptr("NSTextView\0")) {
-                    #str_ptr("setString:\0")
-                } else {
-                    #str_ptr("setStringValue:\0")
-                };
-                perform_on_main(tv, rt::sel(sel_name), ns);
+                ensure_text_method();
+                perform_on_main(tv, rt::sel(#str_ptr("cplusSetTextValue:\0")), ns);
                 // ...and tell the app, for controls whose contract is "you are
                 // told when I change". `click` fires the handler it authorizes;
                 // without this, `set_text` was the one verb that drove a control
@@ -2059,7 +2102,7 @@ fn ctext(s: str) -> text::Text {
 // describe → the neutral node list. Converts AppKit's f64 `rt::Rect` frame to
 // the neutral `Rect`, reading each owned node through a pointer and cloning its
 // `Text`s (never moving them out of the Vec, which would double-free).
-fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+fn mcp_describe_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
     let local: vec::Vec[AppKitNode] = (*s).describe(grant);
@@ -2097,20 +2140,20 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     return out;
 }
 
-fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+fn mcp_click_now(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).click(grant, id);
 }
 
-fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
+fn mcp_set_text_now(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).set_text(grant, id, value, base);
 }
 
 // AppKit's navigate is scroll-into-view (Win32/GTK focus instead).
-fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+fn mcp_navigate_now(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).scroll_to(grant, id);
@@ -2118,7 +2161,7 @@ fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
 
 // Refreshes first like every other verb: "is this covered" is a question about
 // the tree as it is NOW, and a stale snapshot would answer about the old one.
-fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
+fn mcp_hit_test_now(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).hit_test(grant, id);
@@ -2280,6 +2323,7 @@ fn toggle_expand_row(table: *u8, v: *u8) -> bool {
 fn select_row_of(v: *u8) -> bool {
     let table: *u8 = enclosing_table(v);
     if is_null(table) { return false; }
+    if can_select_row_of(v) { activate_owner_on_main(v); }
     if toggle_expand_row(table, v) { return true; }
     let row: i64 = rt::msg_i64_id(table, rt::sel(#str_ptr("rowForView:\0")), v);
     if row < 0 { return false; }
@@ -2487,7 +2531,7 @@ fn refresh_surface(p: *u8) {
 // auto-keyed chrome is pruned; frames and classes are omitted so the agent's
 // context stays small. describe_ui's DEFAULT view ("full" opts into
 // mcp_describe above).
-fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
     let views: vec::Vec[identity::NodeView] = { (*s).reg.describe(grant) };
@@ -2562,13 +2606,13 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     return out;
 }
 
-fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
+fn mcp_set_caret_now(p: *u8, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).set_caret(grant, id, at, length);
 }
 
-fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
+fn mcp_read_runs_now(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).read_runs(grant, id);
@@ -2716,6 +2760,76 @@ fn submenu_titled(root: *u8, title: str) -> *u8 {
         i = i +% 1;
     }
     return null();
+}
+
+// A view getter may run layout (NSTableView.frame does), and reading between
+// separate main-thread hops races UI replacement. Keep refresh, authorization,
+// native reads and the action together on AppKit's thread. Each caller owns its
+// request until waitUntilDone returns; NSValue carries only its address.
+struct McpRequest {
+    opaque surface_ptr: *u8, grant: auth::Grant, verb: u32,
+    id: text::Text, value: text::Text, base: u64, at: u64, length: u64,
+    opaque nodes: *vec::Vec[mcpb::UiNode], outcome: surface::Outcome,
+    opaque hit: *surface::HitTest, opaque runs: *surface::Runs,
+}
+fn cplus_agent_request(receiver: *u8, cmd: *u8, boxed: *u8) {
+    let c: *McpRequest = rt::msg_id(boxed, rt::sel(#str_ptr("pointerValue\0"))) as *McpRequest;
+    if c.is_null() { return; }
+    let p = (*c).surface_ptr; let grant = (*c).grant;
+    if (*c).verb == 0 { let out = (*c).nodes; (*out) = mcp_describe_now(p, grant); }
+    else if (*c).verb == 1 { let out = (*c).nodes; (*out) = mcp_describe_exposed_now(p, grant); }
+    else if (*c).verb == 2 { (*c).outcome = mcp_click_now(p, grant, (*c).id.view()); }
+    else if (*c).verb == 3 { (*c).outcome = mcp_set_text_now(p, grant, (*c).id.view(), (*c).value.view(), (*c).base); }
+    else if (*c).verb == 4 { (*c).outcome = mcp_navigate_now(p, grant, (*c).id.view()); }
+    else if (*c).verb == 5 { let out = (*c).hit; (*out) = mcp_hit_test_now(p, grant, (*c).id.view()); }
+    else if (*c).verb == 6 { (*c).outcome = mcp_set_caret_now(p, grant, (*c).id.view(), (*c).at, (*c).length); }
+    else if (*c).verb == 7 { let out = (*c).runs; (*out) = mcp_read_runs_now(p, grant, (*c).id.view()); }
+}
+#[keeps(nothing)]
+fn invoke_request(c: *McpRequest) {
+    let app = ak::Application::shared_application().raw();
+    let selector = rt::sel(#str_ptr("cplusAgentRequest:\0"));
+    let boxed = rt::msg_id_id(rt::get_class(#str_ptr("NSValue\0")), rt::sel(#str_ptr("valueWithPointer:\0")), c as *u8);
+    rt::add_method_action(rt::get_class(#str_ptr("NSApplication\0")), selector, cplus_agent_request, #str_ptr("v@:@\0"));
+    perform_on_main(app, selector, boxed);
+}
+fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    var c = #zero::[McpRequest](); c.surface_ptr = p; c.grant = grant; c.verb = 0;
+    var out = vec::new::[mcpb::UiNode](); c.nodes = #addr_of(out);
+    invoke_request(#addr_of(c)); return out;
+}
+fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    var c = #zero::[McpRequest](); c.surface_ptr = p; c.grant = grant; c.verb = 1;
+    var out = vec::new::[mcpb::UiNode](); c.nodes = #addr_of(out);
+    invoke_request(#addr_of(c)); return out;
+}
+fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+    var c = #zero::[McpRequest](); c.surface_ptr = p; c.grant = grant; c.verb = 2; c.id = text::from_str(id);
+    invoke_request(#addr_of(c)); return c.outcome;
+}
+fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
+    var c = #zero::[McpRequest](); c.surface_ptr = p; c.grant = grant; c.verb = 3;
+    c.id = text::from_str(id); c.value = text::from_str(value); c.base = base;
+    invoke_request(#addr_of(c)); return c.outcome;
+}
+fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+    var c = #zero::[McpRequest](); c.surface_ptr = p; c.grant = grant; c.verb = 4; c.id = text::from_str(id);
+    invoke_request(#addr_of(c)); return c.outcome;
+}
+fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
+    var c = #zero::[McpRequest](); c.surface_ptr = p; c.grant = grant; c.verb = 5; c.id = text::from_str(id);
+    var out = surface::hit_test_refused(surface::Outcome::NotFound, true); c.hit = #addr_of(out);
+    invoke_request(#addr_of(c)); return out;
+}
+fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
+    var c = #zero::[McpRequest](); c.surface_ptr = p; c.grant = grant; c.verb = 6;
+    c.id = text::from_str(id); c.at = at; c.length = length;
+    invoke_request(#addr_of(c)); return c.outcome;
+}
+fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
+    var c = #zero::[McpRequest](); c.surface_ptr = p; c.grant = grant; c.verb = 7; c.id = text::from_str(id);
+    var out = surface::runs_refused(surface::Outcome::NotFound, true); c.runs = #addr_of(out);
+    invoke_request(#addr_of(c)); return out;
 }
 
 fn mcp_backend() -> mcpb::Backend {

@@ -108,6 +108,8 @@ impl Widget {
 
     // Run `command`. Returns the id it will be given, or 0 if it was not sent
     // because the session is stopped or the previous command is still running.
+    // The integrated zsh editor preserves unfinished input while this command
+    // runs, then restores that draft at the next prompt.
     fn run(this, command: str) -> u64 {
         return this._backend.run(command);
     }

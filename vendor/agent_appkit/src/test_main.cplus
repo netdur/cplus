@@ -18,7 +18,6 @@ import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "stdlib/io" as io;
 import "objc/synthesis" as synth;
 import "facet/facet" as core;
 import "facet/props" as props;
@@ -1751,6 +1750,12 @@ fn a_press_past_the_threshold_becomes_a_drag() {
     // A second drag in the same press starts nothing more.
     rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 180.0, 60.0).raw());
     rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 180.0, 60.0).raw());
+    // The native session consumes events from NSApplication, independently
+    // of the view's press state. Deliver its release there as well, or the
+    // next performClick: enters the still-running drag tracking loop.
+    ak::Application::shared_application().post_event(mouse_at(win, ak::EventType::LeftMouseUp, 180.0, 60.0), true);
+    pump_main_runloop_once();
+    win.close();
     { pool_pop(pool); }
 }
 
@@ -2811,4 +2816,120 @@ fn a_relist_with_nothing_realised_is_a_node_with_no_rows() {
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     assert nodes.count() == 3;
     app::reset_default_for_tests();
+}
+
+#[test]
+fn an_agent_write_survives_ending_a_focused_fields_editing_session() {
+    let win = fixture_window(300.0, 200.0);
+    let content = content_of(win);
+    let f = ak::TextField::new_with_frame(rt::Rect { x: 10.0, y: 50.0, w: 200.0, h: 24.0 });
+    f.as_control().set_string_value("old value");
+    content.add_subview(f.as_view());
+    agent::set_agent_id(f.as_view().raw(), "focused-field");
+    var root: core::Node = mirror(content.raw());
+    mount_tree(#addr_of(root), win.raw());
+    var s = agent::open(win.raw());
+    let _focused = win.make_first_responder(ak::Responder::from_raw(f.as_view().raw()));
+    let ed = rt::msg_id(f.as_view().raw(), rt::sel(#str_ptr("currentEditor\0")));
+    assert ed.is_not_null();
+    assert surface::outcome_eq(s.set_text(auth::operator(), "focused-field", "new value", 0),
+        surface::Outcome::Allowed);
+    assert bridge::to_text(rt::msg_id(ed, rt::sel(#str_ptr("string\0")))).view() == "new value";
+    rt::msg_void_id(win.raw(), rt::sel(#str_ptr("endEditingFor:\0")), 0 as *u8);
+    assert f.as_control().string_value().view() == "new value";
+}
+
+#[test]
+fn a_click_in_another_window_orders_its_owner_in_front() {
+    app::reset_default_for_tests();
+    let app = ak::Application::shared_application();
+    let _policy = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
+    app.finish_launching();
+    let a = fixture_window(300.0f64, 200.0f64); let b = fixture_window(300.0f64, 200.0f64);
+    let button = add_button(content_of(b), "focus-project-b");
+    agent::set_agent_id(button.as_view().raw(), "focus-project-b");
+    var root: core::Node = mirror(content_of(b).raw());
+    mount_tree(#addr_of(root), b.raw());
+    a.make_key_and_order_front(0 as *u8);
+    var surf = agent::open(b.raw());
+    assert surface::outcome_eq(surf.click(auth::operator(), "focus-project-b"), surface::Outcome::Allowed);
+    let ordered = rt::msg_id(app.raw(), rt::sel(#str_ptr("orderedWindows\0")));
+    let front = rt::msg_id_i64(ordered, rt::sel(#str_ptr("objectAtIndex:\0")), 0);
+    assert front == b.raw();
+    a.close(); b.close();
+    app::reset_default_for_tests();
+}
+
+
+static POPUP_CHANGES: i32 = 0;
+fn on_popup_text_changed(sender: *u8, ctx: *u8) { POPUP_CHANGES = POPUP_CHANGES + 1; }
+#[test]
+fn set_text_selects_a_popup_item_and_notifies_the_app() {
+    let win = fixture_window(320.0, 200.0);
+    let content = content_of(win);
+    let picker = ak::PopUpButton::new(rt::Rect { x: 10.0, y: 10.0, w: 200.0, h: 24.0 }, false);
+    picker.add_item_with_title("Claude Code");
+    picker.add_item_with_title("Codex");
+    content.add_subview(picker.as_view());
+    akx::set_control_action_ctx(picker.as_control(), on_popup_text_changed, null_ctx());
+    agent::set_agent_id(picker.as_view().raw(), "provider");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    POPUP_CHANGES = 0;
+    assert surface::outcome_eq(s.set_text(auth::operator(), "provider", "Codex", s.text_version("provider")), surface::Outcome::Allowed);
+    assert picker.index_of_selected_item() == 1;
+    assert POPUP_CHANGES == 1;
+    assert surface::outcome_eq(s.set_text(auth::operator(), "provider", "Claude Code", s.text_version("provider")), surface::Outcome::Allowed);
+    assert picker.index_of_selected_item() == 0;
+    assert POPUP_CHANGES == 2;
+}
+
+// A native getter can trigger layout, so even a read belongs on AppKit's
+// thread. The MCP worker must never ask a live view directly after refreshing.
+static READ_PROBE_CLASS: *u8 = 0 as *u8;
+static READ_PROBE_SURFACE: *u8 = 0 as *u8;
+static READ_PROBE_OFF_MAIN: i32 = 0;
+static READ_PROBE_DONE: i32 = 0;
+static READ_PROBE_NODES: usize = 0;
+fn read_probe_string(view: *u8, cmd: *u8) -> *u8 {
+    if rt::msg_i8(rt::get_class(#str_ptr("NSThread\0")), rt::sel(#str_ptr("isMainThread\0"))) == 0 {
+        READ_PROBE_OFF_MAIN = READ_PROBE_OFF_MAIN + 1;
+    }
+    return bridge::nsstring("probe");
+}
+fn read_probe_worker() -> i32 {
+    let backend = agent::mcp_backend();
+    let full = (backend.describe)(READ_PROBE_SURFACE, auth::operator());
+    let lean = (backend.describe_exposed)(READ_PROBE_SURFACE, auth::operator());
+    READ_PROBE_NODES = full.count() +% lean.count();
+    READ_PROBE_DONE = 1;
+    return 0;
+}
+#[test]
+fn mcp_snapshots_read_native_views_on_the_main_thread() {
+    if READ_PROBE_CLASS.is_null() {
+        READ_PROBE_CLASS = synth::allocate_class_pair(rt::get_class(#str_ptr("NSTextField\0")), #str_ptr("AgentReadThreadProbe\0"), 0);
+        let _added = synth::add_method_id_0id(READ_PROBE_CLASS, rt::sel(#str_ptr("stringValue\0")), read_probe_string, #str_ptr("@@:\0"));
+        synth::register_class_pair(READ_PROBE_CLASS);
+    }
+    let win = fixture_window(320.0, 200.0);
+    let field = ak::TextField::from_raw(synth::alloc_init_class(READ_PROBE_CLASS));
+    content_of(win).add_subview(field.as_view());
+    agent::set_agent_id(field.as_view().raw(), "read-probe");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
+    var surf = agent::open(win.raw());
+    READ_PROBE_SURFACE = #addr_of(surf) as *u8;
+    READ_PROBE_OFF_MAIN = 0; READ_PROBE_DONE = 0; READ_PROBE_NODES = 0;
+    let worker: fn() -> i32 = read_probe_worker;
+    var h: thread::JoinHandle[i32] = thread::spawn(worker);
+    var spins: i32 = 0;
+    while READ_PROBE_DONE == 0 && spins < 600 { pump_main_runloop_once(); spins = spins + 1; }
+    let _rc = h.join();
+    assert READ_PROBE_DONE == 1;
+    assert READ_PROBE_NODES > 0;
+    assert READ_PROBE_OFF_MAIN == 0;
+    READ_PROBE_SURFACE = 0 as *u8;
+    win.close(); app::reset_default_for_tests();
 }

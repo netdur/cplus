@@ -39,3 +39,14 @@ extern fn sched_yield_raw() -> i32;
 fn ui_thread_id() -> u64 { return { pthread_self_raw() }; }
 
 fn yield_once() { let _r: i32 = { sched_yield_raw() }; return; }
+
+// Darwin's per-descriptor pipe policy reports EPIPE without sending SIGPIPE.
+// Keep this out of the process-wide signal policy and the portable service.
+#[link_name = "fcntl"]
+extern fn fcntl_worker(fd: i32, cmd: i32, ...) -> i32;
+fn prepare_worker_pipe(fd: i32) -> i32 {
+    if #platform() == "macos" || #platform() == "ios" {
+        return { fcntl_worker(fd, 73, 1) }; // F_SETNOSIGPIPE
+    }
+    return 0;
+}

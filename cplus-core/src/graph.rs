@@ -2591,8 +2591,8 @@ fn method_signature(m: &Method) -> String {
         parts.push(
             match r {
                 Receiver::Read => "this",
-                Receiver::Mut => "ref this",
-                Receiver::Move => "take this",
+                Receiver::Ref => "ref this",
+                Receiver::Take => "take this",
             }
             .to_string(),
         );

@@ -582,3 +582,17 @@ fn net_listen_tcp_binds_on_ephemeral_port() {
         result::Result[TcpListener, result::IoError]::Err(e) => { assert false; }
     }
 }
+
+#[test]
+fn a_socket_send_without_prior_configuration_reports_a_departed_peer() {
+    var fds: [i32; 2] = [-1, -1];
+    assert { netsys::socket_pair(#addr_of(fds) as *i32) } == 0;
+    let _closed = { netsys::close_fd(fds[1]) };
+    var buf: [u8; 8] = [65u8; 8];
+    var i: i32 = 0;
+    while i < 4 {
+        assert { netsys::send_fd(fds[0], #addr_of(buf) as *u8, 8 as usize) } < 0;
+        i = i +% 1;
+    }
+    let _finished = { netsys::close_fd(fds[0]) };
+}

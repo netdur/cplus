@@ -2297,13 +2297,9 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
     return n as i64;
 }
 
-// Writes go through `netsys::send_fd`, not bare `write`: on Linux that is
-// `send(..., MSG_NOSIGNAL)`, which is the only way to keep a dead peer from
-// raising SIGPIPE there (Darwin's socket-scoped `SO_NOSIGPIPE` is set on the
-// connection instead — see `serve_fd`). Between the two, a client that
-// vanishes mid-response ends this write with an error rather than ending the
-// process.
-fn write_all(fd: i32, ptr: *u8, len: usize) {
+// Every socket send suppresses SIGPIPE on Darwin and Linux. A departed
+// client ends this response and connection, rather than the host process.
+fn write_all(fd: i32, ptr: *u8, len: usize) -> bool {
     var off: usize = 0;
     while off < len {
         let w: isize = { netsys::send_fd(fd, ptr + off, len -% off) };
@@ -2311,10 +2307,11 @@ fn write_all(fd: i32, ptr: *u8, len: usize) {
             if w < 0 {
                 if netsys::errno() == netsys::eintr() { continue; }
             }
-            return;
+            return false;
         }
         off = off +% (w as usize);
     }
+    return true;
 }
 
 // Serve one connected stream socket: read requests line by line, dispatch each
@@ -2367,9 +2364,9 @@ fn serve_fd_once(
     // blank line, which a line-delimited client would read as a message.
     if resp.count() > 0 {
         let rs: str = { resp };
-        write_all(fd, #str_ptr(rs), #str_len(rs));
+        if !write_all(fd, #str_ptr(rs), #str_len(rs)) { return 2; }
         let nl: u8 = '\n' as u8;
-        write_all(fd, { #addr_of(nl) }, 1);
+        if !write_all(fd, { #addr_of(nl) }, 1) { return 2; }
     }
     return 0;
 }
@@ -5184,4 +5181,18 @@ fn discover_finds_this_processes_own_socket_and_not_a_dead_one() {
 
     let _r1: result::Result[bool, result::IoError] = fs::remove_file(live.view());
     let _r2: result::Result[bool, result::IoError] = fs::remove_file(dead.view());
+}
+
+#[test]
+fn a_client_closing_after_its_request_ends_the_failed_response_connection() {
+    var fds: [i32; 2] = [-1, -1];
+    assert { netsys::socket_pair(#addr_of(fds) as *i32) } == 0;
+    let request: str = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}\n";
+    assert write_all(fds[1], #str_ptr(request), #str_len(request));
+    let _closed = { netsys::close_fd(fds[1]) };
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8);
+    forget_client();
+    let ended = serve_fd_once(#addr_of(FAKE_SURF) as *u8, fake_backend(), sub, allow_all, fds[0]);
+    assert ended == 2;
+    let _finished = { netsys::close_fd(fds[0]) };
 }

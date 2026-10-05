@@ -123,6 +123,9 @@ interface Resource {
     fn apply(ref this, req: *Request);
 }
 
+// Read on main before a dependent command, including queued mutations.
+fn busy[R: Resource](ref r: R) -> bool { return (*r.state())._busy; }
+
 // ---- the verbs ---------------------------------------------------------------
 
 // GET — refresh. No arguments: the collection. `id:` one row. `q:` a query,
@@ -544,6 +547,7 @@ fn headless_verbs_are_the_portable_noop() {
     assert services::jobs_settled();
     assert TESTR.rows.count() == (0 as usize);
     assert TESTR.st._busy == false;
+    assert !busy(TESTR);
     assert TESTR.st._queue.count() == (0 as usize);
     assert TESTR.log.count() == (0 as usize);
 }
@@ -563,6 +567,7 @@ fn a_get_lands_the_rows_and_broadcasts_loaded() {
     assert SEEN_VERB == verb_code(Verb::Loaded);
     assert THEN_FIRED == (1 as i64);
     assert TESTR.st._busy == false;
+    assert !busy(TESTR);
     let _c: bool = sub.cancel();
     services::uninstall_scheduler();
 }
@@ -631,6 +636,7 @@ fn verbs_queue_in_call_order_while_a_flight_is_up() {
     let on_then: fn(*u8) = record_then;
     get(TESTR, q: "1", then: on_then);             // queued behind it
     assert TESTR.st._busy;
+    assert busy(TESTR);
     assert TESTR.st._queue.count() == (2 as usize);
     hold_lower();
     settle();
@@ -639,6 +645,7 @@ fn verbs_queue_in_call_order_while_a_flight_is_up() {
     // The query ran after the create, so it saw the new row.
     assert ids_are({ #addr_of(TESTR.hits) }, 1 as i64, 5 as i64, 0 as i64, 2 as usize);
     assert TESTR.st._busy == false;
+    assert !busy(TESTR);
     assert TESTR.st._queue.count() == (0 as usize);
     services::uninstall_scheduler();
 }

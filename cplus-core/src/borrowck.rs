@@ -976,7 +976,7 @@ fn param_is_effective_move(
     // bases — so passing a `take v: Vec[T]` consumes it, and a move-while-view
     // is caught. Non-Drop generics still answer `false` there, which is where
     // the generic-param arm below takes over.
-    p.move_
+    p.is_take
         && matches!(&p.ty.kind, TypeKind::Path(_) | TypeKind::Generic { .. })
         && (oracle.definitely_non_copy(&p.ty) || type_mentions_name(&p.ty, generic_names))
 }
@@ -1110,7 +1110,7 @@ impl SigTable {
                                 .iter()
                                 .map(|p| param_is_effective_move(p, oracle, &generic_names))
                                 .collect(),
-                            param_muts: f.params.iter().map(|p| p.mutable).collect(),
+                            param_muts: f.params.iter().map(|p| p.is_ref).collect(),
                             computed_detaches: Vec::new(),
                             async_frame_borrows: async_frame_borrows(
                                 f.is_async,
@@ -1219,15 +1219,15 @@ impl SigTable {
                             FnEntry {
                                 receiver_claim: m.receiver.as_ref().map(|r| match r {
                                     crate::ast::Receiver::Read => ClaimKind::Shared,
-                                    crate::ast::Receiver::Mut => ClaimKind::Exclusive,
-                                    crate::ast::Receiver::Move => ClaimKind::Move,
+                                    crate::ast::Receiver::Ref => ClaimKind::Exclusive,
+                                    crate::ast::Receiver::Take => ClaimKind::Move,
                                 }),
                                 param_moves: m
                                     .params
                                     .iter()
                                     .map(|p| param_is_effective_move(p, oracle, &generic_names))
                                     .collect(),
-                                param_muts: m.params.iter().map(|p| p.mutable).collect(),
+                                param_muts: m.params.iter().map(|p| p.is_ref).collect(),
                                 computed_detaches: Vec::new(),
                                 async_frame_borrows: async_frame_borrows(
                                     m.is_async,
@@ -1238,7 +1238,7 @@ impl SigTable {
                                     && matches!(
                                         m.receiver,
                                         Some(crate::ast::Receiver::Read)
-                                            | Some(crate::ast::Receiver::Mut)
+                                            | Some(crate::ast::Receiver::Ref)
                                     ),
                                 return_borrow,
                                 return_borrow_flavor,
@@ -2031,7 +2031,7 @@ fn compute_receiver_flows(prog: &Program, oracle: &CopyOracle, sigs: &mut SigTab
                         continue;
                     };
                     let is_source = entry.param_view_flags.get(i).copied().unwrap_or(false)
-                        || (!p.move_
+                        || (!p.is_take
                             && matches!(&p.ty.kind, TypeKind::Path(_) | TypeKind::Generic { .. }));
                     if is_source && i < 64 {
                         ctx.taint.insert(p.name.name.clone(), 1u64 << i);
@@ -2106,7 +2106,7 @@ fn compute_receiver_flows(prog: &Program, oracle: &CopyOracle, sigs: &mut SigTab
                     continue;
                 };
                 let is_source = entry.param_view_flags.get(i).copied().unwrap_or(false)
-                    || (!p.move_
+                    || (!p.is_take
                         && matches!(&p.ty.kind, TypeKind::Path(_) | TypeKind::Generic { .. }));
                 if is_source && i < 64 {
                     ctx.taint.insert(p.name.name.clone(), 1u64 << i);
@@ -2129,7 +2129,7 @@ fn compute_receiver_flows(prog: &Program, oracle: &CopyOracle, sigs: &mut SigTab
             ctx.ret_bits |= tail;
             let mut flows: Vec<(usize, usize)> = Vec::new();
             for (j, pj) in f.params.iter().enumerate() {
-                if !(pj.mutable && !pj.move_) {
+                if !(pj.is_ref && !pj.is_take) {
                     continue;
                 }
                 let bits = ctx.taint.get(&pj.name.name).copied().unwrap_or(0);
@@ -2235,7 +2235,7 @@ fn async_frame_borrows(is_async: bool, params: &[Param], oracle: &CopyOracle) ->
     }
     params
         .iter()
-        .map(|p| !p.move_ && oracle.definitely_non_copy(&p.ty))
+        .map(|p| !p.is_take && oracle.definitely_non_copy(&p.ty))
         .collect()
 }
 
@@ -2323,7 +2323,7 @@ fn detect_fn_view(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSourc
     }
     let mut indices: Vec<u32> = Vec::new();
     for (i, p) in f.params.iter().enumerate() {
-        if p.move_ {
+        if p.is_take {
             continue;
         }
         if !(oracle.definitely_non_copy(&p.ty) || oracle.type_contains_view(&p.ty)) {
@@ -2375,7 +2375,7 @@ fn detect_method_view(
     m: &Method,
     oracle: &CopyOracle,
 ) -> Option<ReturnBorrowSource> {
-    if !matches!(m.receiver, Some(Receiver::Read) | Some(Receiver::Mut)) {
+    if !matches!(m.receiver, Some(Receiver::Read) | Some(Receiver::Ref)) {
         return None;
     }
     // STRM v3 (2026-08-01): widened. Receiver side: a view-typed receiver
@@ -2406,7 +2406,7 @@ fn detect_method_view(
 /// When all checks pass, the return is an *exclusive* borrow of the parameter.
 fn detect_fn_e1_mut(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
     let [p]: &[Param; 1] = (f.params.as_slice()).try_into().ok()?;
-    if !p.mutable || p.move_ {
+    if !p.is_ref || p.is_take {
         return None;
     }
     if !oracle.definitely_non_copy(&p.ty) {
@@ -2423,7 +2423,7 @@ fn detect_fn_e1_mut(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSou
 }
 
 /// Slice 6BC.2 — Rule E2-mut. Mirror of E2 but for `ref this`:
-/// 1. Receiver is `ref this` (i.e. `Receiver::Mut`).
+/// 1. Receiver is `ref this` (i.e. `Receiver::Ref`).
 /// 2. Impl-target type non-`Copy`.
 /// 3. Non-`Copy` return type.
 /// 4. Every `return EXPR;` rooted at `this`.
@@ -2434,7 +2434,7 @@ fn detect_method_e2_mut(
     m: &Method,
     oracle: &CopyOracle,
 ) -> Option<ReturnBorrowSource> {
-    if m.receiver != Some(Receiver::Mut) {
+    if m.receiver != Some(Receiver::Ref) {
         return None;
     }
     let synth = Type {
@@ -2466,7 +2466,7 @@ fn detect_fn_e1(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource>
     // Step 1: exactly one parameter.
     let [p]: &[Param; 1] = (f.params.as_slice()).try_into().ok()?;
     // Step 2: shared-borrow form (no ref, no take).
-    if p.mutable || p.move_ {
+    if p.is_ref || p.is_take {
         return None;
     }
     // Step 3: param type non-Copy.
@@ -2503,7 +2503,7 @@ fn detect_fn_e3(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource>
         return None;
     }
     for p in &f.params {
-        if p.mutable || p.move_ {
+        if p.is_ref || p.is_take {
             return None;
         }
         if !oracle.definitely_non_copy(&p.ty) {
@@ -2549,7 +2549,7 @@ fn detect_fn_e3_mut(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSou
         return None;
     }
     for p in &f.params {
-        if !p.mutable || p.move_ {
+        if !p.is_ref || p.is_take {
             return None;
         }
         if !oracle.definitely_non_copy(&p.ty) {
@@ -4042,7 +4042,7 @@ impl<'a> ViewRules<'a> {
         let mut ref_targets = HashSet::new();
         if let Some(r) = receiver {
             param_names.insert("self".to_string());
-            if r == Receiver::Mut {
+            if r == Receiver::Ref {
                 // `ref this` aliases the caller's receiver — a write target
                 // that outlives the call.
                 ref_targets.insert("self".to_string());
@@ -4051,7 +4051,7 @@ impl<'a> ViewRules<'a> {
                 "self".to_string(),
                 ViewLocal {
                     ty: receiver_ty,
-                    owns_value: r == Receiver::Move,
+                    owns_value: r == Receiver::Take,
                     borrow_roots: BTreeSet::new(),
                 },
             );
@@ -4060,14 +4060,14 @@ impl<'a> ViewRules<'a> {
             param_names.insert(p.name.name.clone());
             param_index.insert(p.name.name.clone(), i);
             // `ref x: T` borrows the caller's storage and writes back.
-            if p.mutable && !p.move_ {
+            if p.is_ref && !p.is_take {
                 ref_targets.insert(p.name.name.clone());
             }
             base.insert(
                 p.name.name.clone(),
                 ViewLocal {
                     ty: Some(p.ty.clone()),
-                    owns_value: p.move_,
+                    owns_value: p.is_take,
                     borrow_roots: BTreeSet::new(),
                 },
             );
@@ -6601,7 +6601,7 @@ fn e0384_for_fn(f: &Function, sigs: &SigTable, oracle: &CopyOracle) -> Option<Ra
     }
     // Every param must be non-Copy borrow-like (no `take`).
     for p in &f.params {
-        if p.move_ {
+        if p.is_take {
             return None;
         }
         if !oracle.definitely_non_copy(&p.ty) {
@@ -6635,7 +6635,7 @@ fn e0384_for_method(
         return None;
     }
     for p in &m.params {
-        if p.move_ {
+        if p.is_take {
             return None;
         }
         if !oracle.definitely_non_copy(&p.ty) {
@@ -6822,7 +6822,7 @@ fn promote_erased_return_flows(prog: &Program, oracle: &CopyOracle, sigs: &mut S
             if i >= 64 || bits & (1u64 << i) == 0 {
                 continue;
             }
-            if p.move_ {
+            if p.is_take {
                 continue;
             }
             if !(oracle.type_contains_view(&p.ty) || oracle.definitely_non_copy(&p.ty)) {

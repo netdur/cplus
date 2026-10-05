@@ -6598,7 +6598,7 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
     // reaching here.
     for item in &program.items {
         match &item.kind {
-            ItemKind::Struct(s) if s.is_pub => {
+            ItemKind::Struct(s) if s.is_export => {
                 let is_repr_c = s.attributes.iter().any(|a| a.path.name == "repr");
                 if !is_repr_c {
                     continue;
@@ -6615,7 +6615,7 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
                     out.push('\n');
                 }
             }
-            ItemKind::Enum(e) if e.is_pub => {
+            ItemKind::Enum(e) if e.is_export => {
                 let is_tagged = e.variants.iter().any(|v| !v.payload.is_empty());
                 if is_tagged {
                     continue;
@@ -6644,7 +6644,7 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
     // consumer couldn't write a matching signature anyway.
     for item in &program.items {
         if let ItemKind::Function(f) = &item.kind {
-            if !f.is_pub {
+            if !f.is_export {
                 continue;
             }
             // Skip the parser-collapsed body for extern declarations

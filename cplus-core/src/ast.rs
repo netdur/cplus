@@ -167,7 +167,7 @@ pub struct ConstDecl {
     /// numeric constants. Anything else is a hard error before the
     /// substitution pass runs.
     pub value: Expr,
-    pub is_pub: bool,
+    pub is_export: bool,
     pub attributes: Vec<Attribute>,
 }
 
@@ -183,8 +183,7 @@ pub struct StaticDecl {
     /// for v0.0.9 (struct-literal / array-literal extensions wait for
     /// a real consumer beyond the immediate raytracer use case).
     pub value: Expr,
-    pub is_mut: bool,
-    pub is_pub: bool,
+    pub is_export: bool,
     pub attributes: Vec<Attribute>,
 }
 
@@ -194,7 +193,7 @@ pub struct StaticDecl {
 pub struct TypeAlias {
     pub name: Ident,
     pub target: Type,
-    pub is_pub: bool,
+    pub is_export: bool,
     /// v0.0.27: `type UserId = distinct i64;` — a NOMINAL alias. Same
     /// representation and ABI as the target, but a distinct type to sema:
     /// not interchangeable with the base or with other distinct aliases;
@@ -212,7 +211,7 @@ pub struct EnumDecl {
     /// There is no per-variant marker (variants inherit the enum's). General
     /// module visibility is name-based — a leading `_` is module-private,
     /// everything else is public — independent of this flag.
-    pub is_pub: bool,
+    pub is_export: bool,
     /// Slice 5ATTR.1: `#[NAME] enum E { ... }` attributes collected by the
     /// parser. Empty when no attributes precede the declaration.
     pub attributes: Vec<Attribute>,
@@ -367,7 +366,7 @@ pub struct StructDecl {
     /// everything else public. Field visibility follows the same name rule
     /// (`_field` is private); fields are never reachable cross-file unless
     /// the struct itself is exported.
-    pub is_pub: bool,
+    pub is_export: bool,
     /// Slice 5ATTR.1: attributes attached to this struct.
     pub attributes: Vec<Attribute>,
     /// Slice 7GEN.2: generic type parameters — `struct Pair[A, B] { ... }`.
@@ -382,13 +381,6 @@ pub struct StructField {
     pub name: Ident,
     pub ty: Type,
     pub span: Span,
-    /// Slice 4B. Vestigial, always `false` since v0.0.24 #10: field
-    /// visibility is name-based — a `_`-prefixed field is module-private,
-    /// every other field is visible to cross-file struct-literal
-    /// construction and field access (when the struct type itself is
-    /// exported). The old per-field `pub` marker is retired (the parser
-    /// rejects it with a hint), so this flag is never set.
-    pub is_pub: bool,
     /// Slice 5ATTR.1: attributes attached to this field.
     pub attributes: Vec<Attribute>,
     /// v0.0.13 (plan.opaque.md): `opaque field: *T` declares that a raw-pointer
@@ -429,7 +421,7 @@ pub struct InterfaceDecl {
     pub methods: Vec<InterfaceMethod>,
     /// Slice 4B: `true` when the interface is marked `export`, like other
     /// items (general visibility is name-based, `_`-prefix = private).
-    pub is_pub: bool,
+    pub is_export: bool,
     pub attributes: Vec<Attribute>,
 }
 
@@ -488,7 +480,7 @@ pub struct Method {
     /// a `_`-prefixed method is module-private (callable only inside the
     /// declaring file), every other method is callable cross-file when its
     /// type is reachable — same logic as private fields.
-    pub is_pub: bool,
+    pub is_export: bool,
     /// Slice 5ATTR.1: attributes attached to this method. Per the design
     /// note `#[test]` is rejected inside `impl` (E0360); validation lives
     /// in the post-parse attribute_check pass, not here.
@@ -506,10 +498,10 @@ pub enum Receiver {
     Read,
     /// `ref this` — mutable access; lowered to a pointer parameter; the
     /// caller's place must be writable.
-    Mut,
+    Ref,
     /// `take this` — ownership transfer; lowered to a pointer parameter;
     /// the caller's place becomes uninitialized after the call.
-    Move,
+    Take,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -549,7 +541,7 @@ pub struct Function {
     /// Slice 4B (v0.0.24 #10): `true` when the fn is marked `export`,
     /// placing it on the C-ABI / header surface. General cross-file
     /// visibility is name-based (a `_`-prefixed fn is module-private).
-    pub is_pub: bool,
+    pub is_export: bool,
     /// Slice 5ATTR.1: attributes attached to this function. `#[test]`
     /// discovery walks the merged Program looking for fns whose attributes
     /// include `test`; sema validates the test-fn signature when present.
@@ -600,7 +592,7 @@ impl Function {
             is_extern: false,
             is_declaration: false,
             is_variadic: false,
-            is_pub: false,
+            is_export: false,
             attributes: Vec::new(),
             generic_params: Vec::new(),
             is_async: false,
@@ -624,10 +616,10 @@ pub struct Param {
     pub name: Ident,
     pub ty: Type,
     /// `ref x: T` — exclusive borrow for non-Copy types; mutable local
-    /// binding for Copy types. Mutually exclusive with `move_`.
-    pub mutable: bool,
-    /// `take x: T` — ownership transfer. Mutually exclusive with `mutable`.
-    pub move_: bool,
+    /// binding for Copy types. Mutually exclusive with `is_take`.
+    pub is_ref: bool,
+    /// `take x: T` — ownership transfer. Mutually exclusive with `is_ref`.
+    pub is_take: bool,
     /// v0.0.8 (post-bench-gap): `restrict x: *T` — opt-in `noalias` for
     /// raw-pointer params. The borrow checker doesn't reason about
     /// `*T`, so cpc would otherwise emit just `noundef` on these. With
@@ -637,12 +629,6 @@ pub struct Param {
     /// part of the calling convention). Sema (E0411) restricts this to
     /// `*T` param types; on other shapes it's a hard error.
     pub restrict: bool,
-    /// Vestigial flag, always `false` since v0.0.24. The `borrow` keyword
-    /// it once recorded was retired: a bare parameter `x: T` is already a
-    /// read-only borrow, so the explicit opt-in marker is gone (the parser
-    /// now rejects a Rust-habit `borrow` with a hint at the bare form).
-    /// The field is kept to avoid churning every AST-construction site.
-    pub borrow_: bool,
     /// Optional default value: `name: T = EXPR`. Spliced in at call sites that
     /// omit this argument (`lower` does the splice; see
     /// docs/compiler/design/named-params-and-defaults.md). `None` for a required
@@ -676,15 +662,6 @@ pub enum TypeKind {
         /// after lower sees `None`.
         len_expr: Option<Box<Expr>>,
     },
-    /// Slice 6BC.5: region-annotated borrow type, historically written
-    /// `borrow REGION T`. No source path constructs this anymore: the
-    /// `borrow` keyword (both the region-annotated type and the parameter
-    /// prefix) was retired in v0.0.24, so the variant is unreachable from
-    /// the surface syntax. The region was a region-name identifier local to
-    /// the enclosing signature (or struct definition); the inner type was
-    /// the underlying place's type. Sema and codegen treat it as a
-    /// transparent wrapper for the inner type — region info is metadata
-    /// that only the borrow checker reads.
     /// Slice 7GEN.5c: generic type instantiation — `Pair[i32, bool]`.
     /// `name` is the generic type's declared name; `args` is the list
     /// of concrete type arguments. Sema's `resolve_type` synthesizes
@@ -1419,10 +1396,9 @@ impl Param {
         Param {
             name,
             ty,
-            mutable: false,
-            move_: false,
+            is_ref: false,
+            is_take: false,
             restrict: false,
-            borrow_: false,
             default: None,
             span,
         }

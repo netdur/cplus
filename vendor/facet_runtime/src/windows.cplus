@@ -145,6 +145,14 @@ fn quit(owner: *application::Application) -> bool {
     return true;
 }
 
+// Called by native close requests BEFORE any view or screen detaches.
+fn should_close(ctx: *u8) -> bool {
+    if ctx.is_null() { return false; }
+    let s = ctx as *model::Session;
+    let w = window::Window::of_navigation(model::Navigator { owner: (*s).owner, id: (*s).id });
+    return w.can_close();
+}
+
 // Called by platform will-close hooks while the views still exist. The native
 // backend unmounts after this returns; release must therefore be deferred to a
 // later loop turn, even when no background job is running.

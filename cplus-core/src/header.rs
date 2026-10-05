@@ -106,7 +106,7 @@ fn replacements(
             ItemKind::Function(f) => {
                 if keep_bodies_at.contains(&f.name.span.start) {
                     // A body that CARRIES A FACT — see `generate_with_flows`.
-                } else if f.is_extern && f.is_pub && !f.is_declaration {
+                } else if f.is_extern && f.is_export && !f.is_declaration {
                     // `export extern fn X(...) { body }` — a C-ABI export
                     // DEFINITION. Its header form is the import declaration
                     // `extern fn X(...);`: the consumer must call the

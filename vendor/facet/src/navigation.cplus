@@ -73,7 +73,8 @@ fn prepare(owner: *app::Application, definition: u64, key: str,
         root: 0 as *core::Node, entries: vec::new::[model::Entry](),
         history: vec::new::[u64](), future: vec::new::[u64](),
         pending: model::params_new(), next_entry: 0 as u64,
-        revision: 0 as u64, busy: true, ready: false, closing: false };
+        revision: 0 as u64, busy: true, ready: false, closing: false,
+        should_close: 0 as fn(*u8) -> bool, should_close_ctx: 0 as *u8 };
     let s: *model::Session = match box::new::[model::Session](value) {
         option::Option[box::Box[model::Session]]::Some(b) => b.into_raw() as *model::Session,
         option::Option[box::Box[model::Session]]::None => 0 as *model::Session,

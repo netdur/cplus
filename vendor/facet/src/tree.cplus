@@ -42,6 +42,7 @@ import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "stdlib/box" as box;
 import "stdlib/vec" as vec;
+import "stdlib/atomic" as atomic;
 import "./facet" as core;
 import "./mount" as mount;
 import "./vocabulary" as vocab;
@@ -204,6 +205,11 @@ fn _ctx_or(own: *u8, shared: *u8) -> *u8 {
     return shared;
 }
 
+static ROOT_GENERATIONS: u64 = 0;
+fn next_root_generation() -> u64 {
+    return atomic::fetch_add_u64(#addr_of(ROOT_GENERATIONS), 1 as u64, atomic::Ordering::Relaxed) +% 1;
+}
+
 struct TreeProps {
     root: TreeNode,
     row: fn(*TreeNode, *u8) -> flex::Node,
@@ -286,6 +292,9 @@ struct TreeProps {
     // highlight IS the feedback; a row that draws a card wants it off, or the
     // highlight is a second answer behind the first.
     selection_highlight: vocab::SelectionHighlight,
+    // Native item boxes borrow this model. Replacing it invalidates every
+    // previous box before its owned nodes are released.
+    root_generation: u64,
 }
 
 impl TreeProps {
@@ -309,6 +318,7 @@ impl TreeProps {
             expanded: vocab::TextList::new(),
             selection_mode: vocab::SelectionMode::Single,
             selection_highlight: vocab::SelectionHighlight::Default,
+            root_generation: next_root_generation(),
         };
     }
 }
@@ -387,6 +397,7 @@ impl Tree {
     fn set_root(this, take root: TreeNode) -> Tree {
         let p: *TreeProps = this._props();
         if p.is_null() { return this; }
+        { (*p).root_generation = next_root_generation() };
         { (*p).root = root };
         core::touch(this._p, P_ROOT);
         return this;

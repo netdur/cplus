@@ -121,7 +121,7 @@ fn window_of_sender(sender: *u8) -> option::Option[ak::Window] {
 
 fn window_close(sender: *u8) {
     match window_of_sender(sender) {
-        option::Option[ak::Window]::Some(w) => { w.close(); }
+        option::Option[ak::Window]::Some(w) => { w.perform_close(0 as *u8); }
         option::Option[ak::Window]::None => { }
     }
 }

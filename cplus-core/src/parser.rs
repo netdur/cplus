@@ -411,36 +411,36 @@ impl Parser {
                 "`pub` is retired; visibility is name-based (a leading `_` is module-private, everything else is public). Use `export` to mark the C-ABI / header surface.",
             ));
         }
-        let is_pub = self.eat(&TokenKind::Export);
+        let is_export = self.eat(&TokenKind::Export);
         match self.peek_kind() {
-            TokenKind::Fn => self.parse_function(is_pub, attributes),
+            TokenKind::Fn => self.parse_function(is_export, attributes),
             // v0.0.3 Phase 5 Slice 5E.1: `async fn` item — `parse_function`
             // handles the `async`-prefix peek itself, but the top-level
             // item dispatch needs to recognise `async` as opening a fn item.
-            TokenKind::Async => self.parse_function(is_pub, attributes),
+            TokenKind::Async => self.parse_function(is_export, attributes),
             // v0.0.4 Phase 4 Slice 4A: `gen fn` item — generator coroutine.
-            TokenKind::Gen => self.parse_function(is_pub, attributes),
+            TokenKind::Gen => self.parse_function(is_export, attributes),
             // Slice 10.FFI.1: `extern fn name(params) -> ret;` declarations.
             // Item-level only — no body, terminated by `;`. The lexer's
             // `Extern` keyword token has existed since Phase 1; this is
             // its first real consumer.
-            TokenKind::Extern => self.parse_extern_fn(is_pub, attributes),
-            TokenKind::Enum => self.parse_enum_decl(is_pub, attributes),
-            TokenKind::Struct => self.parse_struct_decl(is_pub, attributes),
+            TokenKind::Extern => self.parse_extern_fn(is_export, attributes),
+            TokenKind::Enum => self.parse_enum_decl(is_export, attributes),
+            TokenKind::Struct => self.parse_struct_decl(is_export, attributes),
             // Slice 7GEN.3: interface declarations.
-            TokenKind::Interface => self.parse_interface_decl(is_pub, attributes),
+            TokenKind::Interface => self.parse_interface_decl(is_export, attributes),
             // Phase 11 polish (2026-05-13): type aliases.
-            TokenKind::TypeKw => self.parse_type_alias(is_pub, attributes),
+            TokenKind::TypeKw => self.parse_type_alias(is_export, attributes),
             // v0.0.9 Phase 4: module-scope `const NAME: Ty = LIT;`.
-            TokenKind::Const => self.parse_const_decl(is_pub, attributes),
+            TokenKind::Const => self.parse_const_decl(is_export, attributes),
             // v0.0.9 Phase 4: module-scope `static NAME: Ty = LIT;` (every
             // `static` is mutable in v0.0.24; there is no `static mut`).
-            TokenKind::Static => self.parse_static_decl(is_pub, attributes),
+            TokenKind::Static => self.parse_static_decl(is_export, attributes),
             // v0.0.15: module-scope `#asm("...");` global asm item. The
             // `parse_attributes` loop above already declined to treat this
             // `#` as an attribute (it isn't followed by `[`).
             TokenKind::Pound => {
-                if is_pub {
+                if is_export {
                     return Err(self.err_at_peek(
                         "item — `#asm(...)` module-level asm doesn't take `export`",
                     ));
@@ -453,7 +453,7 @@ impl Parser {
                 self.parse_module_asm()
             }
             TokenKind::Impl => {
-                if is_pub {
+                if is_export {
                     return Err(self.err_at_peek(
                         "item — `impl` blocks don't take `export`; mark individual methods inside the block instead",
                     ));
@@ -483,7 +483,7 @@ impl Parser {
             TokenKind::Mod => Err(self.err_at_peek(
                 "an item; C+ has no `mod` and no module tree — packages are string-path imports (`import \"path\" as alias;`)",
             )),
-            TokenKind::Union => self.parse_struct_decl(is_pub, attributes),
+            TokenKind::Union => self.parse_struct_decl(is_export, attributes),
             // `import` after the file's leading import block is a hard
             // error — call it out by name so the diagnostic explains the
             // restriction.
@@ -596,10 +596,10 @@ impl Parser {
             }
             // Memory-model contract §5: `#[keeps(this)]` names the receiver
             // in argument position. `this` lexes as a keyword
-            // (TokenKind::SelfLower), so admit it here as the bare-ident
+            // (TokenKind::ThisLower), so admit it here as the bare-ident
             // arg "this"; the attrs validator's allow-list decides where
             // it's legal.
-            TokenKind::SelfLower => {
+            TokenKind::ThisLower => {
                 let tok = self.peek().clone();
                 self.bump();
                 Ok(AttrArg::Ident(Ident {
@@ -816,7 +816,7 @@ impl Parser {
     /// impl-resolution).
     fn parse_interface_decl(
         &mut self,
-        is_pub: bool,
+        is_export: bool,
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
         let start = self.expect(&TokenKind::Interface, "`interface`")?.span;
@@ -831,7 +831,7 @@ impl Parser {
             kind: ItemKind::Interface(InterfaceDecl {
                 name,
                 methods,
-                is_pub,
+                is_export,
                 attributes,
             }),
             span: start.merge(end),
@@ -906,7 +906,7 @@ impl Parser {
                 "`pub` is retired; a method is module-private when its name starts with `_`, public otherwise. Use `export` for the C-ABI surface.",
             ));
         }
-        let is_pub = self.eat(&TokenKind::Export);
+        let is_export = self.eat(&TokenKind::Export);
         if self.at(&TokenKind::Unsafe) {
             return Err(self.err_at_peek("`unsafe fn` has been removed; write `fn` directly"));
         }
@@ -980,7 +980,7 @@ impl Parser {
             body,
             is_declaration,
             span,
-            is_pub,
+            is_export,
             attributes,
             is_async,
             is_gen,
@@ -993,7 +993,7 @@ impl Parser {
     /// rejected as parse errors (mutually exclusive modifiers).
     fn try_parse_receiver(&mut self) -> Result<Option<Receiver>, ParseError> {
         match self.peek_kind() {
-            TokenKind::SelfLower => {
+            TokenKind::ThisLower => {
                 self.bump();
                 Ok(Some(Receiver::Read))
             }
@@ -1027,18 +1027,46 @@ impl Parser {
             // they stay plain identifiers (so `Iterator::take` etc. are
             // unaffected). Dual-spelled with `mut`/`move` until the hard switch.
             TokenKind::Ident(s)
-                if s == "ref" && matches!(self.peek_kind_n(1), TokenKind::SelfLower) =>
+                if s == "ref" && matches!(self.peek_kind_n(1), TokenKind::ThisLower) =>
             {
                 self.bump(); // `ref`
                 self.bump(); // `this`
-                Ok(Some(Receiver::Mut))
+                Ok(Some(Receiver::Ref))
             }
             TokenKind::Ident(s)
-                if s == "take" && matches!(self.peek_kind_n(1), TokenKind::SelfLower) =>
+                if s == "take" && matches!(self.peek_kind_n(1), TokenKind::ThisLower) =>
             {
                 self.bump(); // `take`
                 self.bump(); // `this`
-                Ok(Some(Receiver::Move))
+                Ok(Some(Receiver::Take))
+            }
+            TokenKind::Ident(s)
+                if s == "ref"
+                    && matches!(self.peek_kind_n(1), TokenKind::Ident(n) if n == "self") =>
+            {
+                let tok = self.peek().clone();
+                Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        found: "`ref self`".into(),
+                        expected:
+                            "`ref this` — C+ receivers are `this` / `ref this` / `take this`, not `self`",
+                    },
+                    span: tok.span,
+                })
+            }
+            TokenKind::Ident(s)
+                if s == "take"
+                    && matches!(self.peek_kind_n(1), TokenKind::Ident(n) if n == "self") =>
+            {
+                let tok = self.peek().clone();
+                Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        found: "`take self`".into(),
+                        expected:
+                            "`take this` — C+ receivers are `this` / `ref this` / `take this`, not `self`",
+                    },
+                    span: tok.span,
+                })
             }
             // v0.0.24 de-Rust: a Rust-style bare receiver `self` (followed by
             // `)` or `,` — not a typed `self: T` param) is rejected with a hint.
@@ -1052,6 +1080,18 @@ impl Parser {
                         found: "`self`".into(),
                         expected:
                             "`this` — C+ receivers are `this` / `ref this` / `take this`, not `self`",
+                    },
+                    span: tok.span,
+                })
+            }
+            // Rust habit: `&self` or `&mut self`.
+            TokenKind::Amp => {
+                let tok = self.peek().clone();
+                Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        found: "`&`".into(),
+                        expected:
+                            "`this` or `ref this` — C+ receivers do not use `&` or `&mut` (use `this` for read-only, `ref this` for mutating, `take this` for consuming)",
                     },
                     span: tok.span,
                 })
@@ -1130,7 +1170,7 @@ impl Parser {
     /// there's no Phase-11 attribute that makes sense on aliases.
     fn parse_type_alias(
         &mut self,
-        is_pub: bool,
+        is_export: bool,
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
         if !attributes.is_empty() {
@@ -1160,7 +1200,7 @@ impl Parser {
             kind: ItemKind::TypeAlias(crate::ast::TypeAlias {
                 name,
                 target,
-                is_pub,
+                is_export,
                 is_distinct,
             }),
             span: start.merge(end),
@@ -1175,7 +1215,7 @@ impl Parser {
     /// uniform and accepts any expression here.
     fn parse_const_decl(
         &mut self,
-        is_pub: bool,
+        is_export: bool,
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
         if !attributes.is_empty() {
@@ -1199,7 +1239,7 @@ impl Parser {
                 name,
                 ty,
                 value,
-                is_pub,
+                is_export,
                 attributes,
             }),
             span: start.merge(end),
@@ -1214,7 +1254,7 @@ impl Parser {
     /// initializer enforced by sema.
     fn parse_static_decl(
         &mut self,
-        is_pub: bool,
+        is_export: bool,
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
         if !attributes.is_empty() {
@@ -1231,12 +1271,11 @@ impl Parser {
             return Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     found: "`mut`".into(),
-                    expected: "a static name — `static` is already mutable; drop `mut` (there is no `static`)",
+                    expected: "a static name — `static` is already mutable; drop `mut` (there is no `static mut`)",
                 },
                 span: tok.span,
             });
         }
-        let is_mut = true;
         let name = self.expect_ident()?;
         self.expect(
             &TokenKind::Colon,
@@ -1251,8 +1290,7 @@ impl Parser {
                 name,
                 ty,
                 value,
-                is_mut,
-                is_pub,
+                is_export,
                 attributes,
             }),
             span: start.merge(end),
@@ -1304,7 +1342,7 @@ impl Parser {
 
     fn parse_struct_decl(
         &mut self,
-        is_pub: bool,
+        is_export: bool,
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
         // `union` and `struct` share every part of the declaration except
@@ -1330,7 +1368,6 @@ impl Parser {
                     "`pub` is retired; a field is module-private when its name starts with `_`, public otherwise.",
                 ));
             }
-            let field_pub = false;
             let field_opaque = self.eat(&TokenKind::Opaque);
             let fname = self.expect_ident()?;
             self.expect(&TokenKind::Colon, "`:`")?;
@@ -1340,7 +1377,6 @@ impl Parser {
                 name: fname,
                 ty,
                 span,
-                is_pub: field_pub,
                 attributes: field_attrs,
                 is_opaque: field_opaque,
             });
@@ -1354,7 +1390,7 @@ impl Parser {
                 name,
                 fields,
                 is_union,
-                is_pub,
+                is_export,
                 attributes,
                 generic_params,
             }),
@@ -1365,7 +1401,7 @@ impl Parser {
 
     fn parse_enum_decl(
         &mut self,
-        is_pub: bool,
+        is_export: bool,
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
         let start = self.expect(&TokenKind::Enum, "`enum`")?.span;
@@ -1430,7 +1466,7 @@ impl Parser {
             kind: ItemKind::Enum(EnumDecl {
                 name,
                 variants,
-                is_pub,
+                is_export,
                 attributes,
                 generic_params,
             }),
@@ -1449,7 +1485,7 @@ impl Parser {
     /// at the link level).
     fn parse_extern_fn(
         &mut self,
-        is_pub: bool,
+        is_export: bool,
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
         let start = self.peek().span;
@@ -1505,7 +1541,7 @@ impl Parser {
         // Variadic + body is rejected because C+ has no `va_list` API to
         // walk the extra args; `printf`-style varargs is import-only.
         let (body, end_span, is_extern_def) = if self.at(&TokenKind::LBrace) {
-            if !is_pub {
+            if !is_export {
                 return Err(self.err_at_peek(
                     "extern fn — only `export extern fn` may have a body (exports a C-callable definition); plain `extern fn` is a declaration ending in `;`",
                 ));
@@ -1522,7 +1558,7 @@ impl Parser {
             // Plain declaration form: `extern fn name(...);`. `export` is
             // meaningful only on definitions (5.C C-ABI exports). If the user
             // wrote `export extern fn name(...);` they likely forgot a body.
-            if is_pub {
+            if is_export {
                 return Err(self.err_at_peek(
                     "extern fn — `export` introduces a C-callable export and requires a body `{ ... }`; a plain declaration ends in `;` and must not be `export`",
                 ));
@@ -1548,7 +1584,7 @@ impl Parser {
                 // always reachable). We preserve it on definitions so
                 // sema can route the export-only checks, and on
                 // declarations we drop it (pre-5.C behavior).
-                is_pub: is_extern_def,
+                is_export: is_extern_def,
                 is_declaration: false,
                 is_extern: true,
                 is_variadic,
@@ -1564,7 +1600,7 @@ impl Parser {
 
     fn parse_function(
         &mut self,
-        is_pub: bool,
+        is_export: bool,
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
         let start = self.peek().span;
@@ -1626,7 +1662,7 @@ impl Parser {
                 return_type,
                 body,
                 is_declaration,
-                is_pub,
+                is_export,
                 is_extern: false,
                 is_variadic: false,
                 attributes,
@@ -1713,10 +1749,9 @@ impl Parser {
         // type) is removed — a bare parameter `x: T` is already a
         // read-only borrow. `mut`/`move`/`borrow` stay reserved tokens
         // and are rejected below with a hint at the new spelling.
-        let mut mutable = false;
-        let mut move_ = false;
+        let mut is_ref = false;
+        let mut is_take = false;
         let mut restrict = false;
-        let borrow_ = false;
         let start = self.peek().span;
         loop {
             match self.peek_kind() {
@@ -1753,19 +1788,19 @@ impl Parser {
                 // switch.
                 TokenKind::Ident(s)
                     if s == "ref"
-                        && !mutable
+                        && !is_ref
                         && matches!(self.peek_kind_n(1), TokenKind::Ident(_)) =>
                 {
                     self.bump();
-                    mutable = true;
+                    is_ref = true;
                 }
                 TokenKind::Ident(s)
                     if s == "take"
-                        && !move_
+                        && !is_take
                         && matches!(self.peek_kind_n(1), TokenKind::Ident(_)) =>
                 {
                     self.bump();
-                    move_ = true;
+                    is_take = true;
                 }
                 TokenKind::Restrict if !restrict => {
                     self.bump();
@@ -1802,10 +1837,9 @@ impl Parser {
         Ok(Param {
             name,
             ty,
-            mutable,
-            move_,
+            is_ref,
+            is_take,
             restrict,
-            borrow_,
             default,
             span,
         })
@@ -1833,6 +1867,16 @@ impl Parser {
                     kind: ParseErrorKind::Unexpected {
                         found: "`borrow`".into(),
                         expected: "a type — `borrow REGION T` is retired; a bare parameter `x: T` is a read-only borrow (use `take` to consume)",
+                    },
+                    span: tok.span,
+                })
+            }
+            // Rust habit: `&T` or `&mut T` reference types.
+            TokenKind::Amp => {
+                Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        found: "`&`".into(),
+                        expected: "a type — C+ has no `&T` / `&mut T` reference types; parameter ownership is declared on the parameter (`x: T` borrows for reading, `ref x: T` for writing, `take x: T` consumes). For raw addresses use `*T`",
                     },
                     span: tok.span,
                 })
@@ -1996,7 +2040,7 @@ impl Parser {
             // self_type_stack / type_params_stack) decides whether it
             // resolves to a concrete type, stays abstract, or errors with
             // E0508 outside any impl/interface context.
-            TokenKind::SelfUpper => {
+            TokenKind::ThisUpper => {
                 let span = self.bump().span;
                 let base = Type {
                     kind: TypeKind::Path("Self".to_string()),
@@ -3873,7 +3917,7 @@ impl Parser {
                     span: tok.span,
                 })
             }
-            TokenKind::SelfLower => {
+            TokenKind::ThisLower => {
                 self.bump();
                 // `this` in an expression is just an ident lookup; sema
                 // registers it as a local inside method bodies.
@@ -4679,13 +4723,13 @@ fn tok_name(k: &TokenKind) -> &'static str {
         TokenKind::Impl => "`impl`",
         TokenKind::Pub => "`pub`",
         TokenKind::Export => "`export`",
-        TokenKind::SelfLower => "`this`",
-        TokenKind::SelfUpper => "`Self`",
+        TokenKind::ThisLower => "`this`",
+        TokenKind::ThisUpper => "`This`",
         TokenKind::Defer => "`defer`",
         TokenKind::Break => "`break`",
         TokenKind::Continue => "`continue`",
         TokenKind::Loop => "`loop`",
-        TokenKind::Move => "`take`",
+        TokenKind::Move => "`move`",
         TokenKind::Restrict => "`restrict`",
         TokenKind::Opaque => "`opaque`",
         TokenKind::Guard => "`guard`",
@@ -5169,22 +5213,22 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
     #[test]
     fn plain_param_has_no_ownership_markers() {
         let params = first_function_params("fn f(x: i32) -> i32 { return x; }");
-        assert!(!params[0].mutable);
-        assert!(!params[0].move_);
+        assert!(!params[0].is_ref);
+        assert!(!params[0].is_take);
     }
 
     #[test]
-    fn mut_param_sets_mutable_flag() {
+    fn ref_param_sets_is_ref_flag() {
         let params = first_function_params("fn f(ref x: i32) -> i32 { return x; }");
-        assert!(params[0].mutable);
-        assert!(!params[0].move_);
+        assert!(params[0].is_ref);
+        assert!(!params[0].is_take);
     }
 
     #[test]
-    fn move_param_sets_move_flag() {
+    fn take_param_sets_is_take_flag() {
         let params = first_function_params("fn f(take x: i32) -> i32 { return x; }");
-        assert!(!params[0].mutable);
-        assert!(params[0].move_);
+        assert!(!params[0].is_ref);
+        assert!(params[0].is_take);
     }
 
     #[test]
@@ -5192,36 +5236,84 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
         // The contradictory `take ref` combo is permitted at parse time (both
         // flags set); sema rejects it with E0334. (`mut`/`move` are retired.)
         let params = first_function_params("fn f(take ref x: i32) -> i32 { return x; }");
-        assert!(params[0].mutable);
-        assert!(params[0].move_);
+        assert!(params[0].is_ref);
+        assert!(params[0].is_take);
     }
 
     #[test]
     fn ref_take_param_sets_both_flags() {
         let params = first_function_params("fn f(ref take x: i32) -> i32 { return x; }");
-        assert!(params[0].mutable);
-        assert!(params[0].move_);
+        assert!(params[0].is_ref);
+        assert!(params[0].is_take);
     }
 
     #[test]
-    fn move_self_receiver_parses() {
-        let m = first_method(
-            "struct P { x: i32 } impl P { fn consume(take this) -> i32 { return this.x; } }",
-        );
-        assert_eq!(m.receiver, Some(Receiver::Move));
-    }
-
-    #[test]
-    fn self_receiver_parses() {
+    fn this_receiver_parses() {
         let m =
             first_method("struct P { x: i32 } impl P { fn read(this) -> i32 { return this.x; } }");
         assert_eq!(m.receiver, Some(Receiver::Read));
     }
 
     #[test]
-    fn mut_self_receiver_parses() {
+    fn ref_this_receiver_parses() {
         let m = first_method("struct P { x: i32 } impl P { fn write(ref this) { this.x = 0; } }");
-        assert_eq!(m.receiver, Some(Receiver::Mut));
+        assert_eq!(m.receiver, Some(Receiver::Ref));
+    }
+
+    #[test]
+    fn take_this_receiver_parses() {
+        let m = first_method(
+            "struct P { x: i32 } impl P { fn consume(take this) -> i32 { return this.x; } }",
+        );
+        assert_eq!(m.receiver, Some(Receiver::Take));
+    }
+
+    #[test]
+    fn ref_self_receiver_rejected_with_hint() {
+        let err = parse_src("struct P { x: i32 } impl P { fn write(ref self) { } }").unwrap_err();
+        match err.kind {
+            ParseErrorKind::Unexpected { expected, found } => {
+                assert!(found.contains("ref self"), "found: {found}");
+                assert!(expected.contains("ref this"), "expected: {expected}");
+            }
+            other => panic!("expected Unexpected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn take_self_receiver_rejected_with_hint() {
+        let err = parse_src("struct P { x: i32 } impl P { fn consume(take self) { } }").unwrap_err();
+        match err.kind {
+            ParseErrorKind::Unexpected { expected, found } => {
+                assert!(found.contains("take self"), "found: {found}");
+                assert!(expected.contains("take this"), "expected: {expected}");
+            }
+            other => panic!("expected Unexpected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn amp_self_receiver_rejected_with_hint() {
+        let err = parse_src("struct P { x: i32 } impl P { fn read(&self) { } }").unwrap_err();
+        match err.kind {
+            ParseErrorKind::Unexpected { expected, found } => {
+                assert!(found.contains("&"), "found: {found}");
+                assert!(expected.contains("this"), "expected: {expected}");
+            }
+            other => panic!("expected Unexpected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn amp_type_rejected_with_hint() {
+        let err = parse_src("fn f(x: &i32) -> i32 { return 0; }").unwrap_err();
+        match err.kind {
+            ParseErrorKind::Unexpected { expected, found } => {
+                assert!(found.contains("&"), "found: {found}");
+                assert!(expected.contains("&T"), "expected: {expected}");
+            }
+            other => panic!("expected Unexpected, got {other:?}"),
+        }
     }
 
     #[test]
@@ -5245,34 +5337,6 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
         };
         assert!(*mutable, "`var` must lower to a mutable binding");
         assert_eq!(name.name, "x");
-    }
-
-    #[test]
-    fn ref_param_sets_mutable_flag() {
-        let params = first_function_params("fn f(ref x: i32) -> i32 { return x; }");
-        assert!(params[0].mutable);
-        assert!(!params[0].move_);
-    }
-
-    #[test]
-    fn take_param_sets_move_flag() {
-        let params = first_function_params("fn f(take x: i32) -> i32 { return x; }");
-        assert!(!params[0].mutable);
-        assert!(params[0].move_);
-    }
-
-    #[test]
-    fn ref_self_receiver_parses() {
-        let m = first_method("struct P { x: i32 } impl P { fn write(ref this) { this.x = 0; } }");
-        assert_eq!(m.receiver, Some(Receiver::Mut));
-    }
-
-    #[test]
-    fn take_self_receiver_parses() {
-        let m = first_method(
-            "struct P { x: i32 } impl P { fn consume(take this) -> i32 { return this.x; } }",
-        );
-        assert_eq!(m.receiver, Some(Receiver::Move));
     }
 
     #[test]
@@ -5404,7 +5468,7 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!();
         };
-        assert!(!f.is_pub);
+        assert!(!f.is_export);
     }
 
     #[test]
@@ -5780,7 +5844,7 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
         let ItemKind::Interface(i) = &p.items[0].kind else {
             panic!()
         };
-        assert_eq!(i.methods[0].receiver, Some(Receiver::Mut));
+        assert_eq!(i.methods[0].receiver, Some(Receiver::Ref));
     }
 
     #[test]
@@ -6149,7 +6213,7 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
             panic!()
         };
         assert!(f.is_extern);
-        assert!(!f.is_pub);
+        assert!(!f.is_export);
         assert_eq!(f.name.name, "abs");
         assert_eq!(f.params.len(), 1);
         assert!(f.body.stmts.is_empty());
@@ -6190,7 +6254,7 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!()
         };
-        assert!(f.is_pub, "expected is_pub on the export");
+        assert!(f.is_export, "expected is_export on the export");
         assert!(f.is_extern, "expected is_extern on the export");
         assert!(!f.is_variadic);
         assert_eq!(f.params.len(), 2);
@@ -6200,7 +6264,7 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
     #[test]
     fn export_keyword_marks_the_c_abi_surface() {
         // v0.0.24 #10: `export` is the C-ABI / linker / header marker (sets the
-        // exported flag, `is_pub`). It works on the extern-fn C-ABI export form
+        // exported flag, `is_export`). It works on the extern-fn C-ABI export form
         // and on plain items; a plain `export` extern declaration (no body) is
         // rejected the same as the old `pub` form.
         let p = parse_src("export extern fn add(a: i32, b: i32) -> i32 { return a + b; }").unwrap();
@@ -6208,7 +6272,7 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
             panic!()
         };
         assert!(
-            f.is_pub && f.is_extern,
+            f.is_export && f.is_extern,
             "export extern fn must set the exported + extern flags"
         );
 
@@ -6217,12 +6281,12 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
             panic!()
         };
         assert!(
-            g.is_pub && !g.is_extern,
+            g.is_export && !g.is_extern,
             "export fn must set the exported flag"
         );
 
         let p3 = parse_src("export struct Handle { fd: i32 }").unwrap();
-        assert!(matches!(&p3.items[0].kind, ItemKind::Struct(s) if s.is_pub));
+        assert!(matches!(&p3.items[0].kind, ItemKind::Struct(s) if s.is_export));
 
         // A bodyless `export extern fn ...;` is rejected (declarations aren't exports).
         assert!(parse_src("export extern fn abs(x: i32) -> i32;").is_err());
@@ -6230,29 +6294,29 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
         // `export` sets the exported flag across item kinds and combines with
         // other modifiers (covers the retired pub-combo parser tests).
         assert!(
-            matches!(&parse_src("export enum E { A, B }").unwrap().items[0].kind, ItemKind::Enum(e) if e.is_pub)
+            matches!(&parse_src("export enum E { A, B }").unwrap().items[0].kind, ItemKind::Enum(e) if e.is_export)
         );
         assert!(
-            matches!(&parse_src("export const K: i32 = 1;").unwrap().items[0].kind, ItemKind::Const(c) if c.is_pub)
+            matches!(&parse_src("export const K: i32 = 1;").unwrap().items[0].kind, ItemKind::Const(c) if c.is_export)
         );
         assert!(
-            matches!(&parse_src("export static S: i32 = 0;").unwrap().items[0].kind, ItemKind::Static(s) if s.is_pub)
+            matches!(&parse_src("export static S: i32 = 0;").unwrap().items[0].kind, ItemKind::Static(s) if s.is_export)
         );
         assert!(
-            matches!(&parse_src("export interface I { fn f(this) -> i32; }").unwrap().items[0].kind, ItemKind::Interface(i) if i.is_pub)
+            matches!(&parse_src("export interface I { fn f(this) -> i32; }").unwrap().items[0].kind, ItemKind::Interface(i) if i.is_export)
         );
         let u = first_function("export fn raw() -> i32 { return 0; }");
-        assert!(u.is_pub, "export fn must set the export flag");
+        assert!(u.is_export, "export fn must set the export flag");
         // export + generics + async.
         assert!(
-            matches!(&parse_src("export fn pick[T](x: T) -> T { return x; }").unwrap().items[0].kind, ItemKind::Function(f) if f.is_pub && !f.generic_params.is_empty())
+            matches!(&parse_src("export fn pick[T](x: T) -> T { return x; }").unwrap().items[0].kind, ItemKind::Function(f) if f.is_export && !f.generic_params.is_empty())
         );
         assert!(
-            matches!(&parse_src("export async fn job() -> i32 { return 0; }").unwrap().items[0].kind, ItemKind::Function(f) if f.is_pub && f.is_async)
+            matches!(&parse_src("export async fn job() -> i32 { return 0; }").unwrap().items[0].kind, ItemKind::Function(f) if f.is_export && f.is_async)
         );
         // export method inside an impl.
         let m = parse_src("struct P {} impl P { export fn make() -> i32 { return 0; } }").unwrap();
-        assert!(matches!(&m.items[1].kind, ItemKind::Impl(b) if b.methods[0].is_pub));
+        assert!(matches!(&m.items[1].kind, ItemKind::Impl(b) if b.methods[0].is_export));
     }
 
     #[test]
@@ -6630,7 +6694,7 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
             panic!("expected ItemKind::Const, got {:?}", p.items[0].kind);
         };
         assert_eq!(c.name.name, "HEADER_BYTES");
-        assert!(!c.is_pub);
+        assert!(!c.is_export);
         let TypeKind::Path(name) = &c.ty.kind else {
             panic!("expected Path type");
         };
@@ -6664,8 +6728,7 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
             panic!("expected ItemKind::Static, got {:?}", p.items[0].kind);
         };
         assert_eq!(s.name.name, "RNG_STATE");
-        assert!(s.is_mut, "every `static` is mutable in v0.0.24");
-        assert!(!s.is_pub);
+        assert!(!s.is_export);
         let TypeKind::Path(name) = &s.ty.kind else {
             panic!("expected Path type");
         };
@@ -6679,8 +6742,7 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
             panic!("expected ItemKind::Static");
         };
         assert_eq!(s.name.name, "COUNTER");
-        assert!(s.is_mut);
-        assert!(!s.is_pub);
+        assert!(!s.is_export);
     }
 
     // v0.0.15: module-scope `#asm("...");` global asm item.

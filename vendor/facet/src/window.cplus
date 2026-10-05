@@ -184,16 +184,41 @@ impl Window {
         return app::activate_window(app::window_key_of(this._root));
     }
 
-    // Close it, no questions asked. The window's own teardown still runs — on
-    // a route-opened window that is the screen's `on_detach`, which is where a
-    // device release belongs and is the same path the user's close button
-    // takes.
-    fn close(this) -> bool {
+    // Install an optional policy on THIS registered instance. The context is
+    // borrowed: its owner must remain alive until the window closes. A null
+    // callback clears it. No Screen implementation is required to opt in.
+    fn on_should_close(this, f: fn(*u8) -> bool, ctx: *u8 = 0 as *u8) -> bool {
+        if !this.is_live() { return false; }
+        let s = navigation::session(this.navigation.owner, this.navigation.id);
+        if s.is_null() { return false; }
+        (*s).should_close = f;
+        (*s).should_close_ctx = ctx;
+        return true;
+    }
+
+    // The common gate for the native delegate and cursor verbs. Refusal leaves
+    // the tree mounted. Keep transitions busy while asking so a callback cannot
+    // recursively close or navigate the window whose owner it is borrowing.
+    fn can_close(this) -> bool {
         if !this.is_live() { return false; }
         let s = navigation::session(this.navigation.owner, this.navigation.id);
         if s.is_not_null() && (*s).busy { return false; }
         let allowed = HOST.can_close;
         if allowed.is_not_null() && !allowed(this._root) { return false; }
+        if s.is_null() || (*s).should_close.is_null() { return true; }
+        let ask = (*s).should_close;
+        let ctx = (*s).should_close_ctx;
+        (*s).busy = true;
+        let result = ask(ctx);
+        (*s).busy = false;
+        return result;
+    }
+
+    // Close after the optional policy allows it; teardown then follows the
+    // same path as the native close button.
+    fn close(this) -> bool {
+        if !this.can_close() { return false; }
+        let s = navigation::session(this.navigation.owner, this.navigation.id);
         let f: fn(*flex::Node) = HOST.close;
         if f.is_not_null() { f(this._root); return true; }
         if s.is_not_null() { return false; }
@@ -211,13 +236,9 @@ impl Window {
     // Falls through to `close` on a backend with no such question, because a
     // platform that cannot ask has nobody to refuse.
     fn request_close(this) -> bool {
-        if !this.is_live() { return false; }
-        let s = navigation::session(this.navigation.owner, this.navigation.id);
-        if s.is_not_null() && (*s).busy { return false; }
-        let allowed = HOST.can_close;
-        if allowed.is_not_null() && !allowed(this._root) { return false; }
         let f: fn(*flex::Node) -> bool = HOST.request_close;
         if f.is_null() { return this.close(); }
+        if !this.can_close() { return false; }
         return f(this._root);
     }
 
