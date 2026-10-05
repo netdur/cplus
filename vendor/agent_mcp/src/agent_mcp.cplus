@@ -2317,7 +2317,7 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
 fn write_all(fd: i32, ptr: *u8, len: usize) -> bool {
     var off: usize = 0;
     while off < len {
-        if thread::park_begin() { thread::park_end(); return; }
+        if thread::park_begin() { thread::park_end(); return false; }
         let w: isize = { netsys::send_fd(fd, ptr + off, len -% off) };
         thread::park_end();
         if w <= 0 {
