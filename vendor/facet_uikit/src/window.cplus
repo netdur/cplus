@@ -33,6 +33,8 @@ import "stdlib/io" as io;
 import "stdlib/env" as env;
 import "facet/window" as app_window;
 import "facet/screen" as screen;
+import "facet/navigation" as navigation;
+import "facet/nav_model" as nav_model;
 import "facet/services" as services;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
@@ -198,6 +200,9 @@ fn attach_root(win: *u8, root: *core::Node) {
     if WANT_ZOOMABLE { zoom::install(content, WANT_MIN_ZOOM, WANT_MAX_ZOOM); }
     let mounted: bool = mount::mount(root);
     app::set_window_native(root, win);
+    navigation::set_present_fn(on_present);
+    scheduler::set_insets_fn(insets_with_bar);
+    scheduler::set_placed_fn(place_hosts);
     // The toolbar, read from the TREE — the same shape facet_appkit uses, and it
     // can only be built once the tree exists, which is here. `toolbar_item`
     // nodes take no space, so this is the only thing that ever looks at them.
@@ -531,6 +536,7 @@ fn imp_did_show(self_obj: *u8, cmd: *u8, navc: *u8, shown: *u8, animated: i8) {
     if navc == (0 as *u8) { return; }
     let live: *u8 = { rt::msg_id(navc, rt::sel(#str_ptr("viewControllers\0"))) };
     if live == (0 as *u8) { return; }
+    sync_shown(live);
     var i: usize = STACK.count();
     while i > (0 as usize) {
         i = i -% (1 as usize);
@@ -553,7 +559,7 @@ fn imp_did_show(self_obj: *u8, cmd: *u8, navc: *u8, shown: *u8, animated: i8) {
     }
     // The bar goes away again once the stack is back to the primary screen,
     // which draws its own.
-    if STACK.count() == (0 as usize) {
+    if STACK.count() == (0 as usize) && SHOWN.count() == (0 as usize) {
         { msg_void_i8_i8(navc, rt::sel(#str_ptr("setNavigationBarHidden:animated:\0")),
                          1 as i8, 1 as i8) };
     }
@@ -562,6 +568,284 @@ fn imp_did_show(self_obj: *u8, cmd: *u8, navc: *u8, shown: *u8, animated: i8) {
     // capture the screen that is on its way out.
     agent_follow(WINDOW);
     return;
+}
+
+// ---- the navigator's whole-window changes, as a native stack -------------------
+// facet's navigator keeps every screen of a window in ONE tree and shows one.
+// On iOS a screen pushed over the whole window is a pushed CONTROLLER: the
+// system bar with its title and back button, the slide, the edge swipe — and on
+// iOS 26 that bar is Liquid Glass. So the navigator tells this backend when the
+// window's content changed (`navigation::set_present_fn`), and the screen's
+// view moves into a controller of its own. The tree does not change: the
+// screen's wrapper keeps its node, its frames and its parent; only its VIEW
+// sits under a different controller while it is pushed.
+//
+// TWO DIRECTIONS, ONE STACK. A pop can be the navigator's (the app called
+// `pop`) or the user's (the back button, the swipe), and UIKit reports both the
+// same way, after the fact, in `didShowViewController:`. A pop the navigator
+// started is marked `leaving`; one it did not start is told to the navigator
+// there, under `SYNCING`, so the navigator's own report of it is not acted on
+// a second time.
+//
+// A COVER, because a screen the navigator leaves is PARKED — its views hide on
+// the next tick — while UIKit is still sliding it. The picture of it is what
+// slides, and it stays over a covered controller until that controller is
+// shown again, which is also what an edge swipe reveals.
+struct Shown {
+    opaque vc: *u8,                   // +1, ours
+    opaque host: *u8,                 // +1, ours: the screen's container in vc's view
+    opaque wrapper: *core::Node,      // the navigator's wrapper for the screen
+    opaque window_root: *core::Node,
+    opaque cover: *u8,                // +1 snapshot over vc's view, or 0
+    leaving: bool,
+}
+static SHOWN: vec::Vec[Shown] = #zero::[vec::Vec[Shown]]();
+static BASE_COVER: *u8 = 0 as *u8;
+static SHOWN_NAV: nav_model::Navigator = #zero::[nav_model::Navigator]();
+static SYNCING: bool = false;
+
+fn nav_of_root(root: *core::Node) -> *u8 {
+    let si: usize = scene_index_for_root(root);
+    if si < SCENES.count() {
+        match SCENES.at_ptr(si) {
+            option::Option[*SceneWin]::Some(e) => { if { (*e).nav } != (0 as *u8) { return { (*e).nav }; } }
+            option::Option[*SceneWin]::None => { }
+        }
+    }
+    return NAV;
+}
+
+fn base_of_root(root: *core::Node) -> *u8 {
+    let si: usize = scene_index_for_root(root);
+    if si < SCENES.count() {
+        match SCENES.at_ptr(si) {
+            option::Option[*SceneWin]::Some(e) => { if { (*e).base } != (0 as *u8) { return { (*e).base }; } }
+            option::Option[*SceneWin]::None => { }
+        }
+    }
+    return BASE_VC;
+}
+
+fn cover_vc(vc: *u8) -> *u8 {
+    if vc == (0 as *u8) { return 0 as *u8; }
+    let v: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    if v == (0 as *u8) { return 0 as *u8; }
+    let snap: *u8 = { msg_id_i8(v, rt::sel(#str_ptr("snapshotViewAfterScreenUpdates:\0")), 0 as i8) };
+    if snap == (0 as *u8) { return 0 as *u8; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("addSubview:\0")), snap) };
+    return rt::retain(snap);
+}
+
+fn uncover(c: *u8) {
+    if c == (0 as *u8) { return; }
+    { rt::msg_void(c, rt::sel(#str_ptr("removeFromSuperview\0"))) };
+    rt::release(c);
+}
+
+fn staying_count() -> usize {
+    var n: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i < SHOWN.count() {
+        match SHOWN.at_ptr(i) {
+            option::Option[*Shown]::Some(e) => { if !{ (*e).leaving } { n = n +% (1 as usize); } }
+            option::Option[*Shown]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+fn on_present(p: navigation::Presentation, title: str) {
+    let navc: *u8 = nav_of_root(p.window_root);
+    if navc == (0 as *u8) { return; }
+    SHOWN_NAV = p.navigator;
+    if p.kind == navigation::PRESENT_PUSH { push_native(navc, p, title); return; }
+    if p.kind == navigation::PRESENT_POP { pop_native(navc); return; }
+    if p.kind == navigation::PRESENT_REPLACE { replace_native(p); return; }
+}
+
+fn push_native(navc: *u8, p: navigation::Presentation, title: str) {
+    let n: usize = SHOWN.count();
+    if n == (0 as usize) {
+        uncover(BASE_COVER);
+        BASE_COVER = cover_vc(base_of_root(p.window_root));
+    } else {
+        match SHOWN.at_ptr(n -% (1 as usize)) {
+            option::Option[*Shown]::Some(e) => { uncover({ (*e).cover }); { (*e).cover = cover_vc({ (*e).vc }) }; }
+            option::Option[*Shown]::None => { }
+        }
+    }
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return; }
+    if title != "" { { rt::msg_void_id(vc, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title)) }; }
+    dress_screen(vc);
+    let host: *u8 = { rt::alloc_init(#str_ptr("UIView\0")) };
+    let vv: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    if vv != (0 as *u8) { { rt::msg_void_id(vv, rt::sel(#str_ptr("addSubview:\0")), host) }; }
+    let rv: *u8 = core::view_of(p.window_root);
+    if rv != (0 as *u8) { geometry::set_view_frame(host, { rt::msg_rect(rv, rt::sel(#str_ptr("frame\0"))) }); }
+    let wv: *u8 = core::view_of(p.shown);
+    if wv != (0 as *u8) { { rt::msg_void_id(host, rt::sel(#str_ptr("addSubview:\0")), wv) }; }
+    let _s: status::Status = SHOWN.append(Shown { vc: vc, host: host, wrapper: p.shown,
+        window_root: p.window_root, cover: 0 as *u8, leaving: false });
+    { msg_void_i8_i8(navc, rt::sel(#str_ptr("setNavigationBarHidden:animated:\0")), 0 as i8, 1 as i8) };
+    { msg_void_id_i8(navc, rt::sel(#str_ptr("pushViewController:animated:\0")), vc, 1 as i8) };
+    scheduler::layout_all_windows(true);
+    agent_follow(app::window_native(p.window_root));
+}
+
+fn pop_native(navc: *u8) {
+    // The user's pop: UIKit has done it already, and `sync_shown` is the caller.
+    if SYNCING { return; }
+    let n: usize = SHOWN.count();
+    if n == (0 as usize) { return; }
+    var root: *core::Node = 0 as *core::Node;
+    match SHOWN.at_ptr(n -% (1 as usize)) {
+        option::Option[*Shown]::Some(e) => {
+            if { (*e).leaving } { return; }
+            { (*e).leaving = true };
+            root = { (*e).window_root };
+            uncover({ (*e).cover });
+            { (*e).cover = cover_vc({ (*e).vc }) };
+        }
+        option::Option[*Shown]::None => { return; }
+    }
+    // What is revealed is real again: its views unhide on this tick, and only
+    // then does its picture come off.
+    scheduler::tick_now();
+    if n == (1 as usize) {
+        uncover(BASE_COVER);
+        BASE_COVER = 0 as *u8;
+        { msg_void_i8_i8(navc, rt::sel(#str_ptr("setNavigationBarHidden:animated:\0")), 1 as i8, 1 as i8) };
+    } else {
+        match SHOWN.at_ptr(n -% (2 as usize)) {
+            option::Option[*Shown]::Some(e) => { uncover({ (*e).cover }); { (*e).cover = 0 as *u8 }; }
+            option::Option[*Shown]::None => { }
+        }
+    }
+    let _p: *u8 = { msg_id_i8(navc, rt::sel(#str_ptr("popViewControllerAnimated:\0")), 1 as i8) };
+    scheduler::layout_all_windows(true);
+    agent_follow(app::window_native(root));
+}
+
+fn replace_native(p: navigation::Presentation) {
+    let n: usize = SHOWN.count();
+    if n == (0 as usize) { return; }
+    match SHOWN.at_ptr(n -% (1 as usize)) {
+        option::Option[*Shown]::Some(e) => {
+            if { (*e).leaving } { return; }
+            let wv: *u8 = core::view_of(p.shown);
+            if wv != (0 as *u8) { { rt::msg_void_id({ (*e).host }, rt::sel(#str_ptr("addSubview:\0")), wv) }; }
+            { (*e).wrapper = p.shown };
+        }
+        option::Option[*Shown]::None => { }
+    }
+}
+
+// From `didShowViewController:`. Every pushed controller UIKit no longer holds
+// has gone, whoever popped it. Its screen's view goes back under the root's
+// view, and a pop the navigator did not start is told to it now.
+fn sync_shown(live: *u8) {
+    var user_pops: usize = 0 as usize;
+    var i: usize = SHOWN.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        let gone: bool = match SHOWN.at_ptr(i) {
+            option::Option[*Shown]::Some(e) => !array_has(live, { (*e).vc }),
+            option::Option[*Shown]::None => false,
+        };
+        if gone {
+            match SHOWN.remove(at: i) {
+                option::Option[Shown]::Some(e) => {
+                    if !e.leaving { user_pops = user_pops +% (1 as usize); }
+                    let rv: *u8 = core::view_of(e.window_root);
+                    let wv: *u8 = core::view_of(e.wrapper);
+                    if rv != (0 as *u8) && wv != (0 as *u8) {
+                        { rt::msg_void_id(rv, rt::sel(#str_ptr("addSubview:\0")), wv) };
+                    }
+                    uncover(e.cover);
+                    { rt::msg_void(e.host, rt::sel(#str_ptr("removeFromSuperview\0"))) };
+                    rt::release(e.host);
+                    rt::release(e.vc);
+                }
+                option::Option[Shown]::None => { }
+            }
+        }
+    }
+    if user_pops == (0 as usize) { return; }
+    // The back button or the swipe: the navigator follows what the user did.
+    SYNCING = true;
+    var k: usize = 0 as usize;
+    while k < user_pops {
+        let _p: bool = SHOWN_NAV.pop();
+        k = k +% (1 as usize);
+    }
+    SYNCING = false;
+    scheduler::tick_now();
+    let n: usize = SHOWN.count();
+    if n == (0 as usize) {
+        uncover(BASE_COVER);
+        BASE_COVER = 0 as *u8;
+    } else {
+        match SHOWN.at_ptr(n -% (1 as usize)) {
+            option::Option[*Shown]::Some(e) => { uncover({ (*e).cover }); { (*e).cover = 0 as *u8 }; }
+            option::Option[*Shown]::None => { }
+        }
+    }
+    scheduler::layout_all_windows(true);
+}
+
+// The layout pass's two seams (scheduler.cplus). A pushed screen sits under the
+// visible bar, so the inset grows to the bar's bottom edge; and its host sits
+// where the root's view does, because its frames are relative to that view.
+//
+// UNDER THE BAR, when the pushed screen asks for `SafeArea::Content`: the
+// screen gets the whole of its controller — under the status bar and under the
+// glass — and only its SCROLLABLE content is inset, by UIKit's own automatic
+// adjustment, so the first row starts below the bar and scrolls up under it.
+// That is the iOS 26 shape, and the bar is glass precisely so there is
+// something under it. `None` is the whole screen too, with no inset anywhere.
+fn insets_with_bar(win: *u8, ins: ui::EdgeInsets) -> ui::EdgeInsets {
+    if staying_count() == (0 as usize) { return ins; }
+    if NAV == (0 as *u8) { return ins; }
+    let top: *core::Node = top_staying_wrapper();
+    if top != (0 as *core::Node) {
+        let sa: vocab::SafeArea = core::safe_area(top);
+        if sa == vocab::SafeArea::Content || sa == vocab::SafeArea::None {
+            return ui::EdgeInsets { top: 0.0f64, left: 0.0f64, bottom: 0.0f64, right: 0.0f64 };
+        }
+    }
+    let bar: *u8 = { rt::msg_id(NAV, rt::sel(#str_ptr("navigationBar\0"))) };
+    if bar == (0 as *u8) { return ins; }
+    let f: rt::Rect = { rt::msg_rect(bar, rt::sel(#str_ptr("frame\0"))) };
+    let bottom: f64 = f.y + f.h;
+    if bottom <= ins.top { return ins; }
+    return ui::EdgeInsets { top: bottom, left: ins.left, bottom: ins.bottom, right: ins.right };
+}
+
+fn top_staying_wrapper() -> *core::Node {
+    var i: usize = SHOWN.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        match SHOWN.at_ptr(i) {
+            option::Option[*Shown]::Some(e) => { if !{ (*e).leaving } { return { (*e).wrapper }; } }
+            option::Option[*Shown]::None => { }
+        }
+    }
+    return 0 as *core::Node;
+}
+
+fn place_hosts(root: *core::Node, r: rt::Rect) {
+    var i: usize = 0 as usize;
+    while i < SHOWN.count() {
+        match SHOWN.at_ptr(i) {
+            option::Option[*Shown]::Some(e) => {
+                if { (*e).window_root } == root { geometry::set_view_frame({ (*e).host }, r); }
+            }
+            option::Option[*Shown]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
 }
 
 fn array_has(arr: *u8, obj: *u8) -> bool {

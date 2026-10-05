@@ -380,6 +380,9 @@ interface Screen {
     fn on_navigation(ref this, state: navigation::State) { }
     // Optional app-menu contribution from this content.
     fn menu_items(this) -> vec::Vec[MenuItem];
+    // What a native navigation bar calls this screen when it is pushed over
+    // the whole window. Empty is "no title", which is the default.
+    fn title(this) -> str { return ""; }
 }
 
 // A type-erased, heap-owned screen — what a route factory returns, so an `App`
@@ -408,6 +411,7 @@ struct ScreenBox {
     _detach: fn(*u8, component::Detach),
 
     _menu_items: fn(*u8) -> vec::Vec[MenuItem],
+    _title: fn(*u8) -> str,
     _drop: fn(*u8),
 }
 
@@ -423,6 +427,7 @@ fn screen_box[S: component::Component + component::Lifecycle + Screen](take s: S
             _detach: sb_detach_tramp::[S],
 
             _menu_items: sb_menu_items_tramp::[S],
+            _title: sb_title_tramp::[S],
             _drop: sb_drop_tramp::[S],
         },
         // Allocation failed: `s` dropped inside box::new. The invalid box —
@@ -454,6 +459,11 @@ fn sb_detach_tramp[S: component::Lifecycle](p: *u8, why: component::Detach) {
 
 
 
+fn sb_title_tramp[S: Screen](p: *u8) -> str {
+    let q: *S = p as *S;
+    return { (*q).title() };
+}
+
 fn sb_menu_items_tramp[S: Screen](p: *u8) -> vec::Vec[MenuItem] {
     let q: *S = p as *S;
     return { (*q).menu_items() };
@@ -478,6 +488,7 @@ impl ScreenBox {
             _detach: 0 as fn(*u8, component::Detach),
 
             _menu_items: 0 as fn(*u8) -> vec::Vec[MenuItem],
+            _title: 0 as fn(*u8) -> str,
             _drop: 0 as fn(*u8),
         };
     }
@@ -514,6 +525,14 @@ impl ScreenBox {
 
 
 
+
+    // The boxed screen's title; empty for an invalid box.
+    fn title(this) -> str {
+        if !this.valid() { return ""; }
+        let f: fn(*u8) -> str = this._title;
+        if f.is_null() { return ""; }
+        return f(this._p);
+    }
 
     // The boxed screen's menu contribution. Empty for an invalid box, so the
     // host merges nothing rather than special-casing.

@@ -50,8 +50,10 @@ export extern fn facet_gallery_ios_main() -> i32 {
     // backend drops them. See facet_uikit/MANIFEST.md §6.
     let mobile = runtime::App::new("facet_gallery_ios");
     mobile.on_launch(configure_theme);
-    mobile.window("main", main_window, chrome: screen::Chrome::new(
+    let main = mobile.window("main", main_window, chrome: screen::Chrome::new(
         title: "Facet Gallery", zoomable: true, max_zoom: 3.0));
+    // A demo, pushed over the catalog. iOS only uses it; see app::native_stack.
+    let _demo: bool = main.route("demo", app::DemoScreen::boxed);
     let _run = mobile.run("main");
     return 0;
 }

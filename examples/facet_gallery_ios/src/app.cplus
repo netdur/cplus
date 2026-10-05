@@ -30,6 +30,7 @@ import "facet/vocabulary" as vocab;
 import "flex_layout/flex_layout" as flex;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/status" as status;
 import "./catalog" as catalog;
 import "./demos/widgets" as widgets;
 import "./demos/typography" as typography;
@@ -43,6 +44,7 @@ import "./demos/responsive" as responsive;
 struct Gallery {
     // The demo on screen, or DEMO_NONE when the catalog is.
     shown: i64,
+    context: nav::Context,
 
     button: widgets::Buttons,
     values: widgets::Values,
@@ -76,6 +78,7 @@ impl Gallery {
     fn new() -> Gallery {
         return Gallery {
             shown: catalog::DEMO_NONE,
+            context: nav::Context::none(),
             button: widgets::Buttons::new(),
             values: widgets::Values::new(),
             switches: widgets::Switches::new(),
@@ -113,6 +116,17 @@ impl Gallery {
         if { (*node).is_branch } { return; }
         let id: i64 = catalog::demo_for({ (*node).id_of() });
         if id == catalog::DEMO_NONE { return; }
+        // ON iOS A DEMO IS A PUSHED SCREEN: the system bar with its title and
+        // back button, the slide and the edge swipe, and on iOS 26 Liquid Glass.
+        // Android has no such bar, so it keeps the outlet swap and the bar this
+        // screen draws for itself.
+        if native_stack() {
+            var p: nav::Params = nav::params_new();
+            let _t: status::Status = p.insert(text::from_str("title"),
+                                              text::from_str({ (*node).label_of() }));
+            let _pushed: bool = this.context.navigator().push("demo", arg: { (*node).id_of() }, params: p);
+            return;
+        }
         this.shown = id;
         this.show();
     }
@@ -134,37 +148,41 @@ impl Gallery {
         // to replay, and it does, because `set_content` rebuilds on repeat.
         if this.shown == catalog::DEMO_NONE { return; }
         match mount::find("g:outlet") {
-            option::Option[*core::Node]::Some(out) => {
-                let d: i64 = this.shown;
-                if d == catalog::DEMO_BUTTON { let _o: bool = mount::set_content(out, this.button); }
-                else if d == catalog::DEMO_VALUES { let _o: bool = mount::set_content(out, this.values); }
-                else if d == catalog::DEMO_SWITCHES { let _o: bool = mount::set_content(out, this.switches); }
-                else if d == catalog::DEMO_INDICATORS { let _o: bool = mount::set_content(out, this.indicators); }
-                else if d == catalog::DEMO_TYPE { let _o: bool = mount::set_content(out, this.type_); }
-                else if d == catalog::DEMO_FIELDS { let _o: bool = mount::set_content(out, this.fields); }
-                else if d == catalog::DEMO_KEYBOARDS { let _o: bool = mount::set_content(out, this.keyboards); }
-                else if d == catalog::DEMO_RADIUS { let _o: bool = mount::set_content(out, this.radius); }
-                else if d == catalog::DEMO_BRUSH { let _o: bool = mount::set_content(out, this.brush); }
-                else if d == catalog::DEMO_SHADOW { let _o: bool = mount::set_content(out, this.shadow); }
-                else if d == catalog::DEMO_CLIP { let _o: bool = mount::set_content(out, this.clip); }
-                else if d == catalog::DEMO_TRANSFORM { let _o: bool = mount::set_content(out, this.transform); }
-                else if d == catalog::DEMO_FADE { let _o: bool = mount::set_content(out, this.fade); }
-                else if d == catalog::DEMO_SPIN { let _o: bool = mount::set_content(out, this.spin); }
-                else if d == catalog::DEMO_POP { let _o: bool = mount::set_content(out, this.pop); }
-                else if d == catalog::DEMO_ENTRANCE { let _o: bool = mount::set_content(out, this.entrance); }
-                else if d == catalog::DEMO_DEAD { let _o: bool = mount::set_content(out, this.dead); }
-                else if d == catalog::DEMO_CANVAS { let _o: bool = mount::set_content(out, this.canvas); }
-                else if d == catalog::DEMO_SWIPE { let _o: bool = mount::set_content(out, this.swipe); }
-                else if d == catalog::DEMO_RADIO { let _o: bool = mount::set_content(out, this.radio); }
-                else if d == catalog::DEMO_SPLIT { let _o: bool = mount::set_content(out, this.split); }
-                else if d == catalog::DEMO_LIST { let _o: bool = mount::set_content(out, this.list); }
-                else if d == catalog::DEMO_RELIST { let _o: bool = mount::set_content(out, this.relist); }
-                else if d == catalog::DEMO_CANNOT { let _o: bool = mount::set_content(out, this.cannot); }
-                else if d == catalog::DEMO_REFRESH { let _o: bool = mount::set_content(out, this.refresh); }
-                else if d == catalog::DEMO_RESPONSIVE { let _o: bool = mount::set_content(out, this.responsive); }
-            }
+            option::Option[*core::Node]::Some(out) => { this.fill(out, this.shown); }
             option::Option::None => { }
         }
+    }
+
+    // Mount demo `d` into `out` — the gallery's own outlet, or a pushed
+    // DemoScreen's. The demos are values the gallery owns, so a pushed screen
+    // asks for one rather than holding its own.
+    fn fill(ref this, out: *core::Node, d: i64) {
+        if d == catalog::DEMO_BUTTON { let _o: bool = mount::set_content(out, this.button); }
+        else if d == catalog::DEMO_VALUES { let _o: bool = mount::set_content(out, this.values); }
+        else if d == catalog::DEMO_SWITCHES { let _o: bool = mount::set_content(out, this.switches); }
+        else if d == catalog::DEMO_INDICATORS { let _o: bool = mount::set_content(out, this.indicators); }
+        else if d == catalog::DEMO_TYPE { let _o: bool = mount::set_content(out, this.type_); }
+        else if d == catalog::DEMO_FIELDS { let _o: bool = mount::set_content(out, this.fields); }
+        else if d == catalog::DEMO_KEYBOARDS { let _o: bool = mount::set_content(out, this.keyboards); }
+        else if d == catalog::DEMO_RADIUS { let _o: bool = mount::set_content(out, this.radius); }
+        else if d == catalog::DEMO_BRUSH { let _o: bool = mount::set_content(out, this.brush); }
+        else if d == catalog::DEMO_SHADOW { let _o: bool = mount::set_content(out, this.shadow); }
+        else if d == catalog::DEMO_CLIP { let _o: bool = mount::set_content(out, this.clip); }
+        else if d == catalog::DEMO_TRANSFORM { let _o: bool = mount::set_content(out, this.transform); }
+        else if d == catalog::DEMO_FADE { let _o: bool = mount::set_content(out, this.fade); }
+        else if d == catalog::DEMO_SPIN { let _o: bool = mount::set_content(out, this.spin); }
+        else if d == catalog::DEMO_POP { let _o: bool = mount::set_content(out, this.pop); }
+        else if d == catalog::DEMO_ENTRANCE { let _o: bool = mount::set_content(out, this.entrance); }
+        else if d == catalog::DEMO_DEAD { let _o: bool = mount::set_content(out, this.dead); }
+        else if d == catalog::DEMO_CANVAS { let _o: bool = mount::set_content(out, this.canvas); }
+        else if d == catalog::DEMO_SWIPE { let _o: bool = mount::set_content(out, this.swipe); }
+        else if d == catalog::DEMO_RADIO { let _o: bool = mount::set_content(out, this.radio); }
+        else if d == catalog::DEMO_SPLIT { let _o: bool = mount::set_content(out, this.split); }
+        else if d == catalog::DEMO_LIST { let _o: bool = mount::set_content(out, this.list); }
+        else if d == catalog::DEMO_RELIST { let _o: bool = mount::set_content(out, this.relist); }
+        else if d == catalog::DEMO_CANNOT { let _o: bool = mount::set_content(out, this.cannot); }
+        else if d == catalog::DEMO_REFRESH { let _o: bool = mount::set_content(out, this.refresh); }
+        else if d == catalog::DEMO_RESPONSIVE { let _o: bool = mount::set_content(out, this.responsive); }
     }
 
     // The bar: a Back button that is only there when there is somewhere to go
@@ -234,14 +252,17 @@ impl Gallery: component::Component {
         var root: core::Builder = core::Builder::new();
 
         // ---- the bar ---------------------------------------------------------
+        // Drawn here only where there is no native one; see `native_stack`.
         var bar: core::Builder = core::Builder::new();
         bar.add(ui::text_button("‹ Back", key: "g:back", on_click: this.on_back)
                 .width(80.0).height(44.0));
         bar.add(ui::label(backend_name(), key: "g:title", font_size: 17.0,
                           font_weight: vocab::FontWeight::Semibold));
         bar.add(ui::column(core::Builder::new()).grow(1.0));
-        root.add(ui::row(bar).gap(8.0).padding(8.0)
-                 .align(flex::Align::Center).height(52.0));
+        if !native_stack() {
+            root.add(ui::row(bar).gap(8.0).padding(8.0)
+                     .align(flex::Align::Center).height(52.0));
+        }
 
         // ---- the catalog -----------------------------------------------------
         // A real `ui::tree`, so browsing the gallery exercises the recycling
@@ -299,5 +320,60 @@ impl Gallery: component::Lifecycle {
 }
 
 impl Gallery: screen::Screen {
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
+
+// Whether a demo is pushed onto the platform's own navigation stack.
+fn native_stack() -> bool { return #platform() == "ios"; }
+
+// ---- a demo, pushed --------------------------------------------------------
+// The route `demo`, with the catalog row's id as its argument and its label as
+// the title the navigation bar shows. It owns no demo: on mount it asks the
+// running gallery to fill its outlet, so a demo keeps its state between visits
+// exactly as it did in the outlet.
+struct DemoScreen { context: nav::Context, name: text::Text }
+
+impl DemoScreen {
+    fn boxed() -> screen::ScreenBox {
+        return screen::screen_box(DemoScreen { context: nav::Context::none(), name: text::new() });
+    }
+}
+
+impl DemoScreen: component::Component {
+    fn build(ref this) -> core::Node {
+        var page: core::Node = ui::column(core::Builder::new(), key: "d:outlet")
+            .grow(1.0).shrink(1.0);
+        page.set_background_color(vocab::Color::window_background());
+        // Under the glass bar: the demo's scroll runs to the top of the screen
+        // and UIKit insets what it scrolls.
+        page.set_safe_area(vocab::SafeArea::Content);
+        return page;
+    }
+}
+
+impl DemoScreen: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
+        let g: *Gallery = GALLERY;
+        if g.is_null() { return; }
+        // WITHIN this screen: every pushed demo has a `d:outlet`, and a parked
+        // one is still in the tree.
+        match mount::find("d:outlet", within: this.context.root()) {
+            option::Option[*core::Node]::Some(out) => {
+                { (*g).fill(out, catalog::demo_for(this.context.arg())) };
+            }
+            option::Option::None => { }
+        }
+    }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}
+
+impl DemoScreen: screen::Screen {
+    fn on_context(ref this, context: nav::Context) {
+        this.context = context;
+        this.name = text::from_str(context.param("title"));
+    }
+    fn title(this) -> str { return this.name.view(); }
     fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
 }

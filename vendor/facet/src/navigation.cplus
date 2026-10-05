@@ -13,6 +13,41 @@ import "./component" as component;
 import "./services" as services;
 
 fn install() { model::install(model::Host { push: navigate, back: travel }); }
+
+// ---- presenting a whole-window change natively ---------------------------------
+// The navigator keeps every screen of a window in ONE tree and shows one of
+// them; that is the whole model, and it is the same on every platform. A
+// platform whose users expect a screen pushed OVER the last one — iOS, with a
+// navigation bar, a back button and a swipe — is told when the window's whole
+// content changed, after the tree has, so it can present the change its own way.
+// Slot navigation is a change INSIDE a screen and is not reported.
+//
+// Installed by a backend; absent, nothing is presented and nothing changes.
+const PRESENT_PUSH: u32 = 1u32;
+const PRESENT_POP: u32 = 2u32;
+const PRESENT_REPLACE: u32 = 3u32;
+struct Presentation {
+    navigator: model::Navigator,
+    opaque window_root: *core::Node,
+    // The screen now shown and the one it replaced: their wrapper nodes.
+    opaque shown: *core::Node,
+    opaque left: *core::Node,
+    kind: u32,
+}
+static PRESENT_FN: fn(Presentation, str) = #zero::[fn(Presentation, str)]();
+fn set_present_fn(f: fn(Presentation, str)) { PRESENT_FN = f; return; }
+fn present(s: *model::Session, shown: u64, left: u64, kind: u32) {
+    let f: fn(Presentation, str) = PRESENT_FN;
+    if f.is_null() { return; }
+    let e = model::entry(s, shown);
+    let l = model::entry(s, left);
+    if e.is_null() { return; }
+    var left_root: *core::Node = 0 as *core::Node;
+    if l.is_not_null() { left_root = (*l).root; }
+    let title = (*((*e).screen as *screen::ScreenBox)).title();
+    f(Presentation { navigator: navigator(s), window_root: (*s).root, shown: (*e).root,
+                     left: left_root, kind: kind }, title);
+}
 fn navigator(s: *model::Session) -> model::Navigator {
     return model::Navigator { owner: (*s).owner, id: (*s).id };
 }
@@ -348,6 +383,11 @@ fn navigate(n: model::Navigator, route: str, key: str, into: str, mode: u32) -> 
         discard(s, old);
     }
     attach_entries(s);
+    if h == (*s).root {
+        var kind: u32 = PRESENT_PUSH;
+        if mode == (1 as u32) { kind = PRESENT_REPLACE; }
+        present(s, id, old, kind);
+    }
     notify(s);
     (*s).busy = false;
     return true;
@@ -365,9 +405,11 @@ fn travel(n: model::Navigator, forward: bool) -> bool {
         let added = (*s).history.append(id);
         if added != status::Status::Ok { (*s).busy = false; return false; }
         let _gone = (*s).future.remove(at: (*s).future.count() -% (1 as usize));
-        set_active(s, shown(s, h), false);
+        let leaving = shown(s, h);
+        set_active(s, leaving, false);
         let _show = mount::switch_to(h, (*e).wrapper.view());
         set_active(s, id, true);
+        if h == (*s).root { present(s, id, leaving, PRESENT_PUSH); }
     } else {
         let added = (*s).future.append(id);
         if added != status::Status::Ok { (*s).busy = false; return false; }
@@ -401,6 +443,7 @@ fn travel(n: model::Navigator, forward: bool) -> bool {
         if previous.is_not_null() {
             let _show = mount::switch_to(h, (*previous).wrapper.view());
             set_active(s, below, true);
+            if h == (*s).root { present(s, below, id, PRESENT_POP); }
         } else {
             let _show = mount::switch_to(h, "@nav:base");
         }
@@ -565,9 +608,7 @@ impl TestScreen: component::Lifecycle {
     }
 }
 impl TestScreen: screen::Screen {
-
-
-
+    fn title(this) -> str { if this.shell { return "Shell"; } return "Page"; }
     fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
     fn on_context(ref this, c: model::Context) { this.context = c; }
     fn on_navigation(ref this, state: model::State) { this.changes = this.changes +% (1 as usize); }
@@ -633,6 +674,55 @@ fn independent_windows_keep_routes_arguments_history_and_handles() {
     assert b.is_live();
     assert b.pop();
     test_close(b);
+    app::release_current();
+}
+static PRESENTED_PUSH: i32 = 0;
+static PRESENTED_POP: i32 = 0;
+static PRESENTED_REPLACE: i32 = 0;
+static PRESENTED_TITLE_OK: bool = false;
+static PRESENTED_SHOWN: *core::Node = 0 as *core::Node;
+static PRESENTED_LEFT: *core::Node = 0 as *core::Node;
+fn record_presentation(p: Presentation, title: str) {
+    if p.kind == PRESENT_PUSH { PRESENTED_PUSH = PRESENTED_PUSH + 1; }
+    if p.kind == PRESENT_POP { PRESENTED_POP = PRESENTED_POP + 1; }
+    if p.kind == PRESENT_REPLACE { PRESENTED_REPLACE = PRESENTED_REPLACE + 1; }
+    PRESENTED_TITLE_OK = title == "Page" || title == "Shell";
+    PRESENTED_SHOWN = p.shown;
+    PRESENTED_LEFT = p.left;
+}
+#[test]
+fn a_whole_window_change_is_presented_and_a_slot_change_is_not() {
+    // A native stack (iOS) pushes a controller for a whole-window push and pops
+    // it for Back. A slot is a change inside a screen and stays the tree's.
+    PRESENTED_PUSH = 0;
+    PRESENTED_POP = 0;
+    PRESENTED_REPLACE = 0;
+    let owner = app::new_instance("navigation test");
+    app::make_current(owner);
+    let n = test_open(owner, "");
+    set_present_fn(record_presentation);
+    let s = model::session(owner, n.id);
+    let base_root = (*model::entry(s, 1 as u64)).root;
+    assert n.push("page", into: "details");
+    assert PRESENTED_PUSH == 0;
+    assert n.push("page");
+    assert PRESENTED_PUSH == 1;
+    assert PRESENTED_TITLE_OK;
+    let pushed = last((*s).history);
+    assert PRESENTED_SHOWN == (*model::entry(s, pushed)).root;
+    assert PRESENTED_LEFT == base_root;
+    assert n.pop();
+    assert PRESENTED_POP == 1;
+    assert PRESENTED_SHOWN == base_root;
+    assert n.forward();
+    assert PRESENTED_PUSH == 2;
+    assert n.replace("page");
+    assert PRESENTED_REPLACE == 1;
+    set_present_fn(#zero::[fn(Presentation, str)]());
+    // Uninstalled: navigation goes on and nothing is presented.
+    assert n.pop();
+    assert PRESENTED_POP == 1;
+    test_close(n);
     app::release_current();
 }
 #[test]

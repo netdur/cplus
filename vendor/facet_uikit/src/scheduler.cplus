@@ -183,7 +183,9 @@ fn layout_window(root: *core::Node, force: bool = false) {
     // TRANSFORM instead, which leaves the bounds alone; the bounds stay the
     // layout space and this must keep reading them.
     let f: rt::Rect = cv.bounds();
-    let ins: ui::EdgeInsets = safe_insets(cv, root);
+    var ins: ui::EdgeInsets = safe_insets(cv, root);
+    let adjust: fn(*u8, ui::EdgeInsets) -> ui::EdgeInsets = INSETS_FN;
+    if adjust.is_not_null() && core::honours_safe_area(root) { ins = adjust(win, ins); }
     let w: f64 = f.w - ins.left - ins.right;
     let h: f64 = f.h - ins.top - ins.bottom;
     geometry::relayout_root(root, w, h, geometry::scale_of_view(content), force);
@@ -201,7 +203,10 @@ fn layout_window(root: *core::Node, force: bool = false) {
     // facade did), so the frame walk never sizes it.
     let rv: *u8 = core::view_of(root);
     if rv != (0 as *u8) {
-        geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
+        let placed: rt::Rect = rt::Rect { x: ins.left, y: ins.top, w: w, h: h };
+        geometry::set_view_frame(rv, placed);
+        let tell: fn(*core::Node, rt::Rect) = PLACED_FN;
+        if tell.is_not_null() { tell(root, placed); }
     } else {
         // A pass-through root has no view of its own, so the facade put its
         // topmost BACKED descendants in the window instead — and those are the
@@ -216,6 +221,21 @@ fn layout_window(root: *core::Node, force: bool = false) {
     geometry::without_implicit_animation_end();
     return;
 }
+
+// TWO SEAMS FOR A NATIVE NAVIGATION STACK, installed by window.cplus (which
+// imports this file, so it cannot be the other way round).
+//
+// A screen pushed onto the UINavigationController sits under a VISIBLE bar,
+// and the content view's own safe area does not include it: the bar lives in
+// the navigation controller's view, and that view is what the inset is read
+// from. `INSETS_FN` lets the window add it. `PLACED_FN` hears where the root's
+// view went, so a pushed screen's host in its own controller can sit at the
+// same rect — the screen's frames are written relative to the root's view.
+static INSETS_FN: fn(*u8, ui::EdgeInsets) -> ui::EdgeInsets =
+    #zero::[fn(*u8, ui::EdgeInsets) -> ui::EdgeInsets]();
+static PLACED_FN: fn(*core::Node, rt::Rect) = #zero::[fn(*core::Node, rt::Rect)]();
+fn set_insets_fn(f: fn(*u8, ui::EdgeInsets) -> ui::EdgeInsets) { INSETS_FN = f; return; }
+fn set_placed_fn(f: fn(*core::Node, rt::Rect)) { PLACED_FN = f; return; }
 
 fn content_view_of(win: *u8) -> *u8 {
     let vc: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("rootViewController\0"))) };
