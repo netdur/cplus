@@ -231,8 +231,18 @@ pub fn split_by_home(ir: &str, residual: &str) -> Split {
             let name = first_symbol(rest).unwrap_or("").to_string();
             let head = &rest[..rest.find('@').unwrap_or(rest.len())];
             let linkage = linkage_of(head);
+            // A DISCARDABLE definition is never a root. `linkonce_odr` tells
+            // LLVM it may drop the body from any object that does not use it,
+            // so a root defined only in its home piece vanished there and every
+            // other piece was left declaring a symbol nobody defined. The
+            // `Type::f` fn-pointer bridge is this: emitted beside its method,
+            // used only by the module that takes its address
+            // (bugs/closed/a-cross-module-fnptr-bridge-is-defined-nowhere.md).
+            // Copied where reached, like an instance.
             let root = linkage == Linkage::External
-                || (linkage == Linkage::Mergeable && !name.contains("__"));
+                || (linkage == Linkage::Mergeable
+                    && retention_of(head) != Retention::Discardable
+                    && !name.contains("__"));
             entities.push(Entity {
                 kind: Kind::Define { name, home, root },
                 start: i,
@@ -718,6 +728,40 @@ entry:
         assert!(b.contains("define weak_odr i32 @pkg.src.b.g("), "{b}");
         assert!(!b.contains("@pkg.src.a.f"), "{b}");
         assert!(!b.contains("declare i32 @pkg.src.b.g"), "b defines g, it must not declare it too: {b}");
+    }
+
+    // `a` defines a method and, beside it, the `linkonce_odr` C-ABI bridge a
+    // `Type::f` fn-pointer points at; only `main` takes its address.
+    const BRIDGE: &str = "\
+; cpc-home: pkg.src.a
+define weak_odr i32 @pkg.src.a.S.make() {
+  ret i32 7
+}
+define linkonce_odr i32 @pkg.src.a.S.make.fnptr() {
+  %r = call i32 @pkg.src.a.S.make()
+  ret i32 %r
+}
+; cpc-home: pkg.src.main
+define i32 @main_entry() {
+  %f = alloca ptr, align 8
+  store ptr @pkg.src.a.S.make.fnptr, ptr %f, align 8
+  ret i32 0
+}
+";
+
+    #[test]
+    fn a_discardable_definition_is_copied_where_used_not_rooted_at_home() {
+        // Rooted in `a`, LLVM dropped it there (nothing in `a` uses a
+        // `linkonce_odr` body) and `main` declared a symbol nobody defined:
+        // the iOS gallery's `app::DemoScreen::boxed` failed to link.
+        let s = split_by_home(BRIDGE, "pkg");
+        let main = piece(&s, "pkg.src.main");
+        assert!(main.contains("define linkonce_odr i32 @pkg.src.a.S.make.fnptr("), "{main}");
+        assert!(!main.contains("declare i32 @pkg.src.a.S.make.fnptr"), "{main}");
+        // What the bridge calls is still `a`'s root, declared here.
+        assert!(main.contains("declare i32 @pkg.src.a.S.make()"), "{main}");
+        let a = piece(&s, "pkg.src.a");
+        assert!(a.contains("define weak_odr i32 @pkg.src.a.S.make("), "{a}");
     }
 
     #[test]
