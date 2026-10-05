@@ -157,6 +157,42 @@ Which of the three to reach for:
   when, and only when, that distinction is the question. On a plain host
   build it is the literal `"host"`, not the host's triple.
 
+### Instruction-set extensions: `#target_feature`
+
+`#arch()` says `x86_64`; it does not say whether AVX2 is there. The backend
+only uses what the build allows, and the default is the arch baseline —
+SSE2 on x86_64, where an `f32x8` is two SSE halves and a vector `fma` is a
+libm call per lane. Allow more with `--target-cpu` / `--target-feature`:
+
+```sh
+cpc build --release --target-cpu=x86-64-v3        # AVX2 + FMA + BMI2 + F16C
+cpc build --release --target-cpu=native           # whatever this machine has
+cpc build --release --target-feature=+avx2,+fma   # just these two
+```
+
+Then pick a kernel with the `bool` constant `#target_feature`:
+
+```cplus
+if #target_feature("avx2") && #target_feature("fma") {
+    dot_f32x8(a, b, n)      // one vfmadd per 8 lanes
+} else {
+    dot_f32x4(a, b, n)
+}
+```
+
+It is value-level like the three above: both arms compile, and the optimizer
+drops the dead one. The answer comes from clang's predefined macros for the
+exact `--target-cpu` and `--target-feature` given, so `native` and every
+named CPU report what the backend will really use. Another architecture's
+feature (`dotprod` on x86_64) is `false`, so one file can carry the
+kernels for both.
+
+A binary built with `--target-cpu=x86-64-v3` runs only on CPUs that have
+those extensions; on an older one it dies on an illegal instruction. The
+setting is part of every prebuilt dependency's fingerprint, so changing it
+rebuilds the slices — under AVX an `f32x8` argument travels in a `ymm`
+register, so mixing slices would disagree about where vectors are passed.
+
 ## 4. Platform sections in the manifest
 
 ```toml

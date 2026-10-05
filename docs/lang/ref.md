@@ -450,6 +450,7 @@ All spelled `#name(...)`:
 | `#platform()` | `str` | active *target's* platform name (`macos ios linux android windows esp32 wasm`); value-level only — both branches compile |
 | `#arch()` | `str` | `aarch64` `x86_64` `xtensa` `riscv32` `wasm32` — crosses `#platform()`, does not refine it |
 | `#target()` | `str` | the `--target` spec name (`host`, `ios-arm64`, `ios-arm64-simulator`, …) — the only axis that separates the iOS simulator from a device |
+| `#target_feature("avx2")` | `bool` | is that ISA extension on for this build (`--target-cpu` / `--target-feature`)? Value-level; the dead arm is optimized out. Names: `sse3 ssse3 sse4.1 sse4.2 popcnt avx avx2 fma f16c bmi bmi2 lzcnt avxvnni avx512f avx512bw avx512dq avx512vl avx512vnni avx512bf16 avx512fp16` (x86_64), `neon fp16 dotprod i8mm bf16 sve sve2` (aarch64); another arch's name is `false`, an unknown one is E0903 |
 | `#println(x)` | `()` | type-dispatched primitive print; interpolation sinks |
 | `#cpu_relax()` | `()` | spin-loop hint |
 | `#asm("tmpl", name = in/out/inout(reg\|"x0") expr, clobber("r"))` | `()` | inline asm tiers 1–2; tier 3 is `#[naked]` |
@@ -575,6 +576,8 @@ cpc init [--kind cli|gui] [--platform P]... [NAME]
 --asan | --ubsan | --tsan | --msan  # asan/tsan/msan mutually exclusive
 --target NAME [--min-os VERSION]    # cross-compile; --min-os goes AFTER --target
 --fp-contract=off|on|fast           # `off` = bit-identical-to-C float output
+--target-cpu=NAME                   # x86_64 -march / aarch64 -mcpu; x86-64-v3 or native = AVX2+FMA
+--target-feature=+a,-b              # LLVM features, e.g. +avx2,+fma; part of every prebuilt slice's key
 --warn-deps                         # dependencies' warnings too (default: own src/ only)
 --timings                           # per-phase and per-package build cost
 --diagnostics=human|short|json
@@ -612,8 +615,9 @@ cpc --realtime-report[=json]        # contract digest; non-zero on any violation
 ```
 
 Targets: `host` (default), `ios-arm64`, `ios-arm64-simulator`,
-`android-arm64`, `esp32-xtensa`, `esp32c3-riscv32`. Place `--target` and
-`--fp-contract` before an inline emit flag and its file. Cross-target
+`android-arm64`, `esp32-xtensa`, `esp32c3-riscv32`. Place `--target`,
+`--fp-contract` and `--target-cpu`/`--target-feature` before an inline emit
+flag and its file. Cross-target
 artifacts land in `target/<target-name>/<mode>/`.
 
 `cpc check FILE` does not read the manifest — a file with any `import`

@@ -19830,6 +19830,153 @@ fn fp_contract_flag_controls_fmuladd_emission() {
     }
 }
 
+/// The IR line `fn has() -> bool { return #target_feature("NAME"); }`
+/// lowers to, under `flags`.
+fn target_feature_ret(flags: &[&str], name: &str) -> String {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("tf.cplus");
+    std::fs::write(
+        &src,
+        format!(
+            "fn has() -> bool {{ return #target_feature(\"{name}\"); }}\n\
+             fn main() -> i32 {{ if has() {{ return 1; }} return 0; }}\n"
+        ),
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .args(flags)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll");
+    assert!(
+        out.status.success(),
+        "{flags:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout).into_owned();
+    let body = ir.split("@has()").nth(1).expect("has() in IR");
+    body.lines()
+        .find(|l| l.trim_start().starts_with("ret i1"))
+        .expect("ret i1")
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn target_feature_reflects_target_cpu_and_target_feature() {
+    // `#target_feature` answers from clang's predefined macros for the active
+    // tuning, so a named CPU expands to its features without a CPU table.
+    // `--emit-ll` only: nothing here executes an AVX2 instruction.
+    if !cfg!(target_arch = "x86_64") {
+        return;
+    }
+    assert_eq!(target_feature_ret(&[], "avx2"), "ret i1 false");
+    assert_eq!(target_feature_ret(&["--target-cpu=x86-64-v3"], "avx2"), "ret i1 true");
+    assert_eq!(target_feature_ret(&["--target-cpu=x86-64-v3"], "fma"), "ret i1 true");
+    assert_eq!(target_feature_ret(&["--target-cpu=x86-64-v3"], "avx512f"), "ret i1 false");
+    assert_eq!(
+        target_feature_ret(&["--target-cpu=x86-64-v3", "--target-feature=-fma"], "fma"),
+        "ret i1 false"
+    );
+    assert_eq!(target_feature_ret(&["--target-feature=+avx2,+fma"], "fma"), "ret i1 true");
+    // Another arch's feature is false, not an error: one kernel file can ask
+    // about both and build on both.
+    assert_eq!(target_feature_ret(&["--target-cpu=x86-64-v3"], "dotprod"), "ret i1 false");
+}
+
+#[test]
+fn target_feature_rejects_an_unknown_name() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("x.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 { if #target_feature(\"avx-2\") { return 1; } return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "an unknown feature name must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unknown CPU feature `avx-2`"),
+        "expected E0903, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn target_cpu_x86_64_v3_fuses_an_f32x8_fma_into_one_vfmadd() {
+    // Without a tuning, x86_64 is SSE2: an 8-lane `fma` has no instruction
+    // and becomes a libm `fmaf` call per lane. `x86-64-v3` (AVX2+FMA) makes
+    // it one `vfmadd*ps` on a `ymm` register.
+    if !cfg!(target_arch = "x86_64") {
+        return;
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("k.cplus");
+    std::fs::write(
+        &src,
+        "export extern fn fma8(x: *f32, y: *f32, z: *f32, out: *f32) {\n\
+         let a: f32x8 = f32x8::load(x);\n\
+         let b: f32x8 = f32x8::load(y);\n\
+         let c: f32x8 = f32x8::load(z);\n\
+         a.fma(b, c).store(out);\n\
+         }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let asm = |flags: &[&str]| {
+        let out = Command::new(cpc)
+            .arg("--release")
+            .args(flags)
+            .arg("--emit-asm")
+            .arg(&src)
+            .output()
+            .expect("emit-asm");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let base = asm(&[]);
+    assert!(!base.contains("vfmadd"), "baseline must not use FMA3:\n{base}");
+    assert!(base.contains("fmaf"), "baseline lowers vector fma to fmaf calls:\n{base}");
+    let v3 = asm(&["--target-cpu=x86-64-v3"]);
+    assert!(v3.contains("vfmadd"), "x86-64-v3 must emit vfmadd:\n{v3}");
+    assert!(v3.contains("ymm"), "x86-64-v3 must keep f32x8 in one ymm register:\n{v3}");
+    assert!(!v3.contains("fmaf"), "x86-64-v3 must not call fmaf:\n{v3}");
+}
+
+#[test]
+fn target_cpu_flags_are_validated() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("x.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let run = |args: &[&str]| {
+        let out = Command::new(cpc)
+            .args(args)
+            .arg("--emit-ll")
+            .arg(&src)
+            .output()
+            .expect("invoke cpc");
+        assert!(!out.status.success(), "{args:?} must fail");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    assert!(run(&["--target-feature=avx2"]).contains("expects `+name` or `-name`"));
+    assert!(run(&["--target-cpu="]).contains("--target-cpu expects a CPU name"));
+    // RV32 pins its own -march in the spec; refused in either order.
+    for args in [
+        &["--target", "esp32c3-riscv32", "--target-cpu=native"][..],
+        &["--target-feature=+avx2", "--target", "esp32c3-riscv32"][..],
+    ] {
+        assert!(
+            run(args).contains("apply to x86_64 and aarch64 targets, not riscv32"),
+            "{args:?}"
+        );
+    }
+}
+
 #[test]
 fn fp_contract_rejects_invalid_value() {
     // B-10: an unrecognized `--fp-contract=` value is a usage error.

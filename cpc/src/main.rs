@@ -93,7 +93,13 @@ build flags (apply to `cpc FILE` and `cpc build`):
   --fp-contract=off|on|fast         float contraction policy; `off` keeps `a*b+c` as
                                     fmul+fadd for bit-identical-to-C output (default: on).
                                     Place before --emit-ll/--emit-asm/--emit-obj FILE.
-  --warn-deps                       report warnings from dependencies too
+  --target-cpu=NAME                 CPU the backend may tune and select instructions for
+                                    (x86_64: -march, aarch64: -mcpu). `x86-64-v3` or
+                                    `native` enables AVX2+FMA; default: the arch baseline.
+  --target-feature=+a,-b            enable/disable LLVM features (e.g. +avx2,+fma).
+                                    Both are part of every prebuilt dependency's
+                                    fingerprint; `#target_feature(NAME)` reads them.
+  --warn-deps                      report warnings from dependencies too
                                     (default: only this project's own `src/`)
   --timings                         print build cost to stderr: per phase
                                     (resolve+sema+borrowck / codegen / prune / clang+link)
@@ -506,6 +512,11 @@ fn main() -> ExitCode {
     // time so the inline-dispatching `--emit-*` flags see it — hence the
     // "place --target first" rule shared with --fp-contract.
     let mut target_spec: TargetSpec = target::HOST;
+    let mut cpu_tuning = target::CpuTuning::default();
+    // `#target_feature` asks clang, lazily and once, so a build that never
+    // uses it never pays for the probe. Installed before the flag loop
+    // because the inline `--emit-*` flags run sema from inside it.
+    target::set_feature_probe(probe_target_macros);
     let mut subcommand: Option<Subcommand> = None;
     // Phase 5 Slice 5.A: deferred-dispatch input for `--emit-obj FILE`.
     // Order-independent with `-o OUT.o` because the FILE may appear before
@@ -728,6 +739,10 @@ fn main() -> ExitCode {
                 };
                 target_spec = spec;
                 target::set_active_target(spec);
+                if let Err(msg) = target::cpu_tuning_clang_args(&cpu_tuning, target_spec.arch) {
+                    eprintln!("cpc: {msg}");
+                    return ExitCode::from(2);
+                }
                 i += 2;
             }
             // v0.0.22: `--min-os VERSION` — override the OS version baked
@@ -765,6 +780,53 @@ fn main() -> ExitCode {
                 };
                 target_spec = spec;
                 target::set_active_target(spec);
+                if let Err(msg) = target::cpu_tuning_clang_args(&cpu_tuning, target_spec.arch) {
+                    eprintln!("cpc: {msg}");
+                    return ExitCode::from(2);
+                }
+                i += 1;
+            }
+            // `--target-cpu=NAME` / `--target-feature=+a,-b`: which ISA
+            // extensions the backend may use (`x86-64-v3` or `native` for
+            // AVX2+FMA). Installed as soon as parsed, like `--target`, so an
+            // inline `--emit-*` placed after them sees it. Checked against the
+            // target's arch here and again at `--target`, so either order is
+            // refused before anything is emitted.
+            Some(s) if s.starts_with("--target-cpu=") => {
+                let v = &s["--target-cpu=".len()..];
+                if v.is_empty() {
+                    eprintln!("cpc: --target-cpu expects a CPU name (e.g. x86-64-v3, native)");
+                    return ExitCode::from(2);
+                }
+                cpu_tuning.cpu = Some(v.to_string());
+                target::set_cpu_tuning(cpu_tuning.clone());
+                if let Err(msg) = target::cpu_tuning_clang_args(&cpu_tuning, target_spec.arch) {
+                    eprintln!("cpc: {msg}");
+                    return ExitCode::from(2);
+                }
+                i += 1;
+            }
+            Some(s) if s.starts_with("--target-feature=") => {
+                for f in s["--target-feature=".len()..].split(',') {
+                    let name = f.get(1..).unwrap_or("");
+                    let well_formed = (f.starts_with('+') || f.starts_with('-'))
+                        && !name.is_empty()
+                        && name
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+                    if !well_formed {
+                        eprintln!(
+                            "cpc: --target-feature expects `+name` or `-name` items, comma-separated (e.g. +avx2,+fma), got `{f}`"
+                        );
+                        return ExitCode::from(2);
+                    }
+                    cpu_tuning.features.push(f.to_string());
+                }
+                target::set_cpu_tuning(cpu_tuning.clone());
+                if let Err(msg) = target::cpu_tuning_clang_args(&cpu_tuning, target_spec.arch) {
+                    eprintln!("cpc: {msg}");
+                    return ExitCode::from(2);
+                }
                 i += 1;
             }
             Some("-h" | "--help") => {
@@ -1543,6 +1605,9 @@ fn detect_host_triple_uncached() -> Option<String> {
 /// cross-emitting iOS objects with mainline clang) simply omits the flag.
 fn clang_target_args(t: &TargetSpec) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
+    // `--target-cpu` / `--target-feature`, host or not. An arch that cannot
+    // take one was refused when the flags were read.
+    args.extend(target::cpu_tuning_clang_args(&target::cpu_tuning(), t.arch).unwrap_or_default());
     if t.triple.is_none() {
         return args;
     }
@@ -1560,6 +1625,26 @@ fn clang_target_args(t: &TargetSpec) -> Vec<String> {
         }
     }
     args
+}
+
+/// The predefined macros clang uses for the active target and CPU tuning —
+/// `#target_feature`'s source of truth (see `target::set_feature_probe`).
+/// Asking clang rather than keeping a table of CPUs is what makes `native`
+/// and every named `--target-cpu` answer exactly what the backend will use.
+fn probe_target_macros() -> Option<String> {
+    let tgt = target::active_target();
+    let prog = clang_program_for(&tgt).ok()?;
+    let out = Command::new(prog)
+        .args(clang_target_args(&tgt))
+        .args(["-x", "c", "-E", "-dM", "-"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// `xcrun --sdk <name> --show-sdk-path`, or `None` when xcrun is missing,
@@ -2497,6 +2582,12 @@ fn prebuild_fingerprint(
     let mut sans: Vec<&str> = sanitizers.to_vec();
     sans.sort_unstable();
     sans.hash(&mut h);
+    // SO IS THE CPU TUNING, and for a harder reason than speed: with AVX an
+    // `f32x8` is passed in a `ymm` register, without it in memory, so a
+    // slice built for `x86-64-v3` linked into a baseline caller (or the
+    // reverse) disagrees about where every vector argument is. Same slot,
+    // same rebuild-on-flip trade as the sanitizer set above.
+    target::cpu_tuning().hash(&mut h);
     package_input_digest(vendor_dir, &mut Vec::new())?.hash(&mut h);
     Ok(format!("{:016x}", h.finish()))
 }
@@ -6238,6 +6329,12 @@ fn run_clang(
     };
     let mut cmd = Command::new(clang_program());
     cmd.arg(opt).arg("-Wno-override-module");
+    // `--target-cpu` / `--target-feature`: this invocation compiles the
+    // program's own `.ll`, so it needs them as much as `clang -c` does.
+    cmd.args(
+        target::cpu_tuning_clang_args(&target::cpu_tuning(), target::active_target().arch)
+            .unwrap_or_default(),
+    );
     // f16 lowering on x86_64 emits libcalls to the half-precision conversion
     // builtins (`__extendhfsf2`, `__truncsfhf2`). On Linux/macOS these live in
     // the default runtime clang links; on windows-msvc clang links the MSVC
