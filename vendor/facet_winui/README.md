@@ -22,6 +22,13 @@ import "facet_winui/facet_winui" as host;
 // host::run(tree, "My application") owns the tree through native shutdown.
 ```
 
+Any number of windows run in the one WinUI Application: `host::start` and
+`host::open_window` open them, each honours `screen::Chrome` (size, limits,
+bar, buttons), and closing the last ends the run. A `runtime::App` runs here
+unchanged after `facet_runtime/winui`'s `select()` - windows, routes,
+`open_window` and keyed alert/choose/prompt sheets included; see
+[examples/facet_runtime_winui](../../examples/facet_runtime_winui/README.md).
+
 [Tutorial](docs/tutorial.md) · [Guide](docs/guide.md) · [Reference](docs/ref.md)
 · [Coverage](MANIFEST.md)
 
@@ -39,9 +46,11 @@ python tools/verb_coverage.py winui --list --check
 
 These test real pointer/keyboard/wheel input, text readback and programmatic
 updates, length limits and read-only fields, scrolling, resize, control
-replacement during its callback, and cleanup. The existing Win32
-backend and `facet_runtime` default are unchanged. This package is not yet a
-replacement for the full Windows runtime facade.
+replacement during its callback, and cleanup. `facet_runtime` still
+defaults to Win32 on Windows; an app opts into this backend with
+`facet_runtime/winui`. The app menu, a close-time `on_should_quit` and
+density-change observation are not served through the facade yet
+([MANIFEST](MANIFEST.md)).
 
 The parity probe checks UTF-16 selection and selection-only events, Enter and
 Ctrl+Enter submission, WebView history/reload/script execution and user-agent

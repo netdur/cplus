@@ -1,0 +1,84 @@
+import "stdlib/vec" as vec;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/nav" as nav;
+import "facet/screen" as screen;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "facet_runtime/runtime" as runtime;
+
+struct Settings { context: nav::Context }
+
+impl Settings {
+    fn new() -> Settings { return Settings { context: nav::Context::none() }; }
+    fn boxed() -> screen::ScreenBox { return screen::screen_box::[Settings](Settings::new()); }
+    fn on_done(ref this, sender: *u8) { runtime::window_close(sender); }
+}
+
+impl Settings: component::Component {
+    fn build(ref this) -> core::Node {
+        var root = @ui {
+            column(key: "settings") {
+                label("Settings", key: "settings:title", font_size: 20.0f64)
+                label("A second window of the same App. Closing it leaves the first running.",
+                      key: "settings:body", font_size: 13.0f64,
+                      line_break: vocab::LineBreak::WordWrap, max_lines: 0)
+                button("Done", key: "settings:done", on_click: this.on_done)
+            }
+                .grow(1.0f64)
+                .padding(24.0f64)
+                .gap(12.0f64)
+        };
+        root.set_safe_area(vocab::SafeArea::None);
+        return root;
+    }
+}
+
+impl Settings: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}
+
+impl Settings: screen::Screen {
+    fn on_context(ref this, c: nav::Context) { this.context = c; }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
+
+// The third window: Blended, and no window_buttons() of its own.
+struct About { context: nav::Context }
+
+impl About {
+    fn new() -> About { return About { context: nav::Context::none() }; }
+    fn boxed() -> screen::ScreenBox { return screen::screen_box::[About](About::new()); }
+}
+
+impl About: component::Component {
+    fn build(ref this) -> core::Node {
+        var root = @ui {
+            column(key: "about") {
+                label("About", key: "about:title", font_size: 20.0f64)
+                label("Blended, without window_buttons(): the system buttons float over this content.",
+                      key: "about:body", font_size: 13.0f64,
+                      line_break: vocab::LineBreak::WordWrap, max_lines: 0)
+            }
+                .grow(1.0f64)
+                .padding_edge(flex::Edge::Top, 48.0f64)
+                .padding_edge(flex::Edge::Horizontal, 24.0f64)
+                .gap(12.0f64)
+                .set_background_color(vocab::Color::sunken())
+        };
+        root.set_safe_area(vocab::SafeArea::None);
+        return root;
+    }
+}
+
+impl About: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}
+
+impl About: screen::Screen {
+    fn on_context(ref this, c: nav::Context) { this.context = c; }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}

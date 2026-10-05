@@ -11,19 +11,22 @@ import "./style" as style;
 import "./typography" as typography;
 
 struct State {buttons: [rt::Object;3],clicks: [ui::EventRegistrationToken;3],watch: rt::Object,entered: ui::EventRegistrationToken,exited: ui::EventRegistrationToken,moved: ui::EventRegistrationToken,got_focus: ui::EventRegistrationToken,lost_focus: ui::EventRegistrationToken,hover: bool}
-static ACTION: fn(i32)=0 as fn(i32);
-static WINDOW_STATE: fn()->i32=0 as fn()->i32;
+// Both receive the buttons' own record, so the host can tell which window
+// they belong to.
+static ACTION: fn(i32,*u8)=0 as fn(i32,*u8);
+static WINDOW_STATE: fn(*u8)->i32=0 as fn(*u8)->i32;
 static LIVE: i64=0;
-fn install(action: fn(i32),state: fn()->i32) {ACTION=action;WINDOW_STATE=state;}
+fn install(action: fn(i32,*u8),state: fn(*u8)->i32) {ACTION=action;WINDOW_STATE=state;}
 fn subscriptions() -> i64 {return LIVE;}
-fn window_state() -> i32 {let read=WINDOW_STATE;return if read.is_not_null() {read()} else {ui::overlapped_presenter_state_restored};}
+// No record: the active window's state (host_of_view falls back to it).
+fn window_state(r: *record::View=0 as *record::View) -> i32 {let read=WINDOW_STATE;return if read.is_not_null() {read(r as *u8)} else {ui::overlapped_presenter_state_restored};}
 fn state(r: *record::View) -> *State {return (*r).extra as *State;}
 fn refresh(r: *record::View) {
     let s=state(r);let p: *chrome::WindowButtonsProps=(*core::node_data((*r).node)).props as *chrome::WindowButtonsProps;
     var focused=false;var i: usize=0;while i<3 {let v=native::must::[ui::IUIElement](ui::IUIElement::query((*s).buttons[i]));let mode=native::must::[i32](v.focus_state());if mode==ui::focus_state_keyboard || mode==ui::focus_state_programmatic {focused=true;}i=i+1;}
     let show=(*p).style!=chrome::ButtonStyle::OnHover || (*s).hover || focused;
     let panel=native::must::[ui::IUIElement](ui::IUIElement::query((*r).content));native::check(panel.set_opacity(if show {1.0f64} else {0.0f64}));native::check(panel.set_is_hit_test_visible(show));
-    let maximized=window_state()==ui::overlapped_presenter_state_maximized;
+    let maximized=window_state(r)==ui::overlapped_presenter_state_maximized;
     let button=native::must::[ui::IContentControl](ui::IContentControl::query((*s).buttons[1]));let label=native::must::[ui::ITextBlock](ui::ITextBlock::query(native::must::[rt::Object](button.content())));
     native::check(label.set_text(typography::glyph(if maximized {0xe923u32} else {0xe922u32}).view()));
     let automation=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());native::check(automation.set_name((*s).buttons[1],if maximized {"Restore"} else {"Maximize"}));
@@ -38,7 +41,7 @@ fn focus(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {refresh(ct
 fn click(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
     let r=ctx as *record::View;if !(*core::node_data((*r).node)).common.is_enabled {return rt::Status {code:0};}
     let identity=native::must::[rt::Object](sender.query(rt::unknown_iid()));var i: usize=0;
-    while i<3 {let item=native::must::[rt::Object]((*state(r)).buttons[i].query(rt::unknown_iid()));if item.raw()==identity.raw() {let call=ACTION;if call.is_not_null() {call(i as i32);}return rt::Status {code:0};}i=i+1;}
+    while i<3 {let item=native::must::[rt::Object]((*state(r)).buttons[i].query(rt::unknown_iid()));if item.raw()==identity.raw() {let call=ACTION;if call.is_not_null() {call(i as i32,r as *u8);}return rt::Status {code:0};}i=i+1;}
     return rt::Status {code:0};
 }
 fn watch(r: *record::View,value: rt::Object) {

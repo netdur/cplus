@@ -1,0 +1,30 @@
+// Two windows, one App, on WinUI. The app is written against the facade
+// alone; `winui::select()` is the whole of the backend choice.
+import "facet/screen" as screen;
+import "stdlib/status" as status;
+import "facet_runtime/runtime" as runtime;
+import "facet_runtime/winui" as winui;
+import "./home" as home;
+import "./settings" as settings;
+
+fn main() -> i32 {
+    let app: runtime::App = runtime::App::new("facet_runtime_winui");
+    // Blended, with the app's own window_buttons() in its header: on WinUI
+    // the system caption goes and the header's `.window_drag()` moves it.
+    app.window("main", home::Home::boxed, chrome: screen::Chrome::new(
+        title: "WinUI runtime", width: 640.0f64, height: 420.0f64,
+        min_width: 480.0f64, min_height: 320.0f64, bar: screen::Bar::Blended));
+    // A native caption, a fixed size and only a close button.
+    app.window("settings", settings::Settings::boxed, chrome: screen::Chrome::new(
+        title: "Settings", width: 420.0f64, height: 280.0f64,
+        min_width: 320.0f64, min_height: 220.0f64,
+        maximizable: false, minimizable: false));
+    // Blended WITHOUT window_buttons(): the content runs under the caption
+    // and the system's own buttons float over it.
+    app.window("about", settings::About::boxed, chrome: screen::Chrome::new(
+        title: "About", width: 360.0f64, height: 220.0f64,
+        min_width: 0.0f64, min_height: 0.0f64, bar: screen::Bar::Blended));
+    winui::select();
+    if app.run("main") == status::Status::Ok { return 0; }
+    return 1;
+}

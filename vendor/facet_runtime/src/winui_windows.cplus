@@ -1,0 +1,115 @@
+// facet_runtime/winui - run a `runtime::App` on WinUI instead of Win32.
+//
+//     import "facet_runtime/winui" as winui;     // Windows only
+//     winui::select();
+//     app.run("main");
+//
+// `select()` fills runtime_windows' backend seam with facet_winui's driver,
+// alerts and window reads; `App::run` then installs WinUI where it would have
+// installed Win32, and everything else - definitions, `open_window`, routes,
+// `on_quit`, `runtime::alert` - is the facade's, unchanged.
+//
+// OPT-IN, AND PAID FOR ONLY BY THE APP THAT OPTS IN. This is the one module of
+// the facade that names WinUI. An app that imports it lists facet_winui, winui
+// and winrt in its manifest; an app that does not never compiles them. That is
+// why the module exists only as `_windows` (there is no base: on any other
+// target the import does not resolve) and why facet_runtime is source mode on
+// Windows - a prebuilt archive would have to contain this module, and with it
+// every WinUI binding, for every Windows app.
+//
+// THE FIRST WINDOW WAITS FOR LAUNCH. `App::run` opens its initial window
+// before it runs the loop, and a XAML window cannot exist before
+// Application.Start has launched. So `open` queues a session that arrives
+// early and `launched` opens the queue; from then on `open` opens at once.
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "stdlib/option" as option;
+import "stdlib/io" as io;
+import "facet/facet" as core;
+import "facet/nav_model" as nav_model;
+import "facet/navigation" as navigation;
+import "facet/vocabulary" as vocab;
+import "facet/application" as app;
+import "facet/services" as services;
+import "./windows" as windows;
+import "./runtime" as facade;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/dialogs" as dialogs;
+
+static PENDING: vec::Vec[nav_model::Navigator] = #zero::[vec::Vec[nav_model::Navigator]]();
+
+// Choose WinUI for the next `App::run`. Call before `run`.
+fn select() {
+    facade::select_backend(facade::Backend {
+        install: install, open: open, run: run,
+        alert: alert, choose: choose, prompt: prompt, alert_blocking: alert_blocking,
+        window_close: host::window_close, window_minimize: host::window_minimize, window_zoom: host::window_zoom,
+        display_density: host::density_of, is_window_active: host::is_window_active,
+        window_frame: host::window_frame_of, set_window_frame: host::set_window_frame_of,
+        observe: observe, cancel_observe: host::cancel_observe,
+    });
+}
+
+// The renderer installs itself at launch; until then there is nothing to do
+// but say which backend this is, so `@backend` is right from the first read.
+fn install() { app::set_backend_name("facet_winui"); }
+
+fn open(n: nav_model::Navigator) -> bool {
+    if host::launched() { return open_now(n); }
+    return PENDING.append(n) == status::Status::Ok;
+}
+
+fn open_now(n: nav_model::Navigator) -> bool {
+    let root = navigation::root(n);
+    let s = nav_model::session(n.owner, n.id);
+    if root.is_null() || s.is_null() { return false; }
+    let w = host::open_window(root, windows::chrome(n),
+        will_close: windows::closing, will_close_ctx: s as *u8);
+    if w.is_null() { return false; }
+    windows::named(n);
+    return true;
+}
+
+fn launched(ctx: *u8) {
+    var i: usize = 0 as usize;
+    while i < PENDING.count() {
+        match PENDING.at(i) {
+            option::Option[nav_model::Navigator]::Some(n) => {
+                if !open_now(n) { io::eprintln("facet_runtime/winui: a window could not be opened (unsupported tree?)"); }
+            }
+            option::Option[nav_model::Navigator]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    PENDING.remove_all();
+}
+
+fn run() {
+    let result = host::start(launched, on_stopped: stopped);
+    if result.is_err() { let code: i32 = result.code; io::eprintln("facet_runtime/winui: the WinUI run ended with HRESULT ${code}"); }
+}
+
+// The last window has closed. Each session parked its release for the next
+// turn (`windows::closing`); drop them now, while XAML's thread is still up,
+// rather than after the apartment is gone. `App::run`'s own reclaim then finds
+// nothing left.
+fn stopped(ctx: *u8) {
+    facade::settle_and_teardown(0 as *core::Node);
+    let _left: usize = services::reclaim_settled();
+}
+
+fn alert(title: str, message: str, primary: str, secondary: str, on_answer: fn(i32, *u8), ctx: *u8) {
+    dialogs::alert_sheet(title, message, primary, secondary, on_answer, ctx);
+}
+fn choose(title: str, message: str, take options: vec::Vec[text::Text], on_answer: fn(i32, *u8), ctx: *u8) {
+    dialogs::choose_sheet(title, message, options, on_answer, ctx);
+}
+fn prompt(title: str, message: str, placeholder: str, primary: str, secondary: str,
+          on_typed: fn(str, *u8), on_typed_ctx: *u8, on_answer: fn(i32, *u8), on_answer_ctx: *u8) {
+    dialogs::prompt_sheet(title, message, placeholder, primary, secondary, on_typed, on_typed_ctx, on_answer, on_answer_ctx);
+}
+fn alert_blocking(title: str, message: str, primary: str, secondary: str) -> i32 {
+    return dialogs::alert(title, message, primary, secondary);
+}
+fn observe(kind: i32, cb: fn(*u8), ctx: *u8) -> u64 { return host::observe(kind, cb, ctx); }

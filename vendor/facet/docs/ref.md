@@ -416,8 +416,11 @@ activates a registered window without app-specific global storage or an
 `install(app)` helper. `App::new(...)` creates a separate app instead.
 `runtime::app_running() -> bool` reports whether an app is running. Without
 one, `app()` returns the process default handle and opening a window is refused.
-The Windows facade does not yet expose `app()`; see
-[accessing the running app](navigation.md#access-the-running-app-from-a-screen).
+See [accessing the running app](navigation.md#access-the-running-app-from-a-screen).
+
+On Windows the facade runs on Win32 unless the app calls
+`facet_runtime/winui`'s `select()` before `run`, which runs the same `App` on
+WinUI; see [facet_runtime](../../facet_runtime/README.md#windows-win32-or-winui).
 
 `App::new(name)` then:
 

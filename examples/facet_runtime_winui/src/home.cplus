@@ -1,0 +1,114 @@
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/nav" as nav;
+import "facet/screen" as screen;
+import "facet/vocabulary" as vocab;
+import "facet/window_chrome" as window_chrome;
+import "flex_layout/flex_layout" as flex;
+import "facet_runtime/runtime" as runtime;
+
+struct Home { context: nav::Context }
+
+impl Home {
+    fn new() -> Home { return Home { context: nav::Context::none() }; }
+    fn boxed() -> screen::ScreenBox { return screen::screen_box::[Home](Home::new()); }
+
+    fn on_open_settings(ref this, sender: *u8) {
+        let _w = runtime::app().open_window("settings");
+    }
+
+    fn on_open_about(ref this, sender: *u8) {
+        let _w = runtime::app().open_window("about");
+    }
+
+    fn on_alert(ref this, sender: *u8) {
+        runtime::alert("Prompt needed", "Type a prompt before pressing Create.", "OK",
+                       secondary: "Cancel", on_answer: this.on_answered);
+    }
+
+    fn on_prompt(ref this, sender: *u8) {
+        runtime::prompt("Rename", "A new name for this canvas.", placeholder: "Name",
+                        on_typed: this.on_typed, on_answer: this.on_answered);
+    }
+
+    fn on_choose(ref this, sender: *u8) {
+        var options: vec::Vec[text::Text] = vec::new::[text::Text]();
+        let _a = options.append(text::from_str("Square"));
+        let _b = options.append(text::from_str("Portrait"));
+        let _c = options.append(text::from_str("Landscape"));
+        runtime::choose("Aspect", "Pick a canvas shape.", options, on_answer: this.on_answered);
+    }
+
+    fn on_answered(ref this, answer: i32) {
+        this.show("Answered ${answer}");
+    }
+
+    fn on_typed(ref this, value: str) {
+        this.put("home:typed", "Typed \"${value}\"");
+    }
+
+    fn show(ref this, message: str) { this.put("home:answer", message); }
+
+    fn put(ref this, key: str, message: str) {
+        match label::find(key, within: this.context.root()) {
+            option::Option[label::Label]::Some(l) => { l.set_text(message); }
+            option::Option[label::Label]::None => { }
+        }
+    }
+}
+
+impl Home: component::Component {
+    fn build(ref this) -> core::Node {
+        var root = @ui {
+            column(key: "home") {
+                row(key: "home:header") {
+                    window_buttons(key: "home:window-buttons")
+                    label("WinUI runtime", key: "home:title", font_size: 13.0f64,
+                          font_weight: vocab::FontWeight::Semibold)
+                    spacer().grow(1.0f64)
+                }
+                    .height(44.0f64)
+                    .shrink(0.0f64)
+                    .align(flex::Align::Center)
+                    .gap(12.0f64)
+                    .padding_edge(flex::Edge::Horizontal, 8.0f64)
+                    .set_background_color(vocab::Color::sunken())
+                    .window_drag()
+                column(key: "home:body") {
+                    label("Two windows, one App, on WinUI.", key: "home:intro", font_size: 20.0f64)
+                    row(key: "home:actions") {
+                        button("Open settings", key: "home:open-settings", on_click: this.on_open_settings)
+                        button("Show alert", key: "home:alert", on_click: this.on_alert)
+                        button("Prompt", key: "home:prompt", on_click: this.on_prompt)
+                        button("Choose", key: "home:choose", on_click: this.on_choose)
+                        button("About", key: "home:open-about", on_click: this.on_open_about)
+                    }
+                        .gap(8.0f64)
+                    label("No answer yet", key: "home:answer", font_size: 13.0f64)
+                    label("Nothing typed", key: "home:typed", font_size: 13.0f64)
+                }
+                    .grow(1.0f64)
+                    .padding(24.0f64)
+                    .gap(16.0f64)
+            }
+                .grow(1.0f64)
+        };
+        root.set_safe_area(vocab::SafeArea::None);
+        return root;
+    }
+}
+
+impl Home: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}
+
+impl Home: screen::Screen {
+    fn on_context(ref this, c: nav::Context) { this.context = c; }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}

@@ -1,8 +1,10 @@
 # Experimental backend coverage
 
-Windows x64, one window and one WinUI Application run per process. The explicit
-host is `facet_winui/facet_winui::run`. The shared gallery's 38 pages mount;
-this is not a claim that every Facet property is implemented.
+Windows x64, one WinUI Application run per process with any number of windows.
+The explicit host is `facet_winui/facet_winui` (`run`, or `start` +
+`open_window`); a `runtime::App` reaches it through `facet_runtime/winui`'s
+`select()`. The shared gallery's 38 pages mount; this is not a claim that
+every Facet property is implemented.
 
 | Contract | Implemented scope |
 |---|---|
@@ -24,18 +26,32 @@ this is not a claim that every Facet property is implemented.
 | Menus and actions | Window command strip with native MenuFlyout launchers and toolbar buttons; context-menu hosts retain visible content. Menus sort by descending priority. Toolbar placement groups Sidebar/Primary/Default/Secondary, then descending priority; ties keep tree order. Secondary commands trail when space permits, and narrow strips wrap. Live text, icons, destructive foreground/reset, inherited visibility/enablement, accessible names, click handlers and safe callback removal. Context-item keyboard shortcuts register before the first menu opening; context actions are scoped. |
 | Other gallery hosts | Circle/square page dots, table document container, swipe actions through drag reveal and native context menu, with image/named icons, destructive foreground/reset, stable interleaved insertion order, and clicked/invoked callbacks. WebView2 source/user-agent updates, history/back/forward, reload, script execution, navigation and process-failure callbacks. |
 | Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. |
-| Window buttons | Three native WinUI buttons drive AppWindow minimize/maximize/restore and Window.close. Live spacing changes intrinsic size. OnHover watches the containing bar; keyboard/programmatic focus also reveals the group. Maximize glyph and accessible name follow current window state. |
+| Window buttons | Three native WinUI buttons drive their own window's AppWindow minimize/maximize/restore and Window.close. Live spacing changes intrinsic size. OnHover watches the containing bar; keyboard/programmatic focus also reveals the group. Maximize glyph and accessible name follow current window state. |
+| Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close) and `app::set_activate_fn` are installed. |
+| Chrome | `screen::Chrome` width/height (ResizeClient, corrected to the delivered client area), min/max size, minimizable/maximizable/resizable, and the bar: Native (dark DWM caption), Blended with `window_buttons()` (no system caption; app buttons are the only set), Blended without (ExtendsContentIntoTitleBar), Hidden/Custom (no border, no caption). `.window_drag()` moves a captionless window. |
+| Dialogs | `facet_winui/dialogs`: alert/choose/prompt as keyed facet sheets on a window's modal layer (scrim + card), answers on a later turn, Return/Escape in alert and prompt, initial focus on the primary button or field, blocking `alert` through a nested message loop. |
+| Facade | `facet_runtime/winui` fills runtime_windows' backend seam: driver open/run with pre-launch queueing, dialogs, window verbs, frame/density/active reads, active/inactive/size observers. |
 | Agent integration | Optional lifecycle/apply/release hooks; `facet_agent_winui` connects keyed controls and privacy policies to `agent_winui`. In-app sessions and UI-dispatched MCP requests. |
 | Accessibility | Native WinUI peers, stable control AutomationIds, explicit accessibility name/help text with native-default restoration, heading levels 1–9 and attached Unicode tooltips with live updates/removal. |
 | Ownership | Native records owned by nodes, event removal before freeing callback contexts, row unrealise before drop, timers cancelled on release, zero view/subscription assertions on shutdown. |
 
 ## Limits
 
-- `facet_runtime` still selects Win32. Multiwindow host services, dialogs,
-  clipboard, jobs/worker-thread dispatch, general gesture/key readers and host
-  focus commands remain separate work. Agent HTTP serving/inspection is
-  available through the optional WinUI agent connector.
-  `run_on_main` currently queues only from the UI thread.
+- `facet_runtime` defaults to Win32; WinUI is an opt-in (`facet_runtime/winui`).
+  Through the facade, the app menu (`App::menu`) is not rendered, a window's
+  close does not ask `on_should_quit` (`app.quit()` does), density-change
+  observation registers nothing, and the clipboard and file pickers are the
+  shared Win32 calls. Jobs/worker-thread dispatch, general gesture/key readers
+  and host focus commands remain separate work. `run_on_main` currently queues
+  only from the UI thread.
+- The agent surface (`facet_agent_winui`) serves one window: the first one
+  opened, then the next open one after it closes. Sheets on that window are
+  visible to it; other windows are not.
+- An alert goes to the most recently activated window, not necessarily the one
+  whose control asked for it (the facade's `alert` carries no sender).
+- `.window_drag()` starts the system move loop; double-click-to-maximize and
+  snap layouts on the drag region are not provided. `Chrome.subtitle_text`
+  and the zoom fields are not mapped.
 - Collections report native drag/drop moves through flat reorder indexes and
   `on_reorder_completed`; the application updates its data order. Cross-group
   moves require `can_mix_groups`. List reorder and drag-edge auto-scrolling

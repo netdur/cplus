@@ -15,4 +15,4 @@ winrt = "*"
 winui = "*"
 
 [link]
-libs = ["shcore", "icu"]
+libs = ["shcore", "icu", "dwmapi"]

@@ -15,6 +15,7 @@ struct State {opaque record: *record::View,flyout: rt::Object,button: rt::Object
 static LIVE: i64=0;
 static SHUTTING_DOWN: bool=false;
 fn begin_shutdown() {SHUTTING_DOWN=true;}
+fn end_shutdown() {SHUTTING_DOWN=false;}
 fn subscriptions() -> i64 {return LIVE;}
 fn create() -> rt::Object {
     let value=native::must::[ui::TimePicker](ui::TimePicker::new());

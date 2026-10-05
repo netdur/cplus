@@ -17,9 +17,45 @@ this with three successive replacement buttons.
 
 Component state must outlive its callbacks. Use a retained component/Box, not
 a local whose address is captured and escapes. The host's apartment outlives
-the tree and every owned native reference. A process-global routing pointer
-borrows the active host but owns no application state; it is cleared before
-the host drops. Queued renderer callbacks capture no host pointer.
+the tree and every owned native reference. Each window has a host record,
+owned by its window and freed on Window.Closed; the process keeps only the
+list of open ones. Window events carry their host record as context and check
+it is still listed; queued renderer callbacks capture no host pointer.
+
+## Windows
+
+One WinUI Application runs per process, with any number of windows in it.
+Windows can only be made once Application.Start has launched, so
+`host::start(on_launch)` opens the first ones from its callback and
+`host::open_window` opens more at any later point on the UI thread. One
+renderer serves every window: a renderer request relays out all of them on
+the next queue turn. Closing a window unmounts only its tree; closing the last
+also retires the timers, the size observers and the composition retirement
+queue, and ends the run. `run(tree, title)` is the one-window spelling.
+
+Chrome follows `screen::Chrome` (table in the [reference](ref.md#chrome)). A
+`Bar::Blended` window whose tree draws `window_buttons()` loses the system
+caption entirely, as on GTK, so the app's three buttons are the only set;
+its `.window_drag()` regions move the window. The client size asked for is
+the client size delivered, measured after the caption is gone.
+
+## Through facet_runtime
+
+An app written against `facet_runtime` keeps `runtime::App` and opts in:
+
+```cplus
+import "facet_runtime/winui" as winui;
+winui::select();          // before app.run(...)
+```
+
+`App::run` then opens one WinUI window per `open_window`, queuing the ones
+opened before launch, and `runtime::alert`, `choose`, `prompt` and
+`alert_blocking` become facet sheets on the active window's modal layer, keyed
+as on every backend (`alert:title`, `alert:primary`, `prompt:value`, ...), so
+an agent answers them the same way. The app lists `facet_winui`, `winui` and
+`winrt` itself; Win32-only apps never compile them. See
+[facet_runtime](../../facet_runtime/README.md#windows-win32-or-winui) and
+`examples/facet_runtime_winui`.
 
 ## Layout and dispatch
 
@@ -169,10 +205,10 @@ touch transitions native, as documented by WinUI's
 The native regression probe measures intermediate offset and page geometry
 with animation enabled, and checks an immediate settled offset when disabled.
 
-Use the explicit host for this backend. `facet_runtime` still selects
-Win32 on Windows. Before selecting this backend through that facade, implement
-its host/window lifecycle, services, dialogs, clipboard and inspection seams.
 Only one backend and one WinUI Application run are supported per process.
+Through `facet_runtime` the clipboard and file pickers stay the shared Win32
+calls, which need no window of their own; the app menu (`App::menu`) is not
+rendered on WinUI yet.
 
 Initial unsupported trees return E_NOTIMPL. Internal native failures abort with
 an HRESULT diagnostic instead of continuing with invalid handles. Full error

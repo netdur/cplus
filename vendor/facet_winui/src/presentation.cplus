@@ -22,6 +22,8 @@ static UI_THREAD: u32=0;
 extern fn GetCurrentThreadId() -> u32;
 fn begin_shutdown() {assert UI_THREAD==0 || UI_THREAD==GetCurrentThreadId();SHUTTING_DOWN=true;return;}
 fn is_shutting_down() -> bool {return SHUTTING_DOWN;}
+// A window that is not the last one has finished closing.
+fn end_shutdown() {SHUTTING_DOWN=false;return;}
 fn remove_rendering(factory: rt::Object,token: ui::EventRegistrationToken) {
     let target=native::must::[ui::ICompositionTargetStatics](ui::ICompositionTargetStatics::query(factory));let removed=target.remove_rendering(token);
     // XAML may already have discarded this UI thread's rendering event source.

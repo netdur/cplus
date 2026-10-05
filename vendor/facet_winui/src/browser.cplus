@@ -14,6 +14,7 @@ static LIVE: i64=0;
 static SHUTTING_DOWN: bool=false;
 fn subscriptions() -> i64 {return LIVE;}
 fn begin_shutdown() {SHUTTING_DOWN=true;}
+fn end_shutdown() {SHUTTING_DOWN=false;}
 fn flush(r: *record::View) {
     let state: *State=(*r).extra as *State;
     if !(*state).ready {return;}
