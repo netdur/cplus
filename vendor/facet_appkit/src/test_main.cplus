@@ -8981,7 +8981,7 @@ fn scrolling_a_carousel_derives_its_position_from_the_offset() {
     let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
     // Onto the third page.
     { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
-                     rt::Point { x: 0.0f64, y: 100.0f64 }) };
+                     rt::Point { x: 200.0f64, y: 0.0f64 }) };
     match carousel::from(p) {
         option::Option[carousel::Carousel]::Some(h) => {
             assert h.position() == (2 as i64);
@@ -8992,6 +8992,39 @@ fn scrolling_a_carousel_derives_its_position_from_the_offset() {
         option::Option[carousel::Carousel]::None => { assert false; }
     }
     assert POSCHANGES == (1 as i64);
+    mount::unmount(p);
+}
+
+#[test]
+fn a_carousels_pages_run_across_and_fill_the_viewport() {
+    // The gallery's carousel stacked its pages DOWNWARD at their content height
+    // — a node is a column by default — and pages two to four drew over the
+    // controls below it. Pages the application did not size must each be the
+    // viewport, side by side.
+    backend::install();
+    var c: core::Node = carousel::carousel(key: "across");
+    var i: i64 = 0 as i64;
+    while i < (4 as i64) {
+        c.add_child(box_view::box(color: vocab::Color::rgba(0.2f64, 0.2f64, 0.2f64)));
+        i = i + (1 as i64);
+    }
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    geometry::relayout_root(p, 300.0f64, 100.0f64, 1.0f64);
+    var k: usize = 0 as usize;
+    while k < (4 as usize) {
+        match core::child_of(p, k) {
+            option::Option[*core::Node]::Some(page) => {
+                let f: flex::Frame = { (*page).frame() };
+                assert f.left == 300.0f64 * (k as f64);
+                assert f.top == 0.0f64;
+                assert f.width == 300.0f64;
+                assert f.height == 100.0f64;
+            }
+            option::Option[*core::Node]::None => { assert false; }
+        }
+        k = k +% (1 as usize);
+    }
     mount::unmount(p);
 }
 
@@ -9010,21 +9043,21 @@ fn the_remaining_threshold_fires_once_on_the_way_in() {
     let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
     // Page 3 of 5: three remain, past a threshold of two.
     { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
-                     rt::Point { x: 0.0f64, y: 100.0f64 }) };
+                     rt::Point { x: 200.0f64, y: 0.0f64 }) };
     assert THRESHOLDS == (0 as i64);
     // Page 4: two remain, so it fires.
     { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
-                     rt::Point { x: 0.0f64, y: 150.0f64 }) };
+                     rt::Point { x: 300.0f64, y: 0.0f64 }) };
     assert THRESHOLDS == (1 as i64);
     // Still in the tail: it must NOT fire again.
     { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
-                     rt::Point { x: 0.0f64, y: 200.0f64 }) };
+                     rt::Point { x: 400.0f64, y: 0.0f64 }) };
     assert THRESHOLDS == (1 as i64);
     // Back out, then in again: that is a second arrival.
     { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
                      rt::Point { x: 0.0f64, y: 0.0f64 }) };
     { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
-                     rt::Point { x: 0.0f64, y: 150.0f64 }) };
+                     rt::Point { x: 300.0f64, y: 0.0f64 }) };
     assert THRESHOLDS == (2 as i64);
     mount::unmount(p);
 }
@@ -9357,7 +9390,7 @@ fn an_unanimated_carousel_position_lands_at_once() {
     set_carousel_position(p, 2 as i64);
     core::touch(p, carousel::P_POSITION);
     views::apply(0 as *u8, p);
-    assert clip_origin_y(v) > 50.0f64;
+    assert clip_origin_x(v) > 100.0f64;
     mount::unmount(p);
 }
 
@@ -9383,7 +9416,7 @@ fn an_animated_carousel_position_is_still_on_its_way() {
     set_carousel_position(p, 2 as i64);
     core::touch(p, carousel::P_POSITION);
     views::apply(0 as *u8, p);
-    assert clip_origin_y(v) == 0.0f64;
+    assert clip_origin_x(v) == 0.0f64;
     mount::unmount(p);
 }
 
@@ -9397,6 +9430,12 @@ fn set_carousel_position(p: *core::Node, at: i64) {
     let d: *core::Data = core::node_data(p);
     let cp: *props::CarouselProps = { (*d).props } as *props::CarouselProps;
     { (*cp).position = at };
+}
+
+// The pages run across, so a carousel's position is a horizontal offset.
+fn clip_origin_x(v: *u8) -> f64 {
+    let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
+    return { rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))) }.x;
 }
 
 fn clip_origin_y(v: *u8) -> f64 {
@@ -11598,24 +11637,24 @@ fn a_looping_carousel_wraps_its_index_and_a_plain_one_declines() {
     set_carousel_position(p, 2 as i64);
     core::touch(p, carousel::P_POSITION);
     views::apply(0 as *u8, p);
-    let at_two: f64 = clip_origin_y(v);
+    let at_two: f64 = clip_origin_x(v);
     assert at_two > 0.0f64;
     core::clear_dirty(p);
     set_carousel_position(p, 0 as i64);
     core::touch(p, carousel::P_POSITION);
     views::apply(0 as *u8, p);
-    assert clip_origin_y(v) == 0.0f64;
+    assert clip_origin_x(v) == 0.0f64;
     core::clear_dirty(p);
     set_carousel_position(p, 7 as i64);
     core::touch(p, carousel::P_POSITION);
     views::apply(0 as *u8, p);
-    assert clip_origin_y(v) == at_two;
+    assert clip_origin_x(v) == at_two;
     // And a negative one comes back from the other end: -1 is the last page.
     core::clear_dirty(p);
     set_carousel_position(p, -1 as i64);
     core::touch(p, carousel::P_POSITION);
     views::apply(0 as *u8, p);
-    assert clip_origin_y(v) > at_two;
+    assert clip_origin_x(v) > at_two;
     mount::unmount(p);
 }
 
@@ -11636,7 +11675,7 @@ fn a_carousel_that_does_not_loop_declines_an_index_it_has_no_page_for() {
     set_carousel_position(p, 7 as i64);
     core::touch(p, carousel::P_POSITION);
     views::apply(0 as *u8, p);
-    assert clip_origin_y(v) == 0.0f64;
+    assert clip_origin_x(v) == 0.0f64;
     mount::unmount(p);
 }
 

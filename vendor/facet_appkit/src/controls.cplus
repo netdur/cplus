@@ -5092,9 +5092,34 @@ fn apply_table_style(n: *core::Node, style: vocab::TableStyle) {
 
 fn create_carousel(n: *core::Node) -> *u8 { return create_sequence_host(true); }
 
+// The pages run ACROSS — the one thing about a carousel that is layout, and a
+// node is a COLUMN by default. Without it the pages stacked downward at their
+// content height, and every page after the first drew over whatever sat below
+// the carousel. Widths are `arrange_columns`' (the viewport, or a share of it),
+// and a page must not shrink to fit beside the others, or four pages would
+// share one viewport. Written only when it differs, so a re-apply raises no
+// layout of its own.
+fn arrange_pages(n: *core::Node) {
+    if { (*n).style.flex_direction } != flex::FlexDirection::Row {
+        core::set_flow(n, flex::FlexDirection::Row);
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if { (*c).style.flex_shrink } != 0.0f64 { core::set_shrink(c, 0.0f64); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+}
+
 fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CarouselProps = props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
     if p.is_null() { return; }
+    arrange_pages(n);
     let anchor: vocab::ScrollAnchor = { (*p).items_view.scroll_anchor };
     if (dirty & props::C_LAYOUT) != (0 as u64) {
         restore_anchor(v, n, anchor, kept_offset(v, anchor));
