@@ -299,6 +299,7 @@ fn super_point(self_obj: *u8, cmd: *u8) -> rt::Point {
 // ---- vertical alignment, the field family ------------------------------------
 
 fn code_top() -> u64 { return 1 as u64; }
+fn code_center() -> u64 { return 2 as u64; }
 fn code_bottom() -> u64 { return 3 as u64; }
 
 // `Center` is the generated default and means NOT ASKED — see the header. A
@@ -357,7 +358,9 @@ fn drawing_rect_imp(self_obj: *u8, cmd: *u8, bounds: rt::Rect) -> rt::Rect {
     // not the same answer on every macOS.
     let flipped: bool = control_is_flipped(self_obj);
     var y: f64 = box.y;
-    if code == code_top() {
+    if code == code_center() {
+        y = box.y + (slack / 2.0f64);
+    } else if code == code_top() {
         if !flipped { y = box.y + slack; }
     } else {
         if flipped { y = box.y + slack; }
@@ -397,8 +400,14 @@ fn adopt_cell(v: *u8) -> *u8 {
     return cell;
 }
 
-fn apply_field_vertical_align(v: *u8, a: vocab::TextAlign) {
-    let code: u64 = vertical_code(a);
+// `centre_is_asked` is for a LABEL. "NSTextFieldCell centres" is true of a
+// field at its own height and false of a label a row has STRETCHED: a
+// borderless NSTextField draws its text at the top of whatever frame it is
+// given, so beside a taller button or switch the label sat high. Center is the
+// label's default, so for a label it has to be done, not left to AppKit.
+fn apply_field_vertical_align(v: *u8, a: vocab::TextAlign, centre_is_asked: bool = false) {
+    var code: u64 = vertical_code(a);
+    if code == (0 as u64) && centre_is_asked && a == vocab::TextAlign::Center { code = code_center(); }
     if code == (0 as u64) {
         let cell: *u8 = field_cell(v);
         if cell.is_not_null() { synth::set_associated(cell, align_key(), 0 as *u8); }

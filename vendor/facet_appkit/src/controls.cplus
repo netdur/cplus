@@ -181,10 +181,11 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & label::P_TEXT_ALIGN) != (0 as u64) {
         f.as_control().set_alignment(paint::ns_text_align({ (*p).text_align }));
     }
-    // The VERTICAL half. NSTextFieldCell has no property for it and centres in
-    // the rect it is given — so the rect is what changes; see compose.cplus.
+    // The VERTICAL half. NSTextFieldCell has no property for it, and a label
+    // draws at the TOP of a frame a row stretched — so the rect is what
+    // changes, Center included; see compose.cplus.
     if (dirty & label::P_VERTICAL_ALIGN) != (0 as u64) {
-        compose::apply_field_vertical_align(v, { (*p).vertical_align });
+        compose::apply_field_vertical_align(v, { (*p).vertical_align }, centre_is_asked: true);
     }
     // PICKING THE TEXT UP. `labelWithString:` hands back a field with
     // `selectable = NO`, so a label was a picture of text — a transcript, an

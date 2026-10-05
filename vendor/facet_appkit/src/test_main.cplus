@@ -9481,17 +9481,21 @@ fn a_label_asked_to_sit_at_the_top_draws_there() {
 }
 
 #[test]
-fn a_label_that_did_not_ask_keeps_appkits_own_rect() {
-    // `Center` is the generated default for vertical_align and means NOT
-    // ASKED — a label that says nothing must not get a runtime subclass, and
-    // must draw in exactly the rect AppKit would have given it.
+fn a_label_that_did_not_ask_centres_its_text_in_a_taller_frame() {
+    // `Center` is the label's default, and AppKit does NOT do it: a borderless
+    // NSTextField draws at the top of the frame it is given. A row stretches a
+    // label to the height of the button or switch beside it, and the gallery's
+    // "Toggle is OFF" sat high next to its switch. The text is the height it
+    // needs, with equal room above and below.
     backend::install();
     var plain: core::Node = label::label("Plain", key: "vp");
     let v: *u8 = views::create(0 as *u8, #addr_of(plain));
-    let cell: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("cell\0"))) };
-    assert synth::object_class(cell) == rt::get_class(#str_ptr("NSTextFieldCell\0"));
     let r: rt::Rect = cell_rect(v, tall());
-    assert r.h > 100.0f64;
+    assert r.h < 60.0f64;
+    let above: f64 = r.y;
+    let below: f64 = tall().h - (r.y + r.h);
+    assert above > 20.0f64;
+    assert (above - below) < 1.0f64 && (below - above) < 1.0f64;
     views::view_release(v);
 }
 
