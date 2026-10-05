@@ -9079,6 +9079,18 @@ fn an_opaque_image_says_so_on_its_layer() {
 }
 
 #[test]
+fn an_image_draws_inside_its_own_frame() {
+    // `Center` does not scale, so a 1024px picture in a 72pt host is wider
+    // than the host. macOS 14 defaults `clipsToBounds` to false, and the
+    // gallery's Image demo drew its hat over the whole page.
+    backend::install();
+    var i: core::Node = image::image("gear", key: "im_clip", fit: vocab::ImageFit::Center);
+    let v: *u8 = views::create(0 as *u8, #addr_of(i));
+    assert ak::View::from_raw(v).clips_to_bounds();
+    views::view_release(v);
+}
+
+#[test]
 fn a_transparent_image_is_not_given_a_layer_to_say_so() {
     // A view that asks for `is_opaque: false` is describing what it does
     // anyway. Giving it a layer to say so would cost a backing store per image.

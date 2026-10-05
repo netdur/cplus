@@ -443,6 +443,9 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
 
 fn create_image(n: *core::Node) -> *u8 {
     let iv: ak::ImageView = ak::ImageView::from_raw(rt::alloc_init(#str_ptr("NSImageView\0")));
+    // `Center` does not scale, so the picture can be larger than the host.
+    // macOS 14 defaults `clipsToBounds` to false, which drew it over the page.
+    iv.as_view().set_clips_to_bounds(true);
     return rt::retain(iv.as_view().raw());
 }
 
