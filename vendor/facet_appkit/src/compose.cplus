@@ -109,6 +109,17 @@ fn is_ours(cls: *u8) -> bool {
     return { synth::get_associated(cls, marker_key()) } != (0 as *u8);
 }
 
+// The class an object IS, which is what `is_ours` must be asked about. KVO
+// swaps an observed object's class for a generated `NSKVONotifying_<C>` and
+// overrides `-class` to hide it, so the RUNTIME class of a view AppKit has
+// started observing names KVO's class, not ours. Judged by that, a view we had
+// already subclassed looked foreign and was subclassed again — under KVO's
+// class, which then jumped to 0 on the next `removeObserver:`. A collection
+// with `reorder_items` re-arms once it is on screen, and crashed that way.
+fn class_of(obj: *u8) -> *u8 {
+    return { rt::msg_id(obj, rt::sel(#str_ptr("class\0"))) };
+}
+
 // Three flavours, because three classes place their text three ways and only
 // the LAST of them was obvious:
 //
@@ -379,7 +390,7 @@ fn cell_flavour(cell: *u8) -> u32 {
 fn adopt_cell(v: *u8) -> *u8 {
     let cell: *u8 = field_cell(v);
     if cell.is_null() { return 0 as *u8; }
-    let cls: *u8 = { synth::object_class(cell) };
+    let cls: *u8 = { class_of(cell) };
     if is_ours(cls) { return cell; }
     let sub: *u8 = subclass_of(cls, "FacetCell", cell_flavour(cell));
     if sub != cls { let _old: *u8 = { object_setClass(cell, sub) }; }
@@ -429,7 +440,7 @@ fn apply_editor_vertical_align(tv: *u8, a: vocab::TextAlign) {
         synth::set_associated(tv, align_key(), 0 as *u8);
         return;
     }
-    let cls: *u8 = { synth::object_class(tv) };
+    let cls: *u8 = { class_of(tv) };
     if !is_ours(cls) {
         let sub: *u8 = subclass_of(cls, "FacetEditor", flavour_editor());
         if sub != cls { let _old: *u8 = { object_setClass(tv, sub) }; }
@@ -1242,7 +1253,7 @@ fn apply_hover_reveal(host: *u8, on_hover: bool) {
         set_group_alpha(host, 1.0f64);
         return;
     }
-    let cls: *u8 = { synth::object_class(host) };
+    let cls: *u8 = { class_of(host) };
     if !is_ours(cls) {
         let sub: *u8 = subclass_of(cls, "FacetHover", flavour_hover());
         if sub != cls { let _old: *u8 = { object_setClass(host, sub) }; }
@@ -1321,7 +1332,7 @@ fn apply_thumb_image(v: *u8, src: str) {
         }
     }
     if img.is_null() { return; }
-    let cls: *u8 = { synth::object_class(cell) };
+    let cls: *u8 = { class_of(cell) };
     if !is_ours(cls) {
         let sub: *u8 = subclass_of(cls, "FacetTrack", flavour_track());
         if sub != cls { let _old: *u8 = { object_setClass(cell, sub) }; }
@@ -1355,7 +1366,7 @@ fn locked_scroll_imp(self_obj: *u8, cmd: *u8, event: *u8) {
 
 fn apply_scroll_lock(v: *u8, locked: bool) {
     if v.is_null() { return; }
-    let cls: *u8 = { synth::object_class(v) };
+    let cls: *u8 = { class_of(v) };
     if !locked {
         if is_ours(cls) { synth::set_associated(v, scroll_locked_key(), 0 as *u8); }
         return;
@@ -1438,7 +1449,7 @@ fn child_at_point(n: *core::Node, p: rt::Point) -> i64 {
 
 fn install_row_selection(doc: *u8, n: *core::Node, h: fn(*u8, i64, u64)) {
     if doc.is_null() { return; }
-    let cls: *u8 = { synth::object_class(doc) };
+    let cls: *u8 = { class_of(doc) };
     if !is_ours(cls) {
         let sub: *u8 = subclass_of(cls, "FacetSelect", flavour_select());
         if sub != cls { let _old: *u8 = { object_setClass(doc, sub) }; }
@@ -1777,7 +1788,7 @@ fn apply_slider_colors(v: *u8, track: vocab::Color, knob: vocab::Color) {
     let cell: *u8 = field_cell(v);
     if cell.is_null() { return; }
     if track.is_set() == false && knob.is_set() == false {
-        if is_ours({ synth::object_class(cell) }) {
+        if is_ours({ class_of(cell) }) {
             synth::set_associated(cell, track_color_key(), 0 as *u8);
             synth::set_associated(cell, knob_color_key(), 0 as *u8);
         }
@@ -1796,7 +1807,7 @@ fn apply_slider_colors(v: *u8, track: vocab::Color, knob: vocab::Color) {
 // The knob and the bar share one subclass: a slider that colours its track and
 // carries a thumb image is one cell, not two.
 fn adopt_track_cell(cell: *u8) {
-    let cls: *u8 = { synth::object_class(cell) };
+    let cls: *u8 = { class_of(cell) };
     if is_ours(cls) { return; }
     let sub: *u8 = subclass_of(cls, "FacetTrack", flavour_track());
     if sub != cls { let _old: *u8 = { object_setClass(cell, sub) }; }
@@ -1976,7 +1987,7 @@ fn apply_picker_kern(v: *u8, kern: f64, shown: str, font: option::Option[ak::Fon
             let had: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("textColor\0"))) };
             if had.is_not_null() { synth::retain_associated(v, kern_color_key(), had); }
         }
-        let cls: *u8 = { synth::object_class(v) };
+        let cls: *u8 = { class_of(v) };
         if !is_ours(cls) {
             let sub: *u8 = subclass_of(cls, "FacetKern", flavour_kern());
             if sub != cls { let _old: *u8 = { object_setClass(v, sub) }; }
@@ -2358,7 +2369,7 @@ fn install_swipe_strip(v: *u8, count: usize, h: *SwipeHooks) -> *u8 {
                                                      ak::View::from_raw(0 as *u8));
         strip = s.raw();
         synth::set_associated(v, swipe_strip_key(), strip);
-        let cls: *u8 = { synth::object_class(v) };
+        let cls: *u8 = { class_of(v) };
         if !is_ours(cls) {
             let sub: *u8 = subclass_of(cls, "FacetSwipe", flavour_swipe());
             if sub != cls { let _old: *u8 = { object_setClass(v, sub) }; }

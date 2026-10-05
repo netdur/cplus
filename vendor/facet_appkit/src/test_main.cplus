@@ -101,6 +101,10 @@ import "./geometry" as geom;
 extern fn msg_size_of(recv: *u8, sel: *u8) -> rt::Size;
 
 #[link_name = "objc_msgSend"]
+extern fn msg_add_observer(recv: *u8, sel: *u8, observer: *u8, path: *u8,
+                           options: u64, context: *u8);
+
+#[link_name = "objc_msgSend"]
 extern fn msg_id_point(recv: *u8, sel: *u8, p: rt::Point) -> *u8;
 
 #[link_name = "objc_msgSend"]
@@ -11828,6 +11832,33 @@ fn a_press_that_never_moved_is_a_pick_and_not_a_reorder() {
     assert core::child_count_of(p) == (4 as usize);
     w.close();
     mount::unmount(p);
+}
+
+#[test]
+fn rearming_a_view_under_kvo_leaves_kvos_class_alone() {
+    // The gallery's Collection page crashed: a reordering collection re-arms
+    // once it is on screen, AppKit is observing its document view by then, and
+    // the runtime class was KVO's `NSKVONotifying_FacetSelect00`. Not ours by
+    // that name, so it was subclassed again under KVO, and the next
+    // `removeObserver:` jumped to 0.
+    backend::install();
+    var c: core::Node = reorder_collection("ro_kvo", true);
+    let p: *core::Node = #addr_of(c);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    let ours: *u8 = synth::object_class(doc);
+    let observer: *u8 = rt::alloc_init(#str_ptr("NSObject\0"));
+    let path: *u8 = bridge::nsstring("frame");
+    { msg_add_observer(doc, rt::sel(#str_ptr("addObserver:forKeyPath:options:context:\0")),
+                       observer, path, 0 as u64, 0 as *u8) };
+    let observed: *u8 = synth::object_class(doc);
+    assert observed != ours;                            // KVO did swap it
+    compose::install_row_selection(doc, p, controls::no_pick);
+    assert synth::object_class(doc) == observed;
+    { rt::msg_void_id_id(doc, rt::sel(#str_ptr("removeObserver:forKeyPath:\0")), observer, path) };
+    assert synth::object_class(doc) == ours;
+    rt::release(observer);
 }
 
 #[test]
