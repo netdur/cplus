@@ -164,12 +164,17 @@ fn index_at_offset(n: *core::Node, view: *u8) -> i64 {
     let b: rt::Rect = ak::View::from_raw(clip).bounds();
     let x: f64 = { b.x };
     let y: f64 = { b.y };
+    // The offset is in the document's space and flex frames are absolute, so
+    // each page is measured from the host — see `controls::scroll_child`.
+    let host: flex::Frame = { (*n).frame() };
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
-                let f: flex::Frame = { (*c).frame() };
+                let a: flex::Frame = { (*c).frame() };
+                let f: flex::Frame = flex::Frame { left: a.left - host.left, top: a.top - host.top,
+                                                   width: a.width, height: a.height };
                 // BOTH spans, not either: a carousel may page along x or along
                 // y, and a child whose horizontal span contains the offset is
                 // every child of a vertical stack. Requiring both makes one

@@ -84,6 +84,7 @@ import "./drawing" as drawing;
 import "./input" as input;
 import "./compose" as compose;
 import "./scheduler" as scheduler;
+import "./scrolling" as scrolling;
 
 extern fn printf(fmt: *u8, ...) -> i32;
 
@@ -4983,12 +4984,17 @@ fn scroll_child_into_view(v: *u8, n: *core::Node, index: i64) {
     scroll_child(v, n, index, false);
 }
 
+// flex frames are ABSOLUTE (the root's space) and a document view's are the
+// host's own, so the child's offset is measured from the host. Read raw, a
+// carousel that was not at the window's origin scrolled 265 points past every
+// page and stopped part-way through the one before.
 fn scroll_child(v: *u8, n: *core::Node, index: i64, animated: bool) {
     if index < (0 as i64) { return; }
     match core::child_of(n, index as usize) {
         option::Option[*core::Node]::Some(child) => {
             let f: flex::Frame = { (*child).frame() };
-            scroll_document_to(v, rt::Point { x: f.left, y: f.top }, animated);
+            let host: flex::Frame = { (*n).frame() };
+            scroll_document_to(v, rt::Point { x: f.left - host.left, y: f.top - host.top }, animated);
         }
         option::Option[*core::Node]::None => { }
     }
@@ -5143,8 +5149,18 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
         // flex's, so this needs no measurement of its own. `animates_scroll`
         // decides whether the move is a jump or a slide — AppKit animates a
         // scroll through the animator proxy, the same as a progress bar.
-        scroll_child(v, n, wrapped(n, { (*p).position }, { (*p).wraps }),
-                     { (*p).animates_scroll });
+        let at: i64 = wrapped(n, { (*p).position }, { (*p).wraps });
+        if at >= (0 as i64) && at < (core::child_count_of(n) as i64) {
+            scroll_child(v, n, at, { (*p).animates_scroll });
+            // Written back: a looping carousel's position IS circular, so 7 on
+            // five pages reads back 2.
+            { (*p).position = at };
+        } else {
+            // Declined, and the position says so: it stays the page that is
+            // showing. Left as written, "Previous" on the first page read back
+            // -1, then -2, and the gallery printed "Page -2 of 4".
+            { (*p).position = scrolling::index_at_offset(n, v) };
+        }
     }
     let iv: *props::ItemsViewProps = { #addr_of((*p).items_view) };
     if (dirty & carousel::P_BOUNCES) != (0 as u64) || dirty == paint::all_bits() {

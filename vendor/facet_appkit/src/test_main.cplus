@@ -9029,6 +9029,52 @@ fn a_carousels_pages_run_across_and_fill_the_viewport() {
 }
 
 #[test]
+fn a_carousel_away_from_the_origin_lands_on_whole_pages() {
+    // flex frames are absolute and the document's are the host's. Every other
+    // carousel test sits at the root's origin, where the two agree; the
+    // gallery's sits 265 points in, and "Next" stopped part-way through a page.
+    backend::install();
+    var c: core::Node = carousel::carousel(key: "inset", wraps: false, animates_scroll: false);
+    var i: i64 = 0 as i64;
+    while i < (4 as i64) {
+        c.add_child(box_view::box(color: vocab::Color::rgba(0.2f64, 0.2f64, 0.2f64)));
+        i = i + (1 as i64);
+    }
+    c.set_height(flex::StyleLength::points(100.0f64));
+    var b: core::Builder = core::Builder::new();
+    b.add(c);
+    var root: core::Node = core::column(b);
+    root.set_padding(flex::Edge::All, flex::StyleLength::points(40.0f64));
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 340.0f64, 200.0f64, 1.0f64);
+    var cp: *core::Node = 0 as *core::Node;
+    match core::child_of(rp, 0 as usize) {
+        option::Option[*core::Node]::Some(x) => { cp = x; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    let v: *u8 = core::view_of(cp);
+    // Page three: two whole pages in, and not a point more.
+    core::clear_dirty(cp);
+    set_carousel_position(cp, 2 as i64);
+    core::touch(cp, carousel::P_POSITION);
+    views::apply(0 as *u8, cp);
+    assert clip_origin_x(v) == 520.0f64;
+    // A page that does not exist is declined, and the position stays the
+    // page that is showing rather than reading back -1.
+    core::clear_dirty(cp);
+    set_carousel_position(cp, -1 as i64);
+    core::touch(cp, carousel::P_POSITION);
+    views::apply(0 as *u8, cp);
+    assert clip_origin_x(v) == 520.0f64;
+    match carousel::from(cp) {
+        option::Option[carousel::Carousel]::Some(h) => { assert h.position() == (2 as i64); }
+        option::Option[carousel::Carousel]::None => { assert false; }
+    }
+    mount::unmount(rp);
+}
+
+#[test]
 fn the_remaining_threshold_fires_once_on_the_way_in() {
     // A handler that loads the next page must not be asked for it on every
     // scrolled pixel — so the threshold ARMS on the way in and only re-arms
