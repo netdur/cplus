@@ -18,6 +18,33 @@ ln -sfn ../../vendor vendor      # resolve deps from the repo, not the registry
 ./target/debug/facet_gallery
 ```
 
+For a live GTK regression pass after building, run from the repository root:
+
+```bash
+python3 tools/test_facet_gtk_gallery.py
+```
+
+This requires a display (or `xvfb-run`). It visits all 39 demo panes twice,
+then checks relist row handlers, columns and scrolling, table row heights,
+carousel page geometry, HTML/literal label transitions, the time picker's
+opened callback, Unicode input, caret placement and native hit testing through
+the app's agent socket. GTK critical warnings abort the check, so navigating away from
+a control with a pending animation also tests its teardown.
+
+On X11, add `--native-input` to test right-click context menus, scoped Ctrl+I
+shortcuts, command rebuilds and carousel resizing. This needs `xwininfo`,
+`xprop` and `libXtst`.
+
+When launching from a Snap-packaged editor, its GTK/GIO environment can make
+WebKit's system helper load incompatible Snap libraries. Use the system GTK
+environment for this app:
+
+```bash
+env -u GTK_PATH -u GIO_MODULE_DIR -u GDK_PIXBUF_MODULE_FILE ./target/debug/facet_gallery
+```
+
+The regression script clears these variables automatically.
+
 On Linux the backend is [`facet_gtk`](../../vendor/facet_gtk), which is younger
 than the AppKit one: its `MANIFEST.md` says what is answered and what is not,
 and a demo whose control looks like a plain box is a kind that has no body yet

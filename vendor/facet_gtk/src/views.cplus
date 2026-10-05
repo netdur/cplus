@@ -65,6 +65,7 @@ fn non_view_kind(kind: u32) -> bool {
 // an address.
 fn wants_view(n: *core::Node) -> bool {
     let kind: u32 = core::kind_of(n);
+    if kind == props::K_CONTEXT_MENU { return window::context_has_content(n); }
     if non_view_kind(kind) { return false; }
     if kind != core::K_NODE { return true; }
     if gestures::has_gestures(n) { return true; }
@@ -606,6 +607,8 @@ fn view_release(v: *u8) {
     // after the last reference went — which is a use-after-free with a timer
     // attached to it.
     transform::released(v);
+    input::cancel_scroll_tween(v);
+    controls::forget_radio(v);
     g::object_unref(v);
     return;
 }
@@ -616,4 +619,3 @@ fn geometry_parent(child: *u8) -> *u8 {
         option::Option[gtk::Widget]::None => { return 0 as *u8; }
     }
 }
-

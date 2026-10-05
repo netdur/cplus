@@ -157,7 +157,7 @@ silently dead.
 | the four recycler-shaped `collection` verbs | `item_sizing` (MeasureFirstItem lays every row against the sample rather than measuring each), `remaining_threshold` + its handler (fired once per crossing, from the bind), `scroll_anchor` (the offset is read and restored around the model replace; `KeepLastItemInView` scrolls to the end), and reordering — a per-row drag source and drop target that report the move through `reorder_from` / `reorder_to` and honour `can_mix_groups` |
 | tree | RECYCLED too, over the same GtkListView: the visible rows are a cached pre-order walk of the expanded model, and a row is built as it scrolls in. Expansion, selection, row height, the row builder and the row's agent id |
 | list · collection | RECYCLED, over a GtkListView: the model is a length, the position is the index, and a row is built (or rebound through `props.bind`) as it scrolls in. Count, the row builder, per-row heights, grouping with headers, selection, columns, separators, scroll bars and `scroll_to` — plus `invalidate_rows` and `insert_rows`/`remove_rows` as ONE `items-changed` over the range they name, so appending to a 5000-row list rebinds nothing rather than everything |
-| table | the same verbs, NOT recycled — a table's rows are its facet children, so there is nothing to build lazily. Row height, `has_uneven_rows`, and the four styles |
+| table | not recycled; uniform row heights apply inside `@content`, and uneven rows restore their authored heights. The four styles are CSS classes |
 | popup | a GtkDropDown over a GtkStringList, with BOTH factories used: the items, the selection, the text band, and the two verbs a combo box cannot express — `label` on the button and `item_enabled` per row |
 | tabs | the panes shown one at a time through `Display::None`, and a tab strip of the panes' own keys that this package builds, places and colours |
 | date_picker · time_picker | a GtkMenuButton over a popover — a GtkCalendar for one, a pair of spinners for the other — with the whole text band, `is_open` both ways, and the bounds enforced at the pick |
@@ -169,7 +169,7 @@ silently dead.
 | the window | `Chrome` whole but for the two rows below — title, subtitle, size, minimum size, the button policy through a GtkHeaderBar's decoration layout, and all four `Bar` modes |
 | the app menu | a GMenu tree, one GSimpleAction per item, a GtkPopoverMenuBar in the window's shell — rebuilt per screen, so a screen's own items leave with it. Shortcuts are BOUND (a GtkShortcutController per window, global scope) rather than only drawn; `is_enabled` rides the GSimpleAction and `title_of` rebuilds the bar when a title actually moves — both re-asked once per sync |
 | menu · menu_item | menus declared IN the tree, merged into the same bar and ordered by priority, with an icon per item |
-| context_menu · its items | a GtkPopoverMenu parented on the node the menu decorates, opened by a right-click gesture of its own, with a shown accelerator per item |
+| context_menu · its items | a content host with a GtkPopoverMenu and scoped shortcuts; item-only menus decorate the parent. Context actions retain their own sender and callbacks across window-command rebuilds |
 | toolbar_item | read out of the tree when a window opens and packed into a GtkHeaderBar the backend builds for their sake: text, icon, destructive marking, and `placement` + `priority` as the bar's order |
 | the two things that move on their own | `progress.animate_progress` as a tween on the bar's fraction with the application's own duration and curve (eleven easings, computed rather than tabulated); `image.is_animation_playing` as a GIF's own frames through GdkPixbufAnimation, each frame a GdkTexture and the iterator deciding how long it stays up |
 | symbol.fill | the outline-to-filled axis as a CSS `font-variation-settings`, which GTK carries straight through to Pango — so the bundled variable font's FILL axis is reachable without a PangoFontDescription |
@@ -517,9 +517,12 @@ shape and was the same mistake.
 
 ## 3. Works, but does not look like its name
 
-- **`TextFormat::Html` is Pango markup.** It shares the inline element
-  vocabulary — `<b>`, `<i>`, `<u>`, `<span>`, `<a href>` — and none of HTML's
-  block layout. Inline styling renders; a `<div>` does not.
+- **`TextFormat::Html` uses Pango markup for inline styling.** `<br>` (also
+  `<br/>` and `<br />`) becomes a newline, `<code>` becomes monospace, and
+  `<strong>`, `<em>`, `<del>` and `<strike>` map to Pango's inline elements.
+  Entities and supported `<b>`, `<i>`, `<u>`, `<span>` and `<a href>` markup
+  are preserved, including when a label also sets `line_height`. This is
+  still an inline subset: HTML block layout and CSS are not implemented.
 - **`mod_command` is the Super key.** facet's four modifier names are macOS's.
   X11 and Wayland call that physical key Super ("the Windows key"), so Command
   maps there and Control maps to Control. Mapping Command onto Control instead
@@ -738,15 +741,13 @@ shape and was the same mistake.
   ONE outstanding tween: a second call replaces the first, which is the right
   answer for a carousel (the user swiped again) and is the same limitation
   `scheduler::after` records.
-- **A `context_menu` DECORATES the node it sits under**, so right-clicking the
-  PARENT is what opens it — which is exactly what `gtk_popover_set_parent`
-  wants: a popover belongs to a widget without being its child. Its right-click
-  gesture is a SECOND one, separate from the gesture band's, because a node may
-  have both and the menu is not a handler an application declined.
-- **A context menu's SHORTCUT is shown, not bound.** A GMenu carries an `accel`
-  attribute that a GtkPopoverMenu displays beside the row; binding it would need
-  a shortcut controller on a window this code does not have. The label is the
-  half that was missing.
+- **A context menu can host ordinary UI.** Its popover and shortcut controller
+  belong to that host; a menu containing only items decorates its parent.
+  Right-click gestures read the current popover, so rebuilding a menu does not
+  leave a gesture pointing at the old one.
+- **Context shortcuts are displayed and bound.** A local GtkShortcutController
+  invokes the host's action group when focus is inside the host. These actions
+  are independent of the window menu's callback table.
 - **A `span` has no widget and never will.** It is a run inside its label's
   markup, read as a NODE by the label that holds it — so its eleven verbs are
   answered by `apply_label` re-reading its children, and `mount` is what makes

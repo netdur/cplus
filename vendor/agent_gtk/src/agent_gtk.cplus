@@ -22,14 +22,14 @@
 // The walk is a DFS (pre-order) over the GTK 4 child chain
 // (gtk_widget_get_first_child / gtk_widget_get_next_sibling); recursion depth
 // tracks widget-tree depth, which is shallow in practice. GTK has no
-// objc_msgSend dispatch — every introspection call is a direct C symbol — and,
-// like Win32, needs no main-thread marshaling helper here: an app that drives
-// the surface off the GTK main thread must hop threads itself (GTK is not
-// thread-safe), the same constraint any GTK code lives under.
+// objc_msgSend dispatch — every introspection call is a direct C symbol.
+// Direct Surface calls belong on the GTK thread; the MCP adapter marshals
+// refresh, authorization and widget access together onto the main context.
 
 import "stdlib/vec" as vec;
 import "stdlib/io" as io;
 import "stdlib/atomic" as atomic;
+import "stdlib/box" as box;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "gobject/bridge" as convert;
@@ -433,6 +433,7 @@ fn walk_window(ref reg: identity::Registry, ref refs: vec::Vec[WidgetRef], windo
 // Walk a window's child hierarchy into a `Surface` of its own. The window is
 // the root node (role Window) under the registry's app root.
 fn open(window: *u8) -> Surface {
+    remember_ui_thread();
     var reg: identity::Registry = identity::new();
     var refs: vec::Vec[WidgetRef] = vec::new::[WidgetRef]();
     // NodeId 0 is the synthetic app root — no backing widget.
@@ -469,6 +470,7 @@ fn has_windows_fn() -> bool { return WINDOWS_FN.is_not_null(); }
 
 // Every window the source names, in the order it names them.
 fn open_app() -> Surface {
+    remember_ui_thread();
     var reg: identity::Registry = identity::new();
     var refs: vec::Vec[WidgetRef] = vec::new::[WidgetRef]();
     refs.append(WidgetRef { p: null() });
@@ -813,8 +815,7 @@ fn ctext(s: str) -> text::Text {
     return text::from_str(s);
 }
 
-fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
-    refresh_surface(p);
+fn mcp_describe_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     let s: *Surface = { p as *Surface };
     let local: vec::Vec[GtkNode] = (*s).describe(grant);
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
@@ -866,35 +867,13 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     return out;
 }
 
-fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
-    refresh_surface(p);
-    // ON THE MAIN THREAD. Emitting a GTK signal from the serve thread killed
-    // the process on the first nav click — see `run_on_main`.
-    return run_on_main(act_click(), p, grant, id, "", 0 as u64, 0 as u64, 0 as u64);
-}
-
-
-fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
-    refresh_surface(p);
-    return run_on_main(act_set_text(), p, grant, id, value, 0 as u64, 0 as u64, base);
-}
-
-
-fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
-    refresh_surface(p);
-    return run_on_main(act_navigate(), p, grant, id, "", 0 as u64, 0 as u64, 0 as u64);
-}
-
-
-
 // The curated describe: identity::Registry.describe() over the wire — only
 // developer-EXPOSED nodes, lean fields (id, role, the human name as `text`,
 // actionable, parent re-parented to the nearest exposed ancestor). Structural
 // auto-keyed chrome is pruned; frames and classes are omitted so the agent's
 // context stays small. describe_ui's DEFAULT view ("full" opts into
 // mcp_describe above).
-fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
-    refresh_surface(p);
+fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     let s: *Surface = { p as *Surface };
     let views: vec::Vec[identity::NodeView] = { (*s).reg.describe(grant) };
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
@@ -942,44 +921,17 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     return out;
 }
 
-// No hit-testing on this backend: it would have to reimplement the toolkit's
-// own pointer resolution to answer, and a plausible guess is worse than an
-// honest refusal — a caller trusting a fabricated "reachable" would conclude
-// the human path is verified when nothing verified it.
-fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
-    refresh_surface(p);
+// Native reads below run inside perform_request, on the GTK thread.
+fn mcp_hit_test_now(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
     let s: *Surface = { p as *Surface };
     return (*s).hit_test(grant, id);
 }
 
 
-// The three verbs this backend cannot answer yet. They report what they are —
-// unsupported — rather than a plausible answer: an untested capability claim is
-// the bug the `clickable` field was added to remove, and the same rule applies
-// to a verb. AppKit is where the agent surface is built first (backend
-// priority: AppKit -> uikit -> android -> gtk4 -> win32).
-fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
-    refresh_surface(p);
-    return run_on_main(act_set_caret(), p, grant, id, "", at, length, 0 as u64);
-}
-
-
-// Same posture as `mcp_describe`: re-walk on the main thread, then read. The
-// threading assumption is the file's, not this verb's.
-fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
-    refresh_surface(p);
+fn mcp_read_runs_now(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
     if is_null(p) { return surface::runs_refused(surface::Outcome::NotFound, true); }
     let s: *Surface = { p as *Surface };
     return (*s).read_runs(grant, id);
-}
-
-// ON THE MAIN THREAD, unlike `read_runs`: this one ACTS. Firing a GAction runs
-// the application's own handler, and a handler is entitled to assume it is on
-// the thread that owns the widgets.
-fn mcp_invoke_menu(p: *u8, grant: auth::Grant, path: str) -> surface::Outcome {
-    refresh_surface(p);
-    return run_on_main(act_invoke_menu(), p, grant, path, "",
-                       0 as u64, 0 as u64, 0 as u64);
 }
 
 fn mcp_backend() -> mcpb::Backend {
@@ -1373,201 +1325,164 @@ fn mask_of(actual: text::Text) -> text::Text {
     return text::repeating("*", { actual.view() }.char_count());
 }
 
-// ---- the snapshot has to be TAKEN AGAIN, and on the right thread ---------------
-//
-// TWO BUGS IN ONE PLACE, and the first hides the second.
-//
-// The surface was walked once, at `attach_window`, and every later
-// `describe_ui` served that. A GtkListView has NO CELLS at attach — they are
-// built when it is first allocated — so a list's rows were simply absent from
-// the wire, forever. Driving a facet nav tree over MCP was therefore
-// impossible: the rows an agent needs to click are the ones that were missing.
-//
-// And the walk RUNS ON THE SERVE THREAD. `serve_once` spawns a worker for the
-// accept loop, and everything below reads live widgets — `frame_of`,
-// `live_hidden`, `node_text` are all `gtk_*` calls. GTK 4 is not thread-safe
-// and has no lock to take: the supported way to touch a widget from another
-// thread is to not, and to hand the work to the main context instead.
-//
-// So the refresh is scheduled with `g_main_context_invoke` and the caller
-// WAITS. `agent_appkit` reaches the same shape through `performSelectorOnMainThread`
-// and for the same reason; this is that, spelled in GLib.
-//
-// The wait is a spin with a yield rather than a condition variable: the main
-// loop is running by construction (an agent is talking to a live app), the work
-// is one tree walk, and a mutex/condvar pair across the C boundary is more
-// machinery than the wait is worth.
+#[link_name = "pthread_self"]
+extern fn agent_thread_id() -> usize;
+static GTK_THREAD_ID: usize = 0;
+fn remember_ui_thread() {
+    if GTK_THREAD_ID == (0 as usize) { GTK_THREAD_ID = agent_thread_id(); }
+}
+fn on_ui_thread() -> bool {
+    return GTK_THREAD_ID != (0 as usize) && GTK_THREAD_ID == agent_thread_id();
+}
 
-#[link_name = "sched_yield"]
-extern fn sched_yield() -> i32;
-#[link_name = "g_main_context_invoke"]
-extern fn g_main_context_invoke(ctx: *u8, f: fn(*u8) -> i32, data: *u8);
+// All live widget access, including refresh and authorization, is one UI task.
+// Separate heap requests prevent a timed-out task from corrupting a later one.
+struct McpRequest {
+    opaque surface_ptr: *u8, grant: auth::Grant, verb: u32,
+    opaque id_ptr: *u8, id_len: usize, opaque value_ptr: *u8, value_len: usize,
+    base: u64, at: u64, length: u64,
+    opaque nodes: *vec::Vec[mcpb::UiNode], outcome: surface::Outcome,
+    opaque hit: *surface::HitTest, opaque runs: *surface::Runs,
+    refs: i32, state: i32, done: i32,
+}
+#[link_name = "g_idle_add_full"]
+extern fn agent_idle_add(priority: i32, callback: fn(*u8) -> i32, data: *u8, destroy: fn(*u8)) -> u32;
+#[link_name = "g_source_remove"]
+extern fn agent_source_remove(id: u32) -> i32;
+#[link_name = "g_main_context_is_owner"]
+extern fn agent_context_is_owner(ctx: *u8) -> i32;
+#[link_name = "g_get_monotonic_time"]
+extern fn agent_monotonic_time() -> i64;
+#[link_name = "g_usleep"]
+extern fn agent_usleep(microseconds: u64);
 
-// The surface being refreshed, and the handshake. One at a time: the serve
-// loop is single-threaded and a second refresh would be a second answer to a
-// question nobody asked twice.
-static REFRESH_TARGET: usize = 0;
-static REFRESH_DONE: i32 = 0;
-
-// The re-walk itself. `#[keeps(nothing)]` is the honest declaration: `open`
-// builds a whole new Surface from the window and the old one is dropped in
-// place — nothing of the argument is borrowed onward, the bytes are replaced.
 #[keeps(nothing)]
-fn replace_surface(s: *Surface, win: *u8) {
-    { (*s) = open(win) };
-    return;
-}
-
-// The same, for every window the source names. Same declaration for the same
-// reason: a whole new Surface replaces the old one and nothing is borrowed on.
-#[keeps(nothing)]
-fn replace_surface_all(s: *Surface) {
-    { (*s) = open_app() };
-    return;
-}
-
-fn refresh_on_main(user: *u8) -> i32 {
-    let p: usize = REFRESH_TARGET;
-    if p != (0 as usize) {
-        let s: *Surface = p as *Surface;
-        // EVERY WINDOW, READ FRESH, when something knows what they are. The
-        // fallback re-opens from the window at NodeId 1 — which is what this
-        // always did, and what leaves a surface empty once that window is
-        // destroyed.
-        if has_windows_fn() {
-            replace_surface_all(s);
-        } else {
-            // The window is NodeId 1 — NodeId 0 is the synthetic app root.
-            let win: *u8 = (*s).widget_of(1 as usize);
-            if !is_null(win) { replace_surface(s, win); }
-        }
-    }
-    atomic::store_i32(#addr_of(REFRESH_DONE), 1 as i32, atomic::Ordering::Release);
-    // G_SOURCE_REMOVE.
-    return 0 as i32;
-}
-
-fn refresh_surface(p: *u8) {
+fn refresh_surface_now(p: *u8) {
     if is_null(p) { return; }
-    REFRESH_TARGET = { #addr(p) };
-    atomic::store_i32(#addr_of(REFRESH_DONE), 0 as i32, atomic::Ordering::Release);
-    { g_main_context_invoke(0 as *u8, refresh_on_main, 0 as *u8) };
-    // BOUNDED. A main loop that never turns — an app mid-teardown, or one
-    // blocked in a modal the agent cannot see — must not hang the serve
-    // thread; a stale snapshot is a worse answer than a late one but a hung
-    // connection is worse than both.
-    var spins: i64 = 0 as i64;
-    while spins < (200000 as i64) {
-        if atomic::load_i32(#addr_of(REFRESH_DONE), atomic::Ordering::Acquire) != (0 as i32) {
+    let s: *Surface = p as *Surface;
+    if has_windows_fn() { (*s) = open_app(); }
+    else {
+        let win: *u8 = (*s).widget_of(1 as usize);
+        if !is_null(win) { (*s) = open(win); }
+    }
+}
+fn request_release(user: *u8) {
+    let c: *McpRequest = user as *McpRequest;
+    if atomic::fetch_sub_i32(#addr_of((*c).refs), 1, atomic::Ordering::AcqRel) == 1 {
+        let owned: box::Box[McpRequest] = box::from_raw::[McpRequest](user);
+    }
+}
+fn request_claim(c: *McpRequest) -> bool {
+    return atomic::compare_exchange_i32(#addr_of((*c).state), 0, 1, atomic::Ordering::AcqRel) == 0;
+}
+fn request_cancel(c: *McpRequest) -> bool {
+    return atomic::compare_exchange_i32(#addr_of((*c).state), 0, 2, atomic::Ordering::AcqRel) == 0;
+}
+fn perform_request(user: *u8) -> i32 {
+    let c: *McpRequest = user as *McpRequest;
+    if !request_claim(c) { return 0; }
+    let p = (*c).surface_ptr; let grant = (*c).grant;
+    refresh_surface_now(p);
+    if !is_null(p) {
+        let s: *Surface = p as *Surface;
+        let id: str = { #str_from_raw_parts((*c).id_ptr, (*c).id_len) };
+        let value: str = { #str_from_raw_parts((*c).value_ptr, (*c).value_len) };
+        if (*c).verb == 0 { let out = (*c).nodes; (*out) = mcp_describe_now(p, grant); }
+        else if (*c).verb == 1 { let out = (*c).nodes; (*out) = mcp_describe_exposed_now(p, grant); }
+        else if (*c).verb == 2 { (*c).outcome = (*s).click(grant, id); }
+        else if (*c).verb == 3 { (*c).outcome = (*s).set_text(grant, id, value, (*c).base); }
+        else if (*c).verb == 4 { (*c).outcome = (*s).focus(grant, id); }
+        else if (*c).verb == 5 { let out = (*c).hit; (*out) = mcp_hit_test_now(p, grant, id); }
+        else if (*c).verb == 6 { (*c).outcome = (*s).set_caret(grant, id, (*c).at, (*c).length); }
+        else if (*c).verb == 7 { let out = (*c).runs; (*out) = mcp_read_runs_now(p, grant, id); }
+        else if (*c).verb == 8 { (*c).outcome = invoke_menu_path((*s).widget_of(1 as usize), id); }
+    }
+    atomic::store_i32(#addr_of((*c).done), 1, atomic::Ordering::Release);
+    return 0;
+}
+#[keeps(nothing)]
+fn invoke_request(c: *McpRequest) {
+    // Direct callers on the GTK thread need no loop (including native tests).
+    if on_ui_thread() || agent_context_is_owner(0 as *u8) != 0 { let _done = perform_request(c as *u8); return; }
+    let raw: *u8 = match box::new::[McpRequest]({ *c }) {
+        option::Option[box::Box[McpRequest]]::Some(b) => b.into_raw(),
+        option::Option::None => { return; }
+    };
+    let pending: *McpRequest = raw as *McpRequest;
+    (*pending).refs = 2;
+    let source = agent_idle_add(0, perform_request, raw, request_release);
+    let deadline = agent_monotonic_time() +% (5000000 as i64);
+    // Input views and output pointers are borrowed until completion. On timeout
+    // a queued task is atomically cancelled before these borrows go away. If
+    // the task already started, wait for it to finish. The source and caller
+    // each keep the heap record alive until they relinquish their reference.
+    while atomic::load_i32(#addr_of((*pending).done), atomic::Ordering::Acquire) == 0 {
+        if agent_monotonic_time() >= deadline && request_cancel(pending) {
+            let _removed = agent_source_remove(source);
+            request_release(raw);
             return;
         }
-        // `sched_yield` rather than a spin: the main thread is what has to run
-        // for this to finish, and burning the scheduler slice keeps it waiting.
-        let _y: i32 = { sched_yield() };
-        spins = spins +% (1 as i64);
+        agent_usleep(1000);
     }
-    return;
+    (*c).outcome = (*pending).outcome;
+    request_release(raw);
+}
+fn request(p: *u8, grant: auth::Grant, verb: u32, id: str = "", value: str = "") -> McpRequest {
+    var c = #zero::[McpRequest]();
+    c.surface_ptr = p; c.grant = grant; c.verb = verb;
+    c.id_ptr = #str_ptr(id); c.id_len = #str_len(id);
+    c.value_ptr = #str_ptr(value); c.value_len = #str_len(value);
+    c.outcome = surface::Outcome::Stale;
+    return c;
+}
+fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    var c = request(p, grant, 0); var out = vec::new::[mcpb::UiNode](); c.nodes = #addr_of(out);
+    invoke_request(#addr_of(c)); return out;
+}
+fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    var c = request(p, grant, 1); var out = vec::new::[mcpb::UiNode](); c.nodes = #addr_of(out);
+    invoke_request(#addr_of(c)); return out;
+}
+fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+    var c = request(p, grant, 2, id); invoke_request(#addr_of(c)); return c.outcome;
+}
+fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
+    var c = request(p, grant, 3, id, value); c.base = base; invoke_request(#addr_of(c)); return c.outcome;
+}
+fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+    var c = request(p, grant, 4, id); invoke_request(#addr_of(c)); return c.outcome;
+}
+fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
+    var c = request(p, grant, 5, id); var out = surface::hit_test_refused(surface::Outcome::Stale, true); c.hit = #addr_of(out);
+    invoke_request(#addr_of(c)); return out;
+}
+fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
+    var c = request(p, grant, 6, id); c.at = at; c.length = length; invoke_request(#addr_of(c)); return c.outcome;
+}
+fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
+    var c = request(p, grant, 7, id); var out = surface::runs_refused(surface::Outcome::Stale, true); c.runs = #addr_of(out);
+    invoke_request(#addr_of(c)); return out;
+}
+fn mcp_invoke_menu(p: *u8, grant: auth::Grant, path: str) -> surface::Outcome {
+    var c = request(p, grant, 8, path); invoke_request(#addr_of(c)); return c.outcome;
 }
 
-// ---- an ACTION runs on the main thread too --------------------------------------
-//
-// `refresh_surface` marshals the WALK and that was only half the problem. The
-// verbs themselves — click, set_text, navigate, set_caret — ran on the serve
-// thread and emitted GTK signals from there. GTK 4 is not thread-safe and has
-// no lock to take, so this is not a race that is merely unlikely: driving the
-// gallery's nav over MCP KILLED THE PROCESS on the first click.
-//
-// The same handshake as the refresh, with a request and an answer beside it.
-// Statics rather than a heap message because the serve loop is
-// single-threaded — one request is outstanding at a time, by construction —
-// and a queue would be machinery for a case that cannot arise.
-
-fn act_click() -> i32 { return 1 as i32; }
-fn act_set_text() -> i32 { return 2 as i32; }
-fn act_navigate() -> i32 { return 3 as i32; }
-fn act_set_caret() -> i32 { return 4 as i32; }
-// Addressed by PATH, not by node id — the only verb that is, because a menu
-// item is not in the widget tree until its menu is open. `ACT_ID` carries the
-// path; the surface's own root is the window the model hangs off.
-fn act_invoke_menu() -> i32 { return 5 as i32; }
-
-static ACT_KIND: i32 = 0;
-static ACT_SURFACE: usize = 0;
-static ACT_ID: text::Text = #zero::[text::Text]();
-static ACT_TEXT: text::Text = #zero::[text::Text]();
-static ACT_GRANT: auth::Grant = #zero::[auth::Grant]();
-static ACT_AT: u64 = 0;
-static ACT_LEN: u64 = 0;
-static ACT_BASE: u64 = 0;
-static ACT_OUT: i32 = 0;
-static ACT_DONE: i32 = 0;
-
-// `outcome_index`'s inverse. agent_core exports the encoder because the wire
-// needs one; the decoder lives here because only this handshake needs it — an
-// enum cannot cross the static that carries the answer back.
-fn outcome_from_index(i: i32) -> surface::Outcome {
-    if i == (0 as i32) { return surface::Outcome::Allowed; }
-    if i == (2 as i32) { return surface::Outcome::NotExposed; }
-    if i == (3 as i32) { return surface::Outcome::NotActionable; }
-    if i == (4 as i32) { return surface::Outcome::VersionConflict; }
-    if i == (5 as i32) { return surface::Outcome::Stale; }
-    if i == (6 as i32) { return surface::Outcome::NeedsGrant; }
-    if i == (7 as i32) { return surface::Outcome::Forbidden; }
-    if i == (8 as i32) { return surface::Outcome::NoHandler; }
-    return surface::Outcome::NotFound;
+#[test]
+fn a_cancelled_ui_request_cannot_start_or_write_to_its_callers_output() {
+    var c = request(0 as *u8, auth::operator(), 0);
+    assert request_cancel(#addr_of(c));
+    assert !request_claim(#addr_of(c));
+    let _ignored = perform_request(#addr_of(c) as *u8);
+    assert atomic::load_i32(#addr_of(c.done), atomic::Ordering::Acquire) == 0;
+}
+#[test]
+fn a_running_ui_request_cannot_be_cancelled_and_is_claimed_only_once() {
+    var c = request(0 as *u8, auth::operator(), 0);
+    assert request_claim(#addr_of(c));
+    assert !request_claim(#addr_of(c));
+    assert !request_cancel(#addr_of(c));
 }
 
-fn perform_on_main(user: *u8) -> i32 {
-    let p: usize = ACT_SURFACE;
-    if p != (0 as usize) {
-        let s: *Surface = p as *Surface;
-        let id: str = ACT_ID.view();
-        var oc: surface::Outcome = surface::Outcome::NotFound;
-        if ACT_KIND == act_click() { oc = (*s).click(ACT_GRANT, id); }
-        if ACT_KIND == act_navigate() { oc = (*s).focus(ACT_GRANT, id); }
-        if ACT_KIND == act_set_text() {
-            oc = (*s).set_text(ACT_GRANT, id, ACT_TEXT.view(), ACT_BASE);
-        }
-        if ACT_KIND == act_set_caret() {
-            oc = (*s).set_caret(ACT_GRANT, id, ACT_AT, ACT_LEN);
-        }
-        if ACT_KIND == act_invoke_menu() {
-            // The window is NodeId 1 — NodeId 0 is the synthetic app root,
-            // the same convention `refresh_on_main` walks from.
-            oc = invoke_menu_path((*s).widget_of(1 as usize), id);
-        }
-        ACT_OUT = surface::outcome_index(oc);
-    }
-    atomic::store_i32(#addr_of(ACT_DONE), 1 as i32, atomic::Ordering::Release);
-    return 0 as i32;
-}
-
-fn run_on_main(kind: i32, p: *u8, grant: auth::Grant, id: str,
-               value: str, at: u64, length: u64, base: u64) -> surface::Outcome {
-    if is_null(p) { return surface::Outcome::NotFound; }
-    ACT_KIND = kind;
-    ACT_SURFACE = { #addr(p) };
-    ACT_ID = text::from_str(id);
-    ACT_TEXT = text::from_str(value);
-    ACT_GRANT = grant;
-    ACT_AT = at;
-    ACT_LEN = length;
-    ACT_BASE = base;
-    ACT_OUT = surface::outcome_index(surface::Outcome::NotFound);
-    atomic::store_i32(#addr_of(ACT_DONE), 0 as i32, atomic::Ordering::Release);
-    { g_main_context_invoke(0 as *u8, perform_on_main, 0 as *u8) };
-    var spins: i64 = 0 as i64;
-    while spins < (200000 as i64) {
-        if atomic::load_i32(#addr_of(ACT_DONE), atomic::Ordering::Acquire) != (0 as i32) {
-            return outcome_from_index(ACT_OUT);
-        }
-        let _y: i32 = { sched_yield() };
-        spins = spins +% (1 as i64);
-    }
-    // A main loop that never turned. `Stale` is the honest answer: the surface
-    // this action was aimed at is not being serviced.
-    return surface::Outcome::Stale;
-}
 
 // ---- bringing a node into view --------------------------------------------------
 //

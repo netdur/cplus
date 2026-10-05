@@ -240,11 +240,13 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
 // plus the same pinning), after nested lanes swallowed a board's horizontal
 // scroll for a long time.
 fn size_scroll_content(node: *core::Node, v: *u8, frame: flex::Frame) {
-    if core::kind_of(node) != props::K_SCROLL { return; }
+    let kind: u32 = core::kind_of(node);
+    if kind != props::K_SCROLL && kind != props::K_TABLE && kind != props::K_CAROUSEL { return; }
     let doc: *u8 = controls::document_host(v);
     if doc == v { return; }
     let e: flex::Size = content_extent(node, frame);
     gtk::Widget::from_raw(doc).set_size_request(round_i32(e.width), round_i32(e.height));
+    if kind == props::K_CAROUSEL { controls::layout_carousel(v, node, e); }
     return;
 }
 
@@ -276,7 +278,10 @@ fn content_extent(node: *core::Node, frame: flex::Frame) -> flex::Size {
     // A host that is not a `scroll` has no axis to ask about, and every one of
     // them scrolls the way its rows run — down. Pinning the cross axis is the
     // same rule the declined axis gets below, for the same reason.
-    if p == (0 as *props::ScrollProps) { return flex::Size { width: frame.width, height: h }; }
+    if p == (0 as *props::ScrollProps) {
+        if core::kind_of(node) == props::K_CAROUSEL { return flex::Size { width: w, height: h }; }
+        return flex::Size { width: frame.width, height: h };
+    }
     // `content_size` — an extent the APPLICATION states, which wins over the
     // one measured from the children.
     //

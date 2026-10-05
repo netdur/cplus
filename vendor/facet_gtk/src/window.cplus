@@ -49,6 +49,7 @@ import "gobject/signal" as sig;
 import "gobject/bridge" as bridge;
 import "./observers" as observers;
 import "./controls" as controls;
+import "./input" as input;
 import "./geometry" as geometry;
 import "./paint" as paint;
 import "./chrome" as chrome;
@@ -467,6 +468,9 @@ fn relayout(slot: usize, width: f64, height: f64) {
     // a null BandSet, which is silently "no bands" — every `hide`/`show` in the
     // tree was a no-op on this backend, with no error to say so.
     { (*root).calculate_layout(width: width, height: height, bands: bands::bands()) };
+    if controls::prepare_carousels(root) {
+        { (*root).calculate_layout(width: width, height: height, bands: bands::bands()) };
+    }
     // SNAP BEFORE THE WALK, exactly as facet_appkit and facet_uikit do. Frames
     // arrive fractional and `geometry::place` used to round the SIZE while
     // leaving the POSITION fractional, which is the seam this closes: rounding
@@ -1482,12 +1486,9 @@ fn add_menu_items(m: *core::Node, into: gio::Menu, group: gio::SimpleActionGroup
 
 // ---- context menus -------------------------------------------------------------
 //
-// A `context_menu` DECORATES THE NODE IT SITS UNDER — right-clicking the parent
-// is what opens it — so it has no place of its own in the widget tree and no
-// frame. Its items are likewise not widgets. Both answer `wants_view` with
-// false and are read as NODES when the PARENT's widget is created, which is
-// exactly what `gtk_popover_set_parent` wants: a popover belongs to a widget
-// without being its child.
+// A context menu containing UI hosts that content and scopes its popover and
+// shortcuts to the host. An item-only menu decorates its parent's widget.
+// Menu items themselves remain viewless nodes in both spellings.
 
 fn context_menu_item_props(n: *core::Node) -> *props::ContextMenuItemProps {
     let d: *core::Data = core::node_data(n);
@@ -1499,6 +1500,32 @@ fn context_menu_item_props(n: *core::Node) -> *props::ContextMenuItemProps {
 }
 
 fn context_menu_key() -> *u8 { return #str_ptr("facet-gtk-ctx-menu\0"); }
+fn context_shortcuts_key() -> *u8 { return #str_ptr("facet-gtk-ctx-shortcuts\0"); }
+
+// A menu containing ordinary UI is a host for that UI. An item-only menu
+// remains a decoration on its parent, preserving the original spelling.
+fn context_has_content(n: *core::Node) -> bool {
+    var i: usize = 0;
+    while i < core::child_count_of(n) {
+        if let option::Option::Some(c) = core::child_of(n, i) {
+            let kind: u32 = core::kind_of(c);
+            if kind != props::K_CONTEXT_MENU_ITEM && kind != props::K_MENU_ITEM { return true; }
+        }
+        i = i +% 1;
+    }
+    return false;
+}
+
+fn context_activated(action: *u8, parameter: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::ContextMenuItemProps = context_menu_item_props(n);
+    if p == (0 as *props::ContextMenuItemProps) { return; }
+    let mi: *props::MenuItemProps = #addr_of((*p).menu_item);
+    if { (*mi).on_clicked } != props::no_handler {
+        let handler = { (*mi).on_clicked };
+        handler(action, { (*mi).on_clicked_ctx });
+    }
+}
 
 // Build and attach the popover a node's `context_menu` child describes. Called
 // from `views::create` once the node has a widget — the child nodes are already
@@ -1518,6 +1545,14 @@ fn attach_context_menu(v: *u8, n: *core::Node) {
     }
     let model: gio::Menu = gio::Menu::new();
     let group: gio::SimpleActionGroup = gio::SimpleActionGroup::new();
+    let old_shortcuts: *u8 = g::get_data(v, context_shortcuts_key());
+    if old_shortcuts != (0 as *u8) {
+        gtk::Widget::from_raw(v).remove_controller(gtk::EventController::from_raw(old_shortcuts));
+        g::set_data(v, context_shortcuts_key(), 0 as *u8);
+    }
+    let shortcuts: gtk::ShortcutController = gtk::ShortcutController::new();
+    shortcuts.set_scope(0 as i32); // local: only this host and its descendants
+    var any_shortcuts: bool = false;
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(cm);
     while i < count {
@@ -1526,15 +1561,31 @@ fn attach_context_menu(v: *u8, n: *core::Node) {
                 let p: *props::ContextMenuItemProps = context_menu_item_props(c);
                 if p != (0 as *props::ContextMenuItemProps) {
                     let mi: *props::MenuItemProps = #addr_of((*p).menu_item);
-                    // The SHORTCUT is SHOWN, not bound: a GMenu carries an
-                    // `accel` attribute that a GtkPopoverMenu displays beside
-                    // the row, and binding it would need a shortcut controller
-                    // on a window this code does not have. The label is what a
-                    // person reads and is the half that was missing.
-                    add_item(model, group, { (*mi).text.view() },
-                             { (*mi).on_clicked }, { (*mi).on_clicked_ctx },
-                             screen::menu_action_none(), { (*mi).icon.view() },
-                             accel_of(p).view());
+                    // Context actions own their callbacks; the window-menu
+                    // slot table is rebuilt independently and cannot own them.
+                    let name: text::Text = "item${i}";
+                    let full: text::Text = "facet_context.${name.view()}";
+                    let item: gio::MenuItem = gio::MenuItem::new({ (*mi).text.view() }, full.view());
+                    if { (*mi).icon.view() } != "" { item.set_icon(gio::ThemedIcon::new({ (*mi).icon.view() }).as_icon()); }
+                    let accel: text::Text = accel_of(p);
+                    if accel.view() != "" { item.set_attribute_value("accel", glib::Variant::new_string(accel.view())); }
+                    model.append_item(item);
+                    g::object_unref(item.raw());
+                    let act: gio::SimpleAction = gio::SimpleAction::new(name.view(), glib::VariantType::from_raw(0 as *u8));
+                    input::bind_node(act.raw(), c);
+                    let _handler = sigc_activate(act.raw(), #str_ptr("activate\0"), context_activated, c as *u8, 0 as *u8, 0);
+                    group.as_action_map().add_action(act.as_action());
+                    g::object_unref(act.raw());
+                    if accel.view() != "" {
+                        let spelling = bridge::str_to_cstring(accel.view());
+                        let trigger: *u8 = gtk_shortcut_trigger_parse(spelling);
+                        bridge::free_cstring(spelling);
+                        if trigger != (0 as *u8) {
+                            let action: gtk::NamedAction = gtk::NamedAction::new(full.view());
+                            shortcuts.add_shortcut(gtk::Shortcut::new(gtk::ShortcutTrigger::from_raw(trigger), gtk::ShortcutAction::from_raw(action.raw())));
+                            any_shortcuts = true;
+                        }
+                    }
                 }
             }
             option::Option[*core::Node]::None => { }
@@ -1543,7 +1594,13 @@ fn attach_context_menu(v: *u8, n: *core::Node) {
     }
     let pop: gtk::PopoverMenu = gtk::PopoverMenu::new_from_model(model.upcast());
     gtk::Widget::from_raw(pop.raw()).set_parent(gtk::Widget::from_raw(v));
-    gtk::Widget::from_raw(v).insert_action_group("app", group.as_action_group());
+    gtk::Widget::from_raw(v).insert_action_group("facet_context", group.as_action_group());
+    g::object_unref(group.raw());
+    g::object_unref(model.raw());
+    if any_shortcuts {
+        gtk::Widget::from_raw(v).add_controller(shortcuts.upcast());
+        g::set_data(v, context_shortcuts_key(), shortcuts.raw());
+    } else { g::object_unref(shortcuts.raw()); }
     g::set_data(v, context_menu_key(), pop.raw());
     arm_context_menu(v, pop.raw());
     return;
@@ -1569,12 +1626,13 @@ fn accel_of(p: *props::ContextMenuItemProps) -> text::Text {
 }
 
 fn context_menu_child(n: *core::Node) -> *core::Node {
+    if core::kind_of(n) == props::K_CONTEXT_MENU && context_has_content(n) { return n; }
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
-                if core::kind_of(c) == props::K_CONTEXT_MENU { return c; }
+                if core::kind_of(c) == props::K_CONTEXT_MENU && !context_has_content(c) { return c; }
             }
             option::Option[*core::Node]::None => { }
         }
@@ -1587,7 +1645,7 @@ fn context_menu_child(n: *core::Node) -> *core::Node {
 // have both — `.gesture(on_right_click:)` and a context menu — and the menu is
 // not a handler an application declined.
 fn context_right_click(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
-    let pop: *u8 = user;
+    let pop: *u8 = g::get_data(user, context_menu_key());
     if pop == (0 as *u8) { return; }
     // Where the pointer was, so the menu opens under it rather than at the
     // widget's centre. A GdkRectangle is four ints and the binding models it as
@@ -1605,11 +1663,14 @@ fn context_right_click(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
 }
 
 fn arm_context_menu(v: *u8, pop: *u8) {
+    let armed: *u8 = #str_ptr("facet-gtk-ctx-armed\0");
+    if g::get_data(v, armed) != (0 as *u8) { return; }
     let c: gtk::GestureClick = gtk::GestureClick::new();
     c.upcast().set_button(3 as u32);                     // GDK_BUTTON_SECONDARY
-    let _r: u64 = c.connect_released(context_right_click, pop);
+    let _r: u64 = c.connect_released(context_right_click, v);
     c.upcast().upcast().upcast().set_propagation_phase(2 as i32);   // BUBBLE
     gtk::Widget::from_raw(v).add_controller(c.upcast().upcast().upcast());
+    g::set_data(v, armed, 1 as *u8);
     return;
 }
 

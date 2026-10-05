@@ -52,6 +52,7 @@ import "facet/collection" as collection;
 import "facet/list" as flist;
 import "facet/collection" as fcollection;
 import "facet/table" as ftable;
+import "facet/relist" as relist;
 import "facet/popup" as popup;
 import "facet/tabs" as ftabs;
 import "facet/date_picker" as date_picker;
@@ -1211,6 +1212,86 @@ fn a_line_height_alone_is_reason_enough_for_markup() {
     assert markup.contains("line_height=\"1.6");
     assert markup.contains("two lines");
     return;
+}
+
+#[test]
+fn gtk_gallery_html_translates_breaks_and_code_without_losing_entities() {
+    let rendered: text::Text = controls::html_markup("<b>Bold <i>and italic</i></b> &amp; &#x1F680;<br>Second <s>strike</s> <code>code</code>.");
+    assert rendered.view() == "<b>Bold <i>and italic</i></b> &amp; &#x1F680;\nSecond <s>strike</s> <tt>code</tt>.";
+    assert controls::html_markup("a<BR/>b<br />c<Br>d").view() == "a\nb\nc\nd";
+    assert controls::html_markup("<strong>bold</strong><em>italic</em><del>gone</del>").view() == "<b>bold</b><i>italic</i><s>gone</s>";
+    assert controls::html_markup("café &amp; <a href=\"https://example.com/?q=>\">link</a>").view() == "café &amp; <a href=\"https://example.com/?q=>\">link</a>";
+}
+
+#[test]
+fn gtk_gallery_html_keeps_formatting_with_line_height_and_plain_text_stays_literal() {
+    var l: core::Node = label::label("<b>Hello</b><br><code>world</code>", text_format: vocab::TextFormat::Html, line_height: 1.5f64);
+    let p: *props::LabelProps = controls::props_of(#addr_of(l), props::K_LABEL) as *props::LabelProps;
+    let markup: text::Text = controls::label_markup(#addr_of(l), p);
+    assert markup.contains("line_height=");
+    assert markup.contains("<b>Hello</b>\n<tt>world</tt>");
+    { (*p).text_format = vocab::TextFormat::Text };
+    assert controls::label_markup(#addr_of(l), p).contains("&lt;b&gt;Hello&lt;/b&gt;&lt;br&gt;");
+}
+
+static GALLERY_PICKER_OPENED: i32 = 0;
+static GALLERY_PICKER_CLOSED: i32 = 0;
+fn gallery_picker_opened(sender: *u8, ctx: *u8) { GALLERY_PICKER_OPENED = GALLERY_PICKER_OPENED +% 1; }
+fn gallery_picker_closed(sender: *u8, ctx: *u8) { GALLERY_PICKER_CLOSED = GALLERY_PICKER_CLOSED +% 1; }
+
+#[test]
+fn gtk_gallery_time_picker_fires_edges_after_a_setter_has_already_written_the_prop() {
+    GALLERY_PICKER_OPENED = 0;
+    GALLERY_PICKER_CLOSED = 0;
+    var n: core::Node = ui::time_picker(vocab::Duration { seconds: 3600.0f64 }, on_opened: gallery_picker_opened, on_closed: gallery_picker_closed);
+    let p: *props::TimePickerProps = controls::props_of(#addr_of(n), props::K_TIME_PICKER) as *props::TimePickerProps;
+    { (*p).is_open = true };
+    input::picker_open_transition(#addr_of(n), 0 as *u8, true, false);
+    input::picker_open_transition(#addr_of(n), 0 as *u8, true, true);
+    assert GALLERY_PICKER_OPENED == 1;
+    { (*p).is_open = false };
+    input::picker_open_transition(#addr_of(n), 0 as *u8, false, true);
+    input::picker_open_transition(#addr_of(n), 0 as *u8, false, false);
+    assert GALLERY_PICKER_CLOSED == 1;
+}
+
+#[test]
+fn gtk_gallery_date_picker_writes_native_state_back_before_firing() {
+    GALLERY_PICKER_OPENED = 0;
+    GALLERY_PICKER_CLOSED = 0;
+    var n: core::Node = ui::date_picker(vocab::Date { year: 2026, month: 8, day: 15 }, on_opened: gallery_picker_opened, on_closed: gallery_picker_closed);
+    let p: *props::DatePickerProps = controls::props_of(#addr_of(n), props::K_DATE_PICKER) as *props::DatePickerProps;
+    input::picker_open_transition(#addr_of(n), 0 as *u8, true, false);
+    assert { (*p).is_open };
+    assert GALLERY_PICKER_OPENED == 1;
+    { (*p).is_open = false };
+    input::picker_open_transition(#addr_of(n), 0 as *u8, false, true);
+    assert GALLERY_PICKER_CLOSED == 1;
+    var plain: core::Node = ui::label("no picker");
+    input::picker_open_transition(#addr_of(plain), 0 as *u8, true, false);
+    assert GALLERY_PICKER_OPENED == 1;
+}
+
+#[test]
+fn gtk_gallery_radio_groups_forget_removed_leaders_and_keep_surviving_members() {
+    let a: *u8 = 1001 as *u8;
+    let b: *u8 = 1002 as *u8;
+    let c: *u8 = 1003 as *u8;
+    var name: text::Text = text::from_str("gallery-plan");
+    controls::remember_radio(a, name.view());
+    name = text::from_str("different");
+    assert controls::radio_has_group(a, "gallery-plan");
+    controls::remember_radio(b, "gallery-plan");
+    assert controls::radio_peer(c, "gallery-plan") == a;
+    controls::forget_radio(a);
+    assert controls::radio_peer(c, "gallery-plan") == b;
+    controls::remember_radio(c, "gallery-plan");
+    controls::forget_radio(b);
+    assert controls::radio_peer(a, "gallery-plan") == c;
+    controls::remember_radio(c, "other-plan");
+    assert controls::radio_peer(a, "gallery-plan") == (0 as *u8);
+    controls::forget_radio(c);
+    assert controls::radio_peer(a, "other-plan") == (0 as *u8);
 }
 
 // ================================================================================
@@ -3158,6 +3239,26 @@ fn row_left(seq: *core::Node, i: usize) -> f64 {
 }
 
 #[test]
+fn carousel_pages_size_after_mount_and_follow_viewport_resizes() {
+    var c = four_pages();
+    controls::apply_carousel(0 as *u8, #addr_of(c), fcarousel::P_ITEM_SIZING);
+    assert !controls::prepare_carousels(#addr_of(c));
+    { c.calculate_layout(width: 300.0f64, height: 100.0f64) };
+    assert controls::prepare_carousels(#addr_of(c));
+    { c.calculate_layout(width: 300.0f64, height: 100.0f64) };
+    assert row_w(#addr_of(c), 0) == 300.0f64;
+    assert row_h(#addr_of(c), 0) == 100.0f64;
+    assert row_left(#addr_of(c), 3) == 900.0f64;
+    assert !controls::prepare_carousels(#addr_of(c));
+    { c.calculate_layout(width: 460.0f64, height: 120.0f64) };
+    assert controls::prepare_carousels(#addr_of(c));
+    { c.calculate_layout(width: 460.0f64, height: 120.0f64) };
+    assert row_w(#addr_of(c), 3) == 460.0f64;
+    assert row_h(#addr_of(c), 3) == 120.0f64;
+    assert row_left(#addr_of(c), 3) == 1380.0f64;
+}
+
+#[test]
 fn a_carousel_body_refuses_a_node_of_another_kind() {
     var n: core::Node = label::label("hi", key: "l6");
     controls::apply_carousel(0 as *u8, #addr_of(n), paint::all_bits());
@@ -3715,20 +3816,69 @@ fn a_table_leaves_its_children_alone_when_its_rows_are_uneven() {
     // still asks about the node's own children.
     var even: core::Node = ui::table(key: "t", row_height: 30 as i64);
     let _a: bool = mount::add_child(#addr_of(even), label::label("a", key: "ta"));
-    recycler::apply_table(0 as *u8, #addr_of(even), table_bits());
+    var even_sizes = recycler::capture_table_rows(#addr_of(even));
+    recycler::apply_table_rows(#addr_of(even), #addr_of(even_sizes), 30, false);
     { even.calculate_layout(width: 200.0f64, height: 400.0f64) };
     assert row_h(#addr_of(even), 0 as usize) == (30.0f64);
 
     var uneven: core::Node = ui::table(key: "t2", row_height: 30 as i64,
                                        uneven_rows: true);
     let _b: bool = mount::add_child(#addr_of(uneven), label::label("b", key: "tb"));
-    recycler::apply_table(0 as *u8, #addr_of(uneven), table_bits());
+    var uneven_sizes = recycler::capture_table_rows(#addr_of(uneven));
+    recycler::apply_table_rows(#addr_of(uneven), #addr_of(uneven_sizes), 30, true);
     { uneven.calculate_layout(width: 200.0f64, height: 400.0f64) };
     assert row_h(#addr_of(uneven), 0 as usize) != (30.0f64);
     return;
 }
 
-fn table_bits() -> u64 { return ftable::P_ROW_HEIGHT | ftable::P_HAS_UNEVEN_ROWS; }
+#[test]
+fn relist_uses_the_native_recycler() {
+    assert recycler::kind_recycles(relist::K_RELIST);
+    assert !recycler::kind_recycles(props::K_TABLE);
+}
+
+#[test]
+fn table_sizes_rows_inside_content_and_restores_authored_heights() {
+    var rows = core::Builder::new();
+    rows.add(label::label("first", key: "first").height(22.0f64));
+    rows.add(label::label("second", key: "second").height(68.0f64));
+    var host = ui::table(key: "host", row_height: 36);
+    core::set_slot(#addr_of(host), "@content", core::column(rows, key: "doc"));
+    var sizes = recycler::capture_table_rows(#addr_of(host));
+    let doc = recycler::table_document(#addr_of(host));
+    recycler::apply_table_rows(#addr_of(host), #addr_of(sizes), 36, false);
+    { host.calculate_layout(width: 200.0f64, height: 400.0f64) };
+    assert row_h(doc, 0) == 36.0f64;
+    assert row_h(doc, 1) == 36.0f64;
+    assert { (*doc).frame().height } == 72.0f64;
+    recycler::apply_table_rows(#addr_of(host), #addr_of(sizes), 52, false);
+    { host.calculate_layout(width: 200.0f64, height: 400.0f64) };
+    assert row_h(doc, 1) == 52.0f64;
+    recycler::apply_table_rows(#addr_of(host), #addr_of(sizes), 52, true);
+    { host.calculate_layout(width: 200.0f64, height: 400.0f64) };
+    assert row_h(doc, 0) == 22.0f64;
+    assert row_h(doc, 1) == 68.0f64;
+    core::set_slot(#addr_of(host), "@content", core::column(core::Builder::new(), key: "replacement"));
+    assert !recycler::table_rows_match(#addr_of(host), #addr_of(sizes));
+}
+
+#[test]
+fn a_context_menu_hosts_content_but_item_only_menus_decorate_the_parent() {
+    var menu = ui::context_menu(key: "content-menu");
+    let _a = mount::add_child(#addr_of(menu), label::label("Right click"));
+    let _b = mount::add_child(#addr_of(menu), ui::context_menu_item("Inspect"));
+    assert window::context_has_content(#addr_of(menu));
+    assert views::wants_view(#addr_of(menu));
+    assert window::context_menu_child(#addr_of(menu)) == #addr_of(menu);
+    var parent = core::column(core::Builder::new());
+    let _c = mount::add_child(#addr_of(parent), menu);
+    assert window::context_menu_child(#addr_of(parent)) == (0 as *core::Node);
+    var decoration = ui::context_menu(key: "decoration");
+    let _d = mount::add_child(#addr_of(decoration), ui::context_menu_item("Inspect"));
+    assert !views::wants_view(#addr_of(decoration));
+    let _e = mount::add_child(#addr_of(parent), decoration);
+    assert window::context_menu_child(#addr_of(parent)) != (0 as *core::Node);
+}
 
 #[test]
 fn a_pooled_row_is_only_rebound_for_a_row_of_its_own_shape() {

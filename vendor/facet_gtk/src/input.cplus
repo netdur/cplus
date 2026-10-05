@@ -142,7 +142,13 @@ fn node_at_or_above(v: *u8) -> *core::Node {
     return 0 as *core::Node;
 }
 
+#[link_name = "g_type_check_instance_is_a"]
+extern fn sender_is_a(instance: *u8, type_id: usize) -> i32;
+#[link_name = "gtk_widget_get_type"]
+extern fn sender_widget_type() -> usize;
 fn parent_of(v: *u8) -> *u8 {
+    // Actions are also senders, but have no widget parent.
+    if v == (0 as *u8) || sender_is_a(v, sender_widget_type()) == 0 { return 0 as *u8; }
     match gtk::Widget::from_raw(v).get_parent() {
         option::Option[gtk::Widget]::Some(p) => { return p.raw(); }
         option::Option[gtk::Widget]::None => { return 0 as *u8; }
@@ -1803,6 +1809,8 @@ fn arm_pull_to_refresh(host: *u8, spinner: *u8, n: *core::Node) {
 
 #[link_name = "g_timeout_add"]
 extern fn g_timeout_add_tween(interval: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
+#[link_name = "g_source_remove"]
+extern fn g_source_remove_tween(source: u32) -> i32;
 
 const TWEEN_STEPS: i64 = 15;
 
@@ -1810,20 +1818,27 @@ static TWEEN_ADJ: usize = 0;
 static TWEEN_FROM: f64 = 0.0f64;
 static TWEEN_TO: f64 = 0.0f64;
 static TWEEN_STEP: i64 = 0;
+static TWEEN_SOURCE: u32 = 0;
+static TWEEN_GENERATION: u64 = 0;
 
 fn tween_adjustment(adj: *u8, to: f64) {
     if adj == (0 as *u8) { return; }
     let a: gtk::Adjustment = gtk::Adjustment::from_raw(adj);
+    // The timer outlives the call, and a screen can disappear mid-scroll.
+    // Hold the adjustment and cancel the source when its scroll host releases.
+    g::object_ref(adj);
+    if TWEEN_ADJ != (0 as usize) { g::object_unref(TWEEN_ADJ as *u8); }
     TWEEN_ADJ = { #addr(adj) };
+    TWEEN_GENERATION = TWEEN_GENERATION +% 1;
     TWEEN_FROM = a.get_value();
     TWEEN_TO = to;
     // A tween already running is REPLACED rather than joined: the step counter
     // going back to zero is what the running timeout reads, so the old one
     // finishes this tween instead of the previous.
-    let restart: bool = TWEEN_STEP > (0 as i64);
+    let restart: bool = TWEEN_SOURCE != (0 as u32);
     TWEEN_STEP = 0 as i64;
     if restart { return; }
-    let _t: u32 = { g_timeout_add_tween(16 as u32, tween_step, 0 as *u8) };
+    TWEEN_SOURCE = { g_timeout_add_tween(16 as u32, tween_step, 0 as *u8) };
     return;
 }
 
@@ -1836,16 +1851,36 @@ fn tween_step(user: *u8) -> i32 {
     let inv: f64 = (1.0 as f64) - t;
     let e: f64 = (1.0 as f64) - (inv * inv);
     let at: f64 = TWEEN_FROM + ((TWEEN_TO - TWEEN_FROM) * e);
-    gtk::Adjustment::from_raw(TWEEN_ADJ as *u8).set_value(at);
+    let adj: *u8 = TWEEN_ADJ as *u8;
+    let generation: u64 = TWEEN_GENERATION;
+    // A scroll handler can replace the screen or restart this very tween.
+    // Keep the in-flight signal's adjustment alive and respect that change.
+    g::object_ref(adj);
+    gtk::Adjustment::from_raw(adj).set_value(at);
+    g::object_unref(adj);
+    if TWEEN_SOURCE == (0 as u32) { return 0; }
+    if TWEEN_GENERATION != generation { return 1; }
     if TWEEN_STEP >= TWEEN_STEPS {
-        // Land exactly. An eased last step is a fraction short, and a carousel
-        // that stops a pixel before the page is a carousel with a seam.
-        gtk::Adjustment::from_raw(TWEEN_ADJ as *u8).set_value(TWEEN_TO);
+        // At t=1 the easing lands exactly on the target.
+        TWEEN_SOURCE = 0;
+        g::object_unref(TWEEN_ADJ as *u8);
         TWEEN_ADJ = 0 as usize;
         TWEEN_STEP = 0 as i64;
         return 0 as i32;
     }
     return 1 as i32;                                          // G_SOURCE_CONTINUE
+}
+
+fn cancel_scroll_tween(v: *u8) {
+    if TWEEN_ADJ == (0 as usize) || !g::is_a(v, #str_ptr("GtkScrolledWindow\0")) { return; }
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::from_raw(v);
+    let adj: *u8 = TWEEN_ADJ as *u8;
+    if sw.get_hadjustment().raw() != adj && sw.get_vadjustment().raw() != adj { return; }
+    if TWEEN_SOURCE != (0 as u32) { let _removed = g_source_remove_tween(TWEEN_SOURCE); }
+    TWEEN_SOURCE = 0;
+    TWEEN_ADJ = 0;
+    TWEEN_STEP = 0;
+    g::object_unref(adj);
 }
 
 // ---- the carousel's own reads --------------------------------------------------
@@ -1946,10 +1981,21 @@ fn arm_carousel(v: *u8, n: *core::Node) {
 fn picker_open_changed(button: *u8, pspec: *u8, user: *u8) {
     let n: *core::Node = user as *core::Node;
     let open: bool = gtk::MenuButton::from_raw(button).get_active();
+    // The prop is the REQUESTED state and setters write it before GTK emits
+    // notify. Compare with the last native state instead, or programmatic
+    // opening/closing silently suppresses its own callback.
+    let was_open: bool = g::get_data(button, picker_open_key()) != (0 as *u8);
+    g::set_data(button, picker_open_key(), if open { 1 as *u8 } else { 0 as *u8 });
+    picker_open_transition(n, button, open, was_open);
+}
+
+fn picker_open_key() -> *u8 { return #str_ptr("facet-gtk-picker-open\0"); }
+
+fn picker_open_transition(n: *core::Node, button: *u8, open: bool, was_open: bool) {
+    if was_open == open { return; }
     let d: *props::DatePickerProps =
         props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
     if d != (0 as *props::DatePickerProps) {
-        if { (*d).is_open } == open { return; }
         { (*d).is_open = open };
         let h: fn(*u8, *u8) = if open { { (*d).on_opened } } else { { (*d).on_closed } };
         let c: *u8 = if open { { (*d).on_opened_ctx } } else { { (*d).on_closed_ctx } };
@@ -1959,7 +2005,6 @@ fn picker_open_changed(button: *u8, pspec: *u8, user: *u8) {
     let t: *props::TimePickerProps =
         props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
     if t == (0 as *props::TimePickerProps) { return; }
-    if { (*t).is_open } == open { return; }
     { (*t).is_open = open };
     let h: fn(*u8, *u8) = if open { { (*t).on_opened } } else { { (*t).on_closed } };
     let c: *u8 = if open { { (*t).on_opened_ctx } } else { { (*t).on_closed_ctx } };
@@ -2786,7 +2831,7 @@ fn arm_text_field(v: *u8, n: *core::Node) {
 //
 // A handler holds only its opaque `sender`, which on this backend is always the
 // GtkWidget that fired. Every reader is the same walk up the widget tree to the
-// nearest node, so `key` and `item` can never resolve off different widgets.
+// nearest keyed node; an item can be inherited from a containing row.
 //
 // PARTIALLY FILLED, and that is a supported state rather than a half-wire:
 // `component::SenderReaders` documents a zero field as keeping facet's portable
@@ -2802,9 +2847,18 @@ fn key_of(sender: *u8) -> text::Text {
 }
 
 fn item_of(sender: *u8) -> *u8 {
-    let n: *core::Node = node_at_or_above(sender);
-    if n == (0 as *core::Node) { return 0 as *u8; }
-    return core::item_of(n);
+    // A button inside a keyed row has its own node, while the row carries
+    // the item. Keep walking until a payload is found, as AppKit does.
+    var cur: *u8 = sender;
+    while cur != (0 as *u8) {
+        let n: *core::Node = node_of_widget(cur);
+        if n != (0 as *core::Node) {
+            let item: *u8 = core::item_of(n);
+            if item != (0 as *u8) { return item; }
+        }
+        cur = parent_of(cur);
+    }
+    return 0 as *u8;
 }
 
 // Bring the keyed element to the front of its siblings, in place. In a GtkFixed
