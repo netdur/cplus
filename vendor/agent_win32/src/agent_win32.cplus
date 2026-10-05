@@ -65,7 +65,9 @@ extern fn SetWindowTextA(hwnd: *u8, text: *u8) -> i32;
 #[link_name = "SetFocus"]
 extern fn SetFocus(hwnd: *u8) -> *u8;
 
+fn gw_hwndlast() -> u32 { return 1 as u32; }
 fn gw_hwndnext() -> u32 { return 2 as u32; }
+fn gw_hwndprev() -> u32 { return 3 as u32; }
 fn gw_child() -> u32 { return 5 as u32; }
 fn gwl_style() -> i32 { return (0 as i32) -% (16 as i32); }
 fn bs_type_mask() -> i64 { return 0xF as i64; }
@@ -350,26 +352,119 @@ struct Surface {
     refs: vec::Vec[HwndRef],
 }
 
-// Recursively register an HWND subtree: classify it, add it to the identity
-// tree (a pinned agent-id becomes the developer id, which also exposes the
-// node), reflect its live enabled state, map NodeId->HWND, then recurse into
-// its child windows in Z-order. `refs` stays index-aligned with the registry:
-// each `add_child` is paired with exactly one `refs.push`.
-fn walk(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], hwnd: *u8, parent_reg: usize) {
-    let role: identity::Role = resolve_role(hwnd);
+// ---- the toolkit's own names for its windows ---------------------------------
+//
+// THE KEY A FACET APP WROTE never reached this walk. AppKit carries it as the
+// view's accessibilityIdentifier and GTK as the widget name, and both readers
+// pick it up off the widget. facet_win32 records it nowhere an HWND reader can
+// see — the node is bound to the window, but the key lives in facet's node —
+// so every facet control walked here came out untagged, which is NOT EXPOSED,
+// and the default (curated) `describe_ui` answered `[]` for a window full of
+// keyed buttons and fields.
+//
+// This package must not learn facet to read it — it walks HWNDs and depends on
+// agent_core and nothing else. So the names arrive the same way the window
+// list does: a seam the toolkit tier fills (`facet_agent` reads facet's own
+// tree and answers with every keyed node that has a window). Asked at every
+// walk, never cached: a re-render replaces windows and their keys move with
+// them. A pinned `set_agent_id` still wins over it — the developer said so
+// directly, on that window.
+struct KeyedWindow {
+    hwnd: usize,
+    key: text::Text,
+}
+
+static KEYS_FN: fn() -> vec::Vec[KeyedWindow] = #zero::[fn() -> vec::Vec[KeyedWindow]]();
+
+fn set_keys_fn(f: fn() -> vec::Vec[KeyedWindow]) { KEYS_FN = f; return; }
+
+fn fetch_keys() -> vec::Vec[KeyedWindow] {
+    let f: fn() -> vec::Vec[KeyedWindow] = KEYS_FN;
+    if f.is_null() { return vec::new::[KeyedWindow](); }
+    return f();
+}
+
+// The toolkit's name for `hwnd`, or "" when it has none. A view into `keys`.
+fn key_for(keys: *vec::Vec[KeyedWindow], hwnd: *u8) -> str {
+    let want: usize = { #addr(hwnd) };
+    var i: usize = 0 as usize;
+    let n: usize = { (*keys).count() };
+    while i < n {
+        match { (*keys).at_ptr(i) } {
+            option::Option[*KeyedWindow]::Some(k) => {
+                if { (*k).hwnd } == want { return { (*k).key.view() }; }
+            }
+            option::Option[*KeyedWindow]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return "";
+}
+
+// ---- sibling order ----------------------------------------------------------------
+//
+// WHICH END OF THE Z-ORDER IS FIRST depends on who built the windows. A dialog
+// template, and plain `CreateWindowEx`, add each control at the BOTTOM, so
+// `GW_CHILD` -> `GW_HWNDNEXT` is creation (= tab) order. facet does the
+// opposite on purpose: its child index is its PAINT order — index 0 at the
+// back, the last on top — the way NSView subviews and GtkFixed children order,
+// so a front-to-back walk read every facet column BOTTOM-UP. A toolkit that
+// orders that way says so here; the default is the dialog order, unchanged.
+static BACK_TO_FRONT: bool = false;
+
+fn set_back_to_front(on: bool) { BACK_TO_FRONT = on; return; }
+
+fn first_child_of(hwnd: *u8) -> *u8 {
+    let top: *u8 = { GetWindow(hwnd, gw_child()) };
+    if is_null(top) || !BACK_TO_FRONT { return top; }
+    return { GetWindow(top, gw_hwndlast()) };
+}
+
+fn next_child_of(child: *u8) -> *u8 {
+    if BACK_TO_FRONT { return { GetWindow(child, gw_hwndprev()) }; }
+    return { GetWindow(child, gw_hwndnext()) };
+}
+
+// Register one window as a registry node: a pinned agent-id, else the
+// toolkit's key, else an auto id (walked, not exposed). Then the live enabled
+// state, the declared tier, and the content name — in that order, because
+// `set_content_name` refuses a node the tier has already made sensitive.
+fn add_window_node(ref reg: identity::Registry, keys: *vec::Vec[KeyedWindow], hwnd: *u8,
+                   parent_reg: usize, role: identity::Role) -> usize {
     let pinned: *u8 = get_agent_id(hwnd);
-    let reg_node: usize = if is_null(pinned) {
+    let named: str = if is_null(pinned) { key_for(keys, hwnd) } else { cstr_to_str(pinned) };
+    let reg_node: usize = if named == "" {
         reg.add_child(parent_reg, option::Option[str]::None, role)
     } else {
-        reg.add_child(parent_reg, option::Option[str]::Some(cstr_to_str(pinned)), role)
+        reg.add_child(parent_reg, option::Option[str]::Some(named), role)
     };
     reg.set_enabled(reg_node, live_enabled(hwnd));
+    // SENSITIVITY, read off the window: facet_agent pins `agent: Private` /
+    // `Protected` / `Hidden` here at mount (`set_agent_policy`) and nothing
+    // read it back, so the pin had nowhere to land.
+    reg.set_policy(reg_node, get_agent_policy(hwnd));
+    // The lean view's `text` IS the name, and the walk never set one — so a
+    // keyed button came out of the curated describe with no label.
+    let shown: text::Text = node_text(hwnd);
+    reg.set_content_name(reg_node, shown.view());
+    return reg_node;
+}
+
+// Recursively register an HWND subtree: classify it, add it to the identity
+// tree (a pinned agent-id or toolkit key becomes the developer id, which also
+// exposes the node), map NodeId->HWND, then recurse into its child windows in
+// Z-order. `refs` stays index-aligned with the registry: each `add_child` is
+// paired with exactly one `refs.append`.
+fn walk(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], keys: *vec::Vec[KeyedWindow],
+        hwnd: *u8, parent_reg: usize) {
+    let role: identity::Role = resolve_role(hwnd);
+    let reg_node: usize = add_window_node(reg, keys, hwnd, parent_reg, role);
     refs.append(HwndRef { p: hwnd });
 
-    var child: *u8 = { GetWindow(hwnd, gw_child()) };
+    var child: *u8 = first_child_of(hwnd);
     while !is_null(child) {
-        walk(reg, refs, child, reg_node);
-        child = { GetWindow(child, gw_hwndnext()) };
+        walk(reg, refs, keys, child, reg_node);
+        child = next_child_of(child);
     }
     return;
 }
@@ -377,20 +472,17 @@ fn walk(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], hwnd: *u8, par
 // One window into an already-open registry: the window node (role Window) and
 // its child controls. Split out of `open` so several windows go into ONE
 // surface — see `open_app`.
-fn walk_window(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], window: *u8) {
+fn walk_window(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], keys: *vec::Vec[KeyedWindow],
+               window: *u8) {
     if is_null(window) { return; }
-    let win_pinned: *u8 = get_agent_id(window);
-    let win_reg: usize = if is_null(win_pinned) {
-        reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window)
-    } else {
-        reg.add_child(reg.root(), option::Option[str]::Some(cstr_to_str(win_pinned)), identity::Role::Window)
-    };
+    let app_root: usize = reg.root();
+    let win_reg: usize = add_window_node(reg, keys, window, app_root, identity::Role::Window);
     refs.append(HwndRef { p: window });
 
-    var child: *u8 = { GetWindow(window, gw_child()) };
+    var child: *u8 = first_child_of(window);
     while !is_null(child) {
-        walk(reg, refs, child, win_reg);
-        child = { GetWindow(child, gw_hwndnext()) };
+        walk(reg, refs, keys, child, win_reg);
+        child = next_child_of(child);
     }
     return;
 }
@@ -402,7 +494,8 @@ fn open(window: *u8) -> Surface {
     var refs: vec::Vec[HwndRef] = vec::new::[HwndRef]();
     // NodeId 0 is the synthetic app root — no backing window.
     refs.append(HwndRef { p: null() });
-    walk_window(reg, refs, window);
+    let keys: vec::Vec[KeyedWindow] = fetch_keys();
+    walk_window(reg, refs, #addr_of(keys), window);
     return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
 }
 
@@ -432,18 +525,122 @@ fn open_app() -> Surface {
         return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
     }
     let wins: vec::Vec[usize] = f();
+    let keys: vec::Vec[KeyedWindow] = fetch_keys();
     var i: usize = 0 as usize;
     while i < { wins.count() } {
         match { wins.at(i) } {
             option::Option[usize]::Some(w) => {
                 let p: *u8 = { w as *u8 };
-                if !is_null(p) { walk_window(reg, refs, p); }
+                if !is_null(p) { walk_window(reg, refs, #addr_of(keys), p); }
             }
             option::Option[usize]::None => { }
         }
         i = i +% (1 as usize);
     }
     return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
+}
+
+// ---- the snapshot is TAKEN AGAIN, on the UI thread --------------------------------
+//
+// THE SURFACE WAS NEVER WALKED. `facet_agent` re-opens it in `attach_window`,
+// and on Windows nothing calls that hook — facet_win32 records the window
+// (`set_window_native`) and stops there. So the static surface the serve
+// thread reads stayed the zeroed one it started as, and `describe_ui` answered
+// `[]`, in both views, for every facet app on this backend.
+//
+// The fix is not to find a caller for the hook. A snapshot taken once is wrong
+// anyway: a nav push, a re-render or a list filling in replaces windows after
+// it is taken, and the agent would act on handles that no longer exist. Every
+// verb re-walks first — the shape agent_gtk settled on for the same two bugs.
+//
+// ON THE UI THREAD when the toolkit says how to get there. The HWND calls are
+// safe from the serve thread, but the key and window lists are facet's, and
+// facet's tree is main-thread-owned. `facet_agent` installs its synchronous hop
+// (`set_marshal_fn`); nothing installed runs the work where it is, which is
+// what a plain-Win32 caller with no facet gets. The serve loop has ONE request
+// in flight by construction, so the statics below are a handshake, not a queue.
+static MARSHAL_FN: fn(*u8, fn(*u8)) = #zero::[fn(*u8, fn(*u8))]();
+
+fn set_marshal_fn(f: fn(*u8, fn(*u8))) { MARSHAL_FN = f; return; }
+
+fn on_ui(ctx: *u8, work: fn(*u8)) {
+    let f: fn(*u8, fn(*u8)) = MARSHAL_FN;
+    if f.is_null() { work(ctx); return; }
+    f(ctx, work);
+    return;
+}
+
+// `#[keeps(nothing)]`: a whole new Surface replaces the old one in place and
+// nothing of the argument is borrowed onward.
+#[keeps(nothing)]
+fn replace_surface(s: *Surface, win: *u8) {
+    { (*s) = open(win) };
+    return;
+}
+
+#[keeps(nothing)]
+fn replace_surface_all(s: *Surface) {
+    { (*s) = open_app() };
+    return;
+}
+
+fn refresh_work(ctx: *u8) {
+    let s: *Surface = ctx as *Surface;
+    // EVERY WINDOW, READ FRESH, when something knows what they are. The
+    // fallback re-opens the window at NodeId 1 (NodeId 0 is the synthetic app
+    // root) — what a caller that handed `open` one window expects.
+    if has_windows_fn() { replace_surface_all(s); return; }
+    let win: *u8 = (*s).hwnd_of(1 as usize);
+    if !is_null(win) { replace_surface(s, win); }
+    return;
+}
+
+fn refresh_surface(p: *u8) {
+    if is_null(p) { return; }
+    on_ui(p, refresh_work);
+    return;
+}
+
+// ---- an ACTION runs on the UI thread too ------------------------------------------
+//
+// A cross-thread `SendMessage` is delivered on the owning thread by the OS, so
+// BM_CLICK itself was never the hazard. What it starts is: the click handler
+// runs facet code — a re-render, a nav push — and `set_text` fires EN_CHANGE
+// into facet's model. Doing it inside the same hop as the walk keeps the whole
+// verb on the thread that owns the tree.
+fn act_click() -> i32 { return 1 as i32; }
+fn act_set_text() -> i32 { return 2 as i32; }
+fn act_navigate() -> i32 { return 3 as i32; }
+
+static ACT_KIND: i32 = 0;
+static ACT_ID: text::Text = #zero::[text::Text]();
+static ACT_TEXT: text::Text = #zero::[text::Text]();
+static ACT_GRANT: auth::Grant = #zero::[auth::Grant]();
+static ACT_BASE: u64 = 0;
+static ACT_OUT: surface::Outcome = #zero::[surface::Outcome]();
+
+fn act_work(ctx: *u8) {
+    let s: *Surface = ctx as *Surface;
+    refresh_work(ctx);
+    let id: str = ACT_ID.view();
+    var oc: surface::Outcome = surface::Outcome::NotFound;
+    if ACT_KIND == act_click() { oc = (*s).click(ACT_GRANT, id); }
+    if ACT_KIND == act_navigate() { oc = (*s).focus(ACT_GRANT, id); }
+    if ACT_KIND == act_set_text() { oc = (*s).set_text(ACT_GRANT, id, ACT_TEXT.view(), ACT_BASE); }
+    ACT_OUT = oc;
+    return;
+}
+
+fn run_action(kind: i32, p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
+    if is_null(p) { return surface::Outcome::NotFound; }
+    ACT_KIND = kind;
+    ACT_ID = text::from_str(id);
+    ACT_TEXT = text::from_str(value);
+    ACT_GRANT = grant;
+    ACT_BASE = base;
+    ACT_OUT = surface::Outcome::NotFound;
+    on_ui(p, act_work);
+    return ACT_OUT;
 }
 
 // Convenience: the read-only snapshot of a window in one call.
@@ -594,6 +791,7 @@ fn ctext(s: str) -> text::Text {
 }
 
 fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    refresh_surface(p);
     let s: *Surface = { p as *Surface };
     let local: vec::Vec[Win32Node] = (*s).describe(grant);
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
@@ -647,18 +845,15 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
 }
 
 fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
-    let s: *Surface = { p as *Surface };
-    return (*s).click(grant, id);
+    return run_action(act_click(), p, grant, id, "", 0 as u64);
 }
 
 fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
-    let s: *Surface = { p as *Surface };
-    return (*s).set_text(grant, id, value, base);
+    return run_action(act_set_text(), p, grant, id, value, base);
 }
 
 fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
-    let s: *Surface = { p as *Surface };
-    return (*s).focus(grant, id);
+    return run_action(act_navigate(), p, grant, id, "", 0 as u64);
 }
 
 
@@ -669,6 +864,7 @@ fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
 // context stays small. describe_ui's DEFAULT view ("full" opts into
 // mcp_describe above).
 fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    refresh_surface(p);
     let s: *Surface = { p as *Surface };
     let views: vec::Vec[identity::NodeView] = { (*s).reg.describe(grant) };
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
@@ -804,5 +1000,111 @@ fn a_pinned_policy_reads_back_and_open_is_not_unpinned() {
     assert round == identity::policy_none();
     let p: usize = ((identity::policy_private() +% (1 as u32)) as usize);
     assert ((p -% (1 as usize)) as u32) == identity::policy_private();
+    return;
+}
+
+// ---- the toolkit seams, end to end ----------------------------------------------
+//
+// THE BUG THESE PIN: a facet app's `describe_ui` answered `[]`. Two causes —
+// the static surface was never walked (nothing on Windows calls the attach
+// hook), and facet's keys never reached the walk, so nothing was exposed. The
+// test drives the MCP vtable exactly as the serve loop does: a ZEROED surface,
+// the window list and key list through their seams, and nothing else.
+
+#[link_name = "CreateWindowExA"]
+extern fn t_CreateWindowExA(ex: u32, class: *u8, title: *u8, style: u32,
+                            x: i32, y: i32, w: i32, h: i32,
+                            parent: *u8, menu: *u8, inst: *u8, param: *u8) -> *u8;
+#[link_name = "DestroyWindow"]
+extern fn t_DestroyWindow(hwnd: *u8) -> i32;
+
+static T_WIN: usize = 0;
+static T_FIRST: usize = 0;
+static T_SECOND: usize = 0;
+
+fn t_windows() -> vec::Vec[usize] {
+    var v: vec::Vec[usize] = vec::new::[usize]();
+    v.append(T_WIN);
+    return v;
+}
+
+// Only the SECOND child carries a key: the first stays walked-but-not-exposed.
+fn t_keys() -> vec::Vec[KeyedWindow] {
+    var v: vec::Vec[KeyedWindow] = vec::new::[KeyedWindow]();
+    v.append(KeyedWindow { hwnd: T_SECOND, key: text::from_str("probe:second") });
+    return v;
+}
+
+fn t_ws_child() -> u32 { return 0x40000000 as u32; }
+fn t_hwnd_message() -> *u8 { return ((0 as i64) -% (3 as i64)) as *u8; }
+
+static T_SURFACE: Surface = #zero::[Surface]();
+
+#[test]
+fn a_zeroed_surface_is_walked_on_describe_and_toolkit_keys_expose_their_windows() {
+    // A MESSAGE-ONLY parent: runnable with no desktop, never drawn.
+    let win: *u8 = { t_CreateWindowExA(0 as u32, #str_ptr("STATIC\0"), #str_ptr("probe\0"), 0 as u32,
+                                       0 as i32, 0 as i32, 100 as i32, 100 as i32,
+                                       t_hwnd_message(), null(), null(), null()) };
+    if is_null(win) { return; }
+    let a: *u8 = { t_CreateWindowExA(0 as u32, #str_ptr("STATIC\0"), #str_ptr("first\0"), t_ws_child(),
+                                     0 as i32, 0 as i32, 10 as i32, 10 as i32, win, null(), null(), null()) };
+    let b: *u8 = { t_CreateWindowExA(0 as u32, #str_ptr("STATIC\0"), #str_ptr("second\0"), t_ws_child(),
+                                     0 as i32, 20 as i32, 10 as i32, 10 as i32, win, null(), null(), null()) };
+    assert !is_null(a) && !is_null(b);
+    T_WIN = { #addr(win) };
+    T_FIRST = { #addr(a) };
+    T_SECOND = { #addr(b) };
+
+    let p: *u8 = #addr_of(T_SURFACE) as *u8;
+    // Before: what every facet app on this backend served.
+    let before: vec::Vec[mcpb::UiNode] = mcp_describe(p, auth::operator());
+    assert before.count() == (0 as usize);
+
+    set_windows_fn(t_windows);
+    set_keys_fn(t_keys);
+    // The walked (full) view: window + both children, in creation order.
+    let full: vec::Vec[mcpb::UiNode] = mcp_describe(p, auth::operator());
+    assert full.count() == (3 as usize);
+    match full.at_ptr(1 as usize) {
+        option::Option[*mcpb::UiNode]::Some(n) => { assert { (*n).text.view() } == "first"; }
+        option::Option[*mcpb::UiNode]::None => { assert false; }
+    }
+    // The curated (default) view: the keyed child is there, named by its key,
+    // labelled with its content; the unkeyed one is not.
+    let lean: vec::Vec[mcpb::UiNode] = mcp_describe_exposed(p, auth::operator());
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    while i < lean.count() {
+        match lean.at_ptr(i) {
+            option::Option[*mcpb::UiNode]::Some(n) => {
+                assert { (*n).text.view() } != "first";
+                if { (*n).id.view() } == "probe:second" {
+                    found = true;
+                    assert { (*n).text.view() } == "second";
+                }
+            }
+            option::Option[*mcpb::UiNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert found;
+    // An action resolves the key too — and re-walks first, so it needs no
+    // describe before it.
+    assert surface::outcome_eq(mcp_set_text(p, auth::operator(), "probe:second", "written", 0 as u64),
+                               surface::Outcome::Allowed);
+    assert node_text(b).view() == "written";
+
+    // BACK TO FRONT: facet's order. The same two children, reversed.
+    set_back_to_front(true);
+    let painted: vec::Vec[mcpb::UiNode] = mcp_describe(p, auth::operator());
+    match painted.at_ptr(1 as usize) {
+        option::Option[*mcpb::UiNode]::Some(n) => { assert { (*n).text.view() } == "written"; }
+        option::Option[*mcpb::UiNode]::None => { assert false; }
+    }
+    set_back_to_front(false);
+    set_keys_fn(0 as fn() -> vec::Vec[KeyedWindow]);
+    set_windows_fn(0 as fn() -> vec::Vec[usize]);
+    let _d: i32 = { t_DestroyWindow(win) };
     return;
 }

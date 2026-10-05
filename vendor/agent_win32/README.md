@@ -81,7 +81,13 @@ held as a window property (`SetPropA`), so pass a stable string literal.
 - **Flatter tree + style-bit classification.** Win32 controls are direct
   children of the window, and the single `Button` class covers push/checkbox/
   radio (→ Button) and group boxes (→ Group), split by the window style.
-- **`agent_mcp`** currently targets the AppKit backend; serving this surface
-  over MCP on Windows is a natural follow-up (a backend-neutral `agent_mcp`).
+- **Served over MCP by `facet_agent`.** A facet app that calls
+  `agent::enable()` and `app.agent_mcp(id)` serves this surface on a loopback
+  HTTP port. `facet_agent` fills three seams so this package never imports
+  facet: `set_windows_fn` (every open window), `set_keys_fn` (facet's key for
+  each keyed node that has an HWND, which becomes its agent id) and
+  `set_marshal_fn` (the hop to the UI thread). It also sets `set_back_to_front`,
+  because facet's child order is paint order (index 0 at the back) where a
+  dialog's is creation order. Every MCP verb re-walks the windows first.
 
 Validated by `cpc/tests/e2e.rs::agent_win32_describe_and_gated_actions`.
