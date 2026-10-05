@@ -1439,7 +1439,8 @@ impl Emitter {
                 .or_else(|| guess_record_size(decl))
                 .unwrap_or(8);
             self.out.push_str(&format!(
-                "#[repr(C)] struct {name} {{ _bytes: [u8; {size}] }}\n"
+                "#[repr(C)] struct {} {{ _bytes: [u8; {size}] }}\n",
+                record_ident(name)
             ));
             self.out.push_str(&format!(
                 "// `{name}` is a C union — fields share storage. Access fields\n\
@@ -1475,7 +1476,8 @@ impl Emitter {
                      // pointer, or access via `unsafe` reinterpret cast.\n"
                 ));
                 self.out.push_str(&format!(
-                    "#[repr(C)] struct {name} {{ _bytes: [u8; {size}] }}\n"
+                    "#[repr(C)] struct {} {{ _bytes: [u8; {size}] }}\n",
+                    record_ident(name)
                 ));
                 return;
             }
@@ -1511,7 +1513,7 @@ impl Emitter {
         }
         let packed = attrs.contains(&"PackedAttr");
         let repr = if packed { "#[repr(C, packed)]" } else { "#[repr(C)]" };
-        self.out.push_str(&format!("{repr} struct {name} {{\n"));
+        self.out.push_str(&format!("{repr} struct {} {{\n", record_ident(name)));
         let inner = decl
             .get("inner")
             .and_then(|v| v.as_array())
@@ -1636,8 +1638,9 @@ impl Emitter {
                 plain_fields.iter().map(|(n, _)| format!("{n}: {n}")).collect();
             init_parts.extend(zero_fields.iter().map(|p| format!("{p}: 0")));
             let inits = init_parts.join(", ");
+            let ty = record_ident(name);
             self.out
-                .push_str(&format!("fn {name}_new({params}) -> {name} {{\n    return {name} {{ {inits} }};\n}}\n"));
+                .push_str(&format!("fn {ty}_new({params}) -> {ty} {{\n    return {ty} {{ {inits} }};\n}}\n"));
         }
     }
 
@@ -1963,14 +1966,29 @@ fn map_c_type_to_cplus(
         s if s.starts_with("struct ") || s.starts_with("union ") => {
             let name = s.trim_start_matches("struct ").trim_start_matches("union ");
             if complete.contains(name) {
-                name.to_string()
+                record_ident(name)
             } else {
                 return Err(format!("incomplete record `{name}`"));
             }
         }
-        s if complete.contains(s) => s.to_string(),
+        s if complete.contains(s) => record_ident(s),
         _ => return Err(format!("unsupported type `{s}`")),
     })
+}
+
+/// The C+ name of a C record tag. The SDK spells most records
+/// `typedef struct _BLENDFUNCTION { ... } BLENDFUNCTION;`, and a leading `_`
+/// is what C+ reads as module-private: bound under its tag, the record (and
+/// every function taking one by value, such as `AlphaBlend`) could not be
+/// named outside the generated module. Leading underscores are dropped when
+/// what remains is an identifier; `_` alone or `__1` keep their spelling.
+fn record_ident(tag: &str) -> String {
+    let rest = tag.trim_start_matches('_');
+    if rest.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        rest.to_string()
+    } else {
+        tag.to_string()
+    }
 }
 
 fn guess_record_size(decl: &serde_json::Value) -> Option<u64> {
@@ -2084,6 +2102,22 @@ pub(crate) fn sanitize_ident(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `typedef struct _BLENDFUNCTION {...} BLENDFUNCTION;` must not bind as a
+    /// module-private `_BLENDFUNCTION`, by value or behind a pointer.
+    #[test]
+    fn underscore_tags_bind_public() {
+        let mut c: std::collections::HashSet<String> = std::collections::HashSet::new();
+        c.insert("_BLENDFUNCTION".to_string());
+        c.insert("tagRECT".to_string());
+        let m = |s: &str| map_c_type_to_cplus(s, &c, true).unwrap();
+        assert_eq!(m("struct _BLENDFUNCTION"), "BLENDFUNCTION");
+        assert_eq!(m("struct _BLENDFUNCTION *"), "*BLENDFUNCTION");
+        assert_eq!(m("struct tagRECT"), "tagRECT");
+        assert_eq!(record_ident("__LUID"), "LUID");
+        assert_eq!(record_ident("_"), "_");
+        assert_eq!(record_ident("__1"), "__1");
+    }
 
     #[test]
     fn scalar_map() {
@@ -2235,6 +2269,29 @@ mod tests {
             "type": {"qualType": ty},
             "inner": [{"kind": "ConstantExpr", "value": width.to_string()}]
         })
+    }
+
+    /// The struct, its `_new` constructor and the constructor's literal all
+    /// take the public name: a regeneration that renamed only the struct left
+    /// `return _WINDOW_ACTION { .. }` naming a type that no longer existed.
+    #[test]
+    fn an_underscore_tag_is_public_in_the_struct_and_its_constructor() {
+        let mut e = Emitter::new("h.h", false);
+        e.emit_record(&serde_json::json!({
+            "kind": "RecordDecl", "name": "_BLENDFUNCTION", "tagUsed": "struct",
+            "completeDefinition": true, "loc": { "file": "h.h" },
+            "inner": [
+                {"kind": "FieldDecl", "name": "BlendOp", "type": {"qualType": "unsigned char"}},
+                // A pointer field is what earns a struct its `_new`.
+                {"kind": "FieldDecl", "name": "hdc", "type": {"qualType": "void *"}}
+            ]
+        }));
+        let out = e.out.clone();
+        assert!(out.contains("struct BLENDFUNCTION {"), "{out}");
+        assert!(out.contains("fn BLENDFUNCTION_new("), "{out}");
+        assert!(out.contains("-> BLENDFUNCTION {"), "{out}");
+        assert!(out.contains("return BLENDFUNCTION {"), "{out}");
+        assert!(!out.contains("_BLENDFUNCTION {"), "{out}");
     }
 
     #[test]
