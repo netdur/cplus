@@ -64,7 +64,11 @@ tooltip update/reset, including native accessible-name fallback.
 
 Run `python tools/test_facet_winui_parity.py --choice-colors-only` from the repo
 root to verify rendered toggle, checkbox and radio colors, radio border width,
-live updates, native theme restoration, toggle callbacks and teardown.
+live updates, native theme restoration, toggle callbacks and teardown. It also
+checks radio outer-surface corner radii (initial, asymmetric and reset), Windows
+Symbol names, live symbol size/color, bundled/system switching and invalid names.
+The gallery's `-VerifyMode symbols` checks painted radio corners and the Icons
+page's system/bundled switch with real clicks.
 
 `--canvas-redraw-only` checks explicit redraw, retained native shapes across
 unrelated layout updates, resize invalidation, drawable clearing and cleanup.
@@ -88,6 +92,13 @@ The paging probe also verifies initial and live circular indexes (including
 negative and extreme values), switching wrapping off, wrapped scroll-to, and
 animation on/off. It measures intermediate native offset and page geometry for
 an adjacent animated change, then immediate arrival for a nonanimated change.
+Both navigation modes are exercised with carousel bounce disabled. The probe
+checks the default, live disable and reset on the native scrolling host and
+attached inertia property. Windows maps bounce to scroll inertia, following
+[MAUI's Windows carousel mapping](https://github.com/dotnet/maui/blob/main/src/Controls/src/Core/Handlers/Items/CarouselViewHandler.Windows.cs).
+This does not establish physical touch edge elasticity. The gallery Carousel
+page has a live bounce/momentum checkbox; its pointer check also verifies that
+paging and retained checkbox state survive disabling and re-enabling it.
 
 `--menus-only` verifies menu launchers, context-menu hosts and toolbar actions:
 live text/icons/destructive colors and reset, automatic measurement, mixed
@@ -172,3 +183,76 @@ from each of the five callbacks. It also checks subscription/view teardown.
 
 The swipe probe also checks auxiliary action identities, live private/open agent
 policy, identity cleanup, hidden-action compaction and accessible-name resets.
+
+Input visuals: `python tools/test_facet_winui_parity.py --input-visuals-only`
+checks search icon/cancel colors and theme reset, selection retention, native
+clear-button invocation, thumb bitmap loading/recolor/reset and rebinding,
+fixed versus growing editor measurements, live sizing-mode changes and explicit
+height constraints. The probe asserts zero views and subscriptions after close.
+The gallery's `-VerifyMode input-visuals` additionally checks rendered colors,
+real clear-button clicks and image-thumb dragging during a color update.
+
+Tables: `python tools/test_facet_winui_parity.py --tables-only` checks uniform
+heights, uneven-row restoration, Data/Form/Settings/Menu spacing, native rendered
+row size, retained input edits, live application height edits, switching the
+document between column and row layouts, restoration of original gaps,
+replacement of the row document and cleanup while overrides are still active.
+This probe is included in the default full suite. The gallery's
+`-VerifyMode tables` adds real button clicks and visible row-pitch checks.
+
+Window commands: `python tools/test_facet_winui_parity.py --commands-only`
+checks menu priority, all four toolbar placements, stable ties, native identity
+and focus, inherited visibility/enablement and agent privacy, narrow wrapping,
+callback removal and restoration of the content area when the strip empties.
+The default suite includes it. Gallery `-VerifyMode menus` adds visible ordering,
+live placement/priority switches, real flyout clicks and keyboard shortcuts.
+
+Window buttons: `python tools/test_facet_winui_parity.py --window-buttons-only`
+checks native measured spacing and reset, hover-mode keyboard reveal, retained
+button identity, real minimize/maximize/restore/close actions, removal/remount,
+and zero views/subscriptions after shutdown. The default suite includes it.
+Gallery `-VerifyMode window-buttons` exercises containing-bar hover with the
+pointer, checks rendered glyph visibility and spacing, preserves edited text
+through maximize/restore, and closes using the new Close button.
+
+HTML labels: `python tools/test_facet_winui_parity.py --html-labels-only`
+checks native nested formatting, common/numeric Unicode entities, collapsed
+whitespace and preformatted text, comments/script exclusion, quoted attributes,
+retained identity, literal-text reset, text transform, explicit-span precedence,
+empty reset and teardown. It is included in the default suite. Gallery
+`-VerifyMode html-labels` checks visible native text, real toggle clicks and remount.
+This is partial HTML support: CSS, the full named-entity set, images/tables and
+active links are still missing, and `label.text_format` remains parity debt.
+
+Carousel sizing: `python tools/test_facet_winui_parity.py --carousel-sizing-only`
+checks first-page measurement (including wrapped content), viewport-width changes,
+live requested heights while uniform sizing is active, restoration of independent
+heights, retained native identity, insertion/replacement of the first page, empty
+refill and teardown. The default suite includes it; existing `--paging-only`
+checks cover selection, animation, anchoring and callback removal. Gallery
+`-VerifyMode carousel` checks painted heights through the new Measure first page
+toggle, navigation, retained checkbox state and reset to viewport-sized pages.
+
+Split roles: `python tools/test_facet_winui_parity.py --split-roles-only` checks
+native navigation-pane material, live roles on either pane, retained editor
+identity/text, frame tracking across resizing/axis/collapse changes, application
+background precedence, child removal/replacement, reset and teardown. Included
+in the default suite. Gallery `-VerifyMode split-roles` checks painted surfaces,
+real role-button clicks and divider dragging, edited text retention and remount.
+
+Return keys: `python tools/test_facet_winui_parity.py --return-keys-only`
+checks the shared submit path's native Next traversal, disabled/hidden skips,
+text/search/password controls, live reset and secure replacement, callback focus
+override, callback source removal and teardown. Included in the default suite.
+Gallery `-VerifyMode return-keys` sends real Enter key presses through all three
+field types and checks native focus. Touch-keyboard action captions remain
+unmapped; both return-key verbs are still tracked as partial gaps.
+
+Button captions: `python tools/test_facet_winui_parity.py --button-breaks-only`
+checks native head/middle fitting, icon space, short and zero-width captions,
+Unicode grapheme boundaries (combining marks, ZWJ emoji and flags), full accessible
+titles, fixed/percentage widths, mounted wrapped heights, live mode/title
+changes, resize, toggle replacement and teardown.
+Included in the default suite. Gallery `-VerifyMode button-breaks` compares
+painted truncation modes and checks wrapping, live widths and real clicks.
+The Button page exposes all six modes and a Narrow / wide switch.

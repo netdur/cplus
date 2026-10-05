@@ -14,7 +14,7 @@ import "./native_slot" as native_slot;
 import "./record" as record;
 import "./scheduler" as scheduler;
 import "./style" as style;
-struct Page {opaque node: *core::Node,item: rt::Object,original: flex::Style}
+struct Page {opaque node: *core::Node,item: rt::Object,original: flex::Style,height: flex::StyleLength,managed: bool}
 struct State {opaque record: *record::View,pages: vec::Vec[Page],scroll: rt::Object,selection: ui::EventRegistrationToken,loaded: ui::EventRegistrationToken,scrolled: ui::EventRegistrationToken,active: bool,depth: usize,replaced_index: i64,scroll_timer: u64,threshold_timer: u64,threshold_inside: bool,threshold_count: usize}
 static LIVE: i64=0;
 fn subscriptions() -> i64 {return LIVE;}
@@ -80,6 +80,9 @@ fn scroll_properties(r: *record::View) {
     if (*state(r)).scroll.is_null() {return;}
     let p: *props::CarouselProps=(*core::node_data((*r).node)).props as *props::CarouselProps;
     let scroll=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*state(r)).scroll));
+    // Windows maps carousel bounce to scroll inertia (as MAUI does).
+    // Keep this independent from swipe permission and page animations.
+    native::check(scroll.set_is_scroll_inertia_enabled((*p).bounces));
     native::check(scroll.set_horizontal_scroll_mode(if (*p).is_swipeable {ui::scroll_mode_enabled} else {ui::scroll_mode_disabled}));
     native::check(scroll.set_horizontal_scroll_bar_visibility(bar((*p).items_view.horizontal_scroll_bars)));native::check(scroll.set_vertical_scroll_bar_visibility(bar((*p).items_view.vertical_scroll_bars)));
 }
@@ -90,24 +93,49 @@ fn apply(r: *record::View) {
     // Touch keeps the platform's direct-manipulation transitions.
     let pager=native::must::[ui::IFlipView](ui::IFlipView::query((*r).object));native::check(pager.set_use_touch_animations_for_all_navigation((*p).animates_scroll));
     let scrolling=native::must::[ui::IScrollViewerStatics](ui::ScrollViewer::i_scroll_viewer_statics_factory());native::check(scrolling.set_horizontal_scroll_mode((*r).object,if (*p).is_swipeable {ui::scroll_mode_enabled} else {ui::scroll_mode_disabled}));
+    native::check(scrolling.set_is_scroll_inertia_enabled((*r).object,(*p).bounces));
     native::check(scrolling.set_horizontal_scroll_bar_visibility((*r).object,bar((*p).items_view.horizontal_scroll_bars)));native::check(scrolling.set_vertical_scroll_bar_visibility((*r).object,bar((*p).items_view.vertical_scroll_bars)));
     if (dirty&carousel::P_SCROLL_TO)!=0 && (*p).items_view.scroll_to_index>=0 {(*p).position=(*p).items_view.scroll_to_index;(*p).items_view.scroll_to_index=-1;}
     sync(r,(*state(r)).active);scroll_properties(r);
 }
+fn same_length(a: flex::StyleLength,b: flex::StyleLength) -> bool {return a.unit==b.unit && (a.value==b.value || (flex::is_undefined(a.value) && flex::is_undefined(b.value)));}
 fn prepare(r: *record::View) {
-    let s=state(r);var i: usize=0;while i<(*s).pages.count() {match (*s).pages.at_ptr(i) {option::Option::Some(page)=>{let n=(*page).node;(*n).set_position_type(flex::PositionType::Absolute);(*n).set_position(flex::Edge::Left,flex::StyleLength::points(0.0f64));(*n).set_position(flex::Edge::Top,flex::StyleLength::points(0.0f64));(*n).set_width(flex::StyleLength::percent(100.0f64));(*n).set_height(flex::StyleLength::percent(100.0f64));},option::Option::None=>{}}i=i+1;}
+    let s=state(r);let p: *props::CarouselProps=(*core::node_data((*r).node)).props as *props::CarouselProps;
+    let uniform=(*p).structured_items_view.item_sizing==vocab::ItemSizing::MeasureFirstItem;
+    let viewport=(*(*r).node).frame();var first_height=flex::undefined();
+    // Preserve edits made while a page is uniformly sized. The application owns
+    // its requested height; this module only lends an override for this layout.
+    var i: usize=0;while i<(*s).pages.count() {if let option::Option::Some(page)=(*s).pages.at_ptr(i) {
+        let n=(*page).node;if (*page).managed && !same_length((*n).style.height,(*page).height) {(*page).original.height=(*n).style.height;}
+        (*n).set_position_type(flex::PositionType::Absolute);(*n).set_position(flex::Edge::Left,flex::StyleLength::points(0.0f64));(*n).set_position(flex::Edge::Top,flex::StyleLength::points(0.0f64));(*n).set_width(flex::StyleLength::percent(100.0f64));
+        if i==0 && uniform && viewport.width>0.0f64 {
+            // Resolve percentages against the viewport, but measure automatic
+            // height from the first retained subtree, including wrapped text.
+            let requested=(*page).original.height;let resolved=requested.resolve(viewport.height);
+            (*n).set_height(if requested.is_defined() && !requested.is_auto() && !flex::is_undefined(resolved) {flex::StyleLength::points(resolved)} else {flex::StyleLength::auto()});
+            (*n).calculate_layout(width:viewport.width,height:flex::undefined());first_height=(*n).frame().height;
+            // This temporary root measurement must not leave a cached frame
+            // with a root origin when the real parent lays the page out again.
+            (*n).mark_content_changed();
+        }
+        let requested=(*page).original.height;
+        let imposed=if uniform && !flex::is_undefined(first_height) {flex::StyleLength::points(first_height)} else if requested.is_defined() && !requested.is_auto() {requested} else {flex::StyleLength::percent(100.0f64)};
+        (*n).set_height(imposed);(*page).height=imposed;(*page).managed=true;
+    }i=i+1;}
     sync(r,true);(*s).replaced_index=-1;
 }
 fn insert(r: *record::View,child: *record::View,index: usize) {
     let s=state(r);let p: *props::CarouselProps=(*core::node_data((*r).node)).props as *props::CarouselProps;let count=(*s).pages.count();
     if (*s).active && count>0 && index as i64!=(*s).replaced_index {if (*p).items_view.scroll_anchor==vocab::ScrollAnchor::KeepItemsInView && index as i64<=(*p).position {(*p).position=(*p).position+1;}else if (*p).items_view.scroll_anchor==vocab::ScrollAnchor::KeepLastItemInView && (*p).position==count as i64-1 {(*p).position=count as i64;}}
     (*r).applying=true;let item=native::must::[ui::FlipViewItem](ui::FlipViewItem::new());let content=native::must::[ui::IContentControl](ui::IContentControl::query(item.object()));native::check(content.set_content(record::visual(child)));native_slot::bind(child,item.object(),native_slot::CONTENT);
-    assert (*s).pages.insert(Page {node:(*child).node,item:item.object(),original:(*(*child).node).style},index).is_ok();native::check(entries(r).insert_at(index as u32,item.object()));sync(r,false);
+    let control=native::must::[ui::IControl](ui::IControl::query(item.object()));native::check(control.set_vertical_content_alignment(ui::vertical_alignment_top));native::check(control.set_horizontal_content_alignment(ui::horizontal_alignment_stretch));
+    assert (*s).pages.insert(Page {node:(*child).node,item:item.object(),original:(*(*child).node).style,height:flex::StyleLength::undefined(),managed:false},index).is_ok();native::check(entries(r).insert_at(index as u32,item.object()));sync(r,false);
 }
 fn remove(r: *record::View,child: *record::View) {
     let s=state(r);let p: *props::CarouselProps=(*core::node_data((*r).node)).props as *props::CarouselProps;var i: usize=0;
     while i<(*s).pages.count() {match (*s).pages.at_ptr(i) {option::Option::Some(page)=>{if (*page).node==(*child).node {
-        let n=(*page).node;(*n).style.position_type=(*page).original.position_type;(*n).style.position_left=(*page).original.position_left;(*n).style.position_top=(*page).original.position_top;(*n).style.width=(*page).original.width;(*n).style.height=(*page).original.height;
+        let n=(*page).node;(*n).style.position_type=(*page).original.position_type;(*n).style.position_left=(*page).original.position_left;(*n).style.position_top=(*page).original.position_top;(*n).style.width=(*page).original.width;
+        if (*page).managed && same_length((*n).style.height,(*page).height) {(*n).set_height((*page).original.height);}
         if i as i64==(*p).position {(*s).replaced_index=i as i64;}
         if (*p).items_view.scroll_anchor!=vocab::ScrollAnchor::KeepScrollOffset && i as i64<(*p).position {(*p).position=(*p).position-1;}
         (*r).applying=true;let content=native::must::[ui::IContentControl](ui::IContentControl::query((*page).item));native::check(content.set_content(rt::Object::empty()));native::check(entries(r).remove_at(i as u32));let removed=(*s).pages.remove(i);sync(r,true);return;

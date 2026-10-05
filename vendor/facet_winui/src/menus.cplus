@@ -1,4 +1,4 @@
-// Facet menu nodes are inline launchers; context-menu hosts retain visible
+// Facet menu nodes are window-strip launchers; context-menu hosts retain visible
 // content separately from native flyout actions.
 import "winui/winui" as ui;
 import "winrt/runtime" as rt;

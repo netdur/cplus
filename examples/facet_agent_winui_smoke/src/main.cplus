@@ -23,6 +23,8 @@ import "./parity" as parity;
 import "./styles" as styles;
 import "./pointers" as pointers;
 import "./texts" as texts;
+import "./tables" as tables;
+import "./input_visuals" as input_visuals;
 import "./lifecycle" as lifecycle;
 import "./actions" as actions;
 import "./date_formats" as date_formats;
@@ -34,12 +36,19 @@ import "./borders" as borders;
 import "./tabs" as tabs;
 import "./paging" as paging;
 import "./menus" as menus;
+import "./commands" as commands;
+import "./window_buttons" as window_buttons;
+import "./html_labels" as html_labels;
+import "./carousel_sizing" as carousel_sizing;
 import "./tree_rows" as tree_rows;
 import "./row_retention" as row_retention;
 import "./input_transform" as input_transform;
 import "./popup_caption" as popup_caption;
 import "./clear_button" as clear_button;
 import "./splits" as splits;
+import "./split_roles" as split_roles;
+import "./return_keys" as return_keys;
+import "./button_breaks" as button_breaks;
 import "./button_modes" as button_modes;
 import "./secure_modes" as secure_modes;
 import "./time_open" as time_open;
@@ -113,6 +122,13 @@ impl Probe {
 }
 
 fn main() -> i32 {
+    if env::has_var("CPLUS_FACET_RETURN_KEYS") {return return_keys::run();}
+    if env::has_var("CPLUS_FACET_BUTTON_BREAKS") {return button_breaks::run();}
+    if env::has_var("CPLUS_FACET_SPLIT_ROLES") {return split_roles::run();}
+    if env::has_var("CPLUS_FACET_CAROUSEL_SIZING") {return carousel_sizing::run();}
+    if env::has_var("CPLUS_FACET_HTML_LABELS") {return html_labels::run();}
+    if env::has_var("CPLUS_FACET_WINDOW_BUTTONS") {return window_buttons::run();}
+    if env::has_var("CPLUS_FACET_COMMANDS") {return commands::run();}
     if env::has_var("CPLUS_FACET_SWIPING") {return swiping::run();}
     if env::has_var("CPLUS_FACET_HYBRID") {return hybrid_web::run();}
     if env::has_var("CPLUS_FACET_CLEAR_BUTTON") {return clear_button::run();}
@@ -138,6 +154,8 @@ fn main() -> i32 {
     if env::has_var("CPLUS_FACET_DATE_FORMATS") {return date_formats::run();}
     if env::has_var("CPLUS_FACET_ACTIONS") {return actions::run();}
     if env::has_var("CPLUS_FACET_LIFECYCLE") {return lifecycle::run();}
+    if env::has_var("CPLUS_FACET_INPUT_VISUALS") {return input_visuals::run();}
+    if env::has_var("CPLUS_FACET_TABLES") {return tables::run();}
     if env::has_var("CPLUS_FACET_TEXT") {return texts::run();}
     if env::has_var("CPLUS_FACET_POINTER") {return pointers::run();}
     if env::has_var("CPLUS_FACET_STYLES") {return styles::run();}

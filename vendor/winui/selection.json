@@ -23,6 +23,9 @@
     "Microsoft.UI.Xaml.Controls.Button",
     "Microsoft.UI.Xaml.Controls.TextBlock",
     "Microsoft.UI.Xaml.Controls.TextBox",
+    "Microsoft.UI.Xaml.Input.FocusManager",
+    "Microsoft.UI.Xaml.Input.FindNextElementOptions",
+    "Microsoft.UI.Xaml.XamlRoot",
     "Microsoft.UI.Xaml.Controls.CheckBox",
     "Microsoft.UI.Xaml.Controls.ToggleSwitch",
     "Microsoft.UI.Xaml.Controls.Slider",
@@ -143,6 +146,10 @@
     "Microsoft.Web.WebView2.Core.CoreWebView2WebResourceResponse",
     "Windows.Storage.Streams.IRandomAccessStream",
     "Windows.Foundation.IAsyncInfo",
-    "Windows.Foundation.Deferral"
+    "Windows.Foundation.Deferral",
+    "Microsoft.UI.Xaml.Controls.SymbolIcon",
+    "Microsoft.UI.Xaml.Controls.Viewbox",
+    "Microsoft.UI.Windowing.AppWindow",
+    "Microsoft.UI.Windowing.OverlappedPresenter"
   ]
 }

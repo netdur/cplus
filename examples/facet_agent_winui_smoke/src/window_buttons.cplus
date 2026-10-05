@@ -1,0 +1,83 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/window_chrome" as chrome;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "flex_layout/flex_layout" as flex;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/window_buttons" as buttons;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn handle() -> chrome::WindowButtons {return match chrome::find("chrome") {option::Option::Some(v)=>v,option::Option::None=>{assert false;#zero::[chrome::WindowButtons]()}};}
+fn panel() -> rt::Object {let border=check::must::[native::IBorder](native::IBorder::query(check::object("chrome")));return check::must::[rt::Object](border.child());}
+fn button(index: u32) -> rt::Object {let panel=check::must::[native::IPanel](native::IPanel::query(panel()));let children=check::must::[native::IVector_Microsoft_UI_Xaml_UIElement](native::IVector_Microsoft_UI_Xaml_UIElement::query(check::must::[rt::Object](panel.children())));assert check::must::[u32](children.size())==3;return check::must::[rt::Object](children.get_at(index));}
+fn opacity() -> f64 {return check::must::[f64](check::must::[native::IUIElement](native::IUIElement::query(panel())).opacity());}
+fn invoke(index: u32) {
+    let factory=check::must::[native::IFrameworkElementAutomationPeerStatics](native::FrameworkElementAutomationPeer::i_framework_element_automation_peer_statics_factory());let peer=check::must::[native::IAutomationPeer](native::IAutomationPeer::query(check::must::[rt::Object](factory.create_peer_for_element(button(index)))));
+    let provider=check::must::[native::IInvokeProvider](native::IInvokeProvider::query(check::must::[rt::Object](peer.get_pattern(native::pattern_interface_invoke))));assert provider.invoke().is_ok();
+}
+struct Probe {passed: bool,identity: rt::Object,timer: services::Cancellable}
+impl Probe {
+    fn build(ref this) -> core::Node {return @ui {column {
+        row(key:"bar") {chrome::window_buttons(key:"chrome",spacing:12.0f64) label("After",key:"after")}.gap(0.0f64)
+        text_field("Retained editor",key:"editor")
+    }.padding(20.0f64).gap(20.0f64).align(flex::Align::Start)};}
+    fn ready(ref this) {this.timer=services::after(0.3f64,this.initial);}
+    fn initial(ref this) {
+        let width=handle().width();let height=handle().height();check::log("WINDOW BUTTONS: initial ${width} x ${height}");
+        assert width>=150.0f64 && width<151.0f64;assert height==32.0f64;assert opacity()==1.0f64;
+        this.identity=check::must::[rt::Object](button(1).query(rt::unknown_iid()));
+        let editor=check::must::[native::IUIElement](native::IUIElement::query(check::object("editor")));assert check::must::[bool](editor.focus(native::focus_state_keyboard));
+        let changed=handle().set_spacing(35.0f64).set_style(chrome::ButtonStyle::OnHover);this.timer=services::after(0.2f64,this.hover_mode);
+    }
+    fn hover_mode(ref this) {
+        let width=handle().width();let alpha=opacity();check::log("WINDOW BUTTONS: hover ${width}, opacity ${alpha}");
+        assert width>=173.0f64 && width<174.0f64;assert opacity()==0.0f64;
+        assert check::must::[rt::Object](button(1).query(rt::unknown_iid())).raw()==this.identity.raw();
+        let visual=check::must::[native::IUIElement](native::IUIElement::query(button(1)));assert check::must::[bool](visual.focus(native::focus_state_keyboard));
+        this.timer=services::after(0.2f64,this.focused);
+    }
+    fn focused(ref this) {
+        check::log("WINDOW BUTTONS: focused");
+        assert opacity()==1.0f64;
+        let editor=check::must::[native::IUIElement](native::IUIElement::query(check::object("editor")));assert check::must::[bool](editor.focus(native::focus_state_keyboard));
+        this.timer=services::after(0.2f64,this.unfocused);
+    }
+    fn unfocused(ref this) {
+        check::log("WINDOW BUTTONS: unfocused");
+        assert opacity()==0.0f64;
+        let visual=check::must::[native::IUIElement](native::IUIElement::query(button(0)));assert check::must::[bool](visual.focus(native::focus_state_pointer));assert opacity()==0.0f64;
+        let changed=handle().set_spacing(-5.0f64).set_style(chrome::ButtonStyle::Native);this.timer=services::after(0.2f64,this.reset);
+    }
+    fn reset(ref this) {
+        check::log("WINDOW BUTTONS: reset");assert handle().width()>=138.0f64 && handle().width()<139.0f64;assert opacity()==1.0f64;assert buttons::window_state()==native::overlapped_presenter_state_restored;
+        invoke(1);this.timer=services::after(0.4f64,this.maximized);
+    }
+    fn maximized(ref this) {
+        check::log("WINDOW BUTTONS: maximized");
+        assert buttons::window_state()==native::overlapped_presenter_state_maximized;
+        invoke(1);this.timer=services::after(0.4f64,this.restored);
+    }
+    fn restored(ref this) {
+        check::log("WINDOW BUTTONS: restored");
+        assert buttons::window_state()==native::overlapped_presenter_state_restored;
+        invoke(0);this.timer=services::after(0.3f64,this.minimized);
+    }
+    fn minimized(ref this) {
+        check::log("WINDOW BUTTONS: minimized");
+        assert buttons::window_state()==native::overlapped_presenter_state_minimized;assert host::presenter().restore().is_ok();
+        // XAML references must be released before Application.run shuts down.
+        this.identity=rt::Object::empty();
+        assert mount::remove("chrome");assert buttons::subscriptions()==0;
+        assert mount::insert_child(check::node("bar"),chrome::window_buttons(key:"chrome"),0);
+        this.timer=services::after(0.3f64,this.finish);
+    }
+    fn finish(ref this) {
+        assert buttons::subscriptions()==8;assert opacity()==1.0f64;
+        check::log("PASS: window-button spacing/reset, hover keyboard reveal, native identity, minimize/maximize/restore and remount cleanup");this.passed=true;invoke(2);
+    }
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI window buttons",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: window buttons teardown");return 0;}

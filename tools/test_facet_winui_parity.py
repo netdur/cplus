@@ -10,6 +10,10 @@ import time
 import sys
 from test_agent_winui_http import connect, rpc
 
+# Native probes include Unicode text; redirected Windows stdout may use cp1252.
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / 'examples/facet_agent_winui_smoke'
 OUT = EXAMPLE / 'out'
@@ -139,6 +143,79 @@ def run_text():
     print(result.stdout)
     assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
     assert 'PASS: text/content teardown' in result.stdout
+
+
+def run_window_buttons():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_WINDOW_BUTTONS': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: window buttons teardown' in result.stdout
+
+
+def run_html_labels():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_HTML_LABELS': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: HTML labels teardown' in result.stdout
+
+
+def run_carousel_sizing():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_CAROUSEL_SIZING': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: carousel sizing teardown' in result.stdout
+
+
+def run_split_roles():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_SPLIT_ROLES': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: split roles teardown' in result.stdout
+
+
+def run_button_breaks():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_BUTTON_BREAKS': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: button breaks teardown' in result.stdout
+
+
+def run_return_keys():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_RETURN_KEYS': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: return keys teardown' in result.stdout
+
+
+def run_input_visuals():
+    runtime = OUT / 'runtime'
+    fixture = OUT / 'input-visuals.png'
+    fixture.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aR3sAAAAASUVORK5CYII='))
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_INPUT_VISUALS': '1', 'CPLUS_TEST_IMAGE': str(fixture)},
+        capture_output=True, text=True, encoding='utf-8', timeout=30,
+        creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: input visuals teardown' in result.stdout
 
 
 def run_lifecycle():
@@ -386,6 +463,26 @@ def run_menus():
     assert 'PASS: menu teardown' in result.stdout
 
 
+def run_commands():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_COMMANDS': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: command strip teardown' in result.stdout
+
+
+def run_tables():
+    runtime = OUT / 'runtime'
+    result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
+        env={**os.environ, 'CPLUS_FACET_TABLES': '1'}, capture_output=True,
+        text=True, encoding='utf-8', timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    print(result.stdout)
+    assert result.returncode == 0, f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+    assert 'PASS: table teardown' in result.stdout
+
+
 def run_tabs():
     runtime = OUT / 'runtime'
     result = subprocess.run([str(runtime / 'facet_agent_winui_smoke.exe')], cwd=runtime,
@@ -467,6 +564,27 @@ if __name__ == '__main__':
     if '--menus-only' in sys.argv:
         run_menus()
         sys.exit(0)
+    if '--window-buttons-only' in sys.argv:
+        run_window_buttons()
+        sys.exit(0)
+    if '--html-labels-only' in sys.argv:
+        run_html_labels()
+        sys.exit(0)
+    if '--carousel-sizing-only' in sys.argv:
+        run_carousel_sizing()
+        sys.exit(0)
+    if '--split-roles-only' in sys.argv:
+        run_split_roles()
+        sys.exit(0)
+    if '--return-keys-only' in sys.argv:
+        run_return_keys()
+        sys.exit(0)
+    if '--button-breaks-only' in sys.argv:
+        run_button_breaks()
+        sys.exit(0)
+    if '--commands-only' in sys.argv:
+        run_commands()
+        sys.exit(0)
     if '--paging-only' in sys.argv:
         run_paging()
         sys.exit(0)
@@ -497,11 +615,18 @@ if __name__ == '__main__':
     if '--lifecycle-only' in sys.argv:
         run_lifecycle()
         sys.exit(0)
+    if '--tables-only' in sys.argv:
+        run_tables()
+        sys.exit(0)
+    if '--input-visuals-only' in sys.argv:
+        run_input_visuals()
+        sys.exit(0)
     if '--styles-only' not in sys.argv and '--text-only' not in sys.argv:
         run()
     if '--text-only' not in sys.argv:
         run_styles()
     run_text()
+    run_input_visuals()
     if len(sys.argv) == 1:
         run_lifecycle()
         run_actions()
@@ -513,11 +638,21 @@ if __name__ == '__main__':
         run_canvas_redraw()
         run_borders()
 
+        run_tables()
         run_tabs()
 
         run_paging()
 
         run_menus()
+
+        run_commands()
+        run_window_buttons()
+        run_html_labels()
+        run_carousel_sizing()
+        run_split_roles()
+        run_return_keys()
+
+        run_button_breaks()
 
         run_tree_rows()
 

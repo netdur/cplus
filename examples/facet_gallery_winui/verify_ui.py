@@ -58,19 +58,390 @@ def click(bounds):
     u.mouse_event(4, 0, 0, 0, 0)
     time.sleep(.25)
 
+def verify_button_breaks():
+    nodes = inspect('navigate', 'Button')
+    inspect('invoke','btn:reset')
+    def reveal():
+        nodes = inspect()
+        target = node(nodes,'btn:break-button')
+        bounds = w.RECT(); assert u.GetWindowRect(hwnd,c.byref(bounds))
+        if target['offscreen'] or target['bounds'][1]+target['bounds'][3] > bounds.bottom-12:
+            nodes = inspect('scroll','demo:scroll',100)
+        return nodes
+    nodes = reveal()
+    def capture():
+        value = node(inspect(), 'btn:break-button')
+        x,y,width,height = value['bounds']
+        # Exclude the button chrome: compare the actual caption pixels.
+        return ImageGrab.grab(bbox=tuple(round(v) for v in (x+8,y+5,x+width-8,y+height-5))).convert('RGB')
+    title = 'Beginning — a long caption — ending'
+    for key in ('btn:break-button', 'btn:break-text'):
+        assert node(nodes,key)['name'] == title
+    images = []
+    for expected in ('Head truncation','Middle truncation','Tail truncation','Character wrap','Word wrap','No wrap'):
+        assert node(inspect(),'btn:break-status')['name'] == expected
+        reveal()
+        time.sleep(.15)
+        images.append(capture())
+        screenshot('verified-button-' + expected.lower().replace(' ','-') + '.png')
+        click(node(inspect(),'btn:break-next')['bounds'])
+    for a,b in ((images[0],images[1]),(images[1],images[2])):
+        assert a.size == b.size
+        assert sum(ImageStat.Stat(ImageChops.difference(a,b)).mean) > 3, 'Truncation modes render the same caption'
+    assert images[3].height > images[0].height, 'Character wrapping stayed on one line'
+    assert images[4].height > images[0].height, 'Word wrapping stayed on one line'
+    before = node(inspect(),'btn:break-button')['bounds'][2]
+    click(node(inspect(),'btn:break-width')['bounds'])
+    after = node(inspect(),'btn:break-button')['bounds'][2]
+    assert after > before * 1.8
+    click(node(inspect(),'btn:break-button')['bounds'])
+    click(node(inspect(),'btn:break-text')['bounds'])
+    assert node(inspect(),'btn:count')['name'] == 'Clicked 2 time(s)'
+    click(node(inspect(),'btn:break-width')['bounds'])
+    screenshot('verified-button-breaks.png')
+    print('PASS: painted head/middle/tail captions, wrapping, full accessibility names, live widths and real clicks',flush=True)
+
+
+def verify_return_keys():
+    inspect('navigate', 'Inputs')
+    def enter():
+        for flags in (0,2):
+            event=Input(type=1,data=Union(key=Key(vk=13,flags=flags)))
+            assert u.SendInput(1,c.byref(event),c.sizeof(event))==1
+        time.sleep(.25)
+    inspect('focus','in:search');enter()
+    assert node(inspect(),'in:search')['focused']
+    inspect('invoke','in:return')
+    assert node(inspect(),'in:return-status')['name']=='Enter: next control'
+    for source,target in (('in:name','in:reveal'),('in:secret','in:search-colors'),('in:search','in:area')):
+        inspect('focus',source);enter()
+        nodes=inspect()
+        assert node(nodes,target)['focused'], (source,target,[(n['id'],n['name']) for n in nodes if n['focused']])
+    # TextBox replacement must keep the live ReturnKey setting.
+    inspect('invoke','in:reveal')
+    inspect('focus','in:secret');enter()
+    assert node(inspect(),'in:search-colors')['focused']
+    inspect('invoke','in:return')
+    inspect('focus','in:search');enter()
+    assert node(inspect(),'in:search')['focused']
+    screenshot('verified-return-keys.png')
+    print('PASS: real Enter advances text/search/password in native tab order; live reset and password replacement',flush=True)
+
+
+def verify_split_roles():
+    nodes = inspect('navigate', 'Split')
+    inspect('value', 'sp:edit', 'Retained through role changes')
+    scale = u.GetDpiForWindow(hwnd)/96
+    def divider():
+        nodes = inspect()
+        left = node(nodes, 'sp:edit')['bounds'][0]
+        return next(n for n in nodes if n['name'] == 'Resize panes' and n['bounds'][0] > left)
+    def colors():
+        x,y,width,height = divider()['bounds']
+        samples = []
+        for offset in (-28,28):
+            px,py = x+width/2+offset*scale,y+height-25*scale
+            samples.append(ImageStat.Stat(ImageGrab.grab(bbox=tuple(round(v) for v in (px-5,py-5,px+5,py+5))).convert('RGB')).mean)
+        return samples
+    def distance(a,b):
+        return sum(abs(x-y) for x,y in zip(a,b))/3
+    time.sleep(.4)
+    leading, content = colors()
+    assert distance(leading,content)>3, (leading,content)
+    screenshot('verified-split-leading-sidebar.png')
+    click(node(inspect(), 'sp:switch')['bounds'])
+    assert node(inspect(), 'sp:roles')['name'] == 'Sidebar: trailing'
+    time.sleep(.4)
+    a,b = colors()
+    assert distance(a,content)<3 and distance(b,content)>3, (a,b,content)
+    screenshot('verified-split-trailing-sidebar.png')
+    click(node(inspect(), 'sp:switch')['bounds'])
+    assert node(inspect(), 'sp:roles')['name'] == 'Both panes: content'
+    time.sleep(.4)
+    a,b = colors()
+    assert distance(a,content)<3 and distance(b,content)<3, (a,b,content)
+    assert node(inspect(), 'sp:edit')['value'] == 'Retained through role changes'
+    before = divider()['bounds']
+    click(before)
+    x,y,width,height = before
+    def move(offset):
+        u.mouse_event(0x8001,round((x+width/2+offset)*65535/(u.GetSystemMetrics(0)-1)),round((y+height/2)*65535/(u.GetSystemMetrics(1)-1)),0,0)
+    move(0);time.sleep(.15);u.mouse_event(2,0,0,0,0)
+    try:
+        time.sleep(.15)
+        for offset in range(10,71,10):
+            move(offset);time.sleep(.08)
+    finally:
+        u.mouse_event(4,0,0,0,0)
+    time.sleep(.2)
+    assert divider()['bounds'][0] > x+40
+    click(node(inspect(), 'sp:switch')['bounds'])
+    assert node(inspect(), 'sp:roles')['name'] == 'Sidebar: leading'
+    assert node(inspect(), 'sp:edit')['value'] == 'Retained through role changes'
+    time.sleep(.4)
+    a,b = colors()
+    assert distance(a,b)>3
+    inspect('navigate','Overview')
+    nodes = inspect('navigate','Split')
+    assert node(nodes,'sp:roles')['name']=='Sidebar: leading'
+    print('PASS: painted sidebar role switches, content reset, real divider drag, retained editor and remount', flush=True)
+
+
+def verify_html_labels():
+    nodes = inspect('navigate', 'Label')
+    rendered = 'Bold and italic · underlined & 🚀\nSecond line with strikethrough and code.'
+    assert node(nodes, 't:html')['name'] == rendered
+    before = node(nodes, 't:html')['bounds']
+    assert before[2] > 200 and before[3] > 30
+    screenshot('verified-html-label.png')
+    click(node(nodes, 't:html-toggle')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 't:html-status')['name'] == 'Literal text'
+    assert node(nodes, 't:html')['name'].startswith('<b>Bold <i>')
+    click(node(nodes, 't:html-toggle')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 't:html')['name'] == rendered
+    assert node(nodes, 't:html-status')['name'] == 'HTML formatting'
+    inspect('navigate', 'Overview')
+    nodes = inspect('navigate', 'Label')
+    assert node(nodes, 't:html')['name'] == rendered
+    print('PASS: rendered HTML label, literal toggle, live layout and navigation/remount', flush=True)
+
+
+def verify_window_buttons():
+    nodes = inspect('navigate', 'Window chrome')
+    inspect('value', 'wc:edit', 'Retained through window actions')
+    scale = u.GetDpiForWindow(hwnd)/96
+    before = node(nodes, 'wc:buttons:minimize')['bounds'][0]
+    click(node(nodes, 'wc:space')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 'wc:spacing')['name'] == 'Spacing: 40 pt'
+    assert abs(before-node(nodes, 'wc:buttons:minimize')['bounds'][0]-40*scale)<2
+    click(node(nodes, 'wc:space')['bounds'])
+    nodes = inspect()
+    first = node(nodes, 'wc:buttons:minimize')['bounds']
+    last = node(nodes, 'wc:buttons:close')['bounds']
+    region = tuple(round(v) for v in (first[0], first[1], last[0]+last[2], last[1]+last[3]))
+    def glyph_pixels():
+        return sum(min(pixel)>160 for pixel in ImageGrab.grab(bbox=region).convert('RGB').getdata())
+    def move_to(bounds):
+        x,y,width,height=bounds
+        u.mouse_event(0x8001,round((x+width/2)*65535/(u.GetSystemMetrics(0)-1)),round((y+height/2)*65535/(u.GetSystemMetrics(1)-1)),0,0)
+        time.sleep(.2)
+    assert glyph_pixels()>15
+    click(node(nodes, 'wc:hover')['bounds'])
+    assert glyph_pixels()==0, 'Hover mode did not hide the controls'
+    move_to(node(inspect(), 'wc:title')['bounds'])
+    assert glyph_pixels()>15, 'Hovering the containing bar did not reveal controls'
+    screenshot('verified-window-hover.png')
+    move_to(node(inspect(), 'wc:edit')['bounds'])
+    assert glyph_pixels()==0
+    inspect('focus', 'wc:hover')
+    for vk,flags in ((0x10,0),(0x09,0),(0x09,2),(0x10,2)):
+        event=Input(type=1,data=Union(key=Key(vk=vk,flags=flags)))
+        assert u.SendInput(1,c.byref(event),c.sizeof(event))==1
+    time.sleep(.2)
+    assert glyph_pixels()>15, 'Shift+Tab did not reach and reveal hidden controls'
+    inspect('focus', 'wc:edit')
+    assert glyph_pixels()==0
+    inspect('focus', 'wc:buttons:maximize')
+    assert glyph_pixels()>15, 'Keyboard focus did not reveal controls'
+    inspect('focus', 'wc:edit')
+    assert glyph_pixels()==0
+    inspect('invoke', 'wc:hover')
+    nodes = inspect()
+    u.IsZoomed.argtypes=[w.HWND]
+    click(node(nodes, 'wc:buttons:maximize')['bounds']); time.sleep(.3)
+    assert u.IsZoomed(hwnd)
+    nodes = inspect()
+    assert node(nodes, 'wc:buttons:maximize')['name']=='Restore'
+    click(node(nodes, 'wc:buttons:maximize')['bounds']); time.sleep(.3)
+    assert not u.IsZoomed(hwnd)
+    assert node(inspect(), 'wc:edit')['value']=='Retained through window actions'
+    inspect('navigate', 'Overview')
+    nodes = inspect('navigate', 'Window chrome')
+    assert node(nodes, 'wc:visibility')['name']=='Buttons always visible'
+    assert node(nodes, 'wc:spacing')['name']=='Spacing: default'
+    screenshot('verified-window-buttons.png')
+    print('PASS: window buttons live spacing, containing-bar hover, keyboard reveal, maximize/restore, retained input and remount', flush=True)
+
+def verify_symbols():
+    inspect('navigate', 'Controls')
+    nodes = inspect('scroll', 'demo:scroll', 100)
+    scale = u.GetDpiForWindow(hwnd)/96
+    def corner_pixel():
+        x, y, width, height = node(inspect(), 'ctl:radius-radio')['bounds']
+        image = ImageGrab.grab().convert('RGB')
+        return image.getpixel((round(x+3*scale), round(y+3*scale)))
+    def purple(pixel):
+        return all(abs(a-b)<8 for a,b in zip(pixel, (89,46,140)))
+    assert purple(corner_pixel()), 'Radio surface background missing'
+    click(node(nodes, 'ctl:radius')['bounds'])
+    assert node(inspect(), 'ctl:radius-status')['name'] == 'Asymmetric corners'
+    assert not purple(corner_pixel()), 'Radio corner radius did not paint'
+    screenshot('verified-radio-corners.png')
+    click(node(inspect(), 'ctl:radius')['bounds'])
+    assert purple(corner_pixel()), 'Radio radius reset did not paint'
+    nodes = inspect('navigate', 'Icons')
+    if node(nodes, 'ico:switch')['offscreen']:
+        nodes = inspect('scroll', 'demo:scroll', 100)
+    assert node(nodes, 'ico:system-status')['name'] == 'Windows: Print (48 pt)'
+    screenshot('verified-system-symbols.png')
+    click(node(nodes, 'ico:switch')['bounds'])
+    nodes = inspect()
+    assert node(nodes, 'ico:system-status')['name'] == 'Bundled: home (32 pt)'
+    screenshot('verified-bundled-symbol.png')
+    click(node(nodes, 'ico:switch')['bounds'])
+    assert node(inspect(), 'ico:system-status')['name'] == 'Windows: Print (48 pt)'
+    inspect('navigate', 'Overview')
+    inspect('navigate', 'Icons')
+    assert node(inspect(), 'ico:system-status')['name'] == 'Windows: Print (48 pt)'
+    print('PASS: native system symbols, bundled switch, resize/color changes and remount', flush=True)
+
+def verify_tables():
+    inspect('navigate', 'Table')
+    nodes = inspect('scroll', 'demo:scroll', 100)
+    scale = u.GetDpiForWindow(hwnd)/96
+    def geometry(nodes):
+        ada = node(nodes, 'tb:ada')['bounds']
+        grace = node(nodes, 'tb:grace')['bounds']
+        alan = node(nodes, 'tb:alan')['bounds']
+        # TextBlock's reported bounds can end at the last glyph rather than
+        # the allocated row edge. Equal-font row origins expose row pitch.
+        return ada[0], grace[1]-ada[1], alan[1]-grace[1]
+    baseline_x, first, second = geometry(nodes)
+    assert abs(first - 36*scale) < 2 and abs(second - 36*scale) < 2
+    click(node(nodes, 'tb:resize')['bounds'])
+    _, first, second = geometry(inspect('scroll', 'demo:scroll', 100))
+    assert abs(first - 52*scale) < 2 and abs(second - 52*scale) < 2
+    click(node(inspect(), 'tb:vary')['bounds'])
+    _, first, second = geometry(inspect('scroll', 'demo:scroll', 100))
+    assert abs(second - 68*scale) < 2 and second > first+20*scale
+    screenshot('verified-table-uneven.png')
+    click(node(inspect(), 'tb:vary')['bounds'])
+    for style, grouped in (('Form', True), ('Settings', True), ('Menu', False), ('Data', False)):
+        click(node(inspect(), 'tb:cycle')['bounds'])
+        nodes = inspect('scroll', 'demo:scroll', 100)
+        assert node(nodes, 'tb:style')['name'] == style
+        x, first, second = geometry(nodes)
+        inset = x - baseline_x
+        gap = first - 52*scale
+        assert abs(inset - (12*scale if grouped else 0)) < 2, (style,inset)
+        assert abs(gap - (8*scale if grouped else 0)) < 2, (style,gap)
+        assert abs(second-first) < 2, (style,first,second, node(nodes,"tb:alan"))
+        if style == 'Form':
+            screenshot('verified-table-form.png')
+    click(node(inspect(), 'tb:resize')['bounds'])
+    _, first, second = geometry(inspect('scroll', 'demo:scroll', 100))
+    assert abs(first - 36*scale) < 2 and abs(second - 36*scale) < 2
+    print('PASS: real table sizing/uneven switches and four style transitions', flush=True)
+
+
+def verify_input_visuals():
+    inspect('navigate', 'Inputs')
+    inspect('value', 'in:search', 'Find this')
+    inspect('invoke', 'in:search-colors')
+    nodes = inspect('focus', 'in:search')
+    x, y, width, height = node(nodes, 'in:search')['bounds']
+    pixels = ImageGrab.grab(bbox=tuple(round(v) for v in (x, y, x+width, y+height))).convert('RGB')
+    assert sum(r > 220 and 100 < g < 180 and b < 100 for r, g, b in pixels.getdata()) > 8, 'Missing orange search icon'
+    assert sum(70 < r < 140 and g > 170 and b > 220 for r, g, b in pixels.getdata()) > 8, 'Missing blue clear glyph'
+    screenshot('verified-search-colors.png')
+    scale = u.GetDpiForWindow(hwnd)/96
+    click((x+width-28*scale, y, 25*scale, height))
+    nodes = inspect()
+    assert node(nodes, 'in:search')['value'] == ''
+    assert node(nodes, 'in:search_echo')['name'] == 'Query: (empty)'
+    inspect('invoke', 'in:search-colors')
+    inspect('scroll', 'demo:scroll', 100)
+    nodes = inspect()
+    fixed = node(nodes, 'in:autosize')['bounds'][3]
+    inspect('invoke', 'in:auto')
+    nodes = inspect('scroll', 'demo:scroll', 100)
+    growing = node(nodes, 'in:autosize')['bounds'][3]
+    assert growing > fixed + 20*scale, (fixed, growing)
+    screenshot('verified-editor-autosize.png')
+    inspect('invoke', 'in:auto')
+    assert abs(node(inspect(), 'in:autosize')['bounds'][3] - fixed) < 2
+
+    inspect('navigate', 'Values')
+    inspect('range', 'val:slider', '.4')
+    inspect('invoke', 'val:thumb')
+    nodes = inspect()
+    assert node(nodes, 'val:thumb-status')['name'] == 'Image thumb'
+    x, y, width, height = node(nodes, 'val:slider')['bounds']
+    def thumb_pixels():
+        return ImageGrab.grab(bbox=tuple(round(v) for v in (x, y, x+width, y+height))).convert('RGB')
+    pixels = thumb_pixels()
+    points = [(col, row) for row in range(pixels.height) for col in range(pixels.width)
+              if all(abs(a-b) < 8 for a,b in zip(pixels.getpixel((col,row)), (89,48,16)))]
+    assert len(points) > 15, 'Image thumb did not paint its diamond'
+    start_x = x + sum(p[0] for p in points)/len(points)
+    start_y = y + sum(p[1] for p in points)/len(points)
+    def mouse(px, py):
+        u.mouse_event(0x8001, round(px*65535/(u.GetSystemMetrics(0)-1)), round(py*65535/(u.GetSystemMetrics(1)-1)), 0, 0)
+        time.sleep(.08)
+    mouse(start_x, start_y)
+    u.mouse_event(2,0,0,0,0)
+    try:
+        mouse(start_x+25, start_y)
+        inspect('invoke', 'val:colors')  # Must defer template replacement during the drag.
+        for offset in (50, 75, 100):
+            mouse(start_x+offset, start_y)
+    finally:
+        u.mouse_event(4,0,0,0,0)
+    time.sleep(.3)
+    nodes = inspect()
+    assert node(nodes, 'val:readout')['name'] != 'Value: 40%'
+    assert node(nodes, 'val:style_status')['name'] == 'Custom slider colors'
+    screenshot('verified-slider-image.png')
+    inspect('invoke', 'val:thumb')
+    assert node(inspect(), 'val:thumb-status')['name'] == 'Native thumb'
+    pixels = thumb_pixels()
+    assert sum(all(abs(a-b) < 8 for a,b in zip(pixel,(89,48,16))) for pixel in pixels.getdata()) == 0
+    inspect('invoke', 'val:colors')
+    print('PASS: rendered search colors/native clear, editor growth/reset, image-thumb drag/recolor/native reset', flush=True)
+
+
+def verify_label_alignment():
+    nodes = inspect('navigate', 'Label')
+    if any(node(nodes, key)['offscreen'] for key in ('t:top', 't:center', 't:bottom')):
+        nodes = inspect('scroll', 'demo:scroll', 100)
+    time.sleep(.3)
+    centers = []
+    for key in ('t:top', 't:center', 't:bottom'):
+        x, y, width, height = node(nodes, key)['bounds']
+        assert width > 0 and height > 0
+        pixels = ImageGrab.grab(bbox=(round(x), round(y), round(x + width), round(y + height))).convert('RGB')
+        rows = [row for row in range(pixels.height)
+                if any(min(pixels.getpixel((col, row))) > 170 for col in range(pixels.width))]
+        assert rows, f'Missing rendered text: {key}'
+        centers.append(y + (min(rows) + max(rows))/2)
+    assert centers[1] - centers[0] > 15, centers
+    assert centers[2] - centers[1] > 15, centers
+    assert abs((centers[0] + centers[2])/2 - centers[1]) < 3, centers
+    screenshot('verified-label-alignment.png')
+    print('PASS: rendered top/center/bottom label alignment', flush=True)
+
+
 def verify_button_modes():
     nodes = inspect('navigate', 'Button')
     click(node(nodes, 'btn:reset')['bounds'])
+    assert node(inspect(), 'btn:count')['name'] == 'Clicked 0 time(s)'
     targets = ('btn:mode-button', 'btn:mode-icon', 'btn:mode-text')
     for mode, count in (('toggle', 3), ('ordinary', 6), ('toggle', 9), ('ordinary', 12)):
         click(node(inspect(), 'btn:switch-mode')['bounds'])
         nodes = inspect()
         assert node(nodes, 'btn:mode-status')['name'] == f'Mode: {mode}'
-        for key in targets:
+        for offset, key in enumerate(targets):
             value = node(nodes, key)
             assert (value['toggle'] is not None) == (mode == 'toggle'), value
             click(value['bounds'])
             nodes = inspect()
+            expected = f'Clicked {count - 2 + offset} time(s)'
+            if node(nodes, 'btn:count')['name'] != expected:
+                screenshot('failed-button-mode.png')
+                raise AssertionError((mode, key, value, node(nodes, 'btn:count'), expected))
         assert node(nodes, 'btn:count')['name'] == f'Clicked {count} time(s)'
     screenshot('verified-button-modes.png')
     print('PASS: real clicks across live ordinary/toggle changes for all three button kinds', flush=True)
@@ -575,6 +946,26 @@ def verify_tree_rows():
 
 def verify_menus():
     nodes = inspect('navigate', 'Menus')
+    def ordered(*keys):
+        snapshot = inspect()
+        values = [node(snapshot, key) for key in keys]
+        for a, b in zip(values, values[1:]):
+            assert a['bounds'][0] < b['bounds'][0], (a, b)
+            assert abs(a['bounds'][1] - b['bounds'][1]) < 2, (a, b)
+    ordered('mn:menu', 'mn:more')
+    ordered('mn:sidebar', 'mn:primary', 'mn:tool', 'mn:secondary')
+    click(node(inspect(), 'mn:priority')['bounds'])
+    ordered('mn:more', 'mn:menu')
+    ordered('mn:sidebar', 'mn:tool', 'mn:primary', 'mn:secondary')
+    click(node(inspect(), 'mn:placement')['bounds'])
+    ordered('mn:sidebar', 'mn:primary', 'mn:tool', 'mn:secondary')
+    click(node(inspect(), 'mn:placement')['bounds'])
+    click(node(inspect(), 'mn:priority')['bounds'])
+    ordered('mn:menu', 'mn:more')
+    ordered('mn:sidebar', 'mn:primary', 'mn:tool', 'mn:secondary')
+    screenshot('verified-command-priority.png')
+    print('PASS: live window-menu priority, toolbar placement/priority and reset preserve declared tie order', flush=True)
+    nodes = inspect()
     def shortcut(vk):
         for code, flags in ((17, 0), (vk, 0), (vk, 2), (17, 2)):
             event = Input(type=1, data=Union(key=Key(vk=code, flags=flags)))
@@ -625,11 +1016,20 @@ def verify_menus():
     shortcut(0x44)
     assert node(inspect(), 'mn:status')['name'] == 'Menu removed; its shortcuts are detached'
     print('PASS: real menu/toolbar/context clicks, live styling, global/scoped shortcuts and shortcut callback removal', flush=True)
+    nodes = inspect('navigate', 'Overview')
+    assert not any(n['id'].startswith('mn:') for n in nodes)
+    nodes = inspect('navigate', 'Menus')
+    assert node(nodes, 'mn:status')['name'] == 'No actions yet'
+    ordered('mn:menu', 'mn:more')
+    ordered('mn:sidebar', 'mn:primary', 'mn:tool', 'mn:secondary')
+    print('PASS: navigation removes window commands and remount restores their initial order', flush=True)
 
 
 def verify_carousel():
     nodes = inspect('navigate', 'Carousel')
     inspect('toggle', 'cr:keep')
+    click(node(inspect(), 'cr:bounces')['bounds'])
+    assert node(inspect(), 'cr:bounces')['toggle'] == 'Off'
     x, y, width, height = node(nodes, 'cr:host')['bounds']
     u.mouse_event(0x8001, round((x + width/2)*65535/(u.GetSystemMetrics(0)-1)),
                   round((y + height/2)*65535/(u.GetSystemMetrics(1)-1)), 0, 0)
@@ -661,11 +1061,42 @@ def verify_carousel():
     inspect('invoke', 'cr:previous'); time.sleep(.1)
     assert node(inspect(), 'cr:keep')['toggle'] == 'On'
     screenshot('verified-carousel.png')
+    # MeasureFirstItem changes retained page geometry, not only a props value.
+    def painted_height(color):
+        x, y, width, height = node(inspect(), 'cr:host')['bounds']
+        pixels = ImageGrab.grab(bbox=tuple(round(v) for v in (x, y, x+width, y+height))).convert('RGB')
+        rows = [row for row in range(pixels.height)
+                if sum(all(abs(a-b)<4 for a,b in zip(pixels.getpixel((col,row)),color))
+                       for col in range(0,pixels.width,4))>20]
+        assert rows, 'Carousel card background was not painted'
+        return max(rows)-min(rows)+1
+    full = painted_height((31,48,82))
+    click(node(inspect(), 'cr:size')['bounds'])
+    assert node(inspect(), 'cr:size')['toggle'] == 'On'
+    measured = painted_height((31,48,82))
+    assert measured < full-10, (full, measured)
+    assert node(inspect(), 'cr:keep')['toggle'] == 'On'
+    inspect('invoke', 'cr:next')
+    assert abs(painted_height((61,36,82))-measured)<2
+    screenshot('verified-carousel-sizing.png')
+    click(node(inspect(), 'cr:size')['bounds'])
+    assert abs(painted_height((61,36,82))-full)<2
+    inspect('invoke', 'cr:previous')
+    assert node(inspect(), 'cr:keep')['toggle'] == 'On'
+    print('PASS: real carousel sizing toggle, uniform painted page heights and viewport reset retain state', flush=True)
+    click(node(inspect(), 'cr:bounces')['bounds'])
+    assert node(inspect(), 'cr:bounces')['toggle'] == 'On'
+    assert node(inspect(), 'cr:keep')['toggle'] == 'On'
+    print('PASS: real bounce toggle and reset preserve navigation and retained page state', flush=True)
     print('PASS: native carousel arrow, keyboard paging, programmatic jumps, circular Previous/Next, animation switch and retained page state', flush=True)
 
 
 previous = w.POINT(); u.GetCursorPos(c.byref(previous))
 try:
+    # Foreground activation may be refused after another test process exits.
+    # Keep this test window visible for hit testing, then restore normal z-order.
+    assert u.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x43)
+    time.sleep(.2)
     # A freshly activated WinUI window can still be waiting for its first
     # pointer/foreground transition. Settle activation on the title bar.
     initial = w.RECT(); assert u.GetWindowRect(hwnd, c.byref(initial))
@@ -731,20 +1162,55 @@ try:
         verify_carousel()
         assert u.PostMessageW(hwnd, 0x10, 0, 0)
         sys.exit(0)
+    if '--symbols-only' in sys.argv:
+        verify_symbols()
+        assert u.PostMessageW(hwnd, 0x10, 0, 0)
+        sys.exit(0)
+    if '--window-buttons-only' in sys.argv:
+        verify_window_buttons()
+        click(node(inspect(), 'wc:buttons:close')['bounds'])
+        sys.exit(0)
+    if '--html-labels-only' in sys.argv:
+        verify_html_labels()
+        verify_label_alignment()
+        assert u.PostMessageW(hwnd, 0x10, 0, 0)
+        sys.exit(0)
+    if '--split-roles-only' in sys.argv:
+        verify_split_roles()
+        assert u.PostMessageW(hwnd, 0x10, 0, 0)
+        sys.exit(0)
+    if '--return-keys-only' in sys.argv:
+        verify_return_keys()
+        assert u.PostMessageW(hwnd, 0x10, 0, 0)
+        sys.exit(0)
+    if '--button-breaks-only' in sys.argv:
+        verify_button_breaks()
+        assert u.PostMessageW(hwnd, 0x10, 0, 0)
+        sys.exit(0)
+    if '--tables-only' in sys.argv:
+        verify_tables()
+        assert u.PostMessageW(hwnd, 0x10, 0, 0)
+        sys.exit(0)
+    if '--input-visuals-only' in sys.argv:
+        verify_input_visuals()
+        assert u.PostMessageW(hwnd, 0x10, 0, 0)
+        sys.exit(0)
     if '--button-modes-only' in sys.argv:
         verify_button_modes()
         assert u.PostMessageW(hwnd, 0x10, 0, 0)
         sys.exit(0)
     nodes = inspect()
     divider = next(n for n in nodes if n['name'] == 'Resize panes')
+    click(divider['bounds'])
     x, y, width, height = divider['bounds']
-    u.SetCursorPos(round(x + width/2), round(y + height/2))
+    u.mouse_event(0x8001, round((x + width/2)*65535/(u.GetSystemMetrics(0)-1)),
+                  round((y + height/2)*65535/(u.GetSystemMetrics(1)-1)), 0, 0)
     time.sleep(.2)
     u.mouse_event(2, 0, 0, 0, 0)
     time.sleep(.2)
     for offset in range(10, 81, 10):
         u.mouse_event(0x8001, round((x + width/2 + offset)*65535/(u.GetSystemMetrics(0)-1)), round((y + height/2)*65535/(u.GetSystemMetrics(1)-1)), 0, 0)
-        time.sleep(.035)
+        time.sleep(.08)
     u.mouse_event(4, 0, 0, 0, 0)
     moved = next(n for n in inspect() if n['name'] == 'Resize panes')
     assert moved['bounds'][0] > x + 40, (divider, moved)
@@ -918,6 +1384,15 @@ try:
     assert node(inspect(), 'tabs:status')['name'] == 'Selected tab: 2'
     print('PASS: native tab clicks, Ctrl+Tab, persistent panes and color changes', flush=True)
 
+    verify_input_visuals()
+    verify_tables()
+    verify_symbols()
+    verify_window_buttons()
+    verify_html_labels()
+    verify_split_roles()
+    verify_return_keys()
+    verify_button_breaks()
+    verify_label_alignment()
     verify_carousel()
     verify_menus()
     verify_tree_rows()
@@ -946,4 +1421,5 @@ try:
     inspect('navigate', 'Basics', 'last'); inspect('invoke', 'ab:slow'); inspect('invoke', 'ab:flourish')
     assert u.PostMessageW(hwnd, 0x10, 0, 0)
 finally:
+    u.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x13)
     u.SetCursorPos(previous.x, previous.y)

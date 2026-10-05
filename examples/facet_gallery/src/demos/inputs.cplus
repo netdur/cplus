@@ -13,10 +13,29 @@ struct Inputs {
     n: i32,
     clear: bool,
     revealed: bool,
+    search_colors: bool,
+    grows: bool,
+    advance: bool,
 }
 
 impl Inputs {
-    fn new() -> Inputs { return Inputs { n: 0,clear:false,revealed:false }; }
+    fn new() -> Inputs { return Inputs { n: 0,clear:false,revealed:false,search_colors:false,grows:false,advance:false }; }
+    fn return_action(ref this,sender: *u8) {
+        this.advance=!this.advance;let mode=if this.advance {vocab::ReturnKey::Next} else {vocab::ReturnKey::Default};
+        if let option::Option::Some(v)=text_field::find("in:name") {let changed=v.set_return_key(mode);}
+        if let option::Option::Some(v)=text_field::find("in:secret") {let changed=v.set_return_key(mode);}
+        if let option::Option::Some(v)=search_field::find("in:search") {let changed=v.set_return_key(mode);}
+        if let option::Option::Some(v)=label::find("in:return-status") {let changed=v.set_text(if this.advance {"Enter: next control"} else {"Enter: submit"});}
+    }
+    fn tint_search(ref this,sender: *u8) {
+        this.search_colors=!this.search_colors;
+        if let option::Option::Some(v)=search_field::find("in:search") {let updated=v.set_search_icon_color(if this.search_colors {vocab::Color::rgba(1.0,0.55,0.2,1.0)} else {vocab::Color::clear()}).set_cancel_button_color(if this.search_colors {vocab::Color::rgba(0.4,0.8,1.0,1.0)} else {vocab::Color::clear()});}
+    }
+    fn autosize(ref this,sender: *u8) {
+        this.grows=!this.grows;
+        if let option::Option::Some(v)=text_area::find("in:autosize") {let updated=v.set_auto_size(if this.grows {vocab::AutoSize::TextChanges} else {vocab::AutoSize::Disabled});}
+        if let option::Option::Some(v)=label::find("in:autosize-status") {let updated=v.set_text(if this.grows {"Grows with text"} else {"Fixed viewport"});}
+    }
     fn reveal(ref this,sender: *u8) {
         this.revealed=!this.revealed;
         if let option::Option::Some(v)=text_field::find("in:secret") {let updated=v.set_secure(!this.revealed);}
@@ -76,7 +95,7 @@ impl Inputs {
 
 impl Inputs: component::Component {
     fn build(ref this) -> core::Node {
-        this.n=0;this.clear=false;this.revealed=false;
+        this.n=0;this.clear=false;this.revealed=false;this.search_colors=false;this.grows=false;this.advance=false;
         var body: core::Builder = core::Builder::new();
 
         body.add(@ui {row {button("Change casing",key:"in:case",on_click:this.casing) label("Default casing",key:"in:case-label") button("Toggle clear button",key:"in:clear",on_click:this.clearing) label("Clear: never",key:"in:clear-label")}.gap(12.0f64)});
@@ -85,10 +104,10 @@ impl Inputs: component::Component {
         body.add(ui::label("Hello, stranger", key: "in:name_echo",
             font_size: 14.0, text_color: vocab::Color::ink(0.7)));
 
-        body.add(@ui {row {label("Secure field") button("Show / hide",key:"in:reveal",on_click:this.reveal)}.gap(12.0f64)});
+        body.add(@ui {row {label("Secure field") button("Show / hide",key:"in:reveal",on_click:this.reveal) button("Toggle Enter action",key:"in:return",on_click:this.return_action) label("Enter: submit",key:"in:return-status")}.gap(12.0f64)});
         body.add(ui::text_field("", key: "in:secret", placeholder: "Password", secure: true));
 
-        body.add(shell::caption("Search field"));
+        body.add(@ui {row {label("Search field") button("Toggle search colors",key:"in:search-colors",on_click:this.tint_search)}.gap(12.0)});
         body.add(ui::search_field("", key: "in:search", placeholder: "Search the catalog…",
             on_text_changed: this.on_search));
         body.add(ui::label("Query: (empty)", key: "in:search_echo",
@@ -97,6 +116,9 @@ impl Inputs: component::Component {
         body.add(shell::caption("Text area"));
         body.add(ui::text_area("Write a few lines…\nSecond line.", key: "in:area")
             .height(120.0));
+
+        body.add(@ui {row {button("Toggle automatic height",key:"in:auto",on_click:this.autosize) label("Fixed viewport",key:"in:autosize-status")}.gap(12.0)});
+        body.add(ui::text_area("First line\nSecond line\nThird line",key:"in:autosize",auto_size:vocab::AutoSize::Disabled));
 
         return shell::panel(
             "Inputs",

@@ -28,6 +28,8 @@ struct View {
     draw_width: f64,
     draw_height: f64,
     opaque extra: *u8,
+    opaque table_height: *u8,
+    opaque table_gap: *u8,
     opaque shortcut: *u8,
     opaque presentation: *u8,
     opaque parent: *u8,

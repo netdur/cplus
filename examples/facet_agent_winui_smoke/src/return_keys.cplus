@@ -1,0 +1,55 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/text_field" as field;
+import "facet/search_field" as search;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/editing" as editing;
+import "facet_winui/record" as record;
+import "winui/winui" as native;
+import "./parity" as check;
+fn focus(key: str) {let v=check::must::[native::IUIElement](native::IUIElement::query(check::object(key)));assert check::must::[bool](v.focus(native::focus_state_keyboard));}
+fn focused(key: str) -> bool {let v=check::must::[native::IUIElement](native::IUIElement::query(check::object(key)));return check::must::[i32](v.focus_state())!=native::focus_state_unfocused;}
+fn submit(key: str) -> bool {let value=check::object(key);let r=core::view_of(check::node(key)) as *record::View;return editing::submit(r,value);}
+struct Probe {passed: bool,calls: i32,mode: i32,timer: services::Cancellable}
+impl Probe {
+    fn submitted(ref this,sender: *u8) {this.calls=this.calls+1;if this.mode==1 {focus("last");}if this.mode==2 {assert mount::remove("search");}}
+    fn build(ref this) -> core::Node {return @ui {column {
+        text_field("First",key:"field",return_key:vocab::ReturnKey::Next)
+        text_field("Disabled",key:"disabled")
+        text_field("Hidden",key:"hidden")
+        search_field("Search",key:"search",return_key:vocab::ReturnKey::Next,on_submit:this.submitted)
+        text_field("Password",key:"secret",secure:true,return_key:vocab::ReturnKey::Next)
+        text_field("Last",key:"last")
+    }.padding(20.0f64).gap(12.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.2f64,this.initial);}
+    fn initial(ref this) {
+        let disabled=check::must::[native::IControl](native::IControl::query(check::object("disabled")));assert disabled.set_is_enabled(false).is_ok();
+        let hidden=check::must::[native::IUIElement](native::IUIElement::query(check::object("hidden")));assert hidden.set_visibility(native::visibility_collapsed).is_ok();
+        focus("field");assert submit("field");assert focused("search");assert submit("search");assert this.calls==1;assert focused("secret");assert submit("secret");assert focused("last");
+        let modes=[vocab::ReturnKey::Default,vocab::ReturnKey::Done,vocab::ReturnKey::Go,vocab::ReturnKey::Search,vocab::ReturnKey::Send];var i: usize=0;
+        while i<5 {
+            if let option::Option::Some(v)=field::find("field") {let changed=v.set_return_key(modes[i]);}
+            if let option::Option::Some(v)=search::find("search") {let changed=v.set_return_key(modes[i]);}
+            focus("field");assert !submit("field");assert focused("field");focus("search");assert submit("search");assert focused("search");i=i+1;
+        }
+        assert this.calls==6;
+        if let option::Option::Some(v)=field::find("field") {let changed=v.set_return_key(vocab::ReturnKey::Next).set_secure(true);}
+        if let option::Option::Some(v)=search::find("search") {let changed=v.set_return_key(vocab::ReturnKey::Next);}
+        this.timer=services::after(0.2f64,this.secure);
+    }
+    fn secure(ref this) {
+        let password=check::must::[native::IPasswordBox](native::IPasswordBox::query(check::object("field")));
+        // A layout can restore application visibility/enabled props; enforce
+        // exclusions again to test native tab traversal after replacement.
+        let disabled=check::must::[native::IControl](native::IControl::query(check::object("disabled")));assert disabled.set_is_enabled(false).is_ok();let hidden=check::must::[native::IUIElement](native::IUIElement::query(check::object("hidden")));assert hidden.set_visibility(native::visibility_collapsed).is_ok();
+        focus("field");assert submit("field");assert focused("search");this.mode=1;assert submit("search");assert focused("last");assert this.calls==7;
+        this.mode=2;focus("search");assert submit("search");assert this.calls==8;this.timer=services::after(0.1f64,this.finish);
+    }
+    fn finish(ref this) {check::log("PASS: Return Next native tab order, disabled/hidden skips, text/search/password, live reset/replacement, callback focus override and source removal");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet return keys",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: return keys teardown");return 0;}

@@ -6,32 +6,52 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/table" as table;
+import "facet/label" as label;
 import "facet/vocabulary" as vocab;
 import "stdlib/option" as option;
 import "../shell" as shell;
 
 struct Tables {
     n: i32,
+    tall: bool,
+    uneven: bool,
 }
 
-fn data_row(a: str, b: str, c: str) -> core::Node {
+fn data_row(a: str, b: str, c: str,key: str="") -> core::Node {
     var r: core::Builder = core::Builder::new();
-    r.add(ui::label(a, key: "", font_size: 13.0, text_color: vocab::Color::ink()).grow(1.0));
+    r.add(ui::label(a, key: key, font_size: 13.0, text_color: vocab::Color::ink()).grow(1.0));
     r.add(ui::label(b, key: "", font_size: 13.0, text_color: vocab::Color::ink(0.7)).grow(1.0));
     r.add(ui::label(c, key: "", font_size: 13.0, text_color: vocab::Color::ink(0.7)).grow(1.0));
     return core::row(r).padding(8.0).gap(8.0);
 }
 
 impl Tables {
-    fn new() -> Tables { return Tables { n: 0 }; }
+    fn new() -> Tables { return Tables { n: 0,tall:false,uneven:false }; }
+    fn sizing(ref this,sender: *u8) {
+        this.tall=!this.tall;
+        if let option::Option::Some(t)=table::find("tb:host") {let updated=t.set_row_height(if this.tall {52i64} else {36i64});}
+        if let option::Option::Some(l)=label::find("tb:height") {let updated=l.set_text(if this.tall {"Rows: 52"} else {"Rows: 36"});}
+    }
+    fn varying(ref this,sender: *u8) {
+        this.uneven=!this.uneven;
+        if let option::Option::Some(t)=table::find("tb:host") {let updated=t.set_uneven_rows(this.uneven);}
+        if let option::Option::Some(l)=label::find("tb:uneven") {let updated=l.set_text(if this.uneven {"Original row heights"} else {"Uniform row heights"});}
+    }
+    fn styling(ref this,sender: *u8) {
+        this.n=(this.n+1)%4;
+        let style=if this.n==1 {vocab::TableStyle::Form} else if this.n==2 {vocab::TableStyle::Settings} else if this.n==3 {vocab::TableStyle::Menu} else {vocab::TableStyle::Data};
+        if let option::Option::Some(t)=table::find("tb:host") {let updated=t.set_style(style);}
+        if let option::Option::Some(l)=label::find("tb:style") {let updated=l.set_text(if this.n==1 {"Form"} else if this.n==2 {"Settings"} else if this.n==3 {"Menu"} else {"Data"});}
+    }
 }
 
 impl Tables: component::Component {
     fn build(ref this) -> core::Node {
+        this.n=0;this.tall=false;this.uneven=false;
         var body: core::Builder = core::Builder::new();
         body.add(shell::caption("table  ·  set_content hosts the document"));
         body.add(ui::label(
-            "TableView is a host: put a column of rows (or a custom grid) into @content. Style and row_height configure chrome.",
+            "TableView is a host: put a column of rows (or a custom grid) into @content. Try uniform heights, original row heights, and grouped or flush spacing.",
             key: "tb:note",
             font_size: 13.0,
             text_color: vocab::Color::ink(0.65),
@@ -39,6 +59,8 @@ impl Tables: component::Component {
             line_break: vocab::LineBreak::WordWrap,
         ));
 
+        body.add(@ui {row {button("Toggle row height",key:"tb:resize",on_click:this.sizing) label("Rows: 36",key:"tb:height") button("Toggle uneven rows",key:"tb:vary",on_click:this.varying) label("Uniform row heights",key:"tb:uneven")}.gap(12.0)});
+        body.add(@ui {row {button("Cycle table style",key:"tb:cycle",on_click:this.styling) label("Data",key:"tb:style")}.gap(12.0)});
         var header: core::Builder = core::Builder::new();
         header.add(ui::label("Name", key: "", font_size: 12.0,
             font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::ink(0.55)).grow(1.0));
@@ -49,17 +71,17 @@ impl Tables: component::Component {
 
         var doc: core::Builder = core::Builder::new();
         doc.add(core::row(header).padding(8.0).gap(8.0));
-        doc.add(data_row("Ada", "Engineer", "Active"));
-        doc.add(data_row("Grace", "Architect", "Active"));
-        doc.add(data_row("Alan", "Research", "Away"));
+        doc.add(data_row("Ada", "Engineer", "Active",key:"tb:ada"));
+        doc.add(data_row("Grace", "Architect", "Active",key:"tb:grace").height(68.0));
+        doc.add(data_row("Alan", "Research", "Away",key:"tb:alan"));
         doc.add(data_row("Edsger", "Reviewer", "Active"));
-        var content: core::Node = core::column(doc).gap(0.0);
+        var content: core::Node = core::column(doc,key:"tb:document").gap(0.0);
 
         var host: core::Node = ui::table(
             key: "tb:host",
             row_height: 36,
             style: vocab::TableStyle::Data,
-        ).height(220.0).grow(1.0);
+        );
         match table::find("tb:host", within: #addr_of(host)) {
             option::Option[table::Table]::Some(t) => {
                 let _c: table::Table = t.set_content(content);

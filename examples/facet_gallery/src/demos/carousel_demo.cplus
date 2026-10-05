@@ -24,6 +24,8 @@ impl CarouselDemo {
     fn next_page(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {let updated=c.set_position(c.position()+1);}this.timer=services::after(0.05f64,this.paint);}
     fn change_loop(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {if let option::Option::Some(b)=checkbox::find("cr:loop") {let updated=c.set_wraps(b.on());}}}
     fn animate(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {if let option::Option::Some(b)=checkbox::find("cr:animate") {let updated=c.set_animates_scroll(b.on());}}}
+    fn bounce(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {if let option::Option::Some(b)=checkbox::find("cr:bounces") {let updated=c.set_bounces(b.on());}}}
+    fn sizing(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {if let option::Option::Some(b)=checkbox::find("cr:size") {let updated=c.set_item_sizing(if b.on() {vocab::ItemSizing::MeasureFirstItem} else {vocab::ItemSizing::MeasureAllItems});}}}
     fn first(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {let updated=c.set_position(0);}this.paint();}
     fn last(ref this,sender: *u8) {if let option::Option::Some(c)=carousel::find("cr:host") {let updated=c.set_position(3);}this.paint();}
 }
@@ -39,7 +41,8 @@ impl CarouselDemo: component::Component {
         return shell::panel("Carousel","Native paging with retained child pages and a separate page indicator.",@ui {column {
             pager page_dots(4,key:"cr:dots",position:0,selected_dot_color:vocab::Color::primary()) label("Page 1 of 4",key:"cr:status")
             row {button("First page",key:"cr:go_first",on_click:this.first) button("Last page",key:"cr:go_last",on_click:this.last) button("Previous",key:"cr:previous",on_click:this.previous) button("Next",key:"cr:next",on_click:this.next_page)}.gap(8.0f64)
-            row {checkbox(false,key:"cr:loop",on_checked_changed:this.change_loop) label("Loop Previous / Next") checkbox(true,key:"cr:animate",on_checked_changed:this.animate) label("Animate adjacent pages")}.gap(8.0f64)
+            row {checkbox(false,key:"cr:loop",on_checked_changed:this.change_loop) label("Loop Previous / Next") checkbox(true,key:"cr:animate",on_checked_changed:this.animate) label("Animate adjacent pages") checkbox(false,key:"cr:size",on_checked_changed:this.sizing) label("Measure first page")}.gap(8.0f64)
+            row {checkbox(true,key:"cr:bounces",on_checked_changed:this.bounce) label("Bounce / momentum after swiping")}.gap(8.0f64)
         }.gap(12.0f64)},howto:"var pages = ui::carousel(key: \"c\", on_position_changed: this.changed);\npages.add_child(page);\ncarousel::find(\"c\").set_position(2);");
     }
 }

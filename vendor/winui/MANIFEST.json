@@ -24,6 +24,9 @@
     "Microsoft.UI.Xaml.Controls.Button",
     "Microsoft.UI.Xaml.Controls.TextBlock",
     "Microsoft.UI.Xaml.Controls.TextBox",
+    "Microsoft.UI.Xaml.Input.FocusManager",
+    "Microsoft.UI.Xaml.Input.FindNextElementOptions",
+    "Microsoft.UI.Xaml.XamlRoot",
     "Microsoft.UI.Xaml.Controls.CheckBox",
     "Microsoft.UI.Xaml.Controls.ToggleSwitch",
     "Microsoft.UI.Xaml.Controls.Slider",
@@ -144,7 +147,11 @@
     "Microsoft.Web.WebView2.Core.CoreWebView2WebResourceResponse",
     "Windows.Storage.Streams.IRandomAccessStream",
     "Windows.Foundation.IAsyncInfo",
-    "Windows.Foundation.Deferral"
+    "Windows.Foundation.Deferral",
+    "Microsoft.UI.Xaml.Controls.SymbolIcon",
+    "Microsoft.UI.Xaml.Controls.Viewbox",
+    "Microsoft.UI.Windowing.AppWindow",
+    "Microsoft.UI.Windowing.OverlappedPresenter"
   ],
   "sources": [
     {
@@ -2765,6 +2772,12 @@
       "name": "IDispatcherQueueTimer"
     },
     {
+      "kind": "Struct",
+      "metadata": "Microsoft.UI.IconId",
+      "methods": [],
+      "name": "IconId"
+    },
+    {
       "iid": "0d430ee6-252c-59a4-b2a2-d44264dc6a40",
       "kind": "Interface",
       "metadata": "Microsoft.UI.Input.IPointerPoint",
@@ -3169,6 +3182,907 @@
       "metadata": "Microsoft.UI.Input.PointerUpdateKind",
       "methods": [],
       "name": "PointerUpdateKind"
+    },
+    {
+      "kind": "Struct",
+      "metadata": "Microsoft.UI.WindowId",
+      "methods": [],
+      "name": "WindowId"
+    },
+    {
+      "iid": "cfa788b3-643b-5c5e-ad4e-321d48a82acd",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Windowing.AppWindow",
+      "methods": [
+        {
+          "name": "get_Id",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsShownInSwitchers",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsShownInSwitchers",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsVisible",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_OwnerWindowId",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Position",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Presenter",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Title",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Title",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "get_TitleBar",
+          "reason": null,
+          "slot": 16,
+          "status": "emitted"
+        },
+        {
+          "name": "Destroy",
+          "reason": null,
+          "slot": 17,
+          "status": "emitted"
+        },
+        {
+          "name": "Hide",
+          "reason": null,
+          "slot": 18,
+          "status": "emitted"
+        },
+        {
+          "name": "Move",
+          "reason": null,
+          "slot": 19,
+          "status": "emitted"
+        },
+        {
+          "name": "MoveAndResize",
+          "reason": null,
+          "slot": 20,
+          "status": "emitted"
+        },
+        {
+          "name": "MoveAndResizeRelativeToDisplayArea",
+          "reason": null,
+          "slot": 21,
+          "status": "emitted"
+        },
+        {
+          "name": "Resize",
+          "reason": null,
+          "slot": 22,
+          "status": "emitted"
+        },
+        {
+          "name": "SetIcon",
+          "reason": null,
+          "slot": 23,
+          "status": "emitted"
+        },
+        {
+          "name": "SetIconWithIconId",
+          "reason": null,
+          "slot": 24,
+          "status": "emitted"
+        },
+        {
+          "name": "SetPresenter",
+          "reason": null,
+          "slot": 25,
+          "status": "emitted"
+        },
+        {
+          "name": "SetPresenterByKind",
+          "reason": null,
+          "slot": 26,
+          "status": "emitted"
+        },
+        {
+          "name": "Show",
+          "reason": null,
+          "slot": 27,
+          "status": "emitted"
+        },
+        {
+          "name": "ShowWithActivation",
+          "reason": null,
+          "slot": 28,
+          "status": "emitted"
+        },
+        {
+          "name": "add_Changed",
+          "reason": null,
+          "slot": 29,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_Changed",
+          "reason": null,
+          "slot": 30,
+          "status": "emitted"
+        },
+        {
+          "name": "add_Closing",
+          "reason": null,
+          "slot": 31,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_Closing",
+          "reason": null,
+          "slot": 32,
+          "status": "emitted"
+        },
+        {
+          "name": "add_Destroying",
+          "reason": null,
+          "slot": 33,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_Destroying",
+          "reason": null,
+          "slot": 34,
+          "status": "emitted"
+        }
+      ],
+      "name": "AppWindow"
+    },
+    {
+      "iid": "bc3042c2-c6c6-5632-8989-ff0ec6d3b40d",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Windowing.AppWindowPresenter",
+      "methods": [
+        {
+          "name": "get_Kind",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "AppWindowPresenter"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Windowing.AppWindowPresenterKind",
+      "methods": [],
+      "name": "AppWindowPresenterKind"
+    },
+    {
+      "iid": "cfa788b3-643b-5c5e-ad4e-321d48a82acd",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IAppWindow",
+      "methods": [
+        {
+          "name": "get_Id",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsShownInSwitchers",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsShownInSwitchers",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsVisible",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_OwnerWindowId",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Position",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Presenter",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Title",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Title",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "get_TitleBar",
+          "reason": null,
+          "slot": 16,
+          "status": "emitted"
+        },
+        {
+          "name": "Destroy",
+          "reason": null,
+          "slot": 17,
+          "status": "emitted"
+        },
+        {
+          "name": "Hide",
+          "reason": null,
+          "slot": 18,
+          "status": "emitted"
+        },
+        {
+          "name": "Move",
+          "reason": null,
+          "slot": 19,
+          "status": "emitted"
+        },
+        {
+          "name": "MoveAndResize",
+          "reason": null,
+          "slot": 20,
+          "status": "emitted"
+        },
+        {
+          "name": "MoveAndResizeRelativeToDisplayArea",
+          "reason": null,
+          "slot": 21,
+          "status": "emitted"
+        },
+        {
+          "name": "Resize",
+          "reason": null,
+          "slot": 22,
+          "status": "emitted"
+        },
+        {
+          "name": "SetIcon",
+          "reason": null,
+          "slot": 23,
+          "status": "emitted"
+        },
+        {
+          "name": "SetIconWithIconId",
+          "reason": null,
+          "slot": 24,
+          "status": "emitted"
+        },
+        {
+          "name": "SetPresenter",
+          "reason": null,
+          "slot": 25,
+          "status": "emitted"
+        },
+        {
+          "name": "SetPresenterByKind",
+          "reason": null,
+          "slot": 26,
+          "status": "emitted"
+        },
+        {
+          "name": "Show",
+          "reason": null,
+          "slot": 27,
+          "status": "emitted"
+        },
+        {
+          "name": "ShowWithActivation",
+          "reason": null,
+          "slot": 28,
+          "status": "emitted"
+        },
+        {
+          "name": "add_Changed",
+          "reason": null,
+          "slot": 29,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_Changed",
+          "reason": null,
+          "slot": 30,
+          "status": "emitted"
+        },
+        {
+          "name": "add_Closing",
+          "reason": null,
+          "slot": 31,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_Closing",
+          "reason": null,
+          "slot": 32,
+          "status": "emitted"
+        },
+        {
+          "name": "add_Destroying",
+          "reason": null,
+          "slot": 33,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_Destroying",
+          "reason": null,
+          "slot": 34,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAppWindow"
+    },
+    {
+      "iid": "6cd41292-794c-5cac-8961-210d012c6ebc",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IAppWindow2",
+      "methods": [
+        {
+          "name": "get_ClientSize",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "MoveInZOrderAtBottom",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "MoveInZOrderAtTop",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "MoveInZOrderBelow",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "ResizeClient",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "ShowOnceWithRequestedStartupState",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAppWindow2"
+    },
+    {
+      "iid": "2f260cea-193d-5dd6-a904-d7649a608d2f",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IAppWindow3",
+      "methods": [
+        {
+          "name": "AssociateWithDispatcherQueue",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_DispatcherQueue",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAppWindow3"
+    },
+    {
+      "iid": "383bfb91-ea29-5414-80cd-6c76d981eb31",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IAppWindow4",
+      "methods": [
+        {
+          "name": "SetTaskbarIcon",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "SetTaskbarIconWithIconId",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "SetTitleBarIcon",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "SetTitleBarIconWithIconId",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAppWindow4"
+    },
+    {
+      "iid": "bc3042c2-c6c6-5632-8989-ff0ec6d3b40d",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IAppWindowPresenter",
+      "methods": [
+        {
+          "name": "get_Kind",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAppWindowPresenter"
+    },
+    {
+      "iid": "62082e3c-1368-5238-90d1-e932dc718a82",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IAppWindowPresenterFactory",
+      "methods": [],
+      "name": "IAppWindowPresenterFactory"
+    },
+    {
+      "iid": "3c315c24-d540-5d72-b518-b226b83627cb",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IAppWindowStatics",
+      "methods": [
+        {
+          "name": "Create",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "CreateWithPresenter",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "CreateWithPresenterAndOwner",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFromWindowId",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAppWindowStatics"
+    },
+    {
+      "iid": "cabc23db-4606-5d6e-89a5-06de1d8bd3e2",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IAppWindowStatics2",
+      "methods": [
+        {
+          "name": "CreateWithDispatcherQueue",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAppWindowStatics2"
+    },
+    {
+      "iid": "21693970-4f4c-5172-9e9d-682a2d174884",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IOverlappedPresenter",
+      "methods": [
+        {
+          "name": "get_HasBorder",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_HasTitleBar",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsAlwaysOnTop",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsAlwaysOnTop",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsMaximizable",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsMaximizable",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsMinimizable",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsMinimizable",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsModal",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsModal",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsResizable",
+          "reason": null,
+          "slot": 16,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsResizable",
+          "reason": null,
+          "slot": 17,
+          "status": "emitted"
+        },
+        {
+          "name": "get_State",
+          "reason": null,
+          "slot": 18,
+          "status": "emitted"
+        },
+        {
+          "name": "Maximize",
+          "reason": null,
+          "slot": 19,
+          "status": "emitted"
+        },
+        {
+          "name": "Minimize",
+          "reason": null,
+          "slot": 20,
+          "status": "emitted"
+        },
+        {
+          "name": "Restore",
+          "reason": null,
+          "slot": 21,
+          "status": "emitted"
+        },
+        {
+          "name": "SetBorderAndTitleBar",
+          "reason": null,
+          "slot": 22,
+          "status": "emitted"
+        }
+      ],
+      "name": "IOverlappedPresenter"
+    },
+    {
+      "iid": "5c6ccd93-4244-5cd2-b355-ed5ea34df730",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IOverlappedPresenter2",
+      "methods": [
+        {
+          "name": "MinimizeWithActivation",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "RestoreWithActivation",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IOverlappedPresenter2"
+    },
+    {
+      "iid": "55d26138-4c38-57e7-a0c1-d467b774db8c",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IOverlappedPresenter3",
+      "methods": [
+        {
+          "name": "get_PreferredMinimumHeight",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_PreferredMinimumHeight",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_PreferredMinimumWidth",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_PreferredMinimumWidth",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_PreferredMaximumWidth",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "put_PreferredMaximumWidth",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "get_PreferredMaximumHeight",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "put_PreferredMaximumHeight",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        }
+      ],
+      "name": "IOverlappedPresenter3"
+    },
+    {
+      "iid": "997225e4-7b00-5aee-a4be-d4068d1999e2",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IOverlappedPresenterStatics",
+      "methods": [
+        {
+          "name": "Create",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "CreateForContextMenu",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "CreateForDialog",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "CreateForToolWindow",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "IOverlappedPresenterStatics"
+    },
+    {
+      "iid": "ed5c4f92-32f4-5d15-80d0-b2a5efa04d39",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IOverlappedPresenterStatics2",
+      "methods": [
+        {
+          "name": "get_RequestedStartupState",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IOverlappedPresenterStatics2"
+    },
+    {
+      "iid": "21693970-4f4c-5172-9e9d-682a2d174884",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Windowing.OverlappedPresenter",
+      "methods": [
+        {
+          "name": "get_HasBorder",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_HasTitleBar",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsAlwaysOnTop",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsAlwaysOnTop",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsMaximizable",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsMaximizable",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsMinimizable",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsMinimizable",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsModal",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsModal",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsResizable",
+          "reason": null,
+          "slot": 16,
+          "status": "emitted"
+        },
+        {
+          "name": "put_IsResizable",
+          "reason": null,
+          "slot": 17,
+          "status": "emitted"
+        },
+        {
+          "name": "get_State",
+          "reason": null,
+          "slot": 18,
+          "status": "emitted"
+        },
+        {
+          "name": "Maximize",
+          "reason": null,
+          "slot": 19,
+          "status": "emitted"
+        },
+        {
+          "name": "Minimize",
+          "reason": null,
+          "slot": 20,
+          "status": "emitted"
+        },
+        {
+          "name": "Restore",
+          "reason": null,
+          "slot": 21,
+          "status": "emitted"
+        },
+        {
+          "name": "SetBorderAndTitleBar",
+          "reason": null,
+          "slot": 22,
+          "status": "emitted"
+        }
+      ],
+      "name": "OverlappedPresenter"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Windowing.OverlappedPresenterState",
+      "methods": [],
+      "name": "OverlappedPresenterState"
     },
     {
       "iid": "06a8f4e7-1146-55af-820d-ebd55643b021",
@@ -14717,6 +15631,54 @@
       "name": "IStackPanelStatics"
     },
     {
+      "iid": "a4322906-0dbe-5eb7-8b64-3e832246eb7f",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.ISymbolIcon",
+      "methods": [
+        {
+          "name": "get_Symbol",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Symbol",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "ISymbolIcon"
+    },
+    {
+      "iid": "d4430447-567c-5aad-996a-a547774e2c3c",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.ISymbolIconFactory",
+      "methods": [
+        {
+          "name": "CreateInstanceWithSymbol",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "ISymbolIconFactory"
+    },
+    {
+      "iid": "ccaa0c34-31f2-50f1-b328-be6edc291aaa",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.ISymbolIconStatics",
+      "methods": [
+        {
+          "name": "get_SymbolProperty",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "ISymbolIconStatics"
+    },
+    {
       "iid": "07b509e1-1d38-551b-95f4-4732b049f6a6",
       "kind": "Interface",
       "metadata": "Microsoft.UI.Xaml.Controls.ITabView",
@@ -18214,6 +19176,70 @@
         }
       ],
       "name": "IUIElementCollection"
+    },
+    {
+      "iid": "510683e8-d0fe-5ef4-85bd-e1131076ac22",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IViewbox",
+      "methods": [
+        {
+          "name": "get_Child",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Child",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Stretch",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Stretch",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_StretchDirection",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "put_StretchDirection",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        }
+      ],
+      "name": "IViewbox"
+    },
+    {
+      "iid": "0466c103-1e17-5e83-a262-8855f216b59f",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IViewboxStatics",
+      "methods": [
+        {
+          "name": "get_StretchProperty",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_StretchDirectionProperty",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IViewboxStatics"
     },
     {
       "iid": "2b2c76c2-997c-5069-a8f0-9b84cd7e624b",
@@ -22891,6 +23917,38 @@
       "name": "StackPanel"
     },
     {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Controls.StretchDirection",
+      "methods": [],
+      "name": "StretchDirection"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Controls.Symbol",
+      "methods": [],
+      "name": "Symbol"
+    },
+    {
+      "iid": "a4322906-0dbe-5eb7-8b64-3e832246eb7f",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Controls.SymbolIcon",
+      "methods": [
+        {
+          "name": "get_Symbol",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Symbol",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "SymbolIcon"
+    },
+    {
       "iid": "07b509e1-1d38-551b-95f4-4732b049f6a6",
       "kind": "Class",
       "metadata": "Microsoft.UI.Xaml.Controls.TabView",
@@ -25110,6 +26168,50 @@
         }
       ],
       "name": "UIElementCollection"
+    },
+    {
+      "iid": "510683e8-d0fe-5ef4-85bd-e1131076ac22",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Controls.Viewbox",
+      "methods": [
+        {
+          "name": "get_Child",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Child",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Stretch",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Stretch",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_StretchDirection",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "put_StretchDirection",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        }
+      ],
+      "name": "Viewbox"
     },
     {
       "iid": "2b2c76c2-997c-5069-a8f0-9b84cd7e624b",
@@ -30486,6 +31588,92 @@
       "name": "IWindowStatics"
     },
     {
+      "iid": "60cb215a-ad15-520a-8b01-4416824f0441",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.IXamlRoot",
+      "methods": [
+        {
+          "name": "get_Content",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_RasterizationScale",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsHostVisible",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "add_Changed",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_Changed",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        }
+      ],
+      "name": "IXamlRoot"
+    },
+    {
+      "iid": "bdee0f42-71cb-50c5-829b-4614d98c5794",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.IXamlRoot2",
+      "methods": [
+        {
+          "name": "get_ContentIslandEnvironment",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IXamlRoot2"
+    },
+    {
+      "iid": "b71dbf3b-2e0f-5de0-ac68-f0c1f65114c8",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.IXamlRoot3",
+      "methods": [
+        {
+          "name": "get_CoordinateConverter",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IXamlRoot3"
+    },
+    {
+      "iid": "377bec22-632b-52be-b26f-5edf7838e5ca",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.IXamlRoot4",
+      "methods": [
+        {
+          "name": "get_ContentIsland",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IXamlRoot4"
+    },
+    {
       "callback": "emitted",
       "iid": "f7a501b9-e277-5611-87b0-0e0607622183",
       "kind": "Delegate",
@@ -30501,6 +31689,75 @@
       "name": "DoubleTappedEventHandler"
     },
     {
+      "iid": "7f88e76b-7417-5447-aed4-2fabd291bdc6",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.FindNextElementOptions",
+      "methods": [
+        {
+          "name": "get_SearchRoot",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_SearchRoot",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_ExclusionRect",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_ExclusionRect",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_HintRect",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "put_HintRect",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "get_XYFocusNavigationStrategyOverride",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "put_XYFocusNavigationStrategyOverride",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        }
+      ],
+      "name": "FindNextElementOptions"
+    },
+    {
+      "iid": "9fd07bc5-d2d4-53fe-a31a-846de8b7a257",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.FocusManager",
+      "methods": [],
+      "name": "FocusManager"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Input.FocusNavigationDirection",
+      "methods": [],
+      "name": "FocusNavigationDirection"
+    },
+    {
       "callback": "emitted",
       "iid": "fe23c5bd-4984-56b6-b92b-fc9d1216b24e",
       "kind": "Delegate",
@@ -30514,6 +31771,203 @@
         }
       ],
       "name": "HoldingEventHandler"
+    },
+    {
+      "iid": "7f88e76b-7417-5447-aed4-2fabd291bdc6",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IFindNextElementOptions",
+      "methods": [
+        {
+          "name": "get_SearchRoot",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_SearchRoot",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_ExclusionRect",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_ExclusionRect",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_HintRect",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "put_HintRect",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "get_XYFocusNavigationStrategyOverride",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "put_XYFocusNavigationStrategyOverride",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        }
+      ],
+      "name": "IFindNextElementOptions"
+    },
+    {
+      "iid": "9fd07bc5-d2d4-53fe-a31a-846de8b7a257",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IFocusManager",
+      "methods": [],
+      "name": "IFocusManager"
+    },
+    {
+      "iid": "e73dce04-e23a-5fb3-96ab-7df04c51dff2",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IFocusManagerStatics",
+      "methods": [
+        {
+          "name": "add_GotFocus",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_GotFocus",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "add_LostFocus",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_LostFocus",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "add_GettingFocus",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_GettingFocus",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "add_LosingFocus",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_LosingFocus",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "TryFocusAsync",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "TryMoveFocusAsync",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "TryMoveFocusWithOptionsAsync",
+          "reason": null,
+          "slot": 16,
+          "status": "emitted"
+        },
+        {
+          "name": "TryMoveFocusWithOptions",
+          "reason": null,
+          "slot": 17,
+          "status": "emitted"
+        },
+        {
+          "name": "FindNextElement",
+          "reason": null,
+          "slot": 18,
+          "status": "emitted"
+        },
+        {
+          "name": "FindFirstFocusableElement",
+          "reason": null,
+          "slot": 19,
+          "status": "emitted"
+        },
+        {
+          "name": "FindLastFocusableElement",
+          "reason": null,
+          "slot": 20,
+          "status": "emitted"
+        },
+        {
+          "name": "FindNextElementWithOptions",
+          "reason": null,
+          "slot": 21,
+          "status": "emitted"
+        },
+        {
+          "name": "FindNextFocusableElement",
+          "reason": null,
+          "slot": 22,
+          "status": "emitted"
+        },
+        {
+          "name": "FindNextFocusableElementWithHint",
+          "reason": null,
+          "slot": 23,
+          "status": "emitted"
+        },
+        {
+          "name": "TryMoveFocus",
+          "reason": null,
+          "slot": 24,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFocusedElement",
+          "reason": null,
+          "slot": 25,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFocusedElementWithRoot",
+          "reason": null,
+          "slot": 26,
+          "status": "emitted"
+        }
+      ],
+      "name": "IFocusManagerStatics"
     },
     {
       "iid": "76ea58b1-e910-5176-9147-695cc95e7da2",
@@ -31271,6 +32725,12 @@
       "metadata": "Microsoft.UI.Xaml.Input.XYFocusNavigationStrategy",
       "methods": [],
       "name": "XYFocusNavigationStrategy"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Input.XYFocusNavigationStrategyOverride",
+      "methods": [],
+      "name": "XYFocusNavigationStrategyOverride"
     },
     {
       "kind": "Enum",
@@ -37312,6 +38772,50 @@
       "name": "WindowSizeChangedEventArgs"
     },
     {
+      "iid": "60cb215a-ad15-520a-8b01-4416824f0441",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.XamlRoot",
+      "methods": [
+        {
+          "name": "get_Content",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_RasterizationScale",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "get_IsHostVisible",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "add_Changed",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_Changed",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        }
+      ],
+      "name": "XamlRoot"
+    },
+    {
       "iid": "17fa3f58-3472-5aa2-a0f8-1ab8a519573d",
       "kind": "Interface",
       "metadata": "Microsoft.UI.Xaml.XamlTypeInfo.IXamlControlsXamlMetaDataProvider",
@@ -40563,6 +42067,21 @@
         }
       ],
       "name": "AsyncOperationCompletedHandler_Microsoft_UI_Xaml_Data_LoadMoreItemsResult"
+    },
+    {
+      "callback": "emitted",
+      "iid": "276fb687-4b2c-535c-9177-ef701fdc052c",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<Microsoft.UI.Xaml.Input.FocusMovementResult>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "AsyncOperationCompletedHandler_Microsoft_UI_Xaml_Input_FocusMovementResult"
     },
     {
       "callback": "emitted",
@@ -44081,6 +45600,66 @@
     },
     {
       "callback": "emitted",
+      "iid": "a1d02c1d-f665-502c-8d06-8f91021ccf98",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.EventHandler<Microsoft.UI.Xaml.Input.FocusManagerGotFocusEventArgs>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "EventHandler_Microsoft_UI_Xaml_Input_FocusManagerGotFocusEventArgs"
+    },
+    {
+      "callback": "emitted",
+      "iid": "5cad2aaf-c531-52bb-85fe-a1815468dbc2",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.EventHandler<Microsoft.UI.Xaml.Input.FocusManagerLostFocusEventArgs>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "EventHandler_Microsoft_UI_Xaml_Input_FocusManagerLostFocusEventArgs"
+    },
+    {
+      "callback": "emitted",
+      "iid": "19b68d80-e219-5e3f-ac5b-6766fe4188ca",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.EventHandler<Microsoft.UI.Xaml.Input.GettingFocusEventArgs>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "EventHandler_Microsoft_UI_Xaml_Input_GettingFocusEventArgs"
+    },
+    {
+      "callback": "emitted",
+      "iid": "e209d16e-08e0-545b-a0bc-558035bb8b00",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.EventHandler<Microsoft.UI.Xaml.Input.LosingFocusEventArgs>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "EventHandler_Microsoft_UI_Xaml_Input_LosingFocusEventArgs"
+    },
+    {
+      "callback": "emitted",
       "iid": "19a913f7-9793-5d2e-b989-7ee26c263a2e",
       "kind": "Delegate",
       "metadata": "Windows.Foundation.EventHandler<Microsoft.UI.Xaml.Media.RenderedEventArgs>",
@@ -44230,6 +45809,32 @@
         }
       ],
       "name": "IAsyncOperation_Microsoft_UI_Xaml_Data_LoadMoreItemsResult"
+    },
+    {
+      "iid": "edc8359c-34db-5065-b37e-c8dc44da81c1",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.IAsyncOperation<Microsoft.UI.Xaml.Input.FocusMovementResult>",
+      "methods": [
+        {
+          "name": "put_Completed",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Completed",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetResults",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAsyncOperation_Microsoft_UI_Xaml_Input_FocusMovementResult"
     },
     {
       "iid": "0493cdd8-fdd3-54f6-bd79-3465cdd1100c",
@@ -45112,6 +46717,20 @@
       "name": "IReference_F64"
     },
     {
+      "iid": "548cefbd-bc8a-5fa0-8df2-957440fc8bf4",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.IReference<I32>",
+      "methods": [
+        {
+          "name": "get_Value",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IReference_I32"
+    },
+    {
       "iid": "5541d8a7-497c-5aa4-86fc-7713adbf2a2c",
       "kind": "Interface",
       "metadata": "Windows.Foundation.IReference<Windows.Foundation.DateTime>",
@@ -45447,6 +47066,51 @@
         }
       ],
       "name": "TypedEventHandler_Microsoft_UI_Dispatching_DispatcherQueueTimer_Object"
+    },
+    {
+      "callback": "emitted",
+      "iid": "cda07756-1584-5049-9ad1-cca782242d34",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.TypedEventHandler<Microsoft.UI.Windowing.AppWindow,Microsoft.UI.Windowing.AppWindowChangedEventArgs>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "TypedEventHandler_Microsoft_UI_Windowing_AppWindow_Microsoft_UI_Windowing_AppWindowChangedEventArgs"
+    },
+    {
+      "callback": "emitted",
+      "iid": "fd0e72c8-8daa-50a2-959f-4d41446f1fc7",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.TypedEventHandler<Microsoft.UI.Windowing.AppWindow,Microsoft.UI.Windowing.AppWindowClosingEventArgs>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "TypedEventHandler_Microsoft_UI_Windowing_AppWindow_Microsoft_UI_Windowing_AppWindowClosingEventArgs"
+    },
+    {
+      "callback": "emitted",
+      "iid": "eddd665f-7d53-5b2d-901d-9c12010816e7",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.TypedEventHandler<Microsoft.UI.Windowing.AppWindow,Object>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "TypedEventHandler_Microsoft_UI_Windowing_AppWindow_Object"
     },
     {
       "callback": "emitted",
@@ -46542,6 +48206,21 @@
         }
       ],
       "name": "TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_RoutedEventArgs"
+    },
+    {
+      "callback": "emitted",
+      "iid": "ce4605e8-4d3e-58a2-8aa0-2faca17873e8",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.TypedEventHandler<Microsoft.UI.Xaml.XamlRoot,Microsoft.UI.Xaml.XamlRootChangedEventArgs>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "TypedEventHandler_Microsoft_UI_Xaml_XamlRoot_Microsoft_UI_Xaml_XamlRootChangedEventArgs"
     },
     {
       "callback": "emitted",
@@ -48441,6 +50120,24 @@
         }
       ],
       "name": "ITimeZoneOnCalendar"
+    },
+    {
+      "kind": "Struct",
+      "metadata": "Windows.Graphics.PointInt32",
+      "methods": [],
+      "name": "PointInt32"
+    },
+    {
+      "kind": "Struct",
+      "metadata": "Windows.Graphics.RectInt32",
+      "methods": [],
+      "name": "RectInt32"
+    },
+    {
+      "kind": "Struct",
+      "metadata": "Windows.Graphics.SizeInt32",
+      "methods": [],
+      "name": "SizeInt32"
     },
     {
       "iid": "905a0fe1-bc53-11df-8c49-001e4fc686da",

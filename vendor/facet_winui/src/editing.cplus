@@ -13,6 +13,8 @@ import "./record" as record;
 import "./native" as native;
 import "./style" as style;
 import "./typography" as typography;
+import "./search_template" as search_template;
+import "./choice_colors" as colors;
 extern fn GetKeyState(key: i32) -> i16;
 extern fn WindowsGetStringLen(value: usize) -> u32;
 struct State {shown: text::Text}
@@ -29,7 +31,24 @@ fn clear_button(r: *record::View) {
     else if native::must::[f64](element.max_width())==0.0f64 {let defaults=native::must::[ui::IFrameworkElementStatics](ui::FrameworkElement::i_framework_element_statics_factory());typography::clear(button,native::must::[rt::Object](defaults.max_width_property()));}
     if native::must::[bool](visual.is_hit_test_visible())!=allow {native::check(visual.set_is_hit_test_visible(allow));}
 }
-fn layout_updated(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {let r=context as *record::View;if !(*r).applying {clear_button(r);}return rt::Status {code:0};}
+fn search_icon(r: *record::View) {
+    if (*r).kind!=props::K_SEARCH_FIELD {return;}
+    let p: *props::SearchFieldProps=(*core::node_data((*r).node)).props as *props::SearchFieldProps;
+    let control=native::must::[ui::IControlProtected](ui::IControlProtected::query((*r).object));let value=native::must::[rt::Object](control.get_template_child("FacetSearchIcon"));if value.is_null() {return;}
+    let label=native::must::[ui::ITextBlock](ui::ITextBlock::query(value));
+    let desired=style::color(if (*p).search_icon_color.is_set() {(*p).search_icon_color} else {vocab::Color::ink(0.6f64)});
+    let old=native::must::[ui::ISolidColorBrush](ui::ISolidColorBrush::query(native::must::[rt::Object](label.foreground())));let previous=native::must::[ui::Color](old.color());
+    if previous.a!=desired.a || previous.r!=desired.r || previous.g!=desired.g || previous.b!=desired.b {native::check(label.set_foreground(style::brush(if (*p).search_icon_color.is_set() {(*p).search_icon_color} else {vocab::Color::ink(0.6f64)})));}
+}
+fn search_colors(r: *record::View) {
+    let p: *props::SearchFieldProps=(*core::node_data((*r).node)).props as *props::SearchFieldProps;
+    var palette=colors::Palette::new((*r).object);
+    palette.set_color("TextControlButtonForeground",(*p).cancel_button_color);
+    palette.set_color("TextControlButtonForegroundPointerOver",(*p).cancel_button_color);
+    palette.set_color("TextControlButtonForegroundPressed",(*p).cancel_button_color);
+    palette.commit((*r).object);search_icon(r);
+}
+fn layout_updated(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {let r=context as *record::View;if !(*r).applying {clear_button(r);search_icon(r);}return rt::Status {code:0};}
 fn supports(k: u32) -> bool {return k==props::K_TEXT_FIELD || k==props::K_TEXT_AREA || k==props::K_SEARCH_FIELD;}
 fn input(n: *core::Node) -> *props::InputViewProps {
     let raw: *u8=(*core::node_data(n)).props;let k: u32=core::kind_of(n);
@@ -77,18 +96,34 @@ fn selected(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     }
     return rt::Status {code:0};
 }
+fn advance(sender: rt::Object) {
+    // Submit callbacks can move focus, remove the field, or close the window.
+    // Only inspect the retained native sender afterwards, never its Facet record.
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query(sender));
+    if native::must::[i32](visual.focus_state())==ui::focus_state_unfocused {return;}
+    let root=native::must::[rt::Object](visual.xaml_root());if root.is_null() {return;}
+    let xaml=native::must::[ui::IXamlRoot](ui::IXamlRoot::query(root));
+    let options=native::must::[ui::FindNextElementOptions](ui::FindNextElementOptions::new());native::check(options.set_search_root(native::must::[rt::Object](xaml.content())));
+    let manager=native::must::[ui::IFocusManagerStatics](ui::FocusManager::i_focus_manager_statics_factory());
+    let moved=native::must::[bool](manager.try_move_focus_with_options(ui::focus_navigation_direction_next,options.object()));
+}
+fn submit(r: *record::View,sender: rt::Object) -> bool {
+    let raw=(*core::node_data((*r).node)).props;var next=false;
+    var call: fn(*u8,*u8)=props::no_handler;var ctx: *u8=0 as *u8;
+    if (*r).kind==props::K_TEXT_FIELD {let p=raw as *props::TextFieldProps;call=(*p).on_submit;ctx=(*p).on_submit_ctx;next=(*p).return_key==vocab::ReturnKey::Next;}
+    if (*r).kind==props::K_SEARCH_FIELD {let p=raw as *props::SearchFieldProps;call=(*p).on_submit;ctx=(*p).on_submit_ctx;next=(*p).return_key==vocab::ReturnKey::Next;}
+    if (*r).kind==props::K_TEXT_AREA {let p=raw as *props::TextAreaProps;call=(*p).on_submit;ctx=(*p).on_submit_ctx;}
+    if call!=props::no_handler {call(r as *u8,ctx);}
+    if next {advance(sender);}
+    return next || call!=props::no_handler;
+}
 fn key_down(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     let r: *record::View=context as *record::View;
     let event: ui::IKeyRoutedEventArgs=native::must::[ui::IKeyRoutedEventArgs](ui::IKeyRoutedEventArgs::query(args));
     if native::must::[i32](event.key())!=13 {return rt::Status {code:0};}
     // Plain Enter stays a newline in multiline editors; Ctrl+Enter submits.
     if (*r).kind==props::K_TEXT_AREA && GetKeyState(17)>=0 {return rt::Status {code:0};}
-    let raw: *u8=(*core::node_data((*r).node)).props;
-    var call: fn(*u8,*u8)=props::no_handler;var ctx: *u8=0 as *u8;
-    if (*r).kind==props::K_TEXT_FIELD {let p: *props::TextFieldProps=raw as *props::TextFieldProps;call=(*p).on_submit;ctx=(*p).on_submit_ctx;}
-    if (*r).kind==props::K_SEARCH_FIELD {let p: *props::SearchFieldProps=raw as *props::SearchFieldProps;call=(*p).on_submit;ctx=(*p).on_submit_ctx;}
-    if (*r).kind==props::K_TEXT_AREA {let p: *props::TextAreaProps=raw as *props::TextAreaProps;call=(*p).on_submit;ctx=(*p).on_submit_ctx;}
-    if call!=props::no_handler {native::check(event.set_handled(true));call(context,ctx);}
+    if submit(r,sender) {native::check(event.set_handled(true));}
     return rt::Status {code:0};
 }
 fn secure(n: *core::Node) -> bool {
@@ -98,7 +133,9 @@ fn secure(n: *core::Node) -> bool {
 }
 fn create(n: *core::Node) -> rt::Object {
     if secure(n) {let v: ui::PasswordBox=native::must::[ui::PasswordBox](ui::PasswordBox::new());return v.object();}
-    let v: ui::TextBox=native::must::[ui::TextBox](ui::TextBox::new());return v.object();
+    let v: ui::TextBox=native::must::[ui::TextBox](ui::TextBox::new());
+    if core::kind_of(n)==props::K_SEARCH_FIELD {let reader=native::must::[ui::IXamlReaderStatics](ui::XamlReader::i_xaml_reader_statics_factory());let control=native::must::[ui::IControl](ui::IControl::query(v.object()));native::check(control.set_template(native::must::[rt::Object](reader.load(search_template::source()))));}
+    return v.object();
 }
 fn read(r: *record::View) -> text::Text {
     if (*r).editor_secure {let edit: ui::IPasswordBox=native::must::[ui::IPasswordBox](ui::IPasswordBox::query((*r).object));return native::must::[text::Text](edit.password());}
@@ -120,6 +157,23 @@ fn changed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     (*n).mark_content_changed();core::touch(n,0 as u64);
     let call: fn(*u8,*u8)=(*p).on_text_changed;let ctx: *u8=(*p).on_text_changed_ctx;
     if call!=props::no_handler {call(context,ctx);}return rt::Status {code:0};
+}
+// Fixed editors retain a one-line intrinsic viewport; explicitly allocated
+// heights remain authoritative. Growing editors use native wrapped text height.
+fn measured_height(r: *record::View,height: f64) -> f64 {
+    let p: *props::TextAreaProps=(*core::node_data((*r).node)).props as *props::TextAreaProps;
+    if (*p).auto_size==vocab::AutoSize::TextChanges {return height;}
+    let control=native::must::[ui::IControl](ui::IControl::query((*r).object));
+    let line=native::must::[ui::TextBlock](ui::TextBlock::new());
+    native::check(line.set_text("M"));native::check(line.set_font_size(native::must::[f64](control.font_size())));
+    native::check(line.set_font_family(native::must::[rt::Object](control.font_family())));
+    native::check(line.set_font_weight(native::must::[ui::FontWeight](control.font_weight())));
+    native::check(line.set_font_style(native::must::[i32](control.font_style())));
+    native::check(line.set_is_text_scale_factor_enabled((*p).input_view.font_scales));
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query(line.object()));let infinity=#bitcast::[f32](0x7f800000u32);native::check(visual.measure(ui::Size {width:infinity,height:infinity}));
+    let size=native::must::[ui::Size](visual.desired_size());let padding=native::must::[ui::Thickness](control.padding());let border=native::must::[ui::Thickness](control.border_thickness());
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));let minimum=native::must::[f64](element.min_height());
+    let natural=size.height as f64+padding.top+padding.bottom+border.top+border.bottom;return if natural>minimum {natural} else {minimum};
 }
 fn apply(r: *record::View) {
     let n: *core::Node=(*r).node;let p: *props::InputViewProps=input(n);let d: *core::Data=core::node_data(n);(*r).applying=true;
@@ -182,6 +236,7 @@ fn apply(r: *record::View) {
         native::check(control.set_vertical_content_alignment(typography::vertical((*typed).vertical_align)));
         if !(*r).editor_secure {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));native::check(edit.set_text_alignment(typography::alignment((*typed).text_align)));}
     }
+    if (*r).kind==props::K_SEARCH_FIELD {search_colors(r);}
     if (*r).kind==props::K_TEXT_FIELD && (!(*r).subscribed || (core::dirty_of(n)&field::P_CLEAR_BUTTON)!=0) {clear_button(r);}
     let displayed=read(r);
     if (*r).extra.is_null() {let owner=match box::new::[State](State {shown:displayed}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();}
@@ -199,11 +254,11 @@ fn attach(r: *record::View) {
     let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));
     let key: ui::KeyEventHandler=native::must::[ui::KeyEventHandler](ui::KeyEventHandler::new(key_down,r as *u8));
     (*r).token3=native::must::[ui::EventRegistrationToken](element.add_preview_key_down(key.object()));LIVE=LIVE+1;
-    if (*r).kind==props::K_TEXT_FIELD && !(*r).editor_secure {let framework=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));let callback=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(layout_updated,r as *u8));(*r).token4=native::must::[ui::EventRegistrationToken](framework.add_layout_updated(callback.object()));LIVE=LIVE+1;}
+    if ((*r).kind==props::K_TEXT_FIELD || (*r).kind==props::K_SEARCH_FIELD) && !(*r).editor_secure {let framework=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));let callback=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(layout_updated,r as *u8));(*r).token4=native::must::[ui::EventRegistrationToken](framework.add_layout_updated(callback.object()));LIVE=LIVE+1;}
     (*r).subscribed=true;LIVE=LIVE+1;return;
 }
 fn release(r: *record::View) {
-    if (*r).kind==props::K_TEXT_FIELD && !(*r).editor_secure {let framework=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));native::check(framework.remove_layout_updated((*r).token4));LIVE=LIVE-1;}
+    if ((*r).kind==props::K_TEXT_FIELD || (*r).kind==props::K_SEARCH_FIELD) && !(*r).editor_secure {let framework=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).object));native::check(framework.remove_layout_updated((*r).token4));LIVE=LIVE-1;}
     if (*r).editor_secure {let edit: ui::IPasswordBox=native::must::[ui::IPasswordBox](ui::IPasswordBox::query((*r).object));native::check(edit.remove_password_changed((*r).token));}
     else {let edit: ui::ITextBox=native::must::[ui::ITextBox](ui::ITextBox::query((*r).object));native::check(edit.remove_text_changed((*r).token));native::check(edit.remove_selection_changed((*r).token2));LIVE=LIVE-1;}
     let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(element.remove_preview_key_down((*r).token3));LIVE=LIVE-1;

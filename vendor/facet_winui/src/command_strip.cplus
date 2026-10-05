@@ -1,0 +1,95 @@
+// Window commands keep their Facet owners and native identities. Their visual
+// parent is the window strip, independent of where they are declared in content.
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./record" as record;
+import "./native" as native;
+import "./native_slot" as slots;
+import "./agent_hooks" as agents;
+import "./presentation" as presentation;
+struct Item {opaque view: *record::View,visible: bool,enabled: bool,group: i32,priority: i64,width: f64,height: f64}
+fn supports(kind: u32) -> bool {return kind==props::K_MENU || kind==props::K_TOOLBAR_ITEM;}
+fn children(panel: rt::Object) -> ui::IVector_Microsoft_UI_Xaml_UIElement {
+    let p=native::must::[ui::IPanel](ui::IPanel::query(panel));
+    return native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](p.children())));
+}
+fn identity(value: rt::Object) -> usize {return native::must::[rt::Object](value.query(rt::unknown_iid())).raw() as usize;}
+fn detach(r: *record::View) {
+    if (*r).slot_kind!=slots::PANEL {return;}
+    // Window.Closed already retires XAML's visual tree. Leave its collection
+    // removal to WinUI while we release callbacks and our own references.
+    if presentation::is_shutting_down() {(*r).slot=rt::Object::empty();(*r).slot_kind=0;return;}
+    let list=children((*r).slot);let target=identity(record::visual(r));var i: u32=0;
+    while i<native::must::[u32](list.size()) {if identity(native::must::[rt::Object](list.get_at(i)))==target {native::check(list.remove_at(i));break;}i=i+1;}
+    (*r).slot=rt::Object::empty();(*r).slot_kind=0;
+}
+fn collect(n: *core::Node,visible: bool,enabled: bool,ref out: vec::Vec[Item]) {
+    let kind=core::kind_of(n);let d=core::node_data(n);
+    let shown=visible && (*d).common.is_visible && (supports(kind) || core::display_of(n)!=flex::Display::None);
+    let available=enabled && (*d).common.is_enabled;
+    if supports(kind) {
+        var group: i32=-1;var priority: i64=0;
+        if kind==props::K_MENU {priority=(*( (*d).props as *props::MenuProps)).priority;}
+        else {let p=(*d).props as *props::ToolbarItemProps;priority=(*p).priority;group=match (*p).placement {vocab::ToolbarPlacement::Sidebar=>0,vocab::ToolbarPlacement::Primary=>1,vocab::ToolbarPlacement::Default=>2,vocab::ToolbarPlacement::Secondary=>3};}
+        let r=core::view_of(n) as *record::View;
+        if r.is_not_null() {agents::apply((*r).object,n);assert out.append(Item {view:r,visible:shown,enabled:available,group:group,priority:priority,width:0.0f64,height:0.0f64}).is_ok();}return;
+    }
+    var page: usize=0;var i: usize=0;while i<core::child_count_of(n) {if let option::Option::Some(c)=core::child_of(n,i) {
+        var active=shown;
+        if kind==props::K_CAROUSEL && !supports(core::kind_of(c)) {let p=(*d).props as *props::CarouselProps;active=active && page as i64==(*p).position;page=page+1;}
+        collect(c,active,available,out);
+    }i=i+1;}
+}
+fn precedes(b: Item,a: Item) -> bool {return if b.group!=a.group {b.group<a.group} else {b.priority>a.priority};}
+fn sort(ref items: vec::Vec[Item]) {
+    var i: usize=1;while i<items.count() {var j=i;while j>0 {
+        let a=match items.at(j-1) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+        let b=match items.at(j) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+        if !precedes(b,a) {break;}assert items.set(b,j-1).is_ok();assert items.set(a,j).is_ok();j=j-1;
+    }i=i+1;}
+}
+fn attach(panel: rt::Object,r: *record::View,index: u32) {
+    let list=children(panel);let value=record::visual(r);let target=identity(value);let count=native::must::[u32](list.size());var at: u32=0;
+    while at<count {if identity(native::must::[rt::Object](list.get_at(at)))==target {break;}at=at+1;}
+    if at!=index {
+        let element=native::must::[ui::IUIElement](ui::IUIElement::query(value));let focus=native::must::[i32](element.focus_state());
+        if at<count {native::check(list.remove_at(at));}
+        native::check(list.insert_at(index,value));
+        if focus!=ui::focus_state_unfocused {let restored=native::must::[bool](element.focus(focus));}
+    } else if at==count {native::check(list.append(value));}
+    slots::bind(r,panel,slots::PANEL);
+}
+fn place(item: Item,x: f64,y: f64,width: f64) {
+    let value=record::visual(item.view);let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));
+    native::check(element.set_width(width));native::check(element.set_height(item.height));
+    let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left(value,x));native::check(canvas.set_top(value,y));
+}
+fn layout(root: *core::Node,panel: rt::Object,width: f64) -> f64 {
+    var items=vec::new::[Item]();collect(root,true,true,items);sort(items);
+    let automatic=#bitcast::[f64](0x7ff8000000000000u64);let infinity=#bitcast::[f32](0x7f800000u32);
+    var i: usize=0;while i<items.count() {if let option::Option::Some(item)=items.at_ptr(i) {
+        let r=(*item).view;attach(panel,r,i as u32);let value=record::visual(r);
+        let visual=native::must::[ui::IUIElement](ui::IUIElement::query(value));native::check(visual.set_visibility(if (*item).visible {ui::visibility_visible} else {ui::visibility_collapsed}));native::check(visual.set_tab_index(i as i32));
+        native::check(native::must::[ui::IControl](ui::IControl::query((*r).object)).set_is_enabled((*item).enabled));
+        if (*item).visible {
+            let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));native::check(element.set_width(automatic));native::check(element.set_height(automatic));
+            native::check(visual.measure(ui::Size {width:infinity,height:infinity}));let size=native::must::[ui::Size](visual.desired_size());
+            (*item).width=size.width as f64+2.0f64;(*item).height=size.height as f64;
+        }
+    }i=i+1;}
+    let limit=if width>16.0f64 {width-8.0f64} else {8.0f64};var x=8.0f64;var y=4.0f64;var height=0.0f64;var lane: i32=-2;var any=false;
+    i=0;while i<items.count() {if let option::Option::Some(item)=items.at(i) {if item.visible {
+        let next_lane=if item.group<0 {0} else {1};let w=if item.width>limit-8.0f64 {limit-8.0f64} else {item.width};
+        if any && (next_lane!=lane || (x>8.0f64 && x+w>limit)) {y=y+height+4.0f64;x=8.0f64;height=0.0f64;}
+        // Secondary actions trail the strip when the remaining group fits.
+        if item.group==3 {var remaining=0.0f64;var j=i;while j<items.count() {if let option::Option::Some(other)=items.at(j) {if other.visible {remaining=remaining+other.width+4.0f64;}}j=j+1;}if remaining>0.0f64 && limit-(remaining-4.0f64)>x {x=limit-(remaining-4.0f64);}}
+        place(item,x,y,w);x=x+w+4.0f64;if item.height>height {height=item.height;}lane=next_lane;any=true;
+    }}i=i+1;}
+    let total=if any {y+height+4.0f64} else {0.0f64};let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(panel));native::check(element.set_width(width));native::check(element.set_height(total));return total;
+}

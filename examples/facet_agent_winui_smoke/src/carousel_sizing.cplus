@@ -1,0 +1,65 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/carousel" as carousel;
+import "facet/label" as label;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn handle() -> carousel::Carousel {return match carousel::find("pager") {option::Option::Some(v)=>v,option::Option::None=>{assert false;#zero::[carousel::Carousel]()}};}
+fn height(key: str) -> f64 {let value=(*check::node(key)).frame().height;let element=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(check::object(key)));let actual=check::must::[f64](element.height());check::log("CAROUSEL HEIGHT ${key}: facet=${value}, native=${actual}");assert actual==value;return value;}
+fn set_height(key: str,value: flex::StyleLength) {(*check::node(key)).set_height(value);core::touch(check::node(key),0u64);}
+fn all(value: f64) {assert height("first")==value;assert height("second")==value;assert height("third")==value;}
+fn identity() -> usize {return check::must::[rt::Object](check::object("kept").query(rt::unknown_iid())).raw() as usize;}
+struct Probe {passed: bool,kept: usize,natural: f64,timer: services::Cancellable}
+impl Probe {
+    fn build(ref this) -> core::Node {
+        var pager=ui::carousel(key:"pager",animates_scroll:false).width(400.0f64).height(220.0f64);
+        assert pager.add_child(@ui {column(key:"first") {label("First page",key:"title",font_size:20.0f64,line_height:24.0f64,line_break:vocab::LineBreak::WordWrap)}.padding(10.0f64).height(80.0f64)}).is_ok();
+        assert pager.add_child(@ui {column(key:"second") {text_field("Retained edit",key:"kept")}.height(140.0f64)}).is_ok();
+        assert pager.add_child(ui::label("Third",key:"third")).is_ok();return @ui {column {label("Carousel sizing probe") pager}.padding(20.0f64)};
+    }
+    fn ready(ref this) {this.timer=services::after(0.25f64,this.initial);}
+    fn initial(ref this) {
+        assert height("first")==80.0f64;assert height("second")==140.0f64;assert height("third")==220.0f64;this.kept=identity();
+        let changed=handle().set_item_sizing(vocab::ItemSizing::MeasureFirstItem);this.timer=services::after(0.15f64,this.uniform);
+    }
+    fn uniform(ref this) {
+        check::log("CAROUSEL SIZING: uniform");
+        all(80.0f64);set_height("first",flex::StyleLength::points(100.0f64));set_height("second",flex::StyleLength::points(180.0f64));this.timer=services::after(0.15f64,this.edited);
+    }
+    fn edited(ref this) {
+        check::log("CAROUSEL SIZING: edited");
+        all(100.0f64);set_height("first",flex::StyleLength::auto());
+        if let option::Option::Some(v)=label::find("title") {let changed=v.set_text("One line\nSecond line\nThird line");}
+        this.timer=services::after(0.15f64,this.intrinsic);
+    }
+    fn intrinsic(ref this) {
+        this.natural=height("first");let h=this.natural;check::log("CAROUSEL SIZING: intrinsic ${h}");assert h>70.0f64 && h<120.0f64;all(h);
+        if let option::Option::Some(v)=label::find("title") {let changed=v.set_text("A paragraph with enough words to wrap into several lines when the available page width becomes narrower.");}
+        this.timer=services::after(0.15f64,this.wide);
+    }
+    fn wide(ref this) {this.natural=height("first");let changed=handle().set_width(200.0f64);this.timer=services::after(0.15f64,this.narrow);}
+    fn narrow(ref this) {
+        let h=height("first");assert h>this.natural;all(h);assert (*check::node("second")).frame().width==200.0f64;assert identity()==this.kept;
+        let changed=handle().set_item_sizing(vocab::ItemSizing::MeasureAllItems);this.timer=services::after(0.15f64,this.restored);
+    }
+    fn restored(ref this) {
+        assert height("first")==220.0f64;assert height("second")==180.0f64;assert height("third")==220.0f64;
+        let changed=handle().set_item_sizing(vocab::ItemSizing::MeasureFirstItem);
+        assert mount::insert_child(check::node("pager"),ui::label("New first",key:"inserted").height(60.0f64),0);this.timer=services::after(0.15f64,this.inserted);
+    }
+    fn inserted(ref this) {assert height("inserted")==60.0f64;all(60.0f64);assert mount::remove("inserted");let old=mount::replace("first",ui::label("Replacement",key:"first").height(72.0f64));this.timer=services::after(0.15f64,this.replaced);}
+    fn replaced(ref this) {
+        all(72.0f64);assert identity()==this.kept;assert mount::remove("first");assert mount::remove("second");assert mount::remove("third");
+        assert handle().position()==0;assert mount::insert_child(check::node("pager"),ui::label("Refilled",key:"refilled").height(88.0f64),0);this.timer=services::after(0.15f64,this.finish);
+    }
+    fn finish(ref this) {assert height("refilled")==88.0f64;check::log("PASS: carousel first-item measurement, wrapped resize, independent height restoration, live edits, identity, insertion/replacement and empty refill");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet carousel sizing",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: carousel sizing teardown");return 0;}

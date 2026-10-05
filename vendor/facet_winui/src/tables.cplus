@@ -1,0 +1,84 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "./record" as record;
+struct Height {opaque table: *core::Node,original: flex::StyleLength,imposed: f64}
+static LIVE: i64=0;
+static GAPS: i64=0;
+fn live_overrides() -> i64 {return LIVE;}
+fn live_gaps() -> i64 {return GAPS;}
+fn same(value: flex::StyleLength,height: f64) -> bool {let point=flex::StyleLength::points(height);return value.unit==point.unit && value.value==height;}
+fn restore(r: *record::View) {
+    if (*r).table_height.is_null() {return;}
+    let saved: box::Box[Height]=box::from_raw::[Height]((*r).table_height);(*r).table_height=0 as *u8;
+    let p=saved.ptr();let n=(*r).node;
+    if same((*n).style.height,(*p).imposed) {(*n).set_height((*p).original);}
+    LIVE=LIVE-1;
+}
+fn restore_gap(r: *record::View) {
+    if (*r).table_gap.is_null() {return;}
+    let saved: box::Box[Height]=box::from_raw::[Height]((*r).table_gap);(*r).table_gap=0 as *u8;
+    let p=saved.ptr();let n=(*r).node;
+    if same((*n).style.gap_row,(*p).imposed) {(*n).set_gap(flex::Gutter::Row,(*p).original);}
+    GAPS=GAPS-1;
+}
+fn gap(table: *core::Node,n: *core::Node,value: f64) {
+    let r=core::view_of(n) as *record::View;
+    if (*r).table_gap.is_null() {
+        let owner=match box::new(Height {table:table,original:(*n).style.gap_row,imposed:value}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+        (*r).table_gap=owner.into_raw();GAPS=GAPS+1;
+    } else {
+        let saved=(*r).table_gap as *Height;
+        if !same((*n).style.gap_row,(*saved).imposed) {(*saved).original=(*n).style.gap_row;}
+        (*saved).imposed=value;
+    }
+    (*n).set_gap(flex::Gutter::Row,flex::StyleLength::points(value));
+}
+fn row(table: *core::Node,n: *core::Node,height: i64,uneven: bool) {
+    let r=core::view_of(n) as *record::View;if r.is_null() {return;}
+    if uneven || height<=0 {restore(r);return;}
+    if (*r).table_height.is_null() {
+        let owner=match box::new(Height {table:table,original:(*n).style.height,imposed:height as f64}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
+        (*r).table_height=owner.into_raw();LIVE=LIVE+1;
+    } else {
+        let saved=(*r).table_height as *Height;
+        // A live application edit becomes the value restored after uniform sizing.
+        if !same((*n).style.height,(*saved).imposed) {(*saved).original=(*n).style.height;}
+        (*saved).imposed=height as f64;
+    }
+    (*n).set_height(flex::StyleLength::points(height as f64));
+}
+// The document can change shape without replacing native views. Restore only
+// overrides owned by this table; nested tables retain their own row policies.
+fn reconcile(table: *core::Node,n: *core::Node,parent: *core::Node,doc: *core::Node) {
+    let r=core::view_of(n) as *record::View;
+    if r.is_not_null() && (*r).table_height.is_not_null() {
+        let saved=(*r).table_height as *Height;
+        if (*saved).table==table && parent!=doc {restore(r);}
+    }
+    if r.is_not_null() && (*r).table_gap.is_not_null() {
+        let saved=(*r).table_gap as *Height;
+        if (*saved).table==table && n!=doc {restore_gap(r);}
+    }
+    var i: usize=0;while i<core::child_count_of(n) {if let option::Option::Some(c)=core::child_of(n,i) {reconcile(table,c,n,doc);}i=i+1;}
+}
+fn detached(host: *record::View,child: *record::View) {
+    restore(child);
+    if (*host).kind==props::K_TABLE {reconcile((*host).node,(*child).node,0 as *core::Node,0 as *core::Node);}
+}
+fn document(n: *core::Node) -> *core::Node {
+    // set_content supplies one column document; direct children are also rows.
+    if core::child_count_of(n)==1 {if let option::Option::Some(child)=core::child_of(n,0) {if core::kind_of(child)==core::K_NODE && core::child_count_of(child)>0 && (*child).style.flex_direction==flex::FlexDirection::Column {return child;}}}
+    return n;
+}
+fn prepare(n: *core::Node) {
+    let p: *props::TableProps=(*core::node_data(n)).props as *props::TableProps;let doc=document(n);
+    reconcile(n,n,0 as *core::Node,doc);
+    let grouped=(*p).style==vocab::TableStyle::Form || (*p).style==vocab::TableStyle::Settings;
+    (*n).set_padding(flex::Edge::All,flex::StyleLength::points(if grouped {12.0f64} else {0.0f64}));
+    gap(n,doc,if grouped {8.0f64} else {0.0f64});
+    var i: usize=0;while i<core::child_count_of(doc) {if let option::Option::Some(child)=core::child_of(doc,i) {row(n,child,(*p).row_height,(*p).has_uneven_rows);}i=i+1;}
+}

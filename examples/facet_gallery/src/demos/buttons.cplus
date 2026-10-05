@@ -12,10 +12,25 @@ import "../shell" as shell;
 struct Buttons {
     clicks: i32,
     live_mode: bool,
+    break_mode: i32,
+    wide: bool,
 }
 
 impl Buttons {
-    fn new() -> Buttons { return Buttons { clicks: 0, live_mode: false }; }
+    fn new() -> Buttons { return Buttons { clicks: 0, live_mode: false,break_mode:0,wide:false }; }
+    fn switch_break(ref this,sender: *u8) {
+        this.break_mode=(this.break_mode+1)%6;
+        let modes=[vocab::LineBreak::HeadTruncation,vocab::LineBreak::MiddleTruncation,vocab::LineBreak::TailTruncation,vocab::LineBreak::CharacterWrap,vocab::LineBreak::WordWrap,vocab::LineBreak::NoWrap];
+        let names=["Head truncation","Middle truncation","Tail truncation","Character wrap","Word wrap","No wrap"];
+        if let option::Option::Some(v)=button::find("btn:break-button") {let changed=v.set_line_break(modes[this.break_mode as usize]);}
+        if let option::Option::Some(v)=text_button::find("btn:break-text") {let changed=v.set_line_break(modes[this.break_mode as usize]);}
+        if let option::Option::Some(v)=label::find("btn:break-status") {let changed=v.set_text(names[this.break_mode as usize]);}
+    }
+    fn switch_width(ref this,sender: *u8) {
+        this.wide=!this.wide;let width=if this.wide {320.0f64} else {160.0f64};
+        if let option::Option::Some(v)=button::find("btn:break-button") {let changed=v.set_width(width);}
+        if let option::Option::Some(v)=text_button::find("btn:break-text") {let changed=v.set_width(width);}
+    }
     fn switch_mode(ref this,sender: *u8) {
         this.live_mode=!this.live_mode;
         match button::find("btn:mode-button") {option::Option::Some(v)=>{let set=v.set_toggles(this.live_mode);},option::Option::None=>{}}
@@ -47,6 +62,7 @@ impl Buttons {
 
 impl Buttons: component::Component {
     fn build(ref this) -> core::Node {
+        this.break_mode=0;this.wide=false;
         var body: core::Builder = core::Builder::new();
 
         body.add(shell::caption("Button  ·  on_click"));
@@ -86,6 +102,13 @@ impl Buttons: component::Component {
         modes.add(ui::text_button("Text action",key:"btn:mode-text",on_click:this.on_click));
         modes.add(ui::label("Mode: ordinary",key:"btn:mode-status"));
         body.add(core::row(modes).gap(8.0));
+
+        body.add(shell::caption("Caption fitting"));
+        body.add(@ui {row {button("Next line-break mode",key:"btn:break-next",on_click:this.switch_break) button("Narrow / wide",key:"btn:break-width",on_click:this.switch_width) label("Head truncation",key:"btn:break-status")}.gap(12.0f64)});
+        body.add(@ui {row {
+            button("Beginning — a long caption — ending",key:"btn:break-button",line_break:vocab::LineBreak::HeadTruncation,on_click:this.on_click).width(160.0f64)
+            text_button("Beginning — a long caption — ending",key:"btn:break-text",line_break:vocab::LineBreak::HeadTruncation,on_click:this.on_click).width(160.0f64)
+        }.gap(16.0f64)});
 
         return shell::panel(
             "Button",

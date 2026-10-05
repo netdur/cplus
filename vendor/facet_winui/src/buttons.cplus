@@ -33,7 +33,7 @@ fn apply(r: *record::View) {
     }
     if (*p).border_color.is_set() {native::check(control.set_border_brush(style::brush((*p).border_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.border_brush_property()));}
     native::check(control.set_corner_radius(style::corners((*p).corner_radius)));
-    let title=native::must::[ui::TextBlock](ui::TextBlock::new());let label=native::must::[ui::ITextBlock](ui::ITextBlock::query(title.object()));
+    let title=native::must::[ui::TextBlock](ui::TextBlock::new());(*r).content=title.object();let label=native::must::[ui::ITextBlock](ui::ITextBlock::query(title.object()));
     native::check(label.set_text(typography::transformed((*p).title.view(),(*p).text_transform).view()));typography::breaking(label,(*p).line_break);
     let host=native::must::[ui::IContentControl](ui::IContentControl::query(value));
     if (*p).symbol==0 && (*p).image.is_empty() {native::check(host.set_content(title.object()));(*r).applying=false;return;}

@@ -49,7 +49,7 @@ impl Probe {
     fn initial(ref this) {
         assert check::must::[i32](accelerator("ci").key())==75;assert check::must::[u32](accelerator("ci").modifiers())==native::virtual_key_modifiers_control;assert check::must::[rt::Object](accelerator("ci").scope_owner()).is_null();
         assert check::must::[i32](accelerator("cx").key())==113;let scope=check::must::[rt::Object](accelerator("cx").scope_owner());assert check::must::[rt::Object](scope.query(rt::unknown_iid())).raw()==check::must::[rt::Object](check::object("context").query(rt::unknown_iid())).raw();
-        assert count("menu")==2 && count("context")==2;assert (*check::node("menu")).frame().width>40.0f64;assert (*check::node("menu")).frame().height>20.0f64;
+        assert count("menu")==2 && count("context")==2;let menu_frame=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(check::object("menu")));assert check::must::[f64](menu_frame.actual_width())>40.0f64;assert check::must::[f64](menu_frame.actual_height())>20.0f64;
         assert check::must::[text::Text](item("mi").text())=="Menu action";assert !check::must::[rt::Object](item("mi").icon()).is_null();
         let control=check::must::[native::IControl](native::IControl::query(check::object("mi")));let color=texts::brush_color(check::must::[rt::Object](control.foreground()));assert color.r>color.g;
         if let option::Option::Some(v)=menu::find("menu") {let updated=v.set_text("Updated menu");assert v.count()==2;}

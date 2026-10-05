@@ -12,10 +12,16 @@ import "../shell" as shell;
 
 struct Controls {
     n: i32,
+    rounded: bool,
 }
 
 impl Controls {
-    fn new() -> Controls { return Controls { n: 0 }; }
+    fn new() -> Controls { return Controls { n: 0,rounded:false }; }
+    fn radius(ref this,sender: *u8) {
+        this.rounded=!this.rounded;
+        if let option::Option::Some(r)=radio::find("ctl:radius-radio") {let changed=r.set_corner_radius(if this.rounded {vocab::Corners {top_leading:20.0f64,top_trailing:4.0f64,bottom_leading:4.0f64,bottom_trailing:20.0f64}} else {vocab::Corners::none()});}
+        if let option::Option::Some(l)=label::find("ctl:radius-status") {let changed=l.set_text(if this.rounded {"Asymmetric corners"} else {"Square corners"});}
+    }
 
     fn style_choices(ref this, sender: *u8) {
         this.n = 1 - this.n;
@@ -119,6 +125,9 @@ impl Controls: component::Component {
             on_checked_changed: this.on_radio));
         body.add(ui::label("Selected: Alpha", key: "ctl:radio_status",
             font_size: 14.0, text_color: vocab::Color::ink()));
+        var surface=ui::radio(false,key:"ctl:radius-radio",text:"Radio surface",group:"radius",corner_radius:vocab::Corners::none()).width(220.0f64).height(48.0f64);
+        surface.set_background_color(vocab::Color::rgba(0.35f64,0.18f64,0.55f64,1.0f64));body.add(surface);
+        body.add(@ui {row {button("Change radio corners",key:"ctl:radius",on_click:this.radius) label("Square corners",key:"ctl:radius-status")}.gap(12.0)});
 
         return shell::panel(
             "Controls",

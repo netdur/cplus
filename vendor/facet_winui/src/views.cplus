@@ -20,6 +20,8 @@ import "./record" as record;
 import "./outline" as outline;
 import "facet/tree" as tree;
 import "facet/split" as split;
+import "facet/window_chrome" as chrome;
+import "./window_buttons" as window_buttons;
 import "./style" as style;
 import "./scheduler" as scheduler;
 import "./choices" as choices;
@@ -27,14 +29,19 @@ import "./editing" as editing;
 import "./pickers" as pickers;
 import "./media" as media;
 import "./typography" as typography;
+import "./labels" as labels;
+import "./button_text" as button_text;
+import "./html_label" as html_label;
 import "./drawing" as drawing;
 import "./borders" as borders;
 import "./tabs" as tabs;
+import "./tables" as tables;
 import "./paging" as paging;
 import "./items" as items;
 import "./actions" as actions;
 import "./swipe" as swipe;
 import "./menus" as menus;
+import "./command_strip" as commands;
 import "./shortcuts" as shortcuts;
 import "./presentation" as presentation;
 import "./divider" as divider;
@@ -49,10 +56,10 @@ type View = record::View;
 static LIVE: i64=0;
 static SUBSCRIPTIONS: i64=0;
 fn live_views() -> i64 { return LIVE; }
-fn live_subscriptions() -> i64 { return SUBSCRIPTIONS+outline::subscriptions()+choices::subscriptions()+editing::subscriptions()+pickers::subscriptions()+media::subscriptions()+items::subscriptions()+actions::subscriptions()+shortcuts::subscriptions()+divider::subscriptions()+presentation::subscriptions()+pointer::subscriptions()+refreshing::subscriptions()+tabs::subscriptions()+paging::subscriptions()+swipe::subscriptions(); }
+fn live_subscriptions() -> i64 { return SUBSCRIPTIONS+outline::subscriptions()+choices::subscriptions()+editing::subscriptions()+pickers::subscriptions()+media::subscriptions()+items::subscriptions()+actions::subscriptions()+shortcuts::subscriptions()+divider::subscriptions()+presentation::subscriptions()+pointer::subscriptions()+refreshing::subscriptions()+tabs::subscriptions()+paging::subscriptions()+swipe::subscriptions()+window_buttons::subscriptions(); }
 fn supports(n: *core::Node) -> bool {
     let kind: u32=core::kind_of(n); let count: usize=core::child_count_of(n);
-    if kind!=props::K_TABS && kind!=props::K_REFRESHABLE && kind!=props::K_TABLE && kind!=props::K_SWIPEABLE && kind!=props::K_CAROUSEL && kind!=core::K_NODE && kind!=props::K_LABEL && kind!=props::K_BUTTON && kind!=props::K_TEXT_FIELD && kind!=props::K_SCROLL && kind!=tree::K_TREE && kind!=split::K_SPLIT && !actions::supports(kind) && !menus::supports(kind) && kind!=props::K_CANVAS && kind!=props::K_BOX && kind!=props::K_BORDERED && !items::supports(kind) && !media::supports(kind) && !pickers::supports(kind) && !editing::supports(kind) && !choices::supports(kind) { return false; }
+    if kind!=chrome::K_WINDOW_BUTTONS && kind!=props::K_TABS && kind!=props::K_REFRESHABLE && kind!=props::K_TABLE && kind!=props::K_SWIPEABLE && kind!=props::K_CAROUSEL && kind!=core::K_NODE && kind!=props::K_LABEL && kind!=props::K_BUTTON && kind!=props::K_TEXT_FIELD && kind!=props::K_SCROLL && kind!=tree::K_TREE && kind!=split::K_SPLIT && !actions::supports(kind) && !menus::supports(kind) && kind!=props::K_CANVAS && kind!=props::K_BOX && kind!=props::K_BORDERED && !items::supports(kind) && !media::supports(kind) && !pickers::supports(kind) && !editing::supports(kind) && !choices::supports(kind) { return false; }
     if core::view_of(n).is_not_null() || (!menus::supports(kind) && kind!=props::K_TABS && kind!=props::K_REFRESHABLE && kind!=props::K_TABLE && kind!=props::K_SWIPEABLE && kind!=props::K_CAROUSEL && kind!=core::K_NODE && kind!=props::K_SCROLL && kind!=split::K_SPLIT && kind!=props::K_BORDERED && count!=0) { return false; }
     var i: usize=0;
     while i<count {
@@ -80,10 +87,12 @@ fn measure(ctx: *u8, width: f64, wm: flex::MeasureMode, height: f64, hm: flex::M
     let infinity: f32=#bitcast::[f32](0x7f800000u32);
     // Intrinsic flex passes may carry NaN with an AtMost mode. WinUI
     // requires infinity for an unconstrained axis and rejects NaN.
-    native::check(layout.measure(ui::Size {width:if wm==flex::MeasureMode::Undefined || flex::is_undefined(width) {infinity} else {width as f32},height:if hm==flex::MeasureMode::Undefined || flex::is_undefined(height) {infinity} else {height as f32}}));
-    let size: ui::Size=native::must::[ui::Size](layout.desired_size());
+    let available=ui::Size {width:if wm==flex::MeasureMode::Undefined || flex::is_undefined(width) {infinity} else {width as f32},height:if hm==flex::MeasureMode::Undefined || flex::is_undefined(height) {infinity} else {height as f32}};
+    button_text::prepare(ctx as *View,available.width as f64);
+    let size: ui::Size=if (*(ctx as *View)).kind==props::K_LABEL {labels::measure(value,available)} else {native::check(layout.measure(available));native::must::[ui::Size](layout.desired_size())};
     native::check(element.set_width(old_width)); native::check(element.set_height(old_height));
     var w: f64=size.width as f64; var h: f64=size.height as f64;
+    if (*(ctx as *View)).kind==props::K_TEXT_AREA {h=editing::measured_height(ctx as *View,h);}
     // Native button text can trim at its own reported DesiredSize under
     // fractional DPI rounding. Reserve two DIPs for automatic widths; exact
     // widths and caller constraints below remain authoritative.
@@ -262,8 +271,10 @@ fn configure(record: *View, n: *core::Node) {
         native::check(label.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));
         if (*p).font_family.count()>0 {native::check(label.set_font_family(typography::font((*p).font_family.view())));} else {typography::clear(value,native::must::[rt::Object](defaults.font_family_property()));}
         if !(*p).formatted_text.is_empty() {typography::runs(label,(*p).formatted_text);}
+        else if (*p).text_format==vocab::TextFormat::Html {html_label::apply(label,(*p).text.view(),(*p).text_transform);}
     }
     if (*record).kind==props::K_BUTTON {buttons::apply(record);}
+    if (*record).kind==chrome::K_WINDOW_BUTTONS {window_buttons::apply(record);}
     if actions::supports((*record).kind) {actions::apply(record);}
     if menus::supports((*record).kind) {menus::apply(record);}
     if (*record).kind==props::K_CAROUSEL {paging::apply(record);}
@@ -294,16 +305,18 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     else if items::supports(kind) {let v: ui::ScrollViewer=native::must::[ui::ScrollViewer](ui::ScrollViewer::new());value=v.object();}
     else if kind==props::K_SCROLL { let v: ui::ScrollViewer=native::must::[ui::ScrollViewer](ui::ScrollViewer::new()); value=v.object(); }
     else if kind==props::K_CANVAS {let v: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new());value=v.object();}
+    else if kind==chrome::K_WINDOW_BUTTONS {let v=native::must::[ui::Border](ui::Border::new());value=v.object();}
     else if media::supports(kind) {value=media::create(kind,n);}
     else if pickers::supports(kind) {value=pickers::create(kind);}
     else if choices::supports(kind) { value=choices::create(kind,n); }
     else if kind==tree::K_TREE { let v: ui::TreeView=native::must::[ui::TreeView](ui::TreeView::new()); value=v.object(); }
     else if kind==props::K_TABS || kind==props::K_TABLE || kind==props::K_CONTEXT_MENU || kind==props::K_SWIPEABLE || kind==core::K_NODE || kind==split::K_SPLIT || kind==props::K_BOX || kind==props::K_BORDERED { let v: ui::Border=native::must::[ui::Border](ui::Border::new()); value=v.object(); }
     else { io::eprintln("facet_winui unsupported node kind ${kind}"); assert false; return 0 as *u8; }
-    let record: box::Box[View]=match box::new::[View](View {object:value,wrapper:rt::Object::empty(),refresh:0 as *u8,reorder:0 as *u8,content:rt::Object::empty(),slot:rt::Object::empty(),slot_kind:0,click_attached:false,button_toggles:false,editor_secure:editing::secure(n),pending_focus:0,node:n,kind:kind,token:#zero::[ui::EventRegistrationToken](),token2:#zero::[ui::EventRegistrationToken](),token3:#zero::[ui::EventRegistrationToken](),token4:#zero::[ui::EventRegistrationToken](),measure_token:#zero::[ui::EventRegistrationToken](),measure_subscribed:false,subscribed:false,applying:false,scroll_pending:false,draw_pending:true,draw_width:0.0f64,draw_height:0.0f64,extra:0 as *u8,shortcut:0 as *u8,presentation:0 as *u8,parent:0 as *u8,item_reader:0 as fn(*u8)->*u8,item_context:0 as *u8}) {
+    let record: box::Box[View]=match box::new::[View](View {object:value,wrapper:rt::Object::empty(),refresh:0 as *u8,reorder:0 as *u8,content:rt::Object::empty(),slot:rt::Object::empty(),slot_kind:0,click_attached:false,button_toggles:false,editor_secure:editing::secure(n),pending_focus:0,node:n,kind:kind,token:#zero::[ui::EventRegistrationToken](),token2:#zero::[ui::EventRegistrationToken](),token3:#zero::[ui::EventRegistrationToken](),token4:#zero::[ui::EventRegistrationToken](),measure_token:#zero::[ui::EventRegistrationToken](),measure_subscribed:false,subscribed:false,applying:false,scroll_pending:false,draw_pending:true,draw_width:0.0f64,draw_height:0.0f64,extra:0 as *u8,table_height:0 as *u8,table_gap:0 as *u8,shortcut:0 as *u8,presentation:0 as *u8,parent:0 as *u8,item_reader:0 as fn(*u8)->*u8,item_context:0 as *u8}) {
         option::Option::Some(v)=>{v}, option::Option::None=>{assert false; return 0 as *u8;}
     };
     let p: *View=record.ptr();
+    if kind==chrome::K_WINDOW_BUTTONS {window_buttons::attach(p);}
     if kind==props::K_SCROLL || kind==props::K_REFRESHABLE {
         let canvas: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new()); (*p).content=canvas.object();
         let control: ui::IContentControl=native::must::[ui::IContentControl](ui::IContentControl::query((*p).object));
@@ -339,7 +352,7 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     if choices::supports(kind) {choices::attach(p);}
     if editing::supports(kind) {editing::attach(p);}
     if pickers::supports(kind) {pickers::attach(p);}
-    if kind==props::K_MENU || kind==props::K_TOOLBAR_ITEM || kind==props::K_LABEL || kind==props::K_BUTTON || editing::supports(kind) || choices::supports(kind) || pickers::supports(kind) || media::supports(kind) {
+    if kind==chrome::K_WINDOW_BUTTONS || kind==props::K_MENU || kind==props::K_TOOLBAR_ITEM || kind==props::K_LABEL || kind==props::K_BUTTON || editing::supports(kind) || choices::supports(kind) || pickers::supports(kind) || media::supports(kind) {
         (*n).set_context(p as *u8); (*n).set_measure(measure); (*n).mark_content_changed();
         let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*p).object));
         let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(measured_loaded,p as *u8));
@@ -362,10 +375,13 @@ fn release(view: *u8) {
     if view.is_null() { return; }
     let p: *View=view as *View;
     if env::has_var("FACET_WINUI_TRACE") {let kind: u32=(*p).kind;io::eprintln("WinUI release kind=${kind}");}
+    tables::restore(p);tables::restore_gap(p);
+    if commands::supports((*p).kind) {commands::detach(p);}
     scheduler::forget((*p).node);
     if (*p).measure_subscribed {let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*p).object));native::check(element.remove_loaded((*p).measure_token));(*p).measure_subscribed=false;SUBSCRIPTIONS=SUBSCRIPTIONS-1;}
     if pointer::supports((*p).kind) {pointer::release(p);}
     presentation::release(p);
+    if (*p).kind==chrome::K_WINDOW_BUTTONS {window_buttons::release(p);}
     if (*p).kind==props::K_CAROUSEL {paging::release(p);}
     if (*p).kind==props::K_TABS {tabs::release(p);}
     if (*p).kind==props::K_SWIPEABLE {swipe::release(p);}
@@ -398,28 +414,33 @@ fn apply(ctx: *u8, n: *core::Node) {
 }
 fn insert(ctx: *u8, host: *u8, child: *u8, index: usize) {
     (*(child as *View)).parent=host;if (*(child as *View)).kind==props::K_CONTEXT_MENU_ITEM {actions::apply(child as *View);}
-    if (*(host as *View)).kind==props::K_CAROUSEL {paging::insert(host as *View,child as *View,index);return;}
+    if (*(child as *View)).kind==chrome::K_WINDOW_BUTTONS {window_buttons::watch(child as *View,record::visual(host as *View));}
+    if commands::supports((*(child as *View)).kind) {return;}
     var native_index=index;
+    var scan: usize=0;while scan<index {if let option::Option::Some(n)=core::child_of((*(host as *View)).node,scan) {if commands::supports(core::kind_of(n)) {native_index=native_index-1;}}scan=scan+1;}
+    if (*(host as *View)).kind==props::K_CAROUSEL {paging::insert(host as *View,child as *View,native_index);return;}
     if (*(host as *View)).kind==props::K_MENU {native::check(menus::entries(host as *View).insert_at(index as u32,object(child)));menus::count_changed(host as *View);return;}
     if (*(host as *View)).kind==props::K_SWIPEABLE || (*(host as *View)).kind==props::K_CONTEXT_MENU {
         // Facet interleaves visible content and actions. WinUI keeps separate
         // vectors, so neither vector can use the unfiltered child index.
         let action=actions::flyout_item((*(child as *View)).kind);native_index=0;var i: usize=0;
-        while i<index {match core::child_of((*(host as *View)).node,i) {option::Option::Some(n)=>{if actions::flyout_item(core::kind_of(n))==action {native_index=native_index+1;}},option::Option::None=>{}}i=i+1;}
+        while i<index {match core::child_of((*(host as *View)).node,i) {option::Option::Some(n)=>{if !commands::supports(core::kind_of(n)) && actions::flyout_item(core::kind_of(n))==action {native_index=native_index+1;}},option::Option::None=>{}}i=i+1;}
         if action {if (*(host as *View)).kind==props::K_SWIPEABLE {swipe::insert(host as *View,child as *View,native_index);}native::check(actions::entries(host as *View).insert_at(native_index as u32,object(child)));if (*(host as *View)).kind==props::K_CONTEXT_MENU {menus::count_changed(host as *View);}return;}
     }
     let list: ui::IVector_Microsoft_UI_Xaml_UIElement=children(host);
     native::check(list.insert_at(native_index as u32,object(child)));
     let owner=host as *View;native_slot::bind(child as *View,if !(*owner).content.is_null() {(*owner).content.clone()} else {(*owner).object.clone()},native_slot::PANEL);
-    if (*(host as *View)).kind==props::K_TABS {tabs::insert(host as *View,child as *View,index);}
+    if (*(host as *View)).kind==props::K_TABS {tabs::insert(host as *View,child as *View,native_index);}
     if env::has_var("FACET_WINUI_TRACE") { let count: u32=native::must::[u32](list.size()); io::eprintln("WinUI children=${count}"); }
     return;
 }
 fn remove(ctx: *u8, host: *u8, child: *u8) {
     if (*(host as *View)).kind==props::K_TABS {tabs::remove(host as *View,child as *View);}
+    tables::detached(host as *View,child as *View);
     presentation::detach(child as *View);
     if (*(host as *View)).kind==props::K_SWIPEABLE && actions::flyout_item((*(child as *View)).kind) {swipe::remove(host as *View,child as *View);}
     shortcuts::release(child as *View);(*(child as *View)).parent=0 as *u8;
+    if commands::supports((*(child as *View)).kind) {commands::detach(child as *View);return;}
     if (*(host as *View)).kind==props::K_CAROUSEL {paging::remove(host as *View,child as *View);return;}
     if ((*(host as *View)).kind==props::K_SWIPEABLE || menus::supports((*(host as *View)).kind)) && actions::flyout_item((*(child as *View)).kind) {
         let list: ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase=if menus::supports((*(host as *View)).kind) {menus::entries(host as *View)} else {actions::entries(host as *View)};
@@ -439,7 +460,7 @@ fn remove(ctx: *u8, host: *u8, child: *u8) {
     return;
 }
 fn place(n: *core::Node, parent: flex::Frame) {
-    if actions::flyout_item(core::kind_of(n)) {return;}
+    if actions::flyout_item(core::kind_of(n)) || commands::supports(core::kind_of(n)) {return;}
     let frame: flex::Frame=(*n).frame(); let value: rt::Object=object(core::view_of(n));
     if env::has_var("FACET_WINUI_TRACE") {
         let key: str=(*n).key(); let x: f64=frame.left; let y: f64=frame.top; let w: f64=frame.width; let h: f64=frame.height;
@@ -451,6 +472,9 @@ fn place(n: *core::Node, parent: flex::Frame) {
     let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());
     native::check(canvas.set_left(value,frame.left-parent.left)); native::check(canvas.set_top(value,frame.top-parent.top));
     native::check(canvas.set_z_index(value,(*n).z_index()));
+    if core::kind_of(n)==props::K_LABEL {labels::place(core::view_of(n) as *View,frame.width,frame.height);}
+    button_text::place(core::view_of(n) as *View,frame.width);
+    if core::kind_of(n)==chrome::K_WINDOW_BUTTONS {window_buttons::refresh(core::view_of(n) as *View);}
     presentation::place(core::view_of(n) as *View,frame.width,frame.height);
     let element_ui: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(value));native::check(element_ui.set_visibility(if core::display_of(n)==flex::Display::None || !(*core::node_data(n)).common.is_visible {ui::visibility_collapsed} else {ui::visibility_visible}));
     var i: usize=0;
@@ -470,9 +494,9 @@ fn place(n: *core::Node, parent: flex::Frame) {
 }
 fn prepare_layout(n: *core::Node) {
     let kind: u32=core::kind_of(n);
-    if kind==props::K_CAROUSEL {paging::prepare(core::view_of(n) as *View);}
+    if kind==props::K_TABLE {tables::prepare(n);}
     if kind==props::K_TABS {tabs::prepare(core::view_of(n) as *View);}
-    if actions::flyout_item(kind) {(*n).set_display(flex::Display::None);}
+    if actions::flyout_item(kind) || commands::supports(kind) {(*n).set_display(flex::Display::None);}
     if kind==split::K_SPLIT {
         let p: *split::SplitProps=(*core::node_data(n)).props as *split::SplitProps;
         let f: flex::Frame=(*n).frame();
@@ -491,6 +515,7 @@ fn prepare_layout(n: *core::Node) {
     }
     var i: usize=0;
     while i<core::child_count_of(n) {match core::child_of(n,i) {option::Option::Some(c)=>{prepare_layout(c);},option::Option::None=>{}} i=i+1;}
+    if kind==props::K_CAROUSEL {paging::prepare(core::view_of(n) as *View);}
     return;
 }
 fn sender_key(sender: *u8) -> text::Text {

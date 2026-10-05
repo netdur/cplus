@@ -1,0 +1,68 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/split" as split;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/divider" as divider;
+import "facet_winui/record" as record;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+import "./splits" as geometry;
+fn handle() -> split::Split {return match split::find("split") {option::Option::Some(v)=>v,option::Option::None=>{assert false;#zero::[split::Split]()}};}
+fn surface(index: usize) -> rt::Object {let r=core::view_of(check::node("split")) as *record::View;let s=(*r).extra as *divider::State;return (*s).sidebars[index].clone();}
+fn identity(value: rt::Object) -> usize {return check::must::[rt::Object](value.query(rt::unknown_iid())).raw() as usize;}
+fn verify(index: usize,key: str,visible: bool) {
+    let value=surface(index);assert !value.is_null();let visual=check::must::[native::IUIElement](native::IUIElement::query(value));assert !check::must::[bool](visual.is_hit_test_visible());
+    assert check::must::[i32](visual.visibility())==(if visible {native::visibility_visible} else {native::visibility_collapsed});
+    if !visible {return;}let border=check::must::[native::IBorder](native::IBorder::query(value));assert !check::must::[rt::Object](border.background()).is_null();
+    let frame=(*check::node(key)).frame();let parent=(*check::node("split")).frame();let element=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(value));
+    geometry::near(check::must::[f64](element.width()),frame.width);geometry::near(check::must::[f64](element.height()),frame.height);
+    let canvas=check::must::[native::ICanvasStatics](native::Canvas::i_canvas_statics_factory());geometry::near(check::must::[f64](canvas.get_left(value)),frame.left-parent.left);geometry::near(check::must::[f64](canvas.get_top(value)),frame.top-parent.top);assert check::must::[i32](canvas.get_z_index(value))<0;
+}
+struct Probe {passed: bool,editor: usize,backing: usize,timer: services::Cancellable}
+impl Probe {
+    fn build(ref this) -> core::Node {return @ui {column {
+        label("Split roles")
+        split(key:"split",position:140.0f64) {
+            column(key:"leading") {label("Navigation") text_field("Initial",key:"edit")}
+            column(key:"trailing") {label("Content") label("Retained trailing",key:"tail")}
+        }.width(400.0f64).height(180.0f64)
+    }.padding(20.0f64)};}
+    fn ready(ref this) {this.timer=services::after(0.2f64,this.initial);}
+    fn initial(ref this) {
+        assert surface(0).is_null() && surface(1).is_null();this.editor=identity(check::object("edit"));let editor=check::must::[native::ITextBox](native::ITextBox::query(check::object("edit")));assert editor.set_text("Retained edit").is_ok();
+        let changed=handle().set_role(split::Pane::Leading,split::PaneRole::Sidebar);this.timer=services::after(0.2f64,this.leading);
+    }
+    fn leading(ref this) {
+        verify(0,"leading",true);assert surface(1).is_null();this.backing=identity(surface(0));
+        let changed=handle().set_role(split::Pane::Leading,split::PaneRole::Content).set_role(split::Pane::Trailing,split::PaneRole::Sidebar);this.timer=services::after(0.2f64,this.trailing);
+    }
+    fn trailing(ref this) {
+        verify(0,"leading",false);verify(1,"trailing",true);assert identity(check::object("edit"))==this.editor;
+        let editor=check::must::[native::ITextBox](native::ITextBox::query(check::object("edit")));assert check::must::[text::Text](editor.text())=="Retained edit";
+        let changed=handle().set_role(split::Pane::Leading,split::PaneRole::Sidebar).set_position(170.0f64).set_width(460.0f64);this.timer=services::after(0.2f64,this.both);
+    }
+    fn both(ref this) {verify(0,"leading",true);verify(1,"trailing",true);assert identity(surface(0))==this.backing;let changed=handle().collapse(split::Pane::Leading);this.timer=services::after(0.2f64,this.collapsed);}
+    fn collapsed(ref this) {verify(0,"leading",false);verify(1,"trailing",true);let changed=handle().expand(split::Pane::Leading).set_axis(split::SplitAxis::Rows).set_position(70.0f64);this.timer=services::after(0.2f64,this.rows);}
+    fn rows(ref this) {
+        verify(0,"leading",true);verify(1,"trailing",true);
+        (*check::node("leading")).set_background_color(vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64));this.timer=services::after(0.2f64,this.background);
+    }
+    fn background(ref this) {
+        let border=check::must::[native::IBorder](native::IBorder::query(check::object("leading")));let brush=check::must::[native::ISolidColorBrush](native::ISolidColorBrush::query(check::must::[rt::Object](border.background())));assert check::must::[native::Color](brush.color()).r==255;
+        verify(0,"leading",true);assert mount::remove("leading");this.timer=services::after(0.2f64,this.removed);
+    }
+    fn removed(ref this) {
+        verify(0,"trailing",true);verify(1,"",false);
+        assert mount::insert_child(check::node("split"),@ui {column(key:"replacement") {label("Replacement") label("Second child")}},0);this.timer=services::after(0.2f64,this.replaced);
+    }
+    fn replaced(ref this) {verify(0,"replacement",true);verify(1,"trailing",true);let changed=handle().set_role(split::Pane::Leading,split::PaneRole::Content).set_role(split::Pane::Trailing,split::PaneRole::Content);this.timer=services::after(0.2f64,this.finish);}
+    fn finish(ref this) {verify(0,"",false);verify(1,"",false);check::log("PASS: split sidebar material, live roles, retained edits/identity, resize/axis/collapse, app background, child replacement and reset");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet split roles",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: split roles teardown");return 0;}

@@ -1,10 +1,13 @@
 import "stdlib/box" as box;
 import "stdlib/option" as option;
+import "stdlib/text" as text;
 import "facet/elements" as ui;
 import "facet/facet" as core;
 import "facet/toggle" as toggle;
 import "facet/checkbox" as checkbox;
 import "facet/radio" as radio;
+import "facet/symbol" as symbol;
+import "facet_winui/symbols" as symbols;
 import "facet/vocabulary" as vocab;
 import "facet/services" as services;
 import "facet_winui/facet_winui" as host;
@@ -18,6 +21,14 @@ fn stroke(key: str,name: str) -> native::Color {return texts::brush_color(check:
 fn same(a: native::Color,b: native::Color) {assert a.a==b.a && a.r==b.r && a.g==b.g && a.b==b.b;}
 fn red() -> vocab::Color {return vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);}
 fn toggle_handle() -> toggle::Toggle {return match toggle::find("toggle") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[toggle::Toggle]();}};}
+fn radio_corners(a: f64,b: f64,c: f64,d: f64) {
+    let root=check::must::[native::IGrid](native::IGrid::query(texts::named_part(check::object("radio"),"RootGrid")));
+    let corners=check::must::[native::CornerRadius](root.corner_radius());
+    assert corners.top_left==a && corners.top_right==b && corners.bottom_left==c && corners.bottom_right==d;
+}
+fn symbol_handle() -> symbol::Symbol {return match symbol::find("symbol") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return #zero::[symbol::Symbol]();}};}
+fn symbol_child() -> rt::Object {let border=check::must::[native::IBorder](native::IBorder::query(check::object("symbol")));return check::must::[rt::Object](border.child());}
+fn system_symbol() -> native::ISymbolIcon {let scale=check::must::[native::IViewbox](native::IViewbox::query(symbol_child()));return check::must::[native::ISymbolIcon](native::ISymbolIcon::query(check::must::[rt::Object](scale.child())));}
 struct Probe {original: native::Color,check_original: native::Color,radio_original: native::Color,radio_width: f64,events: i32,passed: bool,timer: services::Cancellable}
 impl Probe {
     fn changed(ref this,sender: *u8) {this.events=this.events+1;}
@@ -25,20 +36,32 @@ impl Probe {
         toggle(false,key:"toggle",on_toggled:this.changed)
         toggle(true,key:"initial",on_color:red(),thumb_color:red())
         checkbox(true,key:"check")
-        radio(false,key:"radio",text:"Radio",border_width:0.0f64)
+        radio(false,key:"radio",text:"Radio",border_width:0.0f64,corner_radius:vocab::Corners::all(7.0f64))
+        symbol::system_symbol("Home",key:"symbol",size:32.0f64)
     }.padding(20.0f64).gap(12.0f64)};}
     fn ready(ref this) {this.timer=services::after(0.4f64,this.inspect);}
     fn inspect(ref this) {
+        radio_corners(7.0f64,7.0f64,7.0f64,7.0f64);
+        assert check::must::[i32](system_symbol().symbol())==native::symbol_home;
+        assert symbols::resolve("Accept")==native::symbol_accept;
+        assert symbols::resolve("BackToWindow")==native::symbol_back_to_window;
+        assert symbols::resolve("doesNotExist")==-1 && symbols::resolve("Home\"/>")==-1;
+        let changed=symbol_handle().set_name("Print").set_size(48.0f64).set_color(red());
         this.original=fill("toggle","OuterBorder");
         assert fill("initial","SwitchKnobBounds").r==255u8;assert fill("initial","SwitchKnobBounds").g==0u8;
         this.check_original=stroke("check","NormalRectangle");
         this.radio_original=stroke("radio","OuterEllipse");this.radio_width=check::must::[f64](shape("radio","OuterEllipse").stroke_thickness());
         if let option::Option::Some(c)=checkbox::find("check") {let updated=c.set_color(red());}
-        if let option::Option::Some(r)=radio::find("radio") {let updated=r.set_border_color(red()).set_border_width(3.0f64);}
+        if let option::Option::Some(r)=radio::find("radio") {let updated=r.set_border_color(red()).set_border_width(3.0f64).set_corner_radius(vocab::Corners {top_leading:2.0f64,top_trailing:4.0f64,bottom_leading:6.0f64,bottom_trailing:8.0f64});}
         let updated=toggle_handle().set_off_color(red()).set_on_color(red()).set_thumb_color(red());
         this.timer=services::after(0.3f64,this.updated);
     }
     fn updated(ref this) {
+        radio_corners(2.0f64,4.0f64,6.0f64,8.0f64);
+        assert check::must::[i32](system_symbol().symbol())==native::symbol_print;
+        let frame=check::must::[native::IFrameworkElement](native::IFrameworkElement::query(symbol_child()));assert check::must::[f64](frame.width())==48.0f64;
+        let icon=check::must::[native::IIconElement](native::IIconElement::query(system_symbol().object()));assert texts::brush_color(check::must::[rt::Object](icon.foreground())).r==255u8;
+        let changed=symbol_handle().set_icon(0xe88au32).set_font("Segoe UI");
         assert stroke("check","NormalRectangle").r==255u8;assert fill("check","NormalRectangle").g==0u8;
         assert stroke("radio","OuterEllipse").r==255u8;assert check::must::[f64](shape("radio","OuterEllipse").stroke_thickness())==3.0f64;
         assert fill("toggle","OuterBorder").r==255u8;assert fill("toggle","OuterBorder").g==0u8;
@@ -48,14 +71,26 @@ impl Probe {
         this.timer=services::after(0.4f64,this.toggled);
     }
     fn toggled(ref this) {
+        let label=check::must::[native::ITextBlock](native::ITextBlock::query(symbol_child()));assert check::must::[f64](label.font_size())==48.0f64;
+        let changed=symbol_handle().set_name("gearshape");
         assert this.events==1;assert toggle_handle().on();assert fill("toggle","SwitchKnobBounds").r==255u8;
         let knob=check::must::[native::IBorder](native::IBorder::query(texts::named_part(check::object("toggle"),"SwitchKnobOn")));assert texts::brush_color(check::must::[rt::Object](knob.background())).g==0u8;
         let updated=toggle_handle().set_on(false).set_off_color(vocab::Color::clear()).set_on_color(vocab::Color::clear()).set_thumb_color(vocab::Color::clear());
         if let option::Option::Some(c)=checkbox::find("check") {let updated=c.set_color(vocab::Color::clear());}
-        if let option::Option::Some(r)=radio::find("radio") {let updated=r.set_border_color(vocab::Color::clear()).set_border_width(0.0f64);}
+        if let option::Option::Some(r)=radio::find("radio") {let updated=r.set_border_color(vocab::Color::clear()).set_border_width(0.0f64).set_corner_radius(vocab::Corners::none());}
         check::log("PASS: initial and live choice colors, radio thickness, native toggle callback");
         this.timer=services::after(0.4f64,this.cleared);
     }
-    fn cleared(ref this) {same(fill("toggle","OuterBorder"),this.original);same(stroke("check","NormalRectangle"),this.check_original);same(stroke("radio","OuterEllipse"),this.radio_original);assert check::must::[f64](shape("radio","OuterEllipse").stroke_thickness())==this.radio_width;assert this.events==1;this.passed=true;check::log("PASS: cleared choice color restores theme");assert host::close().is_ok();}
+    fn cleared(ref this) {
+        radio_corners(0.0f64,0.0f64,0.0f64,0.0f64);
+        assert check::must::[i32](system_symbol().symbol())==native::symbol_setting;
+        same(fill("toggle","OuterBorder"),this.original);same(stroke("check","NormalRectangle"),this.check_original);same(stroke("radio","OuterEllipse"),this.radio_original);assert check::must::[f64](shape("radio","OuterEllipse").stroke_thickness())==this.radio_width;assert this.events==1;
+        let changed=symbol_handle().set_name("not-a-system-symbol");this.timer=services::after(0.2f64,this.missing);
+    }
+    fn missing(ref this) {
+        let label=check::must::[native::ITextBlock](native::ITextBlock::query(symbol_child()));
+        assert check::must::[text::Text](label.text())=="�";
+        this.passed=true;check::log("PASS: radio per-corner radius/reset, Windows system names, bundled switching, unknown-name fallback and theme reset");assert host::close().is_ok();
+    }
 }
 fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet WinUI choice colors",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: choice color teardown");return 0;}

@@ -90,6 +90,10 @@ fn apply(r: *record::View) {
     if k==props::K_SPINNER {let p: *props::SpinnerProps=raw as *props::SpinnerProps;let v: ui::IProgressRing=native::must::[ui::IProgressRing](ui::IProgressRing::query(value));native::check(v.set_is_active((*p).is_running));let size: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));native::check(size.set_max_width(24.0f64));native::check(size.set_max_height(24.0f64));native::check(control.set_foreground(style::brush((*p).color)));}
     if k==props::K_RADIO {
         let p: *props::RadioProps=raw as *props::RadioProps;
+        // The radius belongs to the control's outer surface, not its round
+        // selection indicator. RootGrid binds this native property directly.
+        native::check(control.set_corner_radius(style::corners((*p).corner_radius)));
+        native::check(control.set_background(style::paint(if (*d).common.background.start.is_set() {(*d).common.background} else {vocab::Brush::solid((*d).common.background_color)})));
         let defaults: ui::IControlStatics=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());
         if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
         native::check(control.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](control.font_size()))));

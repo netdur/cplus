@@ -311,6 +311,20 @@ impl TextButton {
         return { (*p).text_transform };
     }
 
+    fn set_line_break(this, v: vocab::LineBreak) -> TextButton {
+        let p: *TextButtonProps = this._props();
+        if p.is_null() { return this; }
+        (*p).line_break = v;
+        core::touch(this._p, P_LINE_BREAK);
+        return this;
+    }
+
+    fn line_break(this) -> vocab::LineBreak {
+        let p: *TextButtonProps = this._props();
+        if p.is_null() { return vocab::LineBreak::NoWrap; }
+        return (*p).line_break;
+    }
+
     // ---- toggling -------------------------------------------------------------
 
     // Read where the last click left it. Answers the CONTROL, not a copy: with

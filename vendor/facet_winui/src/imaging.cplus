@@ -36,3 +36,17 @@ fn apply(r: *record::View,uri: fn(str)->rt::Object) {
 fn release(r: *record::View) {
     if (*r).extra.is_null() {return;}let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;
 }
+
+extern fn GetFullPathNameW(path: *u16,count: u32,buffer: *u16,part: **u16) -> u32;
+extern fn WindowsGetStringRawBuffer(value: usize,length: *u32) -> *u16;
+extern fn WindowsCreateString(source: *u16,length: u32,value: *usize) -> i32;
+fn uri(source: str) -> rt::Object {
+    var address: text::Text=text::from_str(source);
+    if !source.has_prefix("https:") && !source.has_prefix("http:") && !source.has_prefix("ms-appx:") && !source.has_prefix("file:") {
+        let path: rt::HString=native::must::[rt::HString](rt::HString::new(source));var length: u32=0;let input: *u16=WindowsGetStringRawBuffer(path.raw(),#addr_of(length));
+        var buffer: [u16;32768]=#zero::[[u16;32768]]();let size: u32=GetFullPathNameW(input,32768,#addr_of(buffer) as *u16,0 as **u16);assert size>0 && size<32768;
+        var h: usize=0;native::check(rt::Status {code:WindowsCreateString(#addr_of(buffer) as *u16,size,#addr_of(h))});let owned: rt::HString=rt::HString::adopt(h);let full: text::Text=native::must::[text::Text](owned.to_text());
+        address=text::from_str("file:///");let _a=address.append(full.view());
+    }
+    let factory: ui::IUriRuntimeClassFactory=native::must::[ui::IUriRuntimeClassFactory](ui::Uri::i_uri_runtime_class_factory_factory());return native::must::[rt::Object](factory.create_uri(address.view()));
+}

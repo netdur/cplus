@@ -1,0 +1,58 @@
+// Windows system names are resolved by WinUI's own Symbol enum parser.
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/symbol" as symbol;
+import "facet/vocabulary" as vocab;
+import "./native" as native;
+import "./record" as record;
+import "./style" as style;
+import "./typography" as typography;
+
+fn resolve(name: str) -> i32 {
+    // Preserve the original aliases while exposing the complete Windows set.
+    let windows=if name=="gearshape" {"Setting"} else if name=="star" {"Favorite"} else if name=="archivebox" {"Library"} else if name=="trash" {"Delete"} else if name=="plus" {"Add"} else if name=="magnifyingglass" {"Find"} else if name=="house" || name=="house.fill" {"Home"} else {name};
+    if windows.is_empty() {return -1;}
+    // A name is an enum identifier, never markup or a numeric enum cast.
+    var i: usize=0;while i<windows.count() {
+        let c=match windows.byte_at(i) {option::Option::Some(v)=>v,option::Option::None=>0u8};
+        if !((c>=65u8 && c<=90u8) || (c>=97u8 && c<=122u8) || (i>0 && c>=48u8 && c<=57u8)) {return -1;}i=i+1;
+    }
+    let reader=native::must::[ui::IXamlReaderStatics](ui::XamlReader::i_xaml_reader_statics_factory());
+    let markup="<SymbolIcon xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" Symbol=\"${windows}\"/>";
+    match reader.load(markup) {
+        result::Result::Ok(value)=>{let icon=native::must::[ui::ISymbolIcon](ui::ISymbolIcon::query(value));return native::must::[i32](icon.symbol());},
+        result::Result::Err(e)=>{return -1;}
+    }
+}
+fn apply(r: *record::View) {
+    let p: *symbol::SymbolProps=(*core::node_data((*r).node)).props as *symbol::SymbolProps;
+    let host=native::must::[ui::IBorder](ui::IBorder::query((*r).object));
+    let code=if (*p).set==symbol::IconSet::System {resolve((*p).name.view())} else {-1};
+    let color=if (*p).color.is_set() {(*p).color} else {vocab::Color::ink()};
+    let size=if (*p).size>0.0f64 {(*p).size} else {24.0f64};
+    if code>=0 {
+        match ui::ISymbolIcon::query((*r).content) {
+            result::Result::Ok(icon)=>{native::check(icon.set_symbol(code));},
+            result::Result::Err(e)=>{
+                let icon=native::must::[ui::SymbolIcon](ui::SymbolIcon::new());native::check(icon.set_symbol(code));(*r).content=icon.object();
+                let scale=native::must::[ui::Viewbox](ui::Viewbox::new());native::check(scale.set_child((*r).content));native::check(host.set_child(scale.object()));
+            }
+        }
+        let scale=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(native::must::[rt::Object](host.child())));
+        native::check(scale.set_width(size));native::check(scale.set_height(size));
+        let icon=native::must::[ui::IIconElement](ui::IIconElement::query((*r).content));native::check(icon.set_foreground(style::brush(color)));
+    } else {
+        match ui::ITextBlock::query((*r).content) {
+            result::Result::Ok(label)=>{},
+            result::Result::Err(e)=>{let label=native::must::[ui::TextBlock](ui::TextBlock::new());(*r).content=label.object();native::check(host.set_child((*r).content));}
+        }
+        let label=native::must::[ui::ITextBlock](ui::ITextBlock::query((*r).content));
+        // Unknown system names show the documented missing-glyph box.
+        native::check(label.set_text(typography::glyph(if (*p).set==symbol::IconSet::System {0xfffdu32} else {(*p).icon}).view()));
+        native::check(label.set_font_family(typography::font(if (*p).set==symbol::IconSet::System {"Segoe UI"} else if !(*p).font.is_empty() {(*p).font.view()} else {"ms-appx:///MaterialSymbolsOutlined.ttf#Material Symbols Outlined"})));
+        native::check(label.set_font_size(size));native::check(label.set_foreground(style::brush(color)));
+    }
+}

@@ -5,8 +5,10 @@ import "stdlib/io" as io;
 import "winrt/runtime" as rt;
 import "winui/winui" as ui;
 import "facet/facet" as core;
+import "facet/props" as props;
 import "facet/vocabulary" as vocab;
 import "facet_winui/agent_hooks" as hooks;
+import "facet_winui/record" as record;
 import "facet_agent/native_surface" as selected;
 import "facet_agent/agent" as facade;
 import "agent_winui_mcp/agent_winui_mcp" as http;
@@ -42,16 +44,20 @@ fn _policy(a: vocab::Agent) -> u32 {
 fn _apply(object: rt::Object,node: *core::Node) {
     if !_ACTIVE { return; }
     let data: *core::Data=core::node_data(node);
+    // Window commands can have a different native parent from their logical
+    // owner. Carry every owner boundary with them, including live policy edits.
+    var policy=_policy((*data).common.agent);let r=core::view_of(node) as *record::View;
+    if r.is_not_null() && ((*r).kind==props::K_MENU || (*r).kind==props::K_TOOLBAR_ITEM) {var parent=(*r).parent as *record::View;while parent.is_not_null() {policy=policy|_policy((*core::node_data((*parent).node)).common.agent);parent=(*parent).parent as *record::View;}}
     let key: str=(*node).key();
     // Even an unkeyed container can carry a privacy boundary. Pin it under a
     // reserved process-local identity, then make it observe-only.
     if key=="" {
         let address: usize=object.raw() as usize;
         let id: text::Text="facet:policy:${address}";
-        assert _SURFACE.update(object,id.view(),_policy((*data).common.agent),true,false).is_ok();
+        assert _SURFACE.update(object,id.view(),policy,true,false).is_ok();
         return;
     }
-    assert _SURFACE.update(object,key,_policy((*data).common.agent)).is_ok();
+    assert _SURFACE.update(object,key,policy).is_ok();
 }
 fn _alias(object: rt::Object,node: *core::Node,key: str) {
     if !_ACTIVE {return;}let data=core::node_data(node);

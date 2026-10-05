@@ -55,7 +55,7 @@ $result=@(foreach ($node in $nodes) {
         if (!$c.IsPassword -and $node.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$p)) {$value=([System.Windows.Automation.ValuePattern]$p).Current.Value}
         $toggle=$null;$p=$null
         if ($node.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$p)) {$toggle=([System.Windows.Automation.TogglePattern]$p).Current.ToggleState.ToString()}
-        @{id=$c.AutomationId;name=$c.Name;type=$c.ControlType.ProgrammaticName;enabled=$c.IsEnabled;offscreen=$c.IsOffscreen;password=$c.IsPassword;value=$value;toggle=$toggle;bounds=@($b.X,$b.Y,$b.Width,$b.Height)}
+        @{id=$c.AutomationId;name=$c.Name;type=$c.ControlType.ProgrammaticName;enabled=$c.IsEnabled;offscreen=$c.IsOffscreen;focused=$c.HasKeyboardFocus;password=$c.IsPassword;value=$value;toggle=$toggle;bounds=@($b.X,$b.Y,$b.Width,$b.Height)}
     }
 })
 ConvertTo-Json -InputObject $result -Depth 4 -Compress

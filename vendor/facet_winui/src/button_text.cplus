@@ -1,0 +1,117 @@
+// Native caption layout with grapheme-safe head/middle fitting. ICU ships with
+// the Windows versions supported by WinUI; no private font/shaping engine.
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/text_button" as text_button;
+import "facet/vocabulary" as vocab;
+import "./native" as native;
+import "./record" as record;
+import "./typography" as typography;
+extern fn WindowsGetStringRawBuffer(value: usize,length: *u32) -> *u16;
+extern fn WindowsCreateString(value: *u16,length: u32,result: *usize) -> i32;
+extern fn ubrk_open(kind: i32,locale: *u8,value: *u16,length: i32,status: *i32) -> *u8;
+extern fn ubrk_next(iterator: *u8) -> i32;
+extern fn ubrk_close(iterator: *u8);
+fn supports(r: *record::View) -> bool {return (*r).kind==props::K_BUTTON || (*r).kind==text_button::K_TEXT_BUTTON;}
+fn slice(value: *u16,start: u32,end: u32) -> text::Text {
+    var raw: usize=0;let address=(#addr(value)+(start as usize)*2) as *u16;
+    native::check(rt::Status {code:WindowsCreateString(address,end-start,#addr_of(raw))});
+    let owned=rt::HString::adopt(raw);return native::must::[text::Text](owned.to_text());
+}
+fn boundaries(value: *u16,length: u32) -> vec::Vec[u32] {
+    var result=vec::new::[u32]();assert result.append(0u32).is_ok();
+    assert length<=2147483647u32;var error: i32=0;var locale: u8=0;
+    let iterator=ubrk_open(0,#addr_of(locale),value,length as i32,#addr_of(error));
+    assert error<=0 && iterator.is_not_null();var end=ubrk_next(iterator);
+    while end>=0 {assert result.append(end as u32).is_ok();end=ubrk_next(iterator);}
+    ubrk_close(iterator);return result;
+}
+fn at(values: vec::Vec[u32],index: usize) -> u32 {return match values.at(index) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return 0u32;}};}
+fn character_wrap(value: str) -> text::Text {
+    let owned=native::must::[rt::HString](rt::HString::new(value));var length: u32=0;let buffer=WindowsGetStringRawBuffer(owned.raw(),#addr_of(length));
+    let edges=boundaries(buffer,length);var result=text::from_str("");var i: usize=1;
+    while i<edges.count() {let part=slice(buffer,at(edges,i-1),at(edges,i));assert result.append(part.view()).is_ok();
+        if i+1<edges.count() && part.view()!="\n" && part.view()!="\r" && part.view()!="\r\n" {assert result.append(typography::glyph(0x200bu32).view()).is_ok();}i=i+1;
+    }return result;
+}
+fn candidate(buffer: *u16,edges: vec::Vec[u32],keep: usize,middle: bool) -> text::Text {
+    let count=edges.count()-1;let left=if middle {(keep+1)/2} else {0 as usize};let right=keep-left;
+    var result=slice(buffer,0u32,at(edges,left));assert result.append("…").is_ok();
+    let suffix=slice(buffer,at(edges,count-right),at(edges,count));assert result.append(suffix.view()).is_ok();return result;
+}
+fn width(label: ui::ITextBlock,value: str) -> f64 {
+    native::check(label.set_text(value));let visual=native::must::[ui::IUIElement](ui::IUIElement::query(label.object()));
+    let infinity=#bitcast::[f32](0x7f800000u32);native::check(visual.measure(ui::Size {width:infinity,height:infinity}));
+    return native::must::[ui::Size](visual.desired_size()).width as f64;
+}
+fn fit(label: ui::ITextBlock,value: str,available: f64,middle: bool) -> text::Text {
+    if width(label,value)<=available {return text::from_str(value);}
+    if width(label,"…")>available {return text::from_str("");}
+    let owned=native::must::[rt::HString](rt::HString::new(value));var length: u32=0;let buffer=WindowsGetStringRawBuffer(owned.raw(),#addr_of(length));
+    let edges=boundaries(buffer,length);var low: usize=0;var high=edges.count()-1;
+    while low<high {let count=(low+high+1)/2;let trial=candidate(buffer,edges,count,middle);
+        if width(label,trial.view())<=available {low=count;} else {high=count-1;}
+    }return candidate(buffer,edges,low,middle);
+}
+fn fit_lines(label: ui::ITextBlock,value: str,available: f64,middle: bool) -> text::Text {
+    let owned=native::must::[rt::HString](rt::HString::new(value));var length: u32=0;let buffer=WindowsGetStringRawBuffer(owned.raw(),#addr_of(length));
+    var output=text::from_str("");var start: u32=0;var i: u32=0;
+    while i<length {let unit=*((#addr(buffer)+(i as usize)*2) as *u16);
+        if unit==10u16 || unit==13u16 {let line=slice(buffer,start,i);let fitted=fit(label,line.view(),available,middle);assert output.append(fitted.view()).is_ok();
+            let end=slice(buffer,i,i+1);assert output.append(end.view()).is_ok();start=i+1;
+        }i=i+1;
+    }let line=slice(buffer,start,length);let fitted=fit(label,line.view(),available,middle);assert output.append(fitted.view()).is_ok();return output;
+}
+fn mode(r: *record::View) -> vocab::LineBreak {
+    let raw=(*core::node_data((*r).node)).props;
+    return if (*r).kind==props::K_BUTTON {(*(raw as *props::ButtonProps)).line_break} else {(*(raw as *text_button::TextButtonProps)).line_break};
+}
+fn source(r: *record::View) -> text::Text {
+    let raw=(*core::node_data((*r).node)).props;
+    if (*r).kind==props::K_BUTTON {let p=raw as *props::ButtonProps;return typography::transformed((*p).title.view(),(*p).text_transform);}
+    let p=raw as *text_button::TextButtonProps;return typography::transformed((*p).title.view(),(*p).text_transform);
+}
+fn caption_width(r: *record::View,available: f64) -> f64 {
+    let control=native::must::[ui::IControl](ui::IControl::query((*r).object));let pad=native::must::[ui::Thickness](control.padding());let border=native::must::[ui::Thickness](control.border_thickness());
+    // Flex can ask for intrinsic height with an unconstrained native width
+    // before assigning the explicit width. Bound the caption in that pass too.
+    var outer=available;let requested=(*(*r).node).style.width;let maximum=(*(*r).node).style.max_width;
+    // Percentages belong to the parent constraint, not this already-resolved
+    // child width. Only absolute lengths can tighten an intrinsic pass here.
+    let unknown=#bitcast::[f64](0x7ff8000000000000u64);
+    if requested.is_defined() && !requested.is_auto() {let resolved=requested.resolve(unknown);if resolved>=0.0f64 && resolved<outer {outer=resolved;}}
+    if maximum.is_defined() && !maximum.is_auto() {let resolved=maximum.resolve(unknown);if resolved>=0.0f64 && resolved<outer {outer=resolved;}}
+    var result=outer-pad.left-pad.right-border.left-border.right;
+    if (*r).kind==props::K_BUTTON {let p=(*core::node_data((*r).node)).props as *props::ButtonProps;
+        if ((*p).symbol!=0 || !(*p).image.is_empty()) && ((*p).content_layout==vocab::ContentLayout::ImageLeft || (*p).content_layout==vocab::ContentLayout::ImageRight) {
+            result=result-(if (*p).symbol!=0 {20.0f64} else {24.0f64})-8.0f64;
+        }
+    }return if result>0.0f64 {result} else {0.0f64};
+}
+fn prepare(r: *record::View,available: f64) {
+    if !supports(r) || (*r).content.is_null() {return;}
+    let label=native::must::[ui::ITextBlock](ui::ITextBlock::query((*r).content));let value=source(r);let breaking=mode(r);
+    native::check(label.set_text(if breaking==vocab::LineBreak::CharacterWrap {character_wrap(value.view()).view()} else {value.view()}));
+    typography::breaking(label,breaking);
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).content));native::check(element.set_max_width(caption_width(r,available)));
+    // Trimming is presentation only: native accessibility keeps the full title.
+    let automation=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());native::check(automation.set_name((*r).content,value.view()));
+    if (*core::node_data((*r).node)).common.accessibility_label.is_empty() {native::check(automation.set_name((*r).object,value.view()));}
+}
+fn place(r: *record::View,available: f64) {
+    if !supports(r) || (*r).content.is_null() {return;}
+    prepare(r,available);let breaking=mode(r);
+    if breaking!=vocab::LineBreak::HeadTruncation && breaking!=vocab::LineBreak::MiddleTruncation {return;}
+    let label=native::must::[ui::ITextBlock](ui::ITextBlock::query((*r).content));
+    let measure=native::must::[ui::TextBlock](ui::TextBlock::new());let copy=native::must::[ui::ITextBlock](ui::ITextBlock::query(measure.object()));
+    native::check(copy.set_font_family(native::must::[rt::Object](label.font_family())));native::check(copy.set_font_size(native::must::[f64](label.font_size())));
+    native::check(copy.set_font_weight(native::must::[ui::FontWeight](label.font_weight())));native::check(copy.set_font_style(native::must::[i32](label.font_style())));native::check(copy.set_font_stretch(native::must::[i32](label.font_stretch())));
+    native::check(copy.set_character_spacing(native::must::[i32](label.character_spacing())));native::check(copy.set_is_text_scale_factor_enabled(native::must::[bool](label.is_text_scale_factor_enabled())));
+    let original=source(r);let result=fit_lines(copy,original.view(),caption_width(r,available),breaking==vocab::LineBreak::MiddleTruncation);
+    native::check(label.set_text(result.view()));native::check(label.set_text_trimming(ui::text_trimming_none));
+}

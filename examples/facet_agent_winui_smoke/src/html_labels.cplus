@@ -1,0 +1,57 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "winui/winui" as native;
+import "winrt/runtime" as rt;
+import "./parity" as check;
+fn label() -> native::ITextBlock {return check::must::[native::ITextBlock](native::ITextBlock::query(check::object("html")));}
+fn properties() -> *props::LabelProps {return (*core::node_data(check::node("html"))).props as *props::LabelProps;}
+fn runs() -> native::IVector_Microsoft_UI_Xaml_Documents_Inline {return check::must::[native::IVector_Microsoft_UI_Xaml_Documents_Inline](native::IVector_Microsoft_UI_Xaml_Documents_Inline::query(check::must::[rt::Object](label().inlines())));}
+fn content() -> text::Text {var out=text::new();let v=runs();var i: u32=0;while i<check::must::[u32](v.size()) {let run=check::must::[native::IRun](native::IRun::query(check::must::[rt::Object](v.get_at(i))));assert out.append(check::must::[text::Text](run.text()).view()).is_ok();i=i+1;}return out;}
+fn element(index: u32) -> native::ITextElement {return check::must::[native::ITextElement](native::ITextElement::query(check::must::[rt::Object](runs().get_at(index))));}
+fn set(value: str) {let p=properties();(*p).text=text::from_str(value);core::touch(check::node("html"),0xffffffffffffffffu64);}
+struct Probe {passed: bool,identity: usize,timer: services::Cancellable}
+impl Probe {
+    fn build(ref this) -> core::Node {return ui::label("A <b>bold <i>both</i></b> &amp; &#x1F680;<br>next",key:"html",font_size:16.0f64,text_format:vocab::TextFormat::Html,selectable:true).width(400.0f64);}
+    fn ready(ref this) {this.timer=services::after(0.2f64,this.initial);}
+    fn initial(ref this) {
+        assert content()=="A bold both & 🚀\nnext";assert check::must::[native::FontWeight](element(1).font_weight()).weight==700;
+        assert check::must::[i32](element(2).font_style())==native::font_style_italic;assert check::must::[native::FontWeight](element(2).font_weight()).weight==700;
+        assert check::must::[bool](label().is_text_selection_enabled());this.identity=check::must::[rt::Object](check::object("html").query(rt::unknown_iid())).raw() as usize;
+        set("<P>Hello <U><S>both</S></U></P><script>bad <b>hidden</b></script><!-- comment --><pre>  é\n Ω</pre><span title='a>b'>&lt;safe&gt;</span>");this.timer=services::after(0.2f64,this.changed);
+    }
+    fn changed(ref this) {
+        let value=content();check::log(value.view());assert value=="Hello both\n  é\n Ω\n<safe>";
+        assert check::must::[u32](element(1).text_decorations())==(native::text_decorations_underline | native::text_decorations_strikethrough);
+        assert check::must::[rt::Object](check::object("html").query(rt::unknown_iid())).raw() as usize==this.identity;
+        let p=properties();(*p).text_format=vocab::TextFormat::Text;set("<b>literal &amp;</b>");this.timer=services::after(0.2f64,this.plain);
+    }
+    fn plain(ref this) {
+        assert check::must::[text::Text](label().text())=="<b>literal &amp;</b>";
+        let p=properties();(*p).text_format=vocab::TextFormat::Html;(*p).text_transform=vocab::TextTransform::Uppercase;set("<b>école</b> &unknown; &#0; &#xD800; < broken");this.timer=services::after(0.2f64,this.reset);
+    }
+    fn reset(ref this) {
+        assert content()=="ÉCOLE &UNKNOWN; � � < BROKEN";
+        let p=properties();var spans=vocab::Spans::new();assert spans.add_text("Explicit spans win").is_ok();(*p).formatted_text=spans;set("<i>HTML loses</i>");this.timer=services::after(0.2f64,this.formatted);
+    }
+    fn formatted(ref this) {
+        assert content()=="Explicit spans win";let p=properties();(*p).formatted_text=vocab::Spans::new();(*p).text_transform=vocab::TextTransform::None;
+        var malformed=text::new();var i: usize=0;while i<20000 {assert malformed.append("<").is_ok();i=i+1;}set(malformed.view());this.timer=services::after(0.2f64,this.malformed);
+    }
+    fn malformed(ref this) {
+        let value=content();assert #str_len(value.view())==20000;assert check::must::[u32](runs().size())==1;
+        set("<b>outer<i>nested</b>normal</i><style>hidden</style><br/>after");this.timer=services::after(0.2f64,this.mismatched);
+    }
+    fn mismatched(ref this) {
+        assert content()=="outernestednormal\nafter";assert check::must::[native::FontWeight](element(2).font_weight()).weight!=700;assert check::must::[i32](element(2).font_style())==native::font_style_normal;
+        set("");this.timer=services::after(0.2f64,this.finish);
+    }
+    fn finish(ref this) {assert content()=="";assert check::must::[u32](runs().size())==0;check::log("PASS: native HTML nested styles, entities, whitespace, raw-text exclusion, literal reset, transform, spans precedence and clearing");this.passed=true;assert host::close().is_ok();}
+}
+fn run() -> i32 {let owner=match box::new::[Probe](#zero::[Probe]()) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};let p=owner.ptr();assert host::run((*p).build(),"Facet HTML labels",on_ready:(*p).ready).is_ok();assert (*p).passed;assert host::live_views()==0;assert host::live_subscriptions()==0;check::log("PASS: HTML labels teardown");return 0;}

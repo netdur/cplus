@@ -52,6 +52,8 @@ impl Probe {
         }.padding(20.0f64).gap(12.0f64)};
     }
     fn ready(ref this) {
+        let initial=check::must::[native::Thickness](native_label("label").padding());assert initial.top>0.0f64 && initial.top<30.0f64;
+        assert check::must::[native::Thickness](native_label("rich").padding()).top>0.0f64;
         let date=check::must::[native::ICalendarDatePicker](native::ICalendarDatePicker::query(check::object("date_reset")));this.min_date=check::must::[native::DateTime](date.min_date()).universal_time;this.max_date=check::must::[native::DateTime](date.max_date()).universal_time;
         let date_p: *props::DatePickerProps=(*core::node_data(check::node("date_reset"))).props as *props::DatePickerProps;(*date_p).minimum_date=vocab::Date {year:2026,month:1,day:1};(*date_p).maximum_date=vocab::Date {year:2026,month:12,day:31};dirty("date_reset");
         let popup_p: *props::PopupProps=(*core::node_data(check::node("popup_color"))).props as *props::PopupProps;(*popup_p).title_color=vocab::Color::rgba(1.0f64,0.0f64,0.0f64,1.0f64);(*popup_p).text_color=vocab::Color::rgba(0.0f64,0.0f64,1.0f64,1.0f64);dirty("popup_color");
@@ -66,7 +68,7 @@ impl Probe {
         let sp: *props::SpanProps=(*core::node_data(check::node("span"))).props as *props::SpanProps;
         (*sp).font_size=20.0f64;(*sp).font_family=text::from_str("Consolas");(*sp).font_scales=false;(*sp).is_italic=true;(*sp).character_spacing=2.0f64;
         (*sp).text_transform=vocab::TextTransform::Uppercase;(*sp).line_height=32.0f64;(*sp).text_decoration=vocab::TextDecoration::Underline;dirty("span");
-        let l: *props::LabelProps=(*core::node_data(check::node("label"))).props as *props::LabelProps;(*l).text_transform=vocab::TextTransform::Uppercase;(*l).line_height=32.0f64;dirty("label");
+        let l: *props::LabelProps=(*core::node_data(check::node("label"))).props as *props::LabelProps;(*l).vertical_align=vocab::TextAlign::End;(*l).selectable=true;(*l).text_transform=vocab::TextTransform::Uppercase;(*l).line_height=32.0f64;dirty("label");
         let image: *props::IconButtonProps=(*core::node_data(check::node("image"))).props as *props::IconButtonProps;
         (*image).source=match env::var("CPLUS_TEST_IMAGE") {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};
         (*image).symbol=0;(*image).fit=vocab::ImageFit::AspectFill;(*image).border_width=4.0f64;(*image).corner_radius=vocab::Corners::all(10.0f64);dirty("image");
@@ -75,6 +77,7 @@ impl Probe {
         this.timer=services::after(0.2f64,this.changed);
     }
     fn changed(ref this) {
+        let bottom=check::must::[native::Thickness](native_label("label").padding());assert bottom.top>27.0f64 && bottom.top<29.0f64;assert check::must::[bool](native_label("label").is_text_selection_enabled());
         let tooltip=check::must::[native::IToolTip](native::IToolTip::query(this.slider_tip));assert !check::must::[bool](tooltip.is_open());this.slider_tip=rt::Object::empty();check::log("PASS: recoloring closes the old slider thumb tooltip");
         let date=check::must::[native::ICalendarDatePicker](native::ICalendarDatePicker::query(check::object("date_reset")));assert check::must::[native::DateTime](date.min_date()).universal_time>this.min_date;assert check::must::[native::DateTime](date.max_date()).universal_time<this.max_date;
         let date_p: *props::DatePickerProps=(*core::node_data(check::node("date_reset"))).props as *props::DatePickerProps;(*date_p).minimum_date=#zero::[vocab::Date]();(*date_p).maximum_date=#zero::[vocab::Date]();(*date_p).date=#zero::[vocab::Date]();dirty("date_reset");
@@ -107,10 +110,11 @@ impl Probe {
         (*p).font_scales=true;(*p).character_spacing=0.0f64;(*p).bordered=false;(*p).text_transform=vocab::TextTransform::Lowercase;(*p).line_break=vocab::LineBreak::WordWrap;dirty("button");
         let span: *props::SpanProps=(*core::node_data(check::node("span"))).props as *props::SpanProps;assert (*span).text=="École Ω 🚀";(*span).font_size=0.0f64;(*span).font_family=text::new();(*span).is_italic=false;(*span).font_scales=true;(*span).character_spacing=0.0f64;
         (*span).line_height=0.0f64;(*span).text_transform=vocab::TextTransform::None;(*span).text_decoration=vocab::TextDecoration::None;dirty("span");
-        let l: *props::LabelProps=(*core::node_data(check::node("label"))).props as *props::LabelProps;assert (*l).text=="École Ω 🚀";(*l).line_height=0.0f64;(*l).text_transform=vocab::TextTransform::None;dirty("label");
+        let l: *props::LabelProps=(*core::node_data(check::node("label"))).props as *props::LabelProps;assert (*l).text=="École Ω 🚀";(*l).vertical_align=vocab::TextAlign::Start;(*l).line_height=0.0f64;(*l).text_transform=vocab::TextTransform::None;dirty("label");
         this.timer=services::after(0.2f64,this.reset);
     }
     fn reset(ref this) {
+        assert check::must::[native::Thickness](native_label("label").padding()).top==0.0f64;check::log("PASS: label center/end/start alignment updates retain selection and rich text");
         let date=check::must::[native::ICalendarDatePicker](native::ICalendarDatePicker::query(check::object("date_reset")));assert check::must::[native::DateTime](date.min_date()).universal_time==this.min_date;assert check::must::[native::DateTime](date.max_date()).universal_time==this.max_date;assert check::must::[rt::Object](date.date()).is_null();assert this.date_events==0;
         let factory=check::must::[native::IPropertyValueStatics](native::PropertyValue::i_property_value_statics_factory());assert date.set_date(check::must::[rt::Object](factory.create_date_time(native::DateTime {universal_time:this.min_date}))).is_ok();assert this.date_events==1;
         assert date.set_date(rt::Object::empty()).is_ok();assert this.date_events==2;let date_p: *props::DatePickerProps=(*core::node_data(check::node("date_reset"))).props as *props::DatePickerProps;assert (*date_p).date.year==0;

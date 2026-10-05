@@ -6,6 +6,8 @@ import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/split" as split;
 import "facet/vocabulary" as vocab;
+import "facet/label" as label;
+import "stdlib/option" as option;
 import "../../shell" as shell;
 
 struct Splits {
@@ -14,6 +16,11 @@ struct Splits {
 
 impl Splits {
     fn new() -> Splits { return Splits { n: 0 }; }
+    fn roles(ref this,sender: *u8) {
+        this.n=(this.n+1)%3;
+        if let option::Option::Some(v)=split::find("sp:demo") {let changed=v.set_role(split::Pane::Leading,if this.n==0 {split::PaneRole::Sidebar} else {split::PaneRole::Content}).set_role(split::Pane::Trailing,if this.n==1 {split::PaneRole::Sidebar} else {split::PaneRole::Content});}
+        if let option::Option::Some(v)=label::find("sp:roles") {let changed=v.set_text(if this.n==0 {"Sidebar: leading"} else if this.n==1 {"Sidebar: trailing"} else {"Both panes: content"});}
+    }
 }
 
 fn pane(title: str, color: vocab::Color) -> core::Node {
@@ -29,6 +36,7 @@ fn pane(title: str, color: vocab::Color) -> core::Node {
 
 impl Splits: component::Component {
     fn build(ref this) -> core::Node {
+        this.n=0;
         var body: core::Builder = core::Builder::new();
         body.add(shell::caption("split  ·  two children: leading, trailing"));
         body.add(ui::label(
@@ -41,8 +49,10 @@ impl Splits: component::Component {
         ));
 
         var panes: core::Builder = core::Builder::new();
-        panes.add(pane("Leading", vocab::Color::raised()));
-        panes.add(pane("Trailing", vocab::Color::sunken()));
+        var leading=pane("Leading", vocab::Color::clear());
+        assert leading.add_child(ui::text_field("Retained edit",key:"sp:edit")).is_ok();
+        panes.add(leading);
+        panes.add(pane("Trailing", vocab::Color::clear()));
         body.add(ui::split(
             panes,
             key: "sp:demo",
@@ -50,7 +60,10 @@ impl Splits: component::Component {
             position: 160.0,
             min_leading: 100.0,
             min_trailing: 100.0,
+            role_leading: split::PaneRole::Sidebar,
         ).height(200.0));
+        body.add(ui::button("Switch pane roles",key:"sp:switch",on_click:this.roles));
+        body.add(ui::label("Sidebar: leading",key:"sp:roles"));
 
         return shell::panel(
             "Split",

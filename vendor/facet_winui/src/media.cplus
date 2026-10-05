@@ -14,6 +14,7 @@ import "./browser" as browser;
 import "./hybrid" as hybrid;
 import "./choices" as choices;
 import "./imaging" as imaging;
+import "./symbols" as symbols;
 static LIVE: i64=0;
 fn subscriptions() -> i64 {return LIVE+browser::subscriptions()+hybrid::subscriptions();}
 fn supports(k: u32) -> bool {return k==props::K_PAGE_DOTS || k==props::K_WEB || k==props::K_HYBRID_WEB || k==props::K_ICON_BUTTON || k==props::K_IMAGE || k==props::K_SPAN || k==symbol::K_SYMBOL;}
@@ -21,7 +22,7 @@ fn create(k: u32,n: *core::Node) -> rt::Object {
     if k==props::K_PAGE_DOTS {let v: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new());return v.object();}
     if k==props::K_WEB || k==props::K_HYBRID_WEB {let v: ui::WebView2=native::must::[ui::WebView2](ui::WebView2::new());return v.object();}
     if k==props::K_ICON_BUTTON {let p: *props::IconButtonProps=(*core::node_data(n)).props as *props::IconButtonProps;if (*p).toggles {let v=native::must::[ui::ToggleButton](ui::ToggleButton::new());return v.object();}let v: ui::Button=native::must::[ui::Button](ui::Button::new());return v.object();}
-    if k==props::K_IMAGE {let v: ui::Border=native::must::[ui::Border](ui::Border::new());return v.object();}
+    if k==props::K_IMAGE || k==symbol::K_SYMBOL {let v: ui::Border=native::must::[ui::Border](ui::Border::new());return v.object();}
     let v: ui::TextBlock=native::must::[ui::TextBlock](ui::TextBlock::new());return v.object();
 }
 fn named(name: str) -> u32 {
@@ -40,19 +41,7 @@ fn icon(label: ui::ITextBlock,code: u32,size: f64,color: vocab::Color,font: str=
     native::check(label.set_font_size(if size>0.0f64 {size} else {24.0f64}));
     native::check(label.set_foreground(style::brush(if color.is_set() {color} else {vocab::Color::ink()})));return;
 }
-extern fn GetFullPathNameW(path: *u16,count: u32,buffer: *u16,part: **u16) -> u32;
-extern fn WindowsGetStringRawBuffer(value: usize,length: *u32) -> *u16;
-extern fn WindowsCreateString(source: *u16,length: u32,value: *usize) -> i32;
-fn uri(source: str) -> rt::Object {
-    var address: text::Text=text::from_str(source);
-    if !source.has_prefix("https:") && !source.has_prefix("http:") && !source.has_prefix("ms-appx:") && !source.has_prefix("file:") {
-        let path: rt::HString=native::must::[rt::HString](rt::HString::new(source));var length: u32=0;let input: *u16=WindowsGetStringRawBuffer(path.raw(),#addr_of(length));
-        var buffer: [u16;32768]=#zero::[[u16;32768]]();let size: u32=GetFullPathNameW(input,32768,#addr_of(buffer) as *u16,0 as **u16);assert size>0 && size<32768;
-        var h: usize=0;native::check(rt::Status {code:WindowsCreateString(#addr_of(buffer) as *u16,size,#addr_of(h))});let owned: rt::HString=rt::HString::adopt(h);let full: text::Text=native::must::[text::Text](owned.to_text());
-        address=text::from_str("file:///");let _a=address.append(full.view());
-    }
-    let factory: ui::IUriRuntimeClassFactory=native::must::[ui::IUriRuntimeClassFactory](ui::Uri::i_uri_runtime_class_factory_factory());return native::must::[rt::Object](factory.create_uri(address.view()));
-}
+fn uri(source: str) -> rt::Object {return imaging::uri(source);}
 fn image_source(source: str) -> bool {
     let lower=text::from_str(source).lowercased();let name=lower.view();
     return name.has_prefix("https:") || name.has_prefix("http:") || name.has_prefix("file:") || name.has_prefix("ms-appx:") || name.has_suffix(".png") || name.has_suffix(".jpg") || name.has_suffix(".jpeg") || name.has_suffix(".gif") || name.has_suffix(".bmp") || name.has_suffix(".webp") || name.has_suffix(".ico");
@@ -71,7 +60,7 @@ fn apply(r: *record::View) {
     }
     if k==props::K_WEB {let p: *props::WebProps=raw as *props::WebProps;browser::apply(r,if (*p).source.is_empty() {rt::Object::empty()} else {uri((*p).source.view())});}
     if k==props::K_HYBRID_WEB {hybrid::apply(r);}
-    if k==symbol::K_SYMBOL {let p: *symbol::SymbolProps=raw as *symbol::SymbolProps;let label: ui::ITextBlock=native::must::[ui::ITextBlock](ui::ITextBlock::query(value));icon(label,if (*p).icon!=0 {(*p).icon} else {named((*p).name.view())},(*p).size,(*p).color,(*p).font.view());}
+    if k==symbol::K_SYMBOL {symbols::apply(r);}
     if k==props::K_ICON_BUTTON {
         (*r).applying=true;        let p: *props::IconButtonProps=raw as *props::IconButtonProps;
         let content=native::must::[ui::IContentControl](ui::IContentControl::query(value));

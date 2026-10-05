@@ -15,18 +15,23 @@ import "./native" as native;
 import "./native_slot" as native_slot;
 import "./scheduler" as scheduler;
 import "facet/theme" as theme;
+import "facet/vocabulary" as vocab;
 import "./style" as style;
 import "./presentation" as presentation;
 import "./time_popup" as time_popup;
 import "./agent_hooks" as agent_hooks;
 import "./browser" as browser;
 import "./refresh_retirement" as refresh_retirement;
+import "./command_strip" as commands;
+import "./window_buttons" as window_buttons;
 extern fn fflush(stream: *u8) -> i32;
 
 struct Host {
     root: core::Node,
     title: text::Text,
     window: rt::Object,
+    shell: rt::Object,
+    commands: rt::Object,
     queue: rt::Object,
     size_token: ui::EventRegistrationToken,
     close_token: ui::EventRegistrationToken,
@@ -44,14 +49,28 @@ struct Host {
 // borrow no context, so deliveries after clearing this pointer are inert.
 static CURRENT: *Host=0 as *Host;
 static STARTED: bool=false;
+fn presenter() -> ui::IOverlappedPresenter {
+    let window=native::must::[ui::IWindow2](ui::IWindow2::query((*CURRENT).window));let app=native::must::[ui::IAppWindow](ui::IAppWindow::query(native::must::[rt::Object](window.app_window())));
+    return native::must::[ui::IOverlappedPresenter](ui::IOverlappedPresenter::query(native::must::[rt::Object](app.presenter())));
+}
+fn window_state() -> i32 {return if CURRENT.is_null() || (*CURRENT).closing {ui::overlapped_presenter_state_restored} else {native::must::[i32](presenter().state())};}
+fn window_action(action: i32) {
+    if CURRENT.is_null() || (*CURRENT).closing {return;}
+    if action==2 {let window=native::must::[ui::IWindow](ui::IWindow::query((*CURRENT).window));native::check(window.close());return;}
+    let p=presenter();if action==0 {native::check(p.minimize());}else if window_state()==ui::overlapped_presenter_state_maximized {native::check(p.restore());}else {native::check(p.maximize());}
+}
 fn relayout(host: *Host) {
     if !(*host).mounted || (*host).closing { return; }
     let root: *core::Node=#addr_of((*host).root);
     views::prepare_layout(root);
-    (*root).calculate_layout(width:(*host).width,height:(*host).height);
+    let strip=commands::layout(root,(*host).commands,(*host).width);
+    let available=if (*host).height>strip {(*host).height-strip} else {0.0f64};
+    (*root).calculate_layout(width:(*host).width,height:available);
     views::prepare_layout(root);
-    (*root).calculate_layout(width:(*host).width,height:(*host).height);
-    views::place(root,(*root).frame()); scheduler::notify_sizes(); return;
+    (*root).calculate_layout(width:(*host).width,height:available);
+    views::place(root,(*root).frame());
+    if !commands::supports(core::kind_of(root)) {let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_top(views::object(core::view_of(root)),strip));}
+    scheduler::notify_sizes(); return;
 }
 fn tick(context: *u8) -> rt::Status {
     let host: *Host=CURRENT;
@@ -113,6 +132,7 @@ fn launched(app: rt::Object, context: *u8) -> rt::Status {
     let host: *Host=CURRENT;
     let window: ui::Window=native::must::[ui::Window](ui::Window::new());
     (*host).window=window.object(); native::check(window.set_title((*host).title.view()));
+    window_buttons::install(window_action,window_state);
     (*host).queue=native::must::[rt::Object](window.dispatcher_queue());
     scheduler::install((*host).queue);theme::set_is_dark_fn(style::dark);
     agent_hooks::opened((*host).window);
@@ -129,8 +149,12 @@ fn launched(app: rt::Object, context: *u8) -> rt::Status {
     let loaded_handler: ui::RoutedEventHandler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(loaded));
     (*host).loaded_token=native::must::[ui::EventRegistrationToken](element.add_loaded(loaded_handler.object()));
     (*host).loaded_object=views::object(core::view_of(root));
-    native_slot::bind(core::view_of(root) as *record::View,window.object(),native_slot::WINDOW);
-    native::check(window.set_content(views::object(core::view_of(root))));
+    let shell=native::must::[ui::Canvas](ui::Canvas::new());(*host).shell=shell.object();
+    let strip=native::must::[ui::Canvas](ui::Canvas::new());(*host).commands=strip.object();
+    native::check(native::must::[ui::IPanel](ui::IPanel::query(strip.object())).set_background(style::brush(vocab::Color::window_background())));
+    let children=commands::children(shell.object());native::check(children.append(strip.object()));
+    if !commands::supports(core::kind_of(root)) {native::check(children.append(views::object(core::view_of(root))));native_slot::bind(core::view_of(root) as *record::View,shell.object(),native_slot::PANEL);}
+    native::check(window.set_content(shell.object()));
     let bounds: ui::Rect=native::must::[ui::Rect](window.bounds());
     (*host).width=bounds.width as f64; (*host).height=bounds.height as f64;
     relayout(host); native::check(window.activate()); schedule(0 as *u8);
@@ -145,7 +169,7 @@ fn run(take tree: core::Node, title: str="Facet / WinUI",on_ready: fn(*u8)=0 as 
     let apartment: rt::Apartment=native::must::[rt::Apartment](rt::Apartment::sta());
     var status: rt::Status=rt::Status {code:0};
     {
-        let owner: box::Box[Host]=match box::new::[Host](Host {root:tree,title:text::from_str(title),window:rt::Object::empty(),queue:rt::Object::empty(),
+        let owner: box::Box[Host]=match box::new::[Host](Host {root:tree,title:text::from_str(title),window:rt::Object::empty(),shell:rt::Object::empty(),commands:rt::Object::empty(),queue:rt::Object::empty(),
             size_token:#zero::[ui::EventRegistrationToken](),close_token:#zero::[ui::EventRegistrationToken](),loaded_token:#zero::[ui::EventRegistrationToken](),loaded_object:rt::Object::empty(),mounted:false,closing:false,pending:false,width:900.0f64,height:600.0f64,on_ready:on_ready,on_ready_ctx:on_ready_ctx}) {
             option::Option::Some(v)=>{v}, option::Option::None=>{return rt::Status {code:rt::out_of_memory()};}
         };

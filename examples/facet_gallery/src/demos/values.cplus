@@ -11,11 +11,17 @@ import "../shell" as shell;
 
 struct Values {
     n: i32,
+    image_thumb: bool,
 }
 
 impl Values {
-    fn new() -> Values { return Values { n: 0 }; }
+    fn new() -> Values { return Values { n: 0,image_thumb:false }; }
 
+    fn thumb(ref this,sender: *u8) {
+        this.image_thumb=!this.image_thumb;
+        if let option::Option::Some(v)=slider::find("val:slider") {let updated=v.set_thumb_image(if this.image_thumb {"assets/slider-thumb.png"} else {""});}
+        if let option::Option::Some(v)=label::find("val:thumb-status") {let updated=v.set_text(if this.image_thumb {"Image thumb"} else {"Native thumb"});}
+    }
     fn colors(ref this, sender: *u8) {
         this.n = 1 - this.n;
         let accent = if this.n == 1 {vocab::Color::rgba(0.55f64,0.18f64,0.75f64,1.0f64)} else {vocab::Color::clear()};
@@ -75,6 +81,8 @@ impl Values: component::Component {
 
         body.add(ui::button("Switch slider colors",key:"val:colors",on_click:this.colors));
         body.add(ui::label("Default slider colors",key:"val:style_status"));
+
+        body.add(@ui {row {button("Toggle thumb image",key:"val:thumb",on_click:this.thumb) label("Native thumb",key:"val:thumb-status")}.gap(12.0)});
 
         body.add(shell::caption("Stepper  ·  0…10"));
         body.add(ui::stepper(4.0, key: "val:stepper", minimum: 0.0, maximum: 10.0,

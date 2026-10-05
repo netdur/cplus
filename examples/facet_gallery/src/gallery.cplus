@@ -37,6 +37,7 @@ import "./demos/lists" as lists;
 import "./demos/relists" as relists;
 import "./demos/tabs_demo" as tabs_demo;
 import "./demos/menus_demo" as menus_demo;
+import "./demos/window_chrome_demo" as window_chrome_demo;
 import "./demos/collections" as collections;
 import "./demos/trees" as trees;
 import "./demos/page_dots_demo" as page_dots_demo;
@@ -93,6 +94,7 @@ const ID_A11Y: i32 = 34;
 const ID_RELIST: i32 = 35;
 const ID_TABS: i32 = 36;
 const ID_MENUS: i32 = 37;
+const ID_WINDOW_CHROME: i32 = 38;
 
 const NAV_OVERVIEW: str = "overview";
 const NAV_BUTTON: str = "button";
@@ -115,6 +117,7 @@ const NAV_LIST: str = "list";
 const NAV_RELIST: str = "relist";
 const NAV_TABS: str = "tabs";
 const NAV_MENUS: str = "menus";
+const NAV_WINDOW_CHROME: str = "window_chrome";
 const NAV_COLLECTION: str = "collection";
 const NAV_TREE: str = "tree";
 const NAV_PAGE_DOTS: str = "page_dots";
@@ -163,6 +166,7 @@ struct Gallery {
     relists: relists::Relists,
     tabs_demo: tabs_demo::TabsDemo,
     menus_demo: menus_demo::MenusDemo,
+    window_chrome_demo: window_chrome_demo::WindowChrome,
     collections: collections::Collections,
     trees: trees::Trees,
     page_dots: page_dots_demo::PageDotsDemo,
@@ -203,6 +207,7 @@ fn demo_id_for(nav_id: str) -> i32 {
     if nav_id == NAV_LIST { return ID_LIST; }
     if nav_id == NAV_TABS { return ID_TABS; }
     if nav_id == NAV_MENUS { return ID_MENUS; }
+    if nav_id == NAV_WINDOW_CHROME { return ID_WINDOW_CHROME; }
     if nav_id == NAV_RELIST { return ID_RELIST; }
     if nav_id == NAV_COLLECTION { return ID_COLLECTION; }
     if nav_id == NAV_TREE { return ID_TREE; }
@@ -270,6 +275,7 @@ fn catalog_model() -> tree::TreeNode {
     let _pd: status::Status = cols.add_child(leaf("Page dots", NAV_PAGE_DOTS));
     let _tabs: status::Status = cols.add_child(leaf("Tabs", NAV_TABS));
     let _menus: status::Status = cols.add_child(leaf("Menus", NAV_MENUS));
+    let _chrome: status::Status = cols.add_child(leaf("Window chrome", NAV_WINDOW_CHROME));
     let _tb: status::Status = cols.add_child(leaf("Table", NAV_TABLE));
     let _cr: status::Status = cols.add_child(leaf("Carousel", NAV_CAROUSEL));
     let _cs: status::Status = root.add_child(cols);
@@ -322,6 +328,7 @@ impl Gallery {
             relists: relists::Relists::new(),
             tabs_demo: tabs_demo::TabsDemo::new(),
             menus_demo: menus_demo::MenusDemo::new(),
+            window_chrome_demo: window_chrome_demo::WindowChrome::new(),
             collections: collections::Collections::new(),
             trees: trees::Trees::new(),
             page_dots: page_dots_demo::PageDotsDemo::new(),
@@ -384,6 +391,8 @@ impl Gallery {
                     let _ok: bool = mount::set_content(out, this.lists);
                 } else if id == ID_MENUS {
                     let _ok: bool = mount::set_content(out, this.menus_demo);
+                } else if id == ID_WINDOW_CHROME {
+                    let _ok: bool = mount::set_content(out, this.window_chrome_demo);
                 } else if id == ID_TABS {
                     let _ok: bool = mount::set_content(out, this.tabs_demo);
                 } else if id == ID_RELIST {
@@ -558,7 +567,7 @@ fn start_walk() {
 }
 
 fn walk_step(user: *u8) {
-    if WALK_AT > ID_MENUS {
+    if WALK_AT > ID_WINDOW_CHROME {
         io::println("gallery walk: visited ${WALK_AT} demos, no crash");
         // The walk ends by NOT re-arming, and the app is left running — a walk
         // that quit would take the exit code with it and hide anything printed
