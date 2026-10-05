@@ -40,7 +40,11 @@
 // (`TrivialInline::MathUnary`), which is what stops a one-instruction sqrt
 // costing a cross-package call. The fold is keyed on these names.
 extern fn sqrtf(x: f32) -> f32;
-extern fn fabsf(x: f32) -> f32;
+// No fabsf: the MSVC runtime does not export it (math.h defines it inline),
+// so declaring it made every Windows link that pulled in this module fail
+// with `undefined symbol: fabsf`. f32 `abs` clears the sign bit instead,
+// which is what fabsf is. The other 45 names here are all exported by the
+// static MSVC runtime (libucrt + libcmt), checked with llvm-nm.
 extern fn floorf(x: f32) -> f32;
 extern fn ceilf(x: f32) -> f32;
 extern fn roundf(x: f32) -> f32;
@@ -120,7 +124,7 @@ impl f32 {
     #[intrinsic("llvm.sqrt")]
     fn sqrt(this) -> f32 { return sqrtf(this); }
     #[intrinsic("llvm.fabs")]
-    fn abs(this) -> f32 { return fabsf(this); }
+    fn abs(this) -> f32 { return #bitcast::[f32](#bitcast::[u32](this) & 0x7FFFFFFFu32); }
     #[intrinsic("llvm.floor")]
     fn floor(this) -> f32 { return floorf(this); }
     #[intrinsic("llvm.ceil")]
@@ -222,7 +226,7 @@ impl f64 {
 // Tests
 // ---------------------------------------------------------------------------
 
-fn _close_f32(a: f32, b: f32) -> bool { return fabsf(a - b) < 0.0001f32; }
+fn _close_f32(a: f32, b: f32) -> bool { return (a - b).abs() < 0.0001f32; }
 fn _close_f64(a: f64, b: f64) -> bool { return fabs(a - b) < 0.000000001f64; }
 
 #[test]
@@ -310,4 +314,18 @@ fn constants_agree_across_widths() {
     assert(_close_f64(SQRT_2_F64, (2.0f64).sqrt()));
     assert(_close_f64(LN_2_F64, (2.0f64).ln()));
     assert(_close_f64(LN_10_F64, (10.0f64).ln()));
+}
+
+// abs is the sign-bit clear (no libm call on any target): -0 becomes +0, an
+// infinity stays infinite, a NaN stays NaN, every other bit is untouched.
+#[test]
+fn f32_abs_clears_only_the_sign_bit() {
+    let negative_zero: f32 = #bitcast::[f32](0x80000000u32);
+    assert(#bitcast::[u32](negative_zero.abs()) == 0u32);
+    let negative_infinity: f32 = #bitcast::[f32](0xFF800000u32);
+    assert(#bitcast::[u32](negative_infinity.abs()) == 0x7F800000u32);
+    let nan: f32 = #bitcast::[f32](0xFFC00001u32);
+    assert(nan.abs().is_nan());
+    assert(#bitcast::[u32](nan.abs()) == 0x7FC00001u32);
+    assert(#bitcast::[u32]((0.0f32 - 1.5f32).abs()) == #bitcast::[u32](1.5f32));
 }
