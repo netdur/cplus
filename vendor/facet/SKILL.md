@@ -202,6 +202,13 @@ belonged inline. If you are writing `set_grow`/`set_align`/`set_padding` inside
 setters on the node (`set_background_color`, `set_corner_radius`, `set_shown`,
 `set_input_transparent`, …).
 
+**Which elements take a block.** The containers — `container`, `column`,
+`hstack` (`row`), `vstack`, `zstack`, `card`, `screen` — and `slot`, which always
+needs one (its base content, `{ }` when empty). `scroll` takes one optionally:
+`scroll(key: "s", axis: vocab::ScrollAxis::Vertical) { column { … } }` makes the
+block its content, exactly as the cursor's `set_content` would. Every other
+element is a leaf, and giving one a block is **E1010**.
+
 Say **`column`** and **`hstack`**. `vstack`/`row` are aliases for the same two
 axes; picking a third name for a second thing is how a codebase ends up with
 four words for two concepts.
@@ -1077,7 +1084,8 @@ w.nav().replace("editor", arg: another_path, into: "details");
 ```
 
 Omit `into:` to replace the entire content area while keeping the native window.
-Declare a slot default with `slot("details", route: "overview")`. Back undoes
+Declare a slot default with `slot("details", route: "overview") { }` — a slot
+is a container and always takes a block, even an empty one. Back undoes
 the latest push in this window, across its slots and whole-content transitions.
 Back/Forward retain instances and edits. A successful new navigation discards
 the forward branch; failures leave history intact. Replacement keeps the

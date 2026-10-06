@@ -3562,6 +3562,27 @@ fn f(a: i32 = f()) -> i32 { return a; }  // -> E1009 a default value is nested m
 '''
 
 [[code]]
+id = "E1010"
+title = "A content block given to an element that takes none"
+category = "Compile-time builtins"
+severity = "error"
+repro = "scenario"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/lower.rs:match_call"
+test = "cpc/tests/e2e.rs:builder_block_on_a_non_container_is_e1010_and_positional_binding_is_named"
+cause = "Inside a builder block, `name(args) { ... }` passes the block's filled `Builder` as the call's FIRST argument (spec §17.1). The element called here does not take a `Builder` first, so the block would fill an unrelated parameter. Before this check the mistake surfaced one step later and pointed away from itself: as a type mismatch on a parameter the author never wrote, or — when that parameter was also labelled — as `argument `key` is provided more than once` on a line with one `key:`."
+fix = "Build the content separately and attach it the way that element documents (a cursor's `set_content`, a node's `add_child`), or use a container element. In facet, `scroll` takes a block since 2026-10-06; leaves such as `label` and `button` never do."
+example = '''
+// ctx module: fn tagged(key: i32 = 0) -> Item { ... }   (no Builder parameter)
+let tree = @ctx {
+    tagged(key: 3) {      // -> E1010 this element takes no content block
+        leaf(1)
+    }
+};
+'''
+
+[[code]]
 id = "E1900"
 title = "Construct is outside the wasm subset"
 category = "Targets and packages"

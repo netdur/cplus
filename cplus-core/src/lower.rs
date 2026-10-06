@@ -115,6 +115,10 @@ pub fn lower_multi(
 pub(crate) struct ParamInfo {
     pub(crate) name: String,
     pub(crate) default: Option<Expr>,
+    /// The last path segment of the declared type (`Builder` for
+    /// `core::Builder`), when the type is a path. `None` where the caller
+    /// has no declaration to read it from.
+    pub(crate) ty_name: Option<String>,
 }
 
 /// Where a lowered call's argument in one parameter position comes from.
@@ -127,10 +131,48 @@ enum ArgSlot {
 }
 
 fn param_info(p: &Param) -> ParamInfo {
+    let ty_name = match &p.ty.kind {
+        crate::ast::TypeKind::Path(path) => {
+            // `core::Builder` as written, or `facet.src.elements.Builder`
+            // once a multi-file build has qualified it: the last segment
+            // either way, which is also the only spelling fit for a message.
+            Some(path.rsplit([':', '.']).next().unwrap_or(path).to_string())
+        }
+        _ => None,
+    };
     ParamInfo {
         name: p.name.name.clone(),
         default: p.default.as_deref().cloned(),
+        ty_name,
     }
+}
+
+/// Whether `e` is the accumulator a builder-block container passes as its
+/// first argument — the `__b<offset>` local `desugar_builder_block` names.
+fn is_builder_block_arg(e: &Expr) -> bool {
+    matches!(&e.kind, ExprKind::Ident(n) if n.starts_with("__b")
+        && n[3..].chars().all(|c| c.is_ascii_digit()) && n.len() > 3)
+}
+
+/// How the positional arguments of a call were bound, for a diagnostic that
+/// would otherwise name only the parameter left over: `the 1 positional
+/// argument filled `b: Builder``. Parameters are filled in order, defaults or
+/// not, and a message that does not say so points away from the mistake.
+fn positional_binding_note(params: &[ParamInfo], filled: usize) -> String {
+    let names: Vec<String> = params
+        .iter()
+        .take(filled)
+        .map(|p| match &p.ty_name {
+            Some(t) => format!("`{}: {t}`", p.name),
+            None => format!("`{}`", p.name),
+        })
+        .collect();
+    let what = if filled == 1 {
+        "the 1 positional argument filled".to_string()
+    } else {
+        format!("the {filled} positional arguments filled")
+    };
+    format!("{what} {} — positional arguments fill parameters in order, defaulted or not", names.join(", "))
 }
 
 /// Do two candidates splice the same VALUES into their `Default` slots?
@@ -558,6 +600,30 @@ impl Lower {
         call_span: Span,
     ) -> Result<Vec<ArgSlot>, (&'static str, String, Span)> {
         let n = params.len();
+        // A CONTENT BLOCK GIVEN TO AN ELEMENT THAT TAKES NONE. The desugar
+        // passes `name(args) { ... }`'s filled Builder as argument 0, and the
+        // builder protocol fixes that type's name (spec §17.3). Bound to any
+        // other first parameter, it either fails as a type mismatch on a
+        // parameter the author never wrote, or — when that parameter is also
+        // labelled — as "provided more than once" on a label written once
+        // (reports/spendwise/S03: `scroll(key: "s") { ... }`).
+        if args.first().is_some_and(is_builder_block_arg) {
+            let first = params.first();
+            if first.is_none_or(|p| p.ty_name.as_deref() != Some("Builder")) {
+                let msg = match first {
+                    Some(p) => format!(
+                        "this element takes no content block — the block would fill its first \
+                         parameter, `{}{}`, which is not a `Builder`; build the content separately \
+                         and attach it (e.g. `add_child`)",
+                        p.name,
+                        p.ty_name.as_ref().map(|t| format!(": {t}")).unwrap_or_default()
+                    ),
+                    None => "this element takes no content block — it has no parameters"
+                        .to_string(),
+                };
+                return Err(("E1010", msg, call_span));
+            }
+        }
         let mut slots: Vec<Option<usize>> = vec![None; n];
         let mut seen_named = false;
         let mut next_pos = 0usize;
@@ -613,11 +679,21 @@ impl Lower {
                     if params[pos].default.is_some() {
                         out.push(ArgSlot::Default);
                     } else {
-                        return Err((
-                            "E0308",
-                            format!("missing argument for parameter `{}`", params[pos].name),
-                            call_span,
-                        ));
+                        // Name what the positional arguments filled when one
+                        // of them sits before the gap: `slot("detail",
+                        // route: "x")` filled `b: Builder` with the name and
+                        // left `name` empty, and a message naming only `name`
+                        // reads as "you forgot the name" (S01).
+                        let msg = if next_pos > 0 && pos >= next_pos {
+                            format!(
+                                "missing argument for parameter `{}`; {}",
+                                params[pos].name,
+                                positional_binding_note(params, next_pos)
+                            )
+                        } else {
+                            format!("missing argument for parameter `{}`", params[pos].name)
+                        };
+                        return Err(("E0308", msg, call_span));
                     }
                 }
             }

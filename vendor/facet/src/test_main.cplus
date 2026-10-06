@@ -3994,6 +3994,95 @@ fn dsl_container_args_write_the_container_key() {
     }
 }
 
+// SPENDWISE S03. A scroll takes its content as a block, like every other
+// container. The block filled `key` before, and the call failed as "argument
+// `key` is provided more than once" on a line with one key.
+#[test]
+fn dsl_scroll_takes_its_content_as_a_block() {
+    var root: facet::Node = @ui {
+        scroll(key: "s", axis: vocab::ScrollAxis::Vertical) {
+            column(key: "body") {
+                label("x", key: "x")
+            }
+        }
+    };
+    assert root.key() == "s";
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(c) => { assert { (*c).key() } == "body"; }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    // The content is reachable by key through the scroll, as set_content's is.
+    match label::find("x", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(l) => { assert l.text() == "x"; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    // The vertical axis keeps the cross-axis stretch, as set_content does.
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(c) => {
+            assert matches_flex_start({ (*c).style.align_self }) == false;
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn dsl_scroll_block_goes_through_set_content_on_a_horizontal_axis() {
+    // The block reaches the same door as `set_content`, so a horizontal
+    // scroll's content is not stretched to the viewport.
+    var root: facet::Node = @ui {
+        scroll(key: "h", axis: vocab::ScrollAxis::Horizontal) {
+            hstack(key: "lanes") { label("a") }
+        }
+    };
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(c) => {
+            assert { (*c).key() } == "lanes";
+            assert matches_flex_start({ (*c).style.align_self });
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn dsl_scroll_block_with_two_items_holds_them_in_one_content() {
+    var root: facet::Node = @ui {
+        scroll(key: "s2") {
+            label("a", key: "a")
+            label("b", key: "b")
+        }
+    };
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(c) => { assert { (*c).child_count() } == (2 as usize); }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_scroll_without_a_block_still_has_no_content() {
+    // Every existing caller: all-named, no block. The defaulted Builder is
+    // empty and nothing is attached.
+    var root: facet::Node = ui::scroll(key: "bare", axis: vocab::ScrollAxis::Vertical);
+    assert root.key() == "bare";
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(_) => { assert false; }
+        option::Option[*facet::Node]::None => { assert true; }
+    }
+    // And an empty block is the same as none.
+    var empty: facet::Node = @ui { scroll(key: "e") { } };
+    match facet::slot(#addr_of(empty), "@content") {
+        option::Option[*facet::Node]::Some(_) => { assert false; }
+        option::Option[*facet::Node]::None => { assert true; }
+    }
+}
+
+#[test]
+fn builder_is_empty_until_something_is_added() {
+    var b: facet::Builder = facet::Builder::new();
+    assert b.is_empty();
+    b.add(label::label("x"));
+    assert b.is_empty() == false;
+}
+
 #[test]
 fn dsl_if_and_for_compose_items() {
     let flag: bool = true;

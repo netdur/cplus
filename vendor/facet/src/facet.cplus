@@ -2655,6 +2655,24 @@ impl Builder {
         };
     }
 
+    // Whether nothing was added. A container whose block is optional — a
+    // `scroll` written with or without one — asks before it finishes, because
+    // `finish` hands back a lone item unwrapped and an empty container looks
+    // exactly like a childless leaf.
+    fn is_empty(this) -> bool { return this.inner.node.child_count() == (0 as usize); }
+
+    // ONE NODE THAT CAN STAND IN A NAMED SLOT. `finish` answers several items
+    // with the flex scaffolding that held them, which carries no facet Data —
+    // and a slot's name is marked IN that Data, so `set_slot` on it placed
+    // the child and named nothing: `@ui { scroll { a  b } }` had a child and
+    // no `@content` (the viewless wrapper's fourth bite). One item is still
+    // its own result; several are held in a `container`, which is what the
+    // author would write and which is backed.
+    fn finish_for_slot(take this) -> Node {
+        if this.inner.node.child_count() == (1 as usize) { return this.finish(); }
+        return container(this);
+    }
+
     // The seam for facet's own containers that build through flex directly
     // (split, stack). A pattern cannot destructure a QUALIFIED type, so a
     // sibling module cannot write `let core::Builder { inner } = b`.

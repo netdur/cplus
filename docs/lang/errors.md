@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **197 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **152** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **198 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **152** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -2120,6 +2120,23 @@ fn f(a: i32 = f()) -> i32 { return a; }  // -> E1009 a default value is nested m
 **Fix.** A default value cannot be defined in terms of itself. Give the parameter a value that does not call back into the same function.
 
 <sub>repro: checked · cplus-core/src/lower.rs · test cplus-core/src/lower.rs:a_self_referential_default_is_refused_rather_than_looping</sub>
+
+### E1010 · A content block given to an element that takes none
+
+Inside a builder block, `name(args) { ... }` passes the block's filled `Builder` as the call's FIRST argument (spec §17.1). The element called here does not take a `Builder` first, so the block would fill an unrelated parameter. Before this check the mistake surfaced one step later and pointed away from itself: as a type mismatch on a parameter the author never wrote, or — when that parameter was also labelled — as `argument `key` is provided more than once` on a line with one `key:`.
+
+```cplus
+// ctx module: fn tagged(key: i32 = 0) -> Item { ... }   (no Builder parameter)
+let tree = @ctx {
+    tagged(key: 3) {      // -> E1010 this element takes no content block
+        leaf(1)
+    }
+};
+```
+
+**Fix.** Build the content separately and attach it the way that element documents (a cursor's `set_content`, a node's `add_child`), or use a container element. In facet, `scroll` takes a block since 2026-10-06; leaves such as `label` and `button` never do.
+
+<sub>repro: scenario · cplus-core/src/lower.rs:match_call · test cpc/tests/e2e.rs:builder_block_on_a_non_container_is_e1010_and_positional_binding_is_named</sub>
 
 ## Real-time contracts
 

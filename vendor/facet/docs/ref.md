@@ -520,7 +520,9 @@ Content commands use `w.nav()` or a retained screen context's `navigator()`:
 | `current(into:) -> Option[nav::Context]` | Active screen in that target |
 | `state() -> nav::State` | Navigation snapshot with counts and revision |
 
-`slot(name, route:)` supplies a target with optional default route content.
+`slot(name, route:) { base }` supplies a target with optional default route
+content. It is a container: the block (its base content, possibly empty) is
+required, because the `Builder` it fills is the first parameter.
 Back traverses one chronological history across the window's targets. Missing
 or ambiguous targets and unknown routes return false. Layout visibility does
 not redirect a slot. A failed command preserves history; a successful new

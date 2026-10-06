@@ -151,10 +151,20 @@ A slot can supply authored base content or name a default route:
 return @ui {
     column {
         label("Notes")
-        slot("details", route: "overview")
+        slot("details", route: "overview") {
+            label("Pick a note")          // shown until the route resolves
+        }
     }
 };
 ```
+
+**A slot is a container: it always takes a block**, even an empty one —
+`slot("details", route: "overview") { }`. Its first parameter is the
+`Builder` the block fills, so without a block `"details"` fills that
+parameter and the call reports `name` as missing (the message says which
+parameter the positional argument filled). The block's content is the slot's
+BASE: what it shows when nothing is pushed into it and the route does not
+resolve.
 
 Register the default route on the owning window definition. If the default
 cannot be resolved, the current implementation keeps the slot's authored

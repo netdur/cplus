@@ -8,6 +8,7 @@
 
 import "flex_layout/flex_layout" as flex;
 import "stdlib/text" as text;
+import "stdlib/option" as option;
 import "./facet" as core;
 import "./props" as props;
 import "./vocabulary" as vocab;
@@ -1021,6 +1022,7 @@ fn bordered(
 }
 
 fn scroll(
+    take b: Builder = Builder::new(),
     key: str = "",
     cascades_input: bool = true,
     horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
@@ -1031,7 +1033,7 @@ fn scroll(
     observe_scrolled: fn(*u8, *u8) = props::no_handler,
     observe_scrolled_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
-    return m_scroll::scroll(
+    var n: core::Node = m_scroll::scroll(
         key: key,
         cascades_input: cascades_input,
         horizontal_scroll_bars: horizontal_scroll_bars,
@@ -1042,6 +1044,12 @@ fn scroll(
         observe_scrolled: observe_scrolled,
         observe_scrolled_ctx: observe_scrolled_ctx,
     );
+    if !b.is_empty() {
+        if let option::Option::Some(c) = m_scroll::from(#addr_of(n)) {
+            let _c: m_scroll::Scroll = c.set_content(b.finish_for_slot());
+        }
+    }
+    return n;
 }
 
 fn icon_button(

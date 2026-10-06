@@ -4170,6 +4170,9 @@ def emit_control(row_type, merged):
 
 CONTAINER_FORWARDS = ["container", "column", "row", "hstack", "vstack",
                       "screen", "card", "zstack"]
+# Controls whose `@ui` element takes an OPTIONAL content block, attached
+# through the cursor's `set_content` — see emit_elements.
+BLOCK_CONTROLS = ("scroll",)
 
 FACET_ORIGIN_FORWARDS = """\
 // ---- facet-origin controls (hand-written modules; forwards mirrored here,
@@ -4322,6 +4325,7 @@ def emit_elements(rows_by_control):
          "// an `@` block resolves in one context.\n\n",
          'import "flex_layout/flex_layout" as flex;\n',
          'import "stdlib/text" as text;\n',
+         'import "stdlib/option" as option;\n',
          'import "./facet" as core;\n',
          'import "./props" as props;\n',
          'import "./vocabulary" as vocab;\n',
@@ -4365,12 +4369,31 @@ def emit_elements(rows_by_control):
         mod = MODULE[row_type]
         writes, reads, events, _slots, owned, _commands = split_rows(merged, row_type)
         params = ctor_params(row_type, writes, reads, events, owned)
+        # A SCROLL TAKES A BLOCK. Its content is a named child (`@content`),
+        # and a scroll view is a thing with content in every framework — so
+        # `scroll(key: "s") { column { ... } }` is the first thing anyone
+        # writes. Without a Builder first, the block filled `key` and the
+        # call failed as "argument `key` is provided more than once" on a
+        # line with one key (reports/spendwise/S03). The Builder is DEFAULTED
+        # — every other parameter already is, so E1007 allows it — which
+        # keeps the all-named, block-less form every existing caller uses.
+        # The block goes through the cursor's `set_content`, the one door
+        # that also keeps a horizontal scroll's content unstretched, and is
+        # finished by `finish_for_slot` — several items need a BACKED holder
+        # to carry the slot's name.
+        takes_block = mod in BLOCK_CONTROLS
+        if takes_block:
+            assert all(d is not None for _n, _t, d in params), \
+                f"{mod}: a defaulted Builder needs every later parameter defaulted (E1007)"
         o.append(f"fn {mod}(\n")
+        if takes_block:
+            o.append("    take b: Builder = Builder::new(),\n")
         for nm, pty, dflt in params:
             o.append(f"    {nm}: {pty},\n" if dflt is None
                      else f"    {nm}: {pty} = {dflt},\n")
         o.append(") -> core::Node {\n")
-        o.append(f"    return m_{mod}::{mod}(\n")
+        o.append(f"    var n: core::Node = m_{mod}::{mod}(\n" if takes_block
+                 else f"    return m_{mod}::{mod}(\n")
         fwd = []
         for i, (nm, _pty, dflt) in enumerate(params):
             # `take x` is a PARAMETER MODE, not part of the name: the
@@ -4378,7 +4401,14 @@ def emit_elements(rows_by_control):
             arg = nm[5:] if nm.startswith("take ") else nm
             fwd.append(f"        {arg}" if (i == 0 and dflt is None)
                        else f"        {arg}: {arg}")
-        o.append(",\n".join(fwd) + ",\n    );\n}\n\n")
+        o.append(",\n".join(fwd) + ",\n    );\n")
+        if takes_block:
+            cur = "".join(w.capitalize() for w in mod.split("_"))
+            o.append("    if !b.is_empty() {\n")
+            o.append(f"        if let option::Option::Some(c) = m_{mod}::from(#addr_of(n)) {{\n")
+            o.append(f"            let _c: m_{mod}::{cur} = c.set_content(b.finish_for_slot());\n")
+            o.append("        }\n    }\n    return n;\n")
+        o.append("}\n\n")
     return "".join(o)
 
 

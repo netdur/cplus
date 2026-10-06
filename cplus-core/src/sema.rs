@@ -14543,7 +14543,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let params: Vec<crate::lower::ParamInfo> = names
             .into_iter()
             .zip(defaults)
-            .map(|(name, default)| crate::lower::ParamInfo { name, default })
+            .map(|(name, default)| crate::lower::ParamInfo { name, default, ty_name: None })
             .collect();
         return match crate::lower::arrange_named_args(&params, args, arg_labels, call_span) {
             Ok(arranged) => {

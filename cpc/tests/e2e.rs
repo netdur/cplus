@@ -24390,6 +24390,67 @@ fn builder_container_with_args_runs_and_stray_block_is_denied() {
     );
 }
 
+/// A content block given to an element that takes none is E1010 — not the
+/// duplicate-label E1006 the block's positional binding used to surface as
+/// (reports/spendwise/S03, `scroll(key: "s") { ... }` before scroll took a
+/// block). And a positional argument that filled a Builder parameter is named
+/// in the missing-argument E0308 (S01, `slot("details", route: "x")`).
+#[test]
+fn builder_block_on_a_non_container_is_e1010_and_positional_binding_is_named() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"bx\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let package = format!(
+        "{DSL_GROUP_PACKAGE}\n\
+         fn tagged(key: i32 = 0, scale: i32 = 1) -> Item {{\n\
+         \x20   return Item {{ value: key * scale, weight: 1 }};\n\
+         }}\n\
+         fn holder(b: Builder, name: i32, extra: i32 = 0) -> Item {{\n\
+         \x20   return Item {{ value: b.sum + name + extra, weight: 1 }};\n\
+         }}\n"
+    );
+    std::fs::write(dir.join("src/group.cplus"), package).unwrap();
+    let check = |body: &str| -> String {
+        std::fs::write(
+            dir.join("src/main.cplus"),
+            format!(
+                "import \"./group\" as group;\n\n\
+                 fn main() -> i32 {{\n\
+                 \x20   let tree = @group {{\n{body}\n\x20   }};\n\
+                 \x20   return tree.value;\n\
+                 }}\n"
+            ),
+        )
+        .unwrap();
+        let out = Command::new(cpc).arg("check").current_dir(&dir).output().expect("cpc check");
+        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
+    };
+
+    // A labelled first parameter: was E1006 on a line with one `key:`.
+    let out = check("        tagged(key: 3) {\n            leaf(1)\n        }");
+    assert!(out.contains("E1010"), "got: {out}");
+    assert!(!out.contains("E1006"), "the block must not surface as a duplicate label: {out}");
+    assert!(out.contains("`key: i32`"), "the message names the parameter the block would fill: {out}");
+
+    // No arguments at all: was a type mismatch on `key`.
+    let out = check("        tagged {\n            leaf(1)\n        }");
+    assert!(out.contains("E1010"), "got: {out}");
+
+    // NEGATIVE: a real container with arguments is untouched.
+    let out = check("        nest2(scale: 2) {\n            leaf(4)\n        }");
+    assert!(!out.contains("error"), "a Builder-first container must still check clean: {out}");
+
+    // A positional argument that filled the Builder parameter is named.
+    let out = check("        holder(5, extra: 1)");
+    assert!(out.contains("E0308"), "got: {out}");
+    assert!(
+        out.contains("missing argument for parameter `name`")
+            && out.contains("the 1 positional argument filled `b: Builder`"),
+        "got: {out}"
+    );
+}
+
 /// Named arguments and defaults resolve through a local TYPE ALIAS
 /// (`type Pair = lib::Pair; Pair::make(b: 7)`). The resolver used to
 /// qualify the alias by its own name, leaving a path no assoc-fn table
