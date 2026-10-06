@@ -4075,6 +4075,41 @@ fn a_scroll_without_a_block_still_has_no_content() {
     }
 }
 
+// SPENDWISE S05. Equal-width tabs, stated inline. Headless labels measure
+// nothing, so this pins the SPELLING — a leading-dot `.basis` line in `@ui`
+// writes flex_basis — and the frames; flex_layout's
+// test_basis_zero_shares_all_the_space_equally is the one that tells basis 0
+// from auto with content of different widths.
+#[test]
+fn dsl_basis_zero_gives_equal_tabs_whatever_their_labels() {
+    var root: facet::Node = @ui {
+        hstack(key: "bar") {
+            label("Dashboard", key: "t1")
+                .grow(1.0f64)
+                .shrink(1.0f64)
+                .basis(0.0f64)
+            label("Income", key: "t2")
+                .grow(1.0f64)
+                .shrink(1.0f64)
+                .basis(0.0f64)
+        }
+            .gap(0.0f64)
+    };
+    root.calculate_layout(width: 400.0f64, height: 50.0f64);
+    match facet::find_in(#addr_of(root), "t1") {
+        option::Option[*facet::Node]::Some(p) => { assert { (*p).style.flex_basis.value } == 0.0f64; }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    match root.child_frame(0 as usize) {
+        option::Option[flex::Frame]::Some(f) => { assert f.width == 200.0f64; }
+        option::Option[flex::Frame]::None => { assert false; }
+    }
+    match root.child_frame(1 as usize) {
+        option::Option[flex::Frame]::Some(f) => { assert f.width == 200.0f64; }
+        option::Option[flex::Frame]::None => { assert false; }
+    }
+}
+
 #[test]
 fn builder_is_empty_until_something_is_added() {
     var b: facet::Builder = facet::Builder::new();

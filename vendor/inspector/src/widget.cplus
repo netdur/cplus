@@ -1806,8 +1806,7 @@ fn prop_row(prop: str, me: *u8) -> core::Node {
     // from there — which runs it, and the reset button after it, off the
     // right edge of the pane. Flex's default shrink is 0, so nothing gives
     // way. Same trap as the app side; it wants stating once per grow.
-    core::set_basis(#addr_of(field), 0.0);
-    b.add(field);
+    b.add(field.basis(0.0));
     b.add(ui::text_button("reset", key: xk.view(),
                           text_color: vocab::Color::link(),
                           on_click: on_reset_one, on_click_ctx: me)
@@ -1877,10 +1876,9 @@ impl Inspector: component::Component {
             .padding(10.0).gap(6.0);
         var prop_scroll: core::Node = ui::scroll(key: "insp:propscroll");
         let _ps: status::Status = prop_scroll.add_child(prop_col);
-        var prop_pane: core::Node = prop_scroll.grow(1.0);
         // Basis 0, so the pane takes what is left beside the 300pt tree pane
         // instead of starting from its content's width and growing past it.
-        core::set_basis(#addr_of(prop_pane), 0.0);
+        var prop_pane: core::Node = prop_scroll.grow(1.0).basis(0.0);
 
         var body: core::Builder = core::Builder::new();
         body.add(tree_pane);
@@ -1889,8 +1887,7 @@ impl Inspector: component::Component {
         // toolbar, never from how tall its content happens to be. Without it a
         // long property list makes the panel taller than the window.
         var body_row: core::Node = ui::row(body, key: "insp:body")
-            .grow(1.0).shrink(1.0);
-        core::set_basis(#addr_of(body_row), 0.0);
+            .grow(1.0).shrink(1.0).basis(0.0);
 
         var rootb: core::Builder = core::Builder::new();
         rootb.add(toolbar);

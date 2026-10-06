@@ -192,11 +192,16 @@ belonged inline. If you are writing `set_grow`/`set_align`/`set_padding` inside
 `import "flex_layout/flex_layout" as flex;` is in every screen:
 
 ```
-.grow(f64)   .shrink(f64)   .width(f64)   .height(f64)
-.width_percent(f64)  .height_percent(f64)
+.grow(f64)   .shrink(f64)   .basis(f64)   .width(f64)   .height(f64)
+.width_percent(f64)  .height_percent(f64)  .basis_percent(f64)
 .padding(f64)  .padding_edge(flex::Edge::Top, f64)   .margin(f64)  .margin_edge(..)
 .gap(f64)      .justify(flex::Justify::…)   .align(flex::Align::…)   .wrap(..)
 ```
+
+**Equal-width siblings — tabs, toolbar buttons, segments — are
+`.grow(1.0f64).shrink(1.0f64).basis(0.0f64)`.** Grow alone shares only the space
+left after each item's content, so labels of different lengths come out
+different widths: plausible, slightly ragged, and silent.
 
 **facet adds** `.gesture(on_click: …)` (`facet/gestures`) and the appearance
 setters on the node (`set_background_color`, `set_corner_radius`, `set_shown`,

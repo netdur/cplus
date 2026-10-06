@@ -241,7 +241,7 @@ Line naming matches CSS `[sidebar] 200px`:
 | Builder | `Builder::new` / `add(take)` / `finish` |
 | Containers | `row` / `column` / `box` / `zstack` |
 | Flexible space | `spacer()` — an empty box that absorbs leftover main-axis space |
-| Fluent | `width`, `height`, `width_percent`, `height_percent`, `grow`, `shrink`, `padding`, `margin`, `gap`, `justify`, `align`, `wrap` |
+| Fluent | `width`, `height`, `width_percent`, `height_percent`, `grow`, `shrink`, `basis`, `basis_percent`, `padding`, `margin`, `gap`, `justify`, `align`, `wrap` |
 | HIG containers | `vstack` / `hstack` / `screen` / `card` |
 | HIG modifiers | `.tappable()` / `.card_padding()` / `.screen_margins()` / `.std_gap()` |
 | HIG constants | `HIG_SPACE_XS/S/M/L/XL` (4/8/16/20/32), `HIG_TAP_MIN` (44) |

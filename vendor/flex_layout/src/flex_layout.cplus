@@ -2666,6 +2666,14 @@ fn box() -> Node { return Node::new(); }
 impl Node {
     fn grow(take this, v: f64) -> Node { var n: Node = this; n.style.flex_grow = v; return n; }
     fn shrink(take this, v: f64) -> Node { var n: Node = this; n.style.flex_shrink = v; return n; }
+    // The size an item starts from BEFORE grow and shrink share out the rest.
+    // Left at auto it is the item's content, so `.grow(1.0)` on four tabs with
+    // labels of different lengths hands each the same EXTRA and they stay
+    // ragged. `.grow(1.0).shrink(1.0).basis(0.0)` is the equal-share idiom: all
+    // of the space is shared, so equal factors give equal sizes, whatever the
+    // count — which `width_percent(25.0)` cannot say.
+    fn basis(take this, v: f64) -> Node { var n: Node = this; n.style.flex_basis = StyleLength::points(v); return n; }
+    fn basis_percent(take this, v: f64) -> Node { var n: Node = this; n.style.flex_basis = StyleLength::percent(v); return n; }
     fn width(take this, v: f64) -> Node { var n: Node = this; n.style.width = StyleLength::points(v); return n; }
     fn height(take this, v: f64) -> Node { var n: Node = this; n.style.height = StyleLength::points(v); return n; }
     fn width_percent(take this, v: f64) -> Node { var n: Node = this; n.style.width = StyleLength::percent(v); return n; }
@@ -2889,6 +2897,60 @@ fn test_flex_grow_distributes() {
     root.calculate_layout(400.0, 50.0, Direction::LTR);
     assert approx(must(root.child_frame(0)).width, 100.0);
     assert approx(must(root.child_frame(1)).width, 300.0);
+}
+
+// Four items whose content is 50/100/150/30 wide, in a 400pt row. `.grow`
+// alone shares the 70pt left over on top of each content width; `.basis(0.0)`
+// shares all 400 (reports/spendwise/S05: a tab bar came out 124/105/111/96).
+fn content_item(w: f64, basis: bool) -> Node {
+    var inner: Node = Node::new(); inner.set_width(pts(w));
+    var b: Builder = Builder::new();
+    b.add(inner);
+    let n: Node = column(b).grow(1.0).shrink(1.0);
+    if basis { return n.basis(0.0); }
+    return n;
+}
+
+fn content_row(basis: bool) -> Node {
+    var b: Builder = Builder::new();
+    b.add(content_item(50.0, basis));
+    b.add(content_item(100.0, basis));
+    b.add(content_item(150.0, basis));
+    b.add(content_item(30.0, basis));
+    var root: Node = row(b);
+    root.calculate_layout(400.0, 50.0, Direction::LTR);
+    return root;
+}
+
+#[test]
+fn test_basis_zero_shares_all_the_space_equally() {
+    let root: Node = content_row(true);
+    var i: usize = 0 as usize;
+    while i < (4 as usize) {
+        assert approx(must(root.child_frame(i)).width, 100.0);
+        i = i + (1 as usize);
+    }
+}
+
+#[test]
+fn test_grow_without_basis_shares_only_the_leftover() {
+    // The control: auto basis keeps the content difference. 400 - 330 = 70pt
+    // left over, 17.5 each on top of 50/100/150/30.
+    let root: Node = content_row(false);
+    assert approx(must(root.child_frame(0)).width, 67.5);
+    assert approx(must(root.child_frame(1)).width, 117.5);
+    assert approx(must(root.child_frame(2)).width, 167.5);
+    assert approx(must(root.child_frame(3)).width, 47.5);
+}
+
+#[test]
+fn test_basis_percent_and_points_write_flex_basis() {
+    let a: Node = Node::new().basis(12.0);
+    assert a.style.flex_basis.value == 12.0;
+    match a.style.flex_basis.unit { Unit::Point => { } Unit::Percent => { assert false; } Unit::Auto => { assert false; } Unit::Undefined => { assert false; } }
+    let b: Node = Node::new().basis_percent(25.0);
+    assert b.style.flex_basis.value == 25.0;
+    match b.style.flex_basis.unit { Unit::Percent => { } Unit::Point => { assert false; } Unit::Auto => { assert false; } Unit::Undefined => { assert false; } }
 }
 
 #[test]

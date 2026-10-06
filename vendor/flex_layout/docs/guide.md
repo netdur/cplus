@@ -242,9 +242,16 @@ on its own leading-dot line is a use-after-move.
 | `.width` / `.height` | points |
 | `.width_percent` / `.height_percent` | percent of parent |
 | `.grow` / `.shrink` | flex factors |
+| `.basis` / `.basis_percent` | the size grow and shrink start from (default: the content) |
 | `.padding` / `.margin` | uniform points |
 | `.gap` | container gap |
 | `.justify` / `.align` / `.wrap` | main/cross/wrap |
+
+**Equal shares: `.grow(1.0).shrink(1.0).basis(0.0)`.** Grow alone shares out
+only the space LEFT OVER after each item's content, so four tabs with labels of
+different lengths stay different widths. Basis 0 makes all of the space the
+leftover, so equal factors give equal sizes at any count — which
+`width_percent(25.0)` cannot say once a fifth tab arrives.
 
 Flow control: `if` and `for` may add children; no `while` / `break` / `return`
 inside the block.
