@@ -277,6 +277,14 @@ enum Bar { Native, Blended, Hidden, Custom }
 // ("only a resizable host honours these") ages out within an OS release.
 // facet offers every field; a backend honours what it can and records the
 // rest in its own manifest.
+// The floor a window gets when it did not state one: the desktop floor, or
+// the stated size if that is smaller. A size of zero or less states nothing a
+// floor could be taken from, so it gets the desktop floor.
+fn derived_floor(size: f64, desktop: f64) -> f64 {
+    if size > 0.0f64 && size < desktop { return size; }
+    return desktop;
+}
+
 struct Chrome {
     title_text: text::Text,
     // TitleBar.Subtitle. A second line under the title in the platform's own
@@ -309,17 +317,25 @@ impl Chrome {
     fn new(
         title: str = "facet",
         subtitle: str = "",
-        width: f64 = 480.0f64,
-        height: f64 = 360.0f64,
+        width: f64 = 800.0f64,
+        height: f64 = 600.0f64,
         // A WINDOW HAS A FLOOR BY DEFAULT. Unconstrained, a window can be
         // dragged narrower than its own contents can be satisfied — a split
         // whose two panes declare minimums has nowhere left to put them, and
         // the layout thrashes for as long as the mouse is down rather than
         // simply stopping. 800x600 is the floor a desktop window is designed
-        // against; an app that wants less says so, and `0.0` still means
-        // unconstrained on that axis.
-        min_width: f64 = 800.0f64,
-        min_height: f64 = 600.0f64,
+        // against.
+        //
+        // NEGATIVE MEANS DERIVED, and it is the default: the floor is 800x600
+        // or the stated size, whichever is smaller, per axis. A fixed 800x600
+        // default made `Chrome::new(width: 480.0, height: 760.0)` — a complete
+        // statement of a phone-shaped window — open 800 wide, because the
+        // clamp below raised a size nobody had contradicted. Stating a size
+        // now means that size. An explicit minimum is taken as written, `0.0`
+        // still means unconstrained on that axis, and an explicit minimum
+        // above an explicit size still wins (see the clamp).
+        min_width: f64 = -1.0f64,
+        min_height: f64 = -1.0f64,
         bar: Bar = Bar::Native,
         maximizable: bool = true,
         minimizable: bool = true,
@@ -332,22 +348,27 @@ impl Chrome {
         // THE INITIAL SIZE IS CLAMPED INTO [min, max]. No backend does it:
         // AppKit, GTK and Win32 all open the window at exactly `width` x
         // `height` and apply the floor only once the user resizes, and they
-        // lay the first frame out at that size too. The defaults alone hit
-        // it — 480x360 under an 800x600 floor. The ceiling is applied first
-        // so that, if the two cross, the floor wins (zero = unset on both).
+        // lay the first frame out at that size too. The ceiling is applied
+        // first so that, if the two cross, the floor wins (zero = unset on
+        // both). A derived floor is taken from the size AFTER the ceiling, so
+        // it can never be the thing that crosses it.
         var w: f64 = width;
         var h: f64 = height;
         if max_width > 0.0f64 && w > max_width { w = max_width; }
         if max_height > 0.0f64 && h > max_height { h = max_height; }
-        if min_width > 0.0f64 && w < min_width { w = min_width; }
-        if min_height > 0.0f64 && h < min_height { h = min_height; }
+        var floor_w: f64 = min_width;
+        var floor_h: f64 = min_height;
+        if floor_w < 0.0f64 { floor_w = derived_floor(w, 800.0f64); }
+        if floor_h < 0.0f64 { floor_h = derived_floor(h, 600.0f64); }
+        if floor_w > 0.0f64 && w < floor_w { w = floor_w; }
+        if floor_h > 0.0f64 && h < floor_h { h = floor_h; }
         return Chrome {
             title_text: text::from_str(title),
             subtitle_text: text::from_str(subtitle),
             width: w,
             height: h,
-            min_width: min_width,
-            min_height: min_height,
+            min_width: floor_w,
+            min_height: floor_h,
             bar: bar,
             maximizable: maximizable,
             minimizable: minimizable,
@@ -776,8 +797,8 @@ impl SbtScreen: Screen {
 fn chrome_defaults_and_overrides() {
     let d: Chrome = Chrome::new();
     assert d.title() == "facet";
-    // The floor a window gets without asking — and the default 480x360 is
-    // below it, so the size comes out clamped up to the floor.
+    // The floor a window gets without asking, and a default size that sits
+    // on it — the defaults agree with each other without a clamp.
     assert sc_approx(d.width, 800.0f64);
     assert sc_approx(d.height, 600.0f64);
     assert sc_approx(d.min_width, 800.0f64);
@@ -822,6 +843,43 @@ fn chrome_clamps_initial_size_into_min_max() {
     let ok: Chrome = Chrome::new(width: 1024.0f64, height: 768.0f64);
     assert sc_approx(ok.width, 1024.0f64);
     assert sc_approx(ok.height, 768.0f64);
+}
+
+#[test]
+fn chrome_stated_size_below_the_desktop_floor_is_kept() {
+    // SPENDWISE S02. A phone-shaped window, minimums left alone: it opens at
+    // the size it stated, and that size is its floor. This opened 800 wide
+    // while the default floor was a fixed 800x600.
+    let phone: Chrome = Chrome::new(title: "SpendWise", width: 480.0f64, height: 760.0f64);
+    assert sc_approx(phone.width, 480.0f64);
+    assert sc_approx(phone.height, 760.0f64);
+    assert sc_approx(phone.min_width, 480.0f64);
+    assert sc_approx(phone.min_height, 600.0f64);
+    // Above the desktop floor on both axes: the floor stays 800x600.
+    let big: Chrome = Chrome::new(width: 1280.0f64, height: 900.0f64);
+    assert sc_approx(big.width, 1280.0f64);
+    assert sc_approx(big.min_width, 800.0f64);
+    assert sc_approx(big.min_height, 600.0f64);
+    // A derived floor is taken after the ceiling, so it never crosses it.
+    let capped: Chrome = Chrome::new(width: 900.0f64, height: 500.0f64, max_width: 700.0f64);
+    assert sc_approx(capped.width, 700.0f64);
+    assert sc_approx(capped.min_width, 700.0f64);
+    assert sc_approx(capped.height, 500.0f64);
+    assert sc_approx(capped.min_height, 500.0f64);
+    // An explicit minimum is still taken as written, and still wins over a
+    // smaller explicit size.
+    let explicit: Chrome = Chrome::new(width: 480.0f64, height: 760.0f64, min_width: 800.0f64);
+    assert sc_approx(explicit.width, 800.0f64);
+    assert sc_approx(explicit.min_width, 800.0f64);
+    assert sc_approx(explicit.min_height, 600.0f64);
+    // Zero is still unconstrained, not derived.
+    let free: Chrome = Chrome::new(width: 480.0f64, min_width: 0.0f64);
+    assert free.min_width == 0.0f64;
+    // copy() carries the resolved floor, not the sentinel.
+    let again: Chrome = phone.copy();
+    assert sc_approx(again.width, 480.0f64);
+    assert sc_approx(again.min_width, 480.0f64);
+    assert sc_approx(again.min_height, 600.0f64);
 }
 
 #[test]

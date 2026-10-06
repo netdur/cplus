@@ -381,8 +381,12 @@ with `set_item`. Borrowed: facet never frees it.
 `maximizable`, `minimizable`, `zoomable`, `min_zoom`, `max_zoom`.
 
 Pass chrome to `app.window(name, factory, chrome:)`. It belongs to the native
-window definition, not to routed screen content. Minimum dimensions default
-to 800×600; zero disables a minimum or maximum constraint on that axis.
+window definition, not to routed screen content. The size defaults to 800×600.
+A minimum left unset is derived per axis: 800×600, or the stated size if that
+is smaller — so `Chrome::new(width: 480.0f64, height: 760.0f64)` opens at
+480×760 with a 480×600 floor. An explicit minimum is taken as written and wins
+over a smaller size. Zero disables a minimum or maximum constraint on that
+axis.
 
 `Bar` is `Native`, `Blended`, `Hidden` or `Custom`. `Custom` hides the standard
 buttons so `window_buttons()` can supply its own; pair it with `.window_drag()`
