@@ -4342,6 +4342,13 @@ def emit_elements(rows_by_control):
         o.append(f'import "./{mod}" as m_{mod};\n')
     o.append("\n// facet's own Builder, not flex's — it takes `IntoNode`, so a\n// component can be an item in `@ui` beside a plain node.\ntype Builder = core::Builder;\n\n")
     o.append("// ---- containers (facet core owns these) --------------------------------\n")
+    o.append("// LAYOUT ONLY — none of these draws. `card` is a `column` with HIG spacing\n"
+             "// (16pt padding, 8pt gap) and no surface: no fill, no corner, no shadow.\n"
+             "// Say the surface on the card itself with leading-dot setters\n"
+             "// (`.set_background_color(vocab::Color::raised())`,\n"
+             "// `.set_corner_radius(vocab::Corners::all(12.0f64))`), and put the\n"
+             "// children straight in its block: a padded column inside doubles the\n"
+             "// padding. `box` is the element that draws.\n")
     for c in CONTAINER_FORWARDS:
         o.append(f"fn {c}(take b: Builder, key: str = \"\") -> core::Node "
                  f"{{ return core::{c}(b, key: key); }}\n")

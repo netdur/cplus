@@ -4110,6 +4110,28 @@ fn dsl_basis_zero_gives_equal_tabs_whatever_their_labels() {
     }
 }
 
+// SPENDWISE S06. `card` is spacing only, and its surface is stated INLINE
+// with leading-dot setters — a `ref this` mutator is a modifier line too, so
+// no post-build helper is needed. This pins the spelling the skill documents.
+#[test]
+fn dsl_card_is_spacing_only_and_takes_its_surface_inline() {
+    var plain: facet::Node = @ui { card(key: "c0") { label("x") } };
+    assert plain.background_color().token == vocab::Color::clear().token;
+    assert plain.corner_radius().top_leading == 0.0f64;
+    assert { plain.style.padding_top.value } == 16.0f64;
+
+    var root: facet::Node = @ui {
+        card(key: "c") {
+            label("inside")
+        }
+            .set_background_color(vocab::Color::raised())
+            .set_corner_radius(vocab::Corners::all(12.0f64))
+    };
+    assert root.key() == "c";
+    assert root.background_color().token == vocab::Color::raised().token;
+    assert root.corner_radius().bottom_trailing == 12.0f64;
+}
+
 #[test]
 fn builder_is_empty_until_something_is_added() {
     var b: facet::Builder = facet::Builder::new();

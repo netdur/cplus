@@ -64,6 +64,13 @@ import "./toolbar_item" as m_toolbar_item;
 type Builder = core::Builder;
 
 // ---- containers (facet core owns these) --------------------------------
+// LAYOUT ONLY — none of these draws. `card` is a `column` with HIG spacing
+// (16pt padding, 8pt gap) and no surface: no fill, no corner, no shadow.
+// Say the surface on the card itself with leading-dot setters
+// (`.set_background_color(vocab::Color::raised())`,
+// `.set_corner_radius(vocab::Corners::all(12.0f64))`), and put the
+// children straight in its block: a padded column inside doubles the
+// padding. `box` is the element that draws.
 fn container(take b: Builder, key: str = "") -> core::Node { return core::container(b, key: key); }
 fn column(take b: Builder, key: str = "") -> core::Node { return core::column(b, key: key); }
 fn row(take b: Builder, key: str = "") -> core::Node { return core::row(b, key: key); }

@@ -205,7 +205,23 @@ different widths: plausible, slightly ragged, and silent.
 
 **facet adds** `.gesture(on_click: …)` (`facet/gestures`) and the appearance
 setters on the node (`set_background_color`, `set_corner_radius`, `set_shown`,
-`set_input_transparent`, …).
+`set_input_transparent`, …). A `ref this` setter is a modifier line too, so
+appearance is stated inline, on the item it belongs to:
+
+```cplus
+card(key: "summary") {
+    label("Last 30 days")
+    label("$1,204")
+}
+    .set_background_color(vocab::Color::raised())
+    .set_corner_radius(vocab::Corners::all(12.0f64))
+```
+
+**`card` draws nothing.** It is a `column` with HIG spacing — 16pt padding, 8pt
+gap — and no fill, corner or shadow; the surface is the two lines above. Put
+children straight in its block: a padded `column` inside a `card` is 32pt of
+padding a side, and nothing in the tree says which half came from where. Every
+container is layout only; `box` is the element that draws.
 
 **Which elements take a block.** The containers — `container`, `column`,
 `hstack` (`row`), `vstack`, `zstack`, `card`, `screen` — and `slot`, which always
