@@ -1782,6 +1782,24 @@ export extern fn app_main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0415"
+title = "Invalid `[package] app_id`"
+category = "Targets and packages"
+severity = "error"
+repro = "scenario"
+lang = "toml"
+verified = true
+emit_site = "cplus-core/src/manifest.rs:validate_app_id"
+test = "cpc/tests/cli_scaffold.rs:build_rejects_a_malformed_app_id_e0415"
+cause = "`[package] app_id` is the app's identity on every platform — `CFBundleIdentifier` on macOS and iOS, `package=` on Android — so it must be one every platform accepts: two or more dot-separated segments, each an ASCII letter followed by ASCII letters and digits. Apple rejects an underscore (the App ID name it derives from the identifier is refused at signing), and Android rejects a hyphen and a segment that begins with a digit. `cpc init --app-id` refuses the same ids."
+fix = "Use reverse-DNS with letters and digits only: `com.example.myapp`, not `com.example.my_app` or `com.example.9lives`."
+example = '''
+[package]
+name   = "my_app"
+app_id = "com.example.my_app"
+'''
+
+[[code]]
 id = "E0500"
 title = "Cannot infer a type parameter"
 category = "Generics and bounds"
@@ -3353,6 +3371,28 @@ fix = "Widen the LEFT operand before the operation rather than casting after it:
 example = '''
 fn main() -> i32 { let m: u64 = (1 << 40) as u64; return 0; }
 '''
+[[code]]
+id = "W0008"
+title = "A platform file names a different app id than the manifest"
+category = "Warnings"
+severity = "warning"
+repro = "scenario"
+lang = "toml"
+verified = true
+emit_site = "cpc/src/main.rs:warn_app_id_disagreement"
+test = "cpc/tests/cli_scaffold.rs:build_warns_w0008_when_a_platform_file_drifts_from_app_id"
+cause = "The file this build hands to the platform's own tools — `macos/Info.plist` (embedded by `cpc build`), `ios/Info.plist` (signed by Xcode), `android/AndroidManifest.xml` (read by aapt2) — carries an identity other than `[package] app_id`. The platform reads the file, not the manifest, so the app ships under the file's id: it installs beside the existing app instead of over it, and an iOS device build cannot be signed against a profile for the other id. Only the platform being built is checked. Silent when no `app_id` is declared, when the file is absent, or when it holds an Xcode `$(VARIABLE)`."
+fix = "Make the file carry the manifest's id — `CFBundleIdentifier` in the plist, `package=` on the Android `<manifest>` element — or change `app_id` if the file is the one that is right."
+example = '''
+# Cplus.toml
+[package]
+name   = "spendwise"
+app_id = "com.elmanahil.spendwise"
+
+# android/AndroidManifest.xml says package="cplus.spendwise"
+# cpc build --target android-arm64 -> W0008
+'''
+
 [[code]]
 id = "W0824"
 title = "Handler parameter cannot receive a bound method"

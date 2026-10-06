@@ -1353,6 +1353,17 @@ one of these is **convention over configuration — if the file is at the path
 below, it is used, with nothing to wire.** `cpc init --platform <p>` writes them;
 this is what they are for, so you can add one to a project that skipped it.
 
+**One identity across all of them: `[package] app_id`.** `cpc init --app-id
+com.example.app` writes it to the manifest and into every file below that
+carries one — `CFBundleIdentifier` in both plists, `package=` in the Android
+manifest (without the flag: `dev.cplus.<name>`, reduced to letters and digits).
+The platform reads the FILE, not the manifest, so `cpc build` warns **W0008**
+when the file for the platform being built names a different id: an app id
+that drifts installs as a second app, and an iOS device build cannot be signed
+against a profile for the other id — and the simulator never notices. A
+malformed id is **E0415**: each segment is an ASCII letter then letters and
+digits, because Apple rejects `_` and Android rejects `-` and a leading digit.
+
 **macOS — `macos/Info.plist`.** `cpc build` embeds it into the binary's
 `__TEXT,__info_plist` section whenever the file exists, which is how a bare
 Mach-O with no bundle carries a plist at all. **This is not cosmetic.** A

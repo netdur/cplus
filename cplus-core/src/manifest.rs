@@ -347,6 +347,87 @@ pub struct Package {
     pub name: String,
     pub version: String,
     pub edition: String,
+    /// `[package] app_id` — the reverse-DNS identity the app ships under on
+    /// every platform: `CFBundleIdentifier` on macOS and iOS, the manifest
+    /// `package=` on Android. `None` when the manifest does not declare one;
+    /// `app_id_or_default` answers what the scaffold would have minted.
+    pub app_id: Option<String>,
+}
+
+impl Package {
+    /// The declared `app_id`, or the one `cpc init` mints from the package
+    /// name when none is declared.
+    pub fn app_id_or_default(&self) -> String {
+        match &self.app_id {
+            Some(id) => id.clone(),
+            None => default_app_id(&self.name),
+        }
+    }
+}
+
+/// The app id `cpc init` writes when it is not given one: `dev.cplus.` and
+/// the package name reduced to ASCII alphanumerics, with `app` in front of a
+/// leading digit.
+///
+/// THE ID IS NOT THE PACKAGE NAME. Apple builds an App ID *name* out of the
+/// identifier — `dev.cplus.test_app` becomes "XC dev cplus test_app" — and
+/// rejects anything but alphanumerics, spaces, hyphens and periods, so an
+/// underscore mints no provisioning profile; and a Java package segment may
+/// not begin with a digit. The result passes `validate_app_id`.
+pub fn default_app_id(package_name: &str) -> String {
+    let cleaned: String = package_name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let seg = if cleaned.is_empty() {
+        "app".to_string()
+    } else if cleaned.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("app{cleaned}")
+    } else {
+        cleaned
+    };
+    format!("dev.cplus.{seg}")
+}
+
+/// Whether `id` can be an app's identity on every platform C+ ships to.
+/// The rule is the INTERSECTION of what each one accepts, because one id is
+/// written into all of them: two or more dot-separated segments, each an
+/// ASCII letter followed by ASCII letters and digits.
+///
+/// - Apple rejects an underscore (see `default_app_id`); a hyphen it allows,
+///   but a Java package segment is an identifier and a hyphen is not in one.
+/// - Android rejects a segment that begins with a digit, and needs at least
+///   two segments.
+///
+/// `Err` carries the reason, phrased to finish "invalid app id `x`: ".
+pub fn validate_app_id(id: &str) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("it is empty".to_string());
+    }
+    let segs: Vec<&str> = id.split('.').collect();
+    if segs.len() < 2 {
+        return Err("it needs at least two dot-separated segments, \
+                    reverse-DNS style (`com.example.app`)"
+            .to_string());
+    }
+    for seg in &segs {
+        let Some(first) = seg.chars().next() else {
+            return Err("it has an empty segment".to_string());
+        };
+        if !first.is_ascii_alphabetic() {
+            return Err(format!(
+                "segment `{seg}` must begin with an ASCII letter \
+                 (Android rejects a segment that begins with anything else)"
+            ));
+        }
+        if let Some(bad) = seg.chars().find(|c| !c.is_ascii_alphanumeric()) {
+            return Err(format!(
+                "segment `{seg}` contains `{bad}` — only ASCII letters and digits \
+                 are accepted on every platform (Apple rejects `_`, Android rejects `-`)"
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl Manifest {
@@ -492,6 +573,13 @@ pub enum ManifestError {
         key: String,
         message: String,
     },
+    /// (E0415): `[package] app_id` is not an identity every platform would
+    /// accept — see `validate_app_id`.
+    InvalidAppId {
+        path: PathBuf,
+        found: String,
+        reason: String,
+    },
     /// (E0869): one dependency name declared in more than one place with
     /// incompatible meaning — in `[dependencies]` (all platforms) AND a
     /// `[<platform>.dependencies]` section, or in two platform sections
@@ -542,6 +630,15 @@ impl fmt::Display for ManifestError {
             } => write!(
                 f,
                 "manifest {}: invalid `[{platform}.maven]` entry `{key}`: {message}",
+                path.display()
+            ),
+            ManifestError::InvalidAppId {
+                path,
+                found,
+                reason,
+            } => write!(
+                f,
+                "manifest {}: invalid `[package] app_id` `{found}`: {reason}",
                 path.display()
             ),
             ManifestError::UnsupportedEdition { path, found } => {
@@ -616,6 +713,7 @@ impl ManifestError {
             | ManifestError::EnvExpansion { path, .. }
             | ManifestError::ConflictingDependency { path, .. }
             | ManifestError::InvalidMavenCoordinate { path, .. }
+            | ManifestError::InvalidAppId { path, .. }
             | ManifestError::TargetPathEscapes { path, .. } => path.clone(),
         };
         let primary = SourceSpan {
@@ -691,6 +789,10 @@ impl ManifestError {
             ManifestError::ConflictingDependency { name, message, .. } => (
                 "E0869",
                 format!("dependency `{name}` {message}"),
+            ),
+            ManifestError::InvalidAppId { found, reason, .. } => (
+                "E0415",
+                format!("invalid `[package] app_id` `{found}`: {reason}"),
             ),
             ManifestError::TargetPathEscapes {
                 target, requested, ..
@@ -939,6 +1041,9 @@ struct RawPackage {
     /// The app entry. Defaults to `src/main.cplus` when that file exists.
     #[serde(default)]
     entry: Option<String>,
+    /// The app's identity on every platform (`Package::app_id`).
+    #[serde(default)]
+    app_id: Option<String>,
 }
 
 /// Load and validate a `Cplus.toml` file. The returned `Manifest`'s
@@ -969,6 +1074,16 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
             path: manifest_path.to_path_buf(),
             found: edition,
         });
+    }
+    let app_id = raw.package.app_id.take();
+    if let Some(id) = &app_id {
+        if let Err(reason) = validate_app_id(id) {
+            return Err(ManifestError::InvalidAppId {
+                path: manifest_path.to_path_buf(),
+                found: id.clone(),
+                reason,
+            });
+        }
     }
 
     // Resolve `root` to an absolute path so downstream consumers (file-id
@@ -1376,6 +1491,7 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
             name,
             version,
             edition,
+            app_id,
         },
         entry,
         entry_declared,
@@ -1699,6 +1815,54 @@ mod tests {
         "#;
         let m = parse_in(&dir, text).unwrap();
         assert!(m.entry_for("windows").unwrap().ends_with("src/main_windows.cplus"));
+    }
+
+    #[test]
+    fn app_id_is_read_and_validated_e0415() {
+        // reports/spendwise/S08: the id chosen at creation had nowhere to live.
+        let dir = fresh_dir("app_id");
+        let m = parse_in(&dir, "[package]\nname = \"spendwise\"\n").unwrap();
+        assert_eq!(m.package.app_id, None);
+        assert_eq!(m.package.app_id_or_default(), "dev.cplus.spendwise");
+        let m = parse_in(
+            &dir,
+            "[package]\nname = \"spendwise\"\napp_id = \"com.elmanahil.spendwise\"\n",
+        )
+        .unwrap();
+        assert_eq!(m.package.app_id.as_deref(), Some("com.elmanahil.spendwise"));
+        assert_eq!(m.package.app_id_or_default(), "com.elmanahil.spendwise");
+        // Each rejection, through the manifest, as E0415.
+        for bad in ["spendwise", "com..app", "com.9lives", "com.my_co.app", "com.my-co.app", ""] {
+            let text = format!("[package]\nname = \"a\"\napp_id = \"{bad}\"\n");
+            let e = parse_in(&dir, &text).unwrap_err();
+            assert!(matches!(e, ManifestError::InvalidAppId { .. }), "{bad:?}: got {e}");
+            assert_eq!(e.to_diagnostic().code.0, "E0415", "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn validate_app_id_reasons() {
+        assert!(validate_app_id("com.example.app").is_ok());
+        assert!(validate_app_id("dev.cplus.App2").is_ok());
+        assert!(validate_app_id("ab.c").is_ok());
+        assert!(validate_app_id("").unwrap_err().contains("empty"));
+        assert!(validate_app_id("app").unwrap_err().contains("two"));
+        assert!(validate_app_id("com.").unwrap_err().contains("empty segment"));
+        assert!(validate_app_id("com.9lives").unwrap_err().contains("begin with an ASCII letter"));
+        assert!(validate_app_id("com.my_co.app").unwrap_err().contains("`_`"));
+        assert!(validate_app_id("com.my-co.app").unwrap_err().contains("`-`"));
+        assert!(validate_app_id("com.caf\u{e9}.app").is_err());
+    }
+
+    #[test]
+    fn default_app_id_always_validates() {
+        assert_eq!(default_app_id("spendwise"), "dev.cplus.spendwise");
+        assert_eq!(default_app_id("test_app"), "dev.cplus.testapp");
+        assert_eq!(default_app_id("9lives"), "dev.cplus.app9lives");
+        assert_eq!(default_app_id("___"), "dev.cplus.app");
+        for n in ["spendwise", "test_app", "9lives", "___", "a-b", "x"] {
+            assert!(validate_app_id(&default_app_id(n)).is_ok(), "{n}");
+        }
     }
 
     #[test]

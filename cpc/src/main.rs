@@ -3066,13 +3066,14 @@ fn run_package(
         // than refusing. An app that never asks for a permission needs no
         // usage-description keys, and `cpc init --platform macos` writes a
         // fuller one anyway.
+        let app_id = m.package.app_id_or_default();
         format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
              <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
              <plist version=\"1.0\">\n<dict>\n\
              \x20   <key>CFBundleName</key>\n    <string>{display}</string>\n\
              \x20   <key>CFBundleExecutable</key>\n    <string>{display}</string>\n\
-             \x20   <key>CFBundleIdentifier</key>\n    <string>dev.cplus.{name}</string>\n\
+             \x20   <key>CFBundleIdentifier</key>\n    <string>{app_id}</string>\n\
              \x20   <key>CFBundlePackageType</key>\n    <string>APPL</string>\n\
              \x20   <key>CFBundleShortVersionString</key>\n    <string>1.0</string>\n\
              \x20   <key>CFBundleVersion</key>\n    <string>1</string>\n\
@@ -3115,6 +3116,124 @@ fn run_package(
         println!("      needs its usage-description key there, or `request` kills the process.");
     }
     ExitCode::SUCCESS
+}
+
+/// W0008: the platform file this build hands to the platform's own tools
+/// names an identity other than `[package] app_id`.
+///
+/// Those files are what the platform reads — `cpc build` embeds
+/// `macos/Info.plist`, Xcode signs against `ios/Info.plist`, aapt2 takes
+/// `package=` from the Android manifest — so the manifest cannot override
+/// them. It can say when they have drifted from what it declares, which is
+/// the defect reports/spendwise/S08 found: three files, three different ids,
+/// none the one that was asked for, and nothing said so until a store
+/// rejected a build. Silent when no `app_id` is declared, when the file is
+/// absent, or when it carries no literal id (an Xcode `$(VARIABLE)`).
+fn warn_app_id_disagreement(m: &manifest::Manifest, platform: &str, diag_mode: DiagMode) {
+    let Some(want) = m.package.app_id.as_deref() else {
+        return;
+    };
+    let Some((rel, found)) = platform_app_id(&m.root, platform) else {
+        return;
+    };
+    if found == want || found.contains("$(") {
+        return;
+    }
+    let file = m.root.join(rel);
+    let d = diag::Diagnostic {
+        severity: Severity::Warning,
+        code: diag::DiagCode("W0008"),
+        message: format!(
+            "`{rel}` names the app `{found}`, but `[package] app_id` is `{want}` — \
+             the {platform} build ships as `{found}`"
+        ),
+        primary: diag::SourceSpan {
+            file: file.clone(),
+            start: diag::Position { line: 1, col: 1, byte: 0 },
+            end: diag::Position { line: 1, col: 1, byte: 0 },
+        },
+        labels: Vec::new(),
+        notes: vec![
+            "the platform reads the file, not the manifest: an app id that differs installs \
+             as a different app, and an iOS build cannot be signed against a profile for the other"
+                .to_string(),
+        ],
+        suggestions: Vec::new(),
+    };
+    emit_diag(&d, diag_mode, "");
+}
+
+/// The identity the platform file for `platform` carries, with the file's
+/// path relative to the package root. `None` for a platform with no such
+/// file, a file that is absent, or one that names no id.
+fn platform_app_id(root: &Path, platform: &str) -> Option<(&'static str, String)> {
+    let rel: &'static str = match platform {
+        "macos" => "macos/Info.plist",
+        "ios" => "ios/Info.plist",
+        "android" => "android/AndroidManifest.xml",
+        _ => return None,
+    };
+    let text = std::fs::read_to_string(root.join(rel)).ok()?;
+    let found = if platform == "android" {
+        android_manifest_package(&text)?
+    } else {
+        plist_string_value(&text, "CFBundleIdentifier")?
+    };
+    Some((rel, found))
+}
+
+/// The `<string>` that follows `<key>KEY</key>` in an XML plist. Comments
+/// are skipped, so a commented-out example key is not read as the real one.
+fn plist_string_value(plist: &str, key: &str) -> Option<String> {
+    let text = strip_xml_comments(plist);
+    let key_tag = format!("<key>{key}</key>");
+    let after = &text[text.find(&key_tag)? + key_tag.len()..];
+    let open = after.find("<string>")?;
+    // The value must be the very next element: nothing but whitespace between.
+    if !after[..open].trim().is_empty() {
+        return None;
+    }
+    let rest = &after[open + "<string>".len()..];
+    let close = rest.find("</string>")?;
+    Some(rest[..close].trim().to_string())
+}
+
+/// The `package="..."` attribute of an Android manifest's `<manifest>` element.
+fn android_manifest_package(xml: &str) -> Option<String> {
+    let text = strip_xml_comments(xml);
+    let start = text.find("<manifest")?;
+    let tag_end = start + text[start..].find('>')?;
+    let tag = &text[start..tag_end];
+    let mut at = 0;
+    while let Some(i) = tag[at..].find("package=") {
+        let pos = at + i;
+        // `package=` must be its own attribute, not the tail of another name.
+        let boundary = tag[..pos].chars().last().is_some_and(|c| c.is_whitespace());
+        let rest = &tag[pos + "package=".len()..];
+        if boundary {
+            let quote = rest.chars().next()?;
+            if quote == '"' || quote == '\'' {
+                let body = &rest[1..];
+                return Some(body[..body.find(quote)?].to_string());
+            }
+        }
+        at = pos + "package=".len();
+    }
+    None
+}
+
+fn strip_xml_comments(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(i) = rest.find("<!--") {
+        out.push_str(&rest[..i]);
+        match rest[i..].find("-->") {
+            Some(j) => rest = &rest[i + j + 3..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn build_project(
@@ -3185,6 +3304,7 @@ fn build_project(
     // `lib<name>.a` + a C header and Xcode / Gradle / ESP-IDF owns the link.
     let tgt = target::active_target();
     let platform = target::active_platform();
+    warn_app_id_disagreement(&m, platform, diag_mode);
     let entry: PathBuf = match m.entry_for(platform) {
         Some(e) => e,
         // An app that names entries, none of them for this platform: a hard,
@@ -7628,7 +7748,7 @@ const INIT_USAGE: &str = "\
 cpc init - scaffold a new C+ project
 
 usage:
-  cpc init [--kind K] [--platform P]... [NAME]
+  cpc init [--kind K] [--platform P]... [--app-id ID] [NAME]
                     create a project. With NAME, scaffold into NAME/; without,
                     scaffold in the current directory (name = directory name).
 
@@ -7667,6 +7787,14 @@ usage:
                     with no facet backend scaffolds the shared app and says
                     which entry you will have to finish yourself.
 
+  --app-id ID       the app's identity on every platform, reverse-DNS
+                    (com.example.app). Written to `[package] app_id` and into
+                    every platform file that carries one: CFBundleIdentifier in
+                    macos/ and ios/Info.plist, package= in the Android
+                    manifest. Each segment is an ASCII letter then letters and
+                    digits — the rule Apple and Android both accept. Without
+                    it: dev.cplus.<name, reduced to that rule>.
+
 writes:  Cplus.toml, src/main*.cplus, .gitignore, AGENTS.md, .mcp.json
          (no SKILL.md — `cpc skill` prints it, version-matched and including
          every dependency's; `cpc skill --write` if you want the file)
@@ -7692,8 +7820,25 @@ fn run_init(args: &[OsString]) -> ExitCode {
     let mut want_platform = false;
     let mut want_kind = false;
     let mut kind: Option<InitKind> = None;
+    let mut want_app_id = false;
+    let mut app_id_arg: Option<String> = None;
     for a in args {
         match a.to_str() {
+            _ if want_app_id => {
+                let id = match a.to_str() {
+                    Some(id) => id,
+                    None => {
+                        eprintln!("cpc init: --app-id value must be valid UTF-8");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                if let Err(reason) = manifest::validate_app_id(id) {
+                    eprintln!("cpc init: invalid app id `{id}`: {reason}");
+                    return ExitCode::FAILURE;
+                }
+                app_id_arg = Some(id.to_string());
+                want_app_id = false;
+            }
             _ if want_kind => {
                 kind = match a.to_str() {
                     Some("cli") => Some(InitKind::Cli),
@@ -7730,6 +7875,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
             }
             Some("--platform") => want_platform = true,
             Some("--kind") | Some("--template") => want_kind = true,
+            Some("--app-id") => want_app_id = true,
             Some("-h") | Some("--help") => {
                 print!("{INIT_USAGE}");
                 return ExitCode::SUCCESS;
@@ -7749,6 +7895,10 @@ fn run_init(args: &[OsString]) -> ExitCode {
     }
     if want_kind {
         eprintln!("cpc init: --kind requires a value (cli or gui)");
+        return ExitCode::FAILURE;
+    }
+    if want_app_id {
+        eprintln!("cpc init: --app-id requires a value (reverse-DNS, e.g. com.example.app)");
         return ExitCode::FAILURE;
     }
 
@@ -7788,6 +7938,31 @@ fn run_init(args: &[OsString]) -> ExitCode {
         }
         return ExitCode::FAILURE;
     }
+
+    // ONE ID, WRITTEN EVERYWHERE IT IS NEEDED. `[package] app_id` and every
+    // platform file below carry the same value: macOS and iOS
+    // `CFBundleIdentifier`, Android `package=`. They used to be minted
+    // separately — `dev.cplus.<name>` for Apple, `cplus.<name>` for Android —
+    // and an id the caller had chosen reached none of them
+    // (reports/spendwise/S08). `cpc build` warns (W0008) when a file drifts
+    // from the manifest.
+    //
+    // THE DEFAULT IS NOT THE PACKAGE NAME. `manifest::default_app_id` reduces
+    // it to what Apple and Android both accept: Apple builds an App ID *name*
+    // out of the identifier — `dev.cplus.test_app` becomes "XC dev cplus
+    // test_app" — and rejects it, so the obvious substitution mints nothing:
+    //
+    //     error: An attribute in the provided entity has invalid value:
+    //            The attribute 'name' is invalid: 'XC dev cplus test_app'
+    //     error: No profiles for 'dev.cplus.test_app' were found
+    //
+    // Measured against a real iPad. The failure arrives at signing time, weeks
+    // after `init`, and reads as a provisioning problem rather than as a name
+    // this file chose — which is why the rule lives in code rather than in
+    // advice.
+    let app_id: String = app_id_arg
+        .clone()
+        .unwrap_or_else(|| manifest::default_app_id(&proj_name));
 
     let src = root.join("src");
     if let Err(e) = std::fs::create_dir_all(&src) {
@@ -7981,7 +8156,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
     let manifest_toml = if gui {
         let closures: String = backed.iter().map(|p| backend_deps(p)).collect();
         format!(
-            "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+            "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\napp_id  = \"{app_id}\"\n\n\
              {sections}[dependencies]\n\
              stdlib        = \"*\"\n\
              facet         = \"*\"\n\
@@ -7991,7 +8166,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
         )
     } else {
         format!(
-            "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+            "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\napp_id  = \"{app_id}\"\n\n\
              {sections}[dependencies]\nstdlib = \"*\"\n"
         )
     };
@@ -8253,26 +8428,6 @@ fn run_init(args: &[OsString]) -> ExitCode {
          int main(int argc, char *argv[]) {{\n    return {sym}_main();\n}}\n"
     );
 
-    // THE BUNDLE ID IS NOT THE PACKAGE NAME. Apple builds an App ID *name* out
-    // of the identifier — `dev.cplus.test_app` becomes "XC dev cplus test_app"
-    // — and rejects the result if it holds anything but alphanumerics, spaces,
-    // hyphens and periods. A C+ package name is full of underscores, so the
-    // obvious substitution mints nothing:
-    //
-    //     error: An attribute in the provided entity has invalid value:
-    //            The attribute 'name' is invalid: 'XC dev cplus test_app'
-    //     error: No profiles for 'dev.cplus.test_app' were found
-    //
-    // Measured against a real iPad. The failure arrives at signing time, weeks
-    // after `init`, and reads as a provisioning problem rather than as a name
-    // this file chose — which is why the rule lives here rather than in advice.
-    // iris's own scaffold reduces the same way, so a project made by either
-    // route gets the same id.
-    let app_id: String = {
-        let cleaned: String = proj_name.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
-        if cleaned.is_empty() { "app".to_string() } else { cleaned }
-    };
-
     // A bundle display name has to start somewhere; the package name with its
     // first letter raised reads better on a home screen than `myapp`.
     let display = {
@@ -8303,7 +8458,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   <key>CFBundleDisplayName</key>\n\
          \x20   <string>{display}</string>\n\
          \x20   <key>CFBundleIdentifier</key>\n\
-         \x20   <string>dev.cplus.{app_id}</string>\n\
+         \x20   <string>{app_id}</string>\n\
          \x20   <key>CFBundleShortVersionString</key>\n\
          \x20   <string>1.0</string>\n\
          \x20   <key>CFBundleVersion</key>\n\
@@ -8345,7 +8500,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   <key>CFBundleExecutable</key>\n\
          \x20   <string>{display}</string>\n\
          \x20   <key>CFBundleIdentifier</key>\n\
-         \x20   <string>dev.cplus.{app_id}</string>\n\
+         \x20   <string>{app_id}</string>\n\
          \x20   <key>CFBundleName</key>\n\
          \x20   <string>{display}</string>\n\
          \x20   <key>CFBundlePackageType</key>\n\
@@ -8383,7 +8538,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   <array>\n\
          \x20       <dict>\n\
          \x20           <key>CFBundleURLName</key>\n\
-         \x20           <string>dev.cplus.{app_id}.link</string>\n\
+         \x20           <string>{app_id}.link</string>\n\
          \x20           <key>CFBundleURLSchemes</key>\n\
          \x20           <array><string>myapp</string></array>\n\
          \x20       </dict>\n\
@@ -8466,17 +8621,10 @@ fn run_init(args: &[OsString]) -> ExitCode {
     // are aapt2 flags at package time, so there is one source of truth for them
     // rather than two that can disagree.
     //
-    // A Java package may not begin with a digit, and `app_id` is the project
-    // name with everything but alphanumerics stripped — so `9lives` would mint
-    // `cplus.9lives`, which aapt2 rejects.
-    let android_pkg = format!(
-        "cplus.{}",
-        if app_id.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-            format!("app{app_id}")
-        } else {
-            app_id.clone()
-        }
-    );
+    // `package=` IS the app's identity on Android, so it is `app_id` and
+    // nothing else — `validate_app_id` already refuses a segment a Java
+    // package could not begin with.
+    let android_pkg = app_id.clone();
     let android_manifest = format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n\
          <manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"\n\

@@ -542,6 +542,7 @@ Exit 0 on all-pass, 2 on any failure. Details: [testing.md](testing.md).
 | Key | Meaning |
 |---|---|
 | `[package] name/version/edition` | identity; edition is `"2026"` |
+| `[package] app_id = "com.example.app"` | the app's identity on every platform (`CFBundleIdentifier`, Android `package=`); letters and digits per segment (E0415). `cpc build` warns W0008 when the platform file names another id |
 | `[package] entry = "src/…"` | app entry; default `src/main.cplus` when the file exists, no `[library]`, and no platform entry is declared |
 | `[<platform>] entry` | per-platform entry; declaring any scopes the app (E0413 elsewhere). Platforms: `macos linux windows ios android esp32 wasm` |
 | `[dependencies]` / `[<platform>.dependencies]` | flat, complete; `name = "*"` or a tree-URL spec |

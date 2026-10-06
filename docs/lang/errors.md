@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **195 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **152** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **197 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **152** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -2454,6 +2454,20 @@ fn main() -> i32 { return 0; }
 
 ## Targets and packages
 
+### E0415 · Invalid `[package] app_id`
+
+`[package] app_id` is the app's identity on every platform — `CFBundleIdentifier` on macOS and iOS, `package=` on Android — so it must be one every platform accepts: two or more dot-separated segments, each an ASCII letter followed by ASCII letters and digits. Apple rejects an underscore (the App ID name it derives from the identifier is refused at signing), and Android rejects a hyphen and a segment that begins with a digit. `cpc init --app-id` refuses the same ids.
+
+```toml
+[package]
+name   = "my_app"
+app_id = "com.example.my_app"
+```
+
+**Fix.** Use reverse-DNS with letters and digits only: `com.example.myapp`, not `com.example.my_app` or `com.example.9lives`.
+
+<sub>repro: scenario · cplus-core/src/manifest.rs:validate_app_id · test cpc/tests/cli_scaffold.rs:build_rejects_a_malformed_app_id_e0415</sub>
+
 ### E0852 · Import names an undeclared dependency (or no manifest is reachable)
 
 An import's first path segment looks like a package name but is not a declared `[dependencies]` entry in `Cplus.toml` (or there is no reachable manifest at all, so the bare `package/...` import has nothing to resolve against).
@@ -2828,6 +2842,24 @@ fn main() -> i32 { let m: u64 = (1 << 40) as u64; return 0; }
 **Fix.** Widen the LEFT operand before the operation rather than casting after it: suffix the literal (`1u64 << 40`, `1000000i64 * 1000000i64`) or cast it (`(1 as u64) << 40`). A `const` is the other blessed form and the one to reach for with a named value — it folds at the DECLARED width, so `const MASK: u64 = (1u64 << 40) - 1u64;` and `const N: i64 = 1000000 * 1000000;` are both correct.
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_binary · test cplus-core/src/sema.rs:constant_expressions_that_lose_their_value_warn_w0007</sub>
+
+### W0008 · A platform file names a different app id than the manifest
+
+The file this build hands to the platform's own tools — `macos/Info.plist` (embedded by `cpc build`), `ios/Info.plist` (signed by Xcode), `android/AndroidManifest.xml` (read by aapt2) — carries an identity other than `[package] app_id`. The platform reads the file, not the manifest, so the app ships under the file's id: it installs beside the existing app instead of over it, and an iOS device build cannot be signed against a profile for the other id. Only the platform being built is checked. Silent when no `app_id` is declared, when the file is absent, or when it holds an Xcode `$(VARIABLE)`.
+
+```toml
+# Cplus.toml
+[package]
+name   = "spendwise"
+app_id = "com.elmanahil.spendwise"
+
+# android/AndroidManifest.xml says package="cplus.spendwise"
+# cpc build --target android-arm64 -> W0008
+```
+
+**Fix.** Make the file carry the manifest's id — `CFBundleIdentifier` in the plist, `package=` on the Android `<manifest>` element — or change `app_id` if the file is the one that is right.
+
+<sub>repro: scenario · cpc/src/main.rs:warn_app_id_disagreement · test cpc/tests/cli_scaffold.rs:build_warns_w0008_when_a_platform_file_drifts_from_app_id</sub>
 
 ### W0824 · Handler parameter cannot receive a bound method
 

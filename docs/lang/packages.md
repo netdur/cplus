@@ -38,6 +38,7 @@ A file compiles only if some import reaches it from the entry — an orphan
 name    = "myapp"
 version = "0.0.1"
 edition = "2026"
+app_id  = "com.example.myapp"   # optional: the identity it ships under, every platform
 
 [dependencies]        # the portable tier — resolved at vendor/<name>/
 stdlib = "*"

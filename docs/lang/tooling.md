@@ -212,7 +212,7 @@ language plus the packages actually in this build.
 ## 6. Packages
 
 ```bash
-cpc init [--kind cli|gui] [--platform P]... [NAME]
+cpc init [--kind cli|gui] [--platform P]... [--app-id ID] [NAME]
 cpc pm install [DIR]                  # resolve deps into the store
 cpc pm update  [DIR]                  # re-resolve and refresh
 cpc pm add DIR NAME [SPEC]            # add a package and its declared closure
@@ -230,6 +230,12 @@ name is E0413 rather than a guess. `--kind gui` scaffolds a facet app with
 the backend's full dependency closure already in the manifest; without
 `--kind`, the platform decides — `--platform ios` is `gui` and cannot be
 anything else, because iOS has no console for a printing entry to print to.
+
+`--app-id com.example.app` is the identity the app ships under, written to
+`[package] app_id` and into each platform file that carries one (both
+`Info.plist`s, the Android manifest's `package=`). Without it the id is
+`dev.cplus.<name>`, reduced to letters and digits. `cpc build` warns W0008
+when the file for the platform being built names a different id.
 
 `cpc pm add` is the one to prefer over hand-editing `[dependencies]`: it
 writes the package **and its declared closure**, mapping platform sections

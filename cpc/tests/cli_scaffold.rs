@@ -542,6 +542,141 @@ fn init_rejects_invalid_leaf_name() {
     assert!(!out.status.success(), "an invalid leaf name must be rejected");
 }
 
+// ---- the app id (reports/spendwise/S08) ----
+//
+// An id chosen at creation reached none of the generated files, and the three
+// files minted three different ids of their own. One id now goes everywhere,
+// and a build says when a file drifts from the manifest.
+
+#[test]
+fn init_app_id_reaches_the_manifest_and_every_platform_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["init", "--kind", "gui", "--platform", "macos", "--platform", "ios",
+               "--platform", "android", "--app-id", "com.elmanahil.spendwise", "spendwise"])
+        .output().expect("run cpc init");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let root = dir.path().join("spendwise");
+    let toml = read(&root.join("Cplus.toml"));
+    assert!(toml.contains("app_id  = \"com.elmanahil.spendwise\""), "toml:\n{toml}");
+    for f in ["macos/Info.plist", "ios/Info.plist"] {
+        let plist = read(&root.join(f));
+        assert!(
+            plist.contains("<key>CFBundleIdentifier</key>\n    <string>com.elmanahil.spendwise</string>"),
+            "{f}:\n{plist}"
+        );
+        assert!(!plist.contains("dev.cplus."), "{f} still carries a minted id:\n{plist}");
+    }
+    let android = read(&root.join("android/AndroidManifest.xml"));
+    assert!(android.contains("package=\"com.elmanahil.spendwise\""), "android:\n{android}");
+}
+
+#[test]
+fn init_without_app_id_writes_one_default_everywhere() {
+    // Before: `dev.cplus.my_app` for Apple (which Apple rejects — the
+    // underscore) and `cplus.myapp` for Android. Now one reduced id.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["init", "--kind", "gui", "--platform", "macos", "--platform", "ios",
+               "--platform", "android", "my_app"])
+        .output().expect("run cpc init");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let root = dir.path().join("my_app");
+    assert!(read(&root.join("Cplus.toml")).contains("app_id  = \"dev.cplus.myapp\""));
+    for f in ["macos/Info.plist", "ios/Info.plist"] {
+        assert!(read(&root.join(f)).contains("<string>dev.cplus.myapp</string>"), "{f}");
+    }
+    assert!(read(&root.join("android/AndroidManifest.xml")).contains("package=\"dev.cplus.myapp\""));
+}
+
+#[test]
+fn init_refuses_an_app_id_some_platform_would_reject() {
+    for bad in ["spendwise", "com.my_co.app", "com.my-co.app", "com.9lives", "com..app"] {
+        let dir = tempfile::tempdir().unwrap();
+        let out = Command::new(cpc())
+            .current_dir(dir.path())
+            .args(["init", "--app-id", bad, "app"])
+            .output().expect("run cpc init");
+        assert!(!out.status.success(), "`{bad}` must be refused");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("invalid app id"), "{bad}: {err}");
+        assert!(!dir.path().join("app").exists(), "{bad}: nothing may be scaffolded");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["init", "app", "--app-id"])
+        .output().expect("run cpc init");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--app-id requires a value"));
+}
+
+/// A dependency-free app, so the build needs no store.
+fn bare_app(dir: &Path, app_id: &str) {
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        format!("[package]\nname = \"bare\"\napp_id = \"{app_id}\"\n"),
+    ).unwrap();
+    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 0; }\n").unwrap();
+}
+
+#[test]
+fn build_warns_w0008_when_a_platform_file_drifts_from_app_id() {
+    let dir = tempfile::tempdir().unwrap();
+    bare_app(dir.path(), "com.example.bare");
+    std::fs::create_dir_all(dir.path().join("android")).unwrap();
+    // A commented-out package= must not be read as the real one.
+    std::fs::write(
+        dir.path().join("android/AndroidManifest.xml"),
+        "<!-- package=\"com.example.bare\" -->\n<manifest xmlns:android=\"x\"\n    package=\"cplus.bare\">\n</manifest>\n",
+    ).unwrap();
+    // The build itself stops at E0409 (`fn main` on an archive target) or a
+    // missing NDK; the warning is raised before either, which is all this pins.
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["build", "--target", "android-arm64"])
+        .output().expect("run cpc build");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("warning[W0008]"), "stderr:\n{err}");
+    assert!(err.contains("`cplus.bare`") && err.contains("`com.example.bare`"), "stderr:\n{err}");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn build_is_silent_when_the_platform_file_agrees_with_app_id() {
+    let dir = tempfile::tempdir().unwrap();
+    bare_app(dir.path(), "com.example.bare");
+    std::fs::create_dir_all(dir.path().join("macos")).unwrap();
+    let plist = |id: &str| format!(
+        "<plist version=\"1.0\">\n<dict>\n    <key>CFBundleIdentifier</key>\n    <string>{id}</string>\n</dict>\n</plist>\n"
+    );
+    std::fs::write(dir.path().join("macos/Info.plist"), plist("com.example.bare")).unwrap();
+    let out = Command::new(cpc()).current_dir(dir.path()).arg("build").output().expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("W0008"));
+    // An Xcode build-setting variable is not a literal id to compare.
+    std::fs::write(dir.path().join("macos/Info.plist"), plist("$(PRODUCT_BUNDLE_IDENTIFIER)")).unwrap();
+    let out = Command::new(cpc()).current_dir(dir.path()).arg("build").output().expect("build");
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("W0008"));
+    // And drift on macOS warns too.
+    std::fs::write(dir.path().join("macos/Info.plist"), plist("dev.cplus.bare")).unwrap();
+    let out = Command::new(cpc()).current_dir(dir.path()).arg("build").output().expect("build");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("warning[W0008]"));
+}
+
+#[test]
+fn build_rejects_a_malformed_app_id_e0415() {
+    let dir = tempfile::tempdir().unwrap();
+    bare_app(dir.path(), "com.my_co.app");
+    let out = Command::new(cpc()).current_dir(dir.path()).arg("build").output().expect("build");
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("error[E0415]") && err.contains("`_`"), "stderr:\n{err}");
+}
+
 // ---- cpc pm (unified package manager) ----
 
 #[test]
