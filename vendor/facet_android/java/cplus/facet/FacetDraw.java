@@ -58,6 +58,19 @@ public final class FacetDraw {
         v.setBackground(d);
     }
 
+    // FOUR CORNERS, each its own. `setCornerRadii` takes a float[] — eight
+    // values, x and y per corner, clockwise from top-left — and C+ has no door
+    // to a Java array, so the background C+ just installed gets its radii here.
+    // A background that is not a GradientDrawable (a control's own) is left
+    // alone. Leading/trailing are read as left/right.
+    public static void cornerRadii(android.view.View v, float tl, float tr, float br, float bl) {
+        android.graphics.drawable.Drawable b = v.getBackground();
+        if (b instanceof android.graphics.drawable.GradientDrawable) {
+            ((android.graphics.drawable.GradientDrawable) b).setCornerRadii(
+                new float[] { tl, tl, tr, tr, br, br, bl, bl });
+        }
+    }
+
     private static android.graphics.drawable.GradientDrawable.Orientation
     orientationOf(float angleDeg) {
         float a = angleDeg % 360f;

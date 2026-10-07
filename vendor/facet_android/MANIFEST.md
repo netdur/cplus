@@ -1037,6 +1037,6 @@ it, `0100007F:2253` is there and the tree comes back.
   full-screen styles. Back dismisses it through `Navigator::pop`.
 - Both are roots drawn OVER the window in the same host (`window.cplus`
   `add_overlay` / `remove_overlay`); the scheduler lays out every window root.
-- Not yet: per-corner radii (a sheet's bottom corners round too; the
-  background drawable takes one radius, and `setCornerRadii` needs a float[]
-  that vendor/jni cannot build — a FacetDraw helper and a dex rebuild).
+- Corners that differ (a sheet's rounded top, square bottom) reach the
+  background through `FacetDraw.cornerRadii`, because `setCornerRadii` takes
+  a float[] that vendor/jni cannot build.

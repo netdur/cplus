@@ -690,11 +690,32 @@ fn spinner_props(n: *core::Node) -> *props::SpinnerProps {
 // then a corner radius had nowhere to go, and setting the colour afterwards
 // silently discards a drawable built for the radius. One builder for all of it
 // is the only version that cannot half-apply.
+// The largest of four corners: the uniform radius a drawable starts from, and
+// whether there is any rounding at all — a box rounded only at the top has a
+// top-leading radius, and one rounded only at the bottom does not.
+fn largest_corner(c: vocab::Corners) -> f64 {
+    var r: f64 = c.top_leading;
+    if c.top_trailing > r { r = c.top_trailing; }
+    if c.bottom_leading > r { r = c.bottom_leading; }
+    if c.bottom_trailing > r { r = c.bottom_trailing; }
+    return r;
+}
+
+// CORNERS THAT DIFFER — a bottom sheet rounds its top two and not its bottom
+// two. The drawable was built with one radius; this gives it four.
+fn apply_corners(env: rt::Env, v: *u8, c: vocab::Corners) {
+    if c.top_leading == c.top_trailing && c.top_leading == c.bottom_leading
+       && c.top_leading == c.bottom_trailing { return; }
+    dex::corner_radii(env, { v as jni::jobject }, e::px(c.top_leading), e::px(c.top_trailing),
+                      e::px(c.bottom_trailing), e::px(c.bottom_leading));
+    return;
+}
+
 fn apply_decoration(env: rt::Env, v: *u8, n: *core::Node) {
     let brush: vocab::Brush = core::background(n);
     let flat: vocab::Color = core::background_color(n);
     let corners: vocab::Corners = core::corner_radius(n);
-    let radius: f64 = corners.top_leading;
+    let radius: f64 = largest_corner(corners);
     let has_radius: bool = radius > 0.0f64;
 
     var view: w::View = wrap(v);
@@ -726,6 +747,7 @@ fn apply_decoration(env: rt::Env, v: *u8, n: *core::Node) {
     if brush.is_gradient && brush.start.is_set() && brush.end.is_set() {
         dex::draw_gradient_background(env, v, argb_of(brush.start), argb_of(brush.end),
                                       brush.angle, e::px(radius));
+        apply_corners(env, v, corners);
         view.set_clip_to_outline(has_radius || core::kind_of(n) == props::K_SCROLL);
         unwrap_keep(view);
         return;
@@ -739,6 +761,7 @@ fn apply_decoration(env: rt::Env, v: *u8, n: *core::Node) {
 
     var drawable: w::Drawable = d.as_drawable();
     view.set_background(drawable.into_raw());
+    apply_corners(env, v, corners);
     // CLIP TO THE OUTLINE, so a rounded background actually clips its children
     // rather than being a rounded rectangle with square content on top of it.
     view.set_clip_to_outline(has_radius || core::kind_of(n) == props::K_SCROLL);
