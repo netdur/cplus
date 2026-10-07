@@ -1693,6 +1693,27 @@ fn set_padding_edge(n: *Node, edge: flex::Edge, v: f64) {
     touch(n, props::C_LAYOUT);
 }
 
+// The same write, skipped when the edge already says `v` in points — for a
+// backend that re-asserts a padding from a path that runs on every apply (a tab
+// strip in the padding of its edge), where an unconditional write would mark
+// the layout dirty each time.
+fn ensure_padding_edge(n: *Node, edge: flex::Edge, v: f64) {
+    if n.is_null() { return; }
+    let cur: flex::StyleLength = match edge {
+        flex::Edge::Top => { (*n).style.padding_top },
+        flex::Edge::Bottom => { (*n).style.padding_bottom },
+        flex::Edge::Left => { (*n).style.padding_left },
+        flex::Edge::Right => { (*n).style.padding_right },
+        _ => flex::StyleLength::auto(),
+    };
+    let same: bool = match cur.unit {
+        flex::Unit::Point => cur.value == v,
+        _ => false,
+    };
+    if same { return; }
+    set_padding_edge(n, edge, v);
+}
+
 fn set_margin_edge(n: *Node, edge: flex::Edge, v: f64) {
     if n.is_null() { return; }
     { (*n).set_margin(edge, flex::StyleLength::points(v)) };

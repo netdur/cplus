@@ -4132,6 +4132,42 @@ fn dsl_card_is_spacing_only_and_takes_its_surface_inline() {
     assert root.corner_radius().bottom_trailing == 12.0f64;
 }
 
+// SPENDWISE S11. MAUI's AndroidSpecific ToolbarPlacement on TabbedPage, made
+// every platform's: a constructor argument, a cursor verb, and a dirty bit.
+#[test]
+fn tabs_carry_a_bar_placement_and_report_its_change() {
+    var root: facet::Node = tabs::tabs(key: "t");
+    match tabs::find("t", within: #addr_of(root)) {
+        option::Option[tabs::Tabs]::Some(t) => {
+            match t.bar_placement() { vocab::BarPlacement::Default => { } _ => { assert false; } }
+            let _t: tabs::Tabs = t.set_bar_placement(vocab::BarPlacement::Bottom);
+            match t.bar_placement() { vocab::BarPlacement::Bottom => { } _ => { assert false; } }
+        }
+        option::Option[tabs::Tabs]::None => { assert false; }
+    }
+    assert (facet::dirty_of(#addr_of(root)) & tabs::P_BAR_PLACEMENT) != (0 as u64);
+    var b: facet::Node = tabs::tabs(key: "b", bar_placement: vocab::BarPlacement::Top);
+    match tabs::find("b", within: #addr_of(b)) {
+        option::Option[tabs::Tabs]::Some(t) => {
+            match t.bar_placement() { vocab::BarPlacement::Top => { } _ => { assert false; } }
+        }
+        option::Option[tabs::Tabs]::None => { assert false; }
+    }
+}
+
+#[test]
+fn ensure_padding_edge_writes_only_a_change() {
+    var n: facet::Node = facet::column(facet::Builder::new(), key: "p");
+    let p: *facet::Node = #addr_of(n);
+    facet::ensure_padding_edge(p, flex::Edge::Bottom, 64.0f64);
+    assert { (*p).style.padding_bottom.value } == 64.0f64;
+    facet::clear_dirty(p);
+    facet::ensure_padding_edge(p, flex::Edge::Bottom, 64.0f64);
+    assert facet::dirty_of(p) == (0 as u64);
+    facet::ensure_padding_edge(p, flex::Edge::Bottom, 40.0f64);
+    assert (facet::dirty_of(p) & props::C_LAYOUT) != (0 as u64);
+}
+
 #[test]
 fn builder_is_empty_until_something_is_added() {
     var b: facet::Builder = facet::Builder::new();

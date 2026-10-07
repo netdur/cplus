@@ -5155,6 +5155,87 @@ fn tabs_props(n: *core::Node) -> *props::TabsProps {
 
 fn strip_height() -> f64 { return 40.0f64; }
 
+// MAUI's AndroidSpecific ToolbarPlacement: Default is Android's convention, the
+// TOP strip; Bottom is the Material 3 navigation bar.
+fn tabs_at_bottom(n: *core::Node) -> bool {
+    let p: *props::TabsProps = tabs_props(n);
+    if p == (0 as *props::TabsProps) { return false; }
+    return match { (*p).bar_placement } {
+        vocab::BarPlacement::Bottom => true,
+        vocab::BarPlacement::Default => false,
+        vocab::BarPlacement::Top => false,
+    };
+}
+
+// A Material 3 navigation bar is 80dp with an icon over the label; facet's tabs
+// carry a label only, so the bar is the label row and the indicator around it.
+fn bottom_bar_height() -> f64 { return 64.0f64; }
+
+fn tab_bar_height(n: *core::Node) -> f64 {
+    if tabs_at_bottom(n) { return bottom_bar_height(); }
+    return strip_height();
+}
+
+// The ACTIVE INDICATOR: Material 3's 64x32 pill in secondary-container, behind
+// the selected label and centred in its cell; every other cell is bare. An
+// InsetDrawable, so the whole cell stays the touch target while only the pill
+// is drawn. Run from the frame walk, which is the first place a cell's size is
+// known.
+fn dress_bottom_tab(env: rt::Env, n: *core::Node, b: jni::jobject, at: i64, each: f64, h: f64) {
+    let p: *props::TabsProps = tabs_props(n);
+    if p == (0 as *props::TabsProps) { return; }
+    var bv: w::View = w::View::from_global(env, env.new_global_ref(b));
+    if { (*p).selected_index } != at {
+        bv.set_background(0 as jni::jobject);
+        paint::unwrap_keep(bv);
+        return;
+    }
+    var pill: w::GradientDrawable = w::GradientDrawable::new_void(env);
+    pill.set_color_i(paint::argb_of(vocab::Color::selected_content_background()));
+    pill.set_corner_radius({ e::px(16.0f64) as f32 });
+    var pw: f64 = 64.0f64;
+    if pw > each - 8.0f64 { pw = each - 8.0f64; }
+    let dx: i32 = { e::px((each - pw) / 2.0f64) as i32 };
+    let dy: i32 = { e::px((h - 32.0f64) / 2.0f64) as i32 };
+    let inset: jni::jobject = inset_drawable(env, pill.as_obj(), dx, dy, dx, dy);
+    if inset != (0 as jni::jobject) {
+        bv.set_background(inset);
+        env.delete_local_ref(inset);
+    }
+    paint::unwrap_keep(bv);
+    let _keep: *u8 = pill.into_raw();
+    return;
+}
+
+#[test]
+fn a_tab_bar_is_at_the_top_by_default_and_at_the_bottom_when_asked() {
+    // MAUI's Android convention: TabbedPage's strip is at the TOP unless
+    // ToolbarPlacement says Bottom (reports/spendwise/S11).
+    var d: core::Node = tabs::tabs(key: "t:default");
+    assert tabs_at_bottom(#addr_of(d)) == false;
+    assert tab_bar_height(#addr_of(d)) == strip_height();
+    var b: core::Node = tabs::tabs(key: "t:bottom", bar_placement: vocab::BarPlacement::Bottom);
+    assert tabs_at_bottom(#addr_of(b));
+    assert tab_bar_height(#addr_of(b)) == bottom_bar_height();
+    var t: core::Node = tabs::tabs(key: "t:top", bar_placement: vocab::BarPlacement::Top);
+    assert tabs_at_bottom(#addr_of(t)) == false;
+}
+
+// `new InsetDrawable(drawable, l, t, r, b)` — five arguments, more than the
+// binding's constructors take, so the JNI call is made here.
+fn inset_drawable(env: rt::Env, d: jni::jobject, l: i32, t: i32, r: i32, b: i32) -> jni::jobject {
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/graphics/drawable/InsetDrawable\0"));
+    if cls == (0 as jni::jclass) { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"),
+        #str_ptr("(Landroid/graphics/drawable/Drawable;IIII)V\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 5] = [jni::arg_object(d), jni::arg_int(l), jni::arg_int(t),
+                                  jni::arg_int(r), jni::arg_int(b)];
+    let o: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+    if env.has_pending_exception() { env.clear_exception(); return 0 as jni::jobject; }
+    return o;
+}
+
 fn create_tabs(n: *core::Node) -> *u8 {
     let env: rt::Env = e::env();
     let raw: *u8 = global_of(dex::new_host(env, e::context()));
@@ -5183,15 +5264,23 @@ fn tab_strip_of(v: *u8) -> jni::jobject {
 fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TabsProps = tabs_props(n);
     if p == (0 as *props::TabsProps) { return; }
-    if dirty == paint::all_bits() {
-        { (*n).set_padding(flex::Edge::Top, flex::StyleLength::points(strip_height())) };
+    if dirty == paint::all_bits() || (dirty & tabs::P_BAR_PLACEMENT) != (0 as u64) {
+        // The strip lives in the PADDING of the edge it is on.
+        if tabs_at_bottom(n) {
+            core::ensure_padding_edge(n, flex::Edge::Bottom, bottom_bar_height());
+            core::ensure_padding_edge(n, flex::Edge::Top, 0.0f64);
+        } else {
+            core::ensure_padding_edge(n, flex::Edge::Top, strip_height());
+            core::ensure_padding_edge(n, flex::Edge::Bottom, 0.0f64);
+        }
     }
     // THE STRIP IS REBUILT RATHER THAN DIFFED. A tab strip is short, the panes
     // change rarely, and a diff would be more code than the rebuild it
     // replaces — the same call facet_appkit makes about its own.
     let rebuild: u64 = tabs::P_BAR_BACKGROUND | tabs::P_BAR_BACKGROUND_COLOR
                      | tabs::P_BAR_TEXT_COLOR | tabs::P_SELECTED_TAB_COLOR
-                     | tabs::P_UNSELECTED_TAB_COLOR | tabs::P_SELECTED_INDEX;
+                     | tabs::P_UNSELECTED_TAB_COLOR | tabs::P_SELECTED_INDEX
+                     | tabs::P_BAR_PLACEMENT;
     if (dirty & rebuild) != (0 as u64) || dirty == paint::all_bits() {
         rebuild_tab_strip(v, n, p);
     }
@@ -5222,6 +5311,10 @@ fn rebuild_tab_strip(v: *u8, n: *core::Node, p: *props::TabsProps) {
         let brush: vocab::Brush = { (*p).bar_background };
         if { brush.start }.is_set() { back = { brush.start }; }
     }
+    let bottom: bool = tabs_at_bottom(n);
+    // A BOTTOM BAR IS A SURFACE: Material 3's surface-container, which on
+    // Android 12+ is the wallpaper's tone (palette.cplus) — unless the app said.
+    if bottom && !back.is_set() { back = vocab::Color::control_background(); }
     if back.is_set() {
         var sv: w::View = w::View::from_global(env, env.new_global_ref({ strip as *u8 }));
         sv.set_background_color(paint::argb_of(back));
@@ -5246,6 +5339,14 @@ fn rebuild_tab_strip(v: *u8, n: *core::Node, p: *props::TabsProps) {
                 var fg: vocab::Color = { (*p).unselected_tab_color };
                 if { i as i64 } == at { fg = { (*p).selected_tab_color }; }
                 if !fg.is_set() { fg = { (*p).bar_text_color }; }
+                // Material 3's label colours: on-surface for the selected tab,
+                // on-surface-variant for the rest.
+                if bottom && !fg.is_set() {
+                    fg = vocab::Color::text_secondary();
+                    if { i as i64 } == at { fg = vocab::Color::text(); }
+                }
+                // A bottom tab is a label on the bar, not a raised button.
+                if bottom { btv.as_view().set_background(0 as jni::jobject); }
                 if fg.is_set() { btv.set_text_color_i(paint::argb_of(fg)); }
                 // A TAB IS A NODE'S INDEX, and the click carries it: the tab
                 // token packs the node with the index rather than pointing at

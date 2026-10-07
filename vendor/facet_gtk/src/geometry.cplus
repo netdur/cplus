@@ -204,6 +204,7 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
                     reposition_children(c, controls::document_host(v), cf);
                     size_scroll_content(c, v, cf);
                     place_split_divider(c, v, cf);
+                    controls::place_tab_strip(c, v, cf);
                     place_refresh_spinner(c, v, cf);
                     // A swipeable's strip is this package's widget too, and its
                     // content sits wherever the last swipe left it — which is a

@@ -48,8 +48,14 @@ fn attach(r: *record::View) {
     let panel=native::must::[ui::IPanel](ui::IPanel::query((*r).content));let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));native::check(children.append(strip.object()));
     let handler=native::must::[ui::SelectionChangedEventHandler](ui::SelectionChangedEventHandler::new(changed,r as *u8));let token=native::must::[ui::EventRegistrationToken](tab.add_selection_changed(handler.object()));
     let owner=match box::new::[State](State {strip:strip.object(),panes:vec::new::[Pane](),token:token}) {option::Option::Some(v)=>v,option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();LIVE=LIVE+1;
-    (*(*r).node).set_padding(flex::Edge::Top,flex::StyleLength::points(48.0f64));
+    pad(r);
 }
+// MAUI's AndroidSpecific ToolbarPlacement, made every platform's: Default is the
+// TabView's own place, the top; Bottom puts the strip in the bottom padding.
+fn at_bottom(r: *record::View) -> bool {let d=core::node_data((*r).node);if d.is_null() {return false;}let p: *props::TabsProps=(*d).props as *props::TabsProps;if p.is_null() {return false;}
+    return match (*p).bar_placement {vocab::BarPlacement::Bottom=>true,vocab::BarPlacement::Default=>false,vocab::BarPlacement::Top=>false};}
+fn pad(r: *record::View) {if at_bottom(r) {core::ensure_padding_edge((*r).node,flex::Edge::Bottom,48.0f64);core::ensure_padding_edge((*r).node,flex::Edge::Top,0.0f64);}
+    else {core::ensure_padding_edge((*r).node,flex::Edge::Top,48.0f64);core::ensure_padding_edge((*r).node,flex::Edge::Bottom,0.0f64);}}
 fn item_palette(value: rt::Object,p: *props::TabsProps) -> bool {
     var palette=colors::Palette::new(value);
     palette.set_color("TabViewItemHeaderBackgroundSelected",(*p).selected_tab_color);
@@ -62,7 +68,7 @@ fn item_background(value: rt::Object,p: *props::TabsProps) {
     else {let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());typography::clear(value,native::must::[rt::Object](defaults.background_property()));}
 }
 fn apply(r: *record::View) {
-    (*r).applying=true;let s=state(r);let d=core::node_data((*r).node);let p: *props::TabsProps=(*d).props as *props::TabsProps;
+    pad(r);(*r).applying=true;let s=state(r);let d=core::node_data((*r).node);let p: *props::TabsProps=(*d).props as *props::TabsProps;
     let bar=native::must::[ui::IControl](ui::IControl::query((*s).strip));native::check(bar.set_is_enabled((*d).common.is_enabled));
     if (*p).bar_background.start.is_set() || (*p).bar_background_color.is_set() {native::check(bar.set_background(style::paint(if (*p).bar_background.start.is_set() {(*p).bar_background} else {vocab::Brush::solid((*p).bar_background_color)})));}
     else {let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());typography::clear((*s).strip,native::must::[rt::Object](defaults.background_property()));}
@@ -95,5 +101,6 @@ fn remove(r: *record::View,child: *record::View) {
     }
     (*r).applying=false;
 }
-fn place(r: *record::View,width: f64) {let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*state(r)).strip));native::check(element.set_width(width));native::check(element.set_height(48.0f64));}
+fn place(r: *record::View,width: f64,height: f64) {let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*state(r)).strip));native::check(element.set_width(width));native::check(element.set_height(48.0f64));
+    let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_top((*state(r)).strip,if at_bottom(r) {height-48.0f64} else {0.0f64}));}
 fn release(r: *record::View) {native::check(control(r).remove_selection_changed((*state(r)).token));let owner=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;LIVE=LIVE-1;}

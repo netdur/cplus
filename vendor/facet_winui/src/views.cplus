@@ -483,7 +483,7 @@ fn place(n: *core::Node, parent: flex::Frame) {
         i=i+1;
     }
     if core::kind_of(n)==props::K_SWIPEABLE {swipe::place(core::view_of(n) as *View,frame.width,frame.height);}
-    if core::kind_of(n)==props::K_TABS {tabs::place(core::view_of(n) as *View,frame.width);}
+    if core::kind_of(n)==props::K_TABS {tabs::place(core::view_of(n) as *View,frame.width,frame.height);}
     if core::kind_of(n)==split::K_SPLIT {divider::place(core::view_of(n) as *View,frame.width,frame.height);}
     if items::supports(core::kind_of(n)) {items::place(core::view_of(n) as *View,frame.width,frame.height,layout_row);}
     if core::kind_of(n)==tree::K_TREE {outline::place(core::view_of(n) as *View,frame.width,layout_row);}

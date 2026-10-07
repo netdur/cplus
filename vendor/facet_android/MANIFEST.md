@@ -814,6 +814,23 @@ export, five lines calling `entry::start`. It lives in the APP because cpc emits
 one object per package: a package that names a symbol obligates everything that
 links it.
 
+### A BOTTOM TAB BAR is a Material 3 navigation bar, drawn here
+
+`tabs(bar_placement: Bottom)` — MAUI's `AndroidSpecific.ToolbarPlacement` —
+moves the strip into the node's BOTTOM padding and dresses it as Material 3's
+navigation bar: a surface-container fill (`control_background`, the
+wallpaper's tone on Android 12+), on-surface / on-surface-variant labels, and
+the 64x32 pill active indicator in secondary-container behind the selected
+label, drawn as an `InsetDrawable` so the whole cell stays the touch target.
+When the node's bottom is the safe box's bottom the strip runs on under the
+gesture handle by the bottom inset (a FacetHost does not clip).
+
+MAUI gets this from Material Components' `BottomNavigationView`. That library is
+an AndroidX AAR, which this backend does not depend on (and which `cpc pm`
+cannot yet merge the resources of), so the bar is drawn from the same pieces as
+the top strip. `Default` stays Android's convention, the top. facet's tabs
+carry a label and no icon, so the bar is 64dp rather than Material's 80.
+
 ### A COLOUR IS A TOKEN, not three numbers
 
 `vocab::Color` carries a `token`, and only 255 means "the rgba fields are the

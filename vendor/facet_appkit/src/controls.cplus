@@ -3663,6 +3663,43 @@ fn create_tabs(n: *core::Node) -> *u8 {
 
 fn tab_strip_of(v: *u8) -> *u8 { return { synth::get_associated(v, tab_strip_key()) }; }
 
+// MAUI's AndroidSpecific ToolbarPlacement, made every platform's. Default is the
+// desktop convention, the top — NSTabView's own place for its tabs.
+fn tabs_at_bottom(p: *props::TabsProps) -> bool {
+    return match { (*p).bar_placement } {
+        vocab::BarPlacement::Bottom => true,
+        vocab::BarPlacement::Default => false,
+        vocab::BarPlacement::Top => false,
+    };
+}
+
+// The strip in the PADDING of the edge it is on, and pinned to that edge. The
+// host is flipped, so a flexible MIN-Y margin (8) is what keeps a strip at the
+// BOTTOM as the host grows, and a flexible MAX-Y margin (32) at the top; width
+// tracks the host either way (2).
+fn place_tab_strip(v: *u8, n: *core::Node, bottom: bool) {
+    let strip: *u8 = tab_strip_of(v);
+    let h: f64 = strip_height();
+    if bottom {
+        core::ensure_padding_edge(n, flex::Edge::Bottom, h);
+        core::ensure_padding_edge(n, flex::Edge::Top, 0.0f64);
+    } else {
+        core::ensure_padding_edge(n, flex::Edge::Top, h);
+        core::ensure_padding_edge(n, flex::Edge::Bottom, 0.0f64);
+    }
+    if strip.is_null() { return; }
+    let host: rt::Rect = ak::View::from_raw(v).bounds();
+    let sv: ak::View = ak::View::from_raw(strip);
+    if bottom {
+        { rt::msg_void_u64(strip, rt::sel(#str_ptr("setAutoresizingMask:\0")), 10 as u64) };
+        sv.set_frame(rt::Rect { x: 0.0f64, y: host.h - h, w: host.w, h: h });
+    } else {
+        { rt::msg_void_u64(strip, rt::sel(#str_ptr("setAutoresizingMask:\0")), 34 as u64) };
+        sv.set_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: host.w, h: h });
+    }
+    return;
+}
+
 // A pane arrives. It is an ordinary subview now — the strip gains a button for
 // it, and the LABEL is still its key, because a tab needs a title and every
 // addressable node already has one.
@@ -3830,8 +3867,8 @@ fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     // The strip lives in the node's PADDING, which is how flex is told it is
     // there. Without this a pane is laid out over the strip, which is the shape
     // of the bug NSTabView had from the other direction.
-    if dirty == paint::all_bits() {
-        { (*n).set_padding(flex::Edge::Top, flex::StyleLength::points(strip_height())) };
+    if dirty == paint::all_bits() || (dirty & tabs::P_BAR_PLACEMENT) != (0 as u64) {
+        place_tab_strip(v, n, tabs_at_bottom(p));
     }
     if (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) {
         show_selected_pane(n, { (*p).selected_index });

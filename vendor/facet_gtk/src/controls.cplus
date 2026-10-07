@@ -3399,6 +3399,32 @@ fn strip_height() -> f64 { return 28.0f64; }
 
 fn tab_strip_of(v: *u8) -> *u8 { return g::get_data(v, tab_strip_key()); }
 
+// MAUI's AndroidSpecific ToolbarPlacement, made every platform's. Default is the
+// desktop convention, the top.
+fn tabs_at_bottom(p: *props::TabsProps) -> bool {
+    return match { (*p).bar_placement } {
+        vocab::BarPlacement::Bottom => true,
+        vocab::BarPlacement::Default => false,
+        vocab::BarPlacement::Top => false,
+    };
+}
+
+// From the frame walk: a GtkFixed does not size its children, so the strip is
+// given the host's width here and moved to the edge it is placed on.
+fn place_tab_strip(n: *core::Node, v: *u8, frame: flex::Frame) {
+    if core::kind_of(n) != props::K_TABS { return; }
+    let p: *props::TabsProps = tabs_props(n);
+    if p == (0 as *props::TabsProps) { return; }
+    let strip: *u8 = tab_strip_of(v);
+    if strip == (0 as *u8) { return; }
+    let sw: gtk::Widget = gtk::Widget::from_raw(strip);
+    sw.set_size_request({ frame.width as i32 }, { strip_height() as i32 });
+    var y: f64 = 0.0f64;
+    if tabs_at_bottom(p) { y = frame.height - strip_height(); }
+    gtk::Fixed::from_raw(v).move_(sw, 0.0f64, y);
+    return;
+}
+
 fn create_tabs(n: *core::Node) -> *u8 {
     let fixed: gtk::Fixed = gtk::Fixed::new();
     // Horizontal, homogeneous: every tab the same width, which is what a strip
@@ -3416,8 +3442,12 @@ fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::TabsProps) { return; }
     // The strip lives in the node's PADDING, which is how flex is told it is
     // there. Without this a pane is laid out OVER the strip.
-    if dirty == paint::all_bits() {
-        { (*n).set_padding(flex::Edge::Top, flex::StyleLength::points(strip_height())) };
+    if tabs_at_bottom(p) {
+        core::ensure_padding_edge(n, flex::Edge::Bottom, strip_height());
+        core::ensure_padding_edge(n, flex::Edge::Top, 0.0f64);
+    } else {
+        core::ensure_padding_edge(n, flex::Edge::Top, strip_height());
+        core::ensure_padding_edge(n, flex::Edge::Bottom, 0.0f64);
     }
     // One button per pane, rebuilt when the panes change. A strip is short and
     // a diff would be more code than the rebuild it replaces.

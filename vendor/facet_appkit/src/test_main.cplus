@@ -1795,6 +1795,31 @@ fn a_tab_pane_is_an_ordinary_subview_and_gains_a_tab_for_it() {
     }
 }
 
+#[test]
+fn a_tab_strip_sits_in_the_padding_of_the_edge_bar_placement_names() {
+    // MAUI's AndroidSpecific ToolbarPlacement, made every platform's
+    // (reports/spendwise/S11). Default is the desktop convention, the top.
+    backend::install();
+    var d: core::Node = tabs::tabs(key: "tabs:d");
+    let dp: *core::Node = #addr_of(d);
+    let dv: *u8 = views::create(0 as *u8, dp);
+    assert { (*dp).style.padding_top.value } == controls::strip_height();
+    assert { (*dp).style.padding_bottom.value } == 0.0f64;
+    views::view_release(dv);
+
+    var b: core::Node = tabs::tabs(key: "tabs:b", bar_placement: vocab::BarPlacement::Bottom);
+    let bp: *core::Node = #addr_of(b);
+    let bv: *u8 = views::create(0 as *u8, bp);
+    assert { (*bp).style.padding_bottom.value } == controls::strip_height();
+    assert { (*bp).style.padding_top.value } == 0.0f64;
+    // The strip follows the host's bottom edge as the host is sized.
+    ak::View::from_raw(bv).set_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    let sf: rt::Rect = ak::View::from_raw(controls::tab_strip_of(bv)).frame();
+    assert sf.y + sf.h == 200.0f64;
+    assert sf.w == 300.0f64;
+    views::view_release(bv);
+}
+
 // ---- the menu tier: a kind that is not a view --------------------------------
 
 #[test]

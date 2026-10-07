@@ -270,6 +270,10 @@ fn safe_insets(root: *core::Node) -> Insets {
 
 static INSET_LEFT: f64 = 0.0f64;
 static INSET_TOP: f64 = 0.0f64;
+// The bottom of it, and the safe box's height: what a bottom bar needs to know
+// to reach the screen edge (place_tab_strip).
+static INSET_BOTTOM: f64 = 0.0f64;
+static SAFE_HEIGHT: f64 = 0.0f64;
 
 // WHERE THE ROOT HOST'S ORIGIN IS, in facet's units — which is the one thing a
 // reader OUTSIDE this file needs from the pair above, and the reason they are
@@ -297,8 +301,10 @@ fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
     let ins: Insets = safe_insets(root);
     INSET_LEFT = ins.left;
     INSET_TOP = ins.top;
+    INSET_BOTTOM = ins.bottom;
     let width: f64 = width - ins.left - ins.right;
     let height: f64 = height - ins.top - ins.bottom;
+    SAFE_HEIGHT = height;
     // THE ROOT FILLS ITS WINDOW, stated as style rather than assumed.
     //
     // `calculate_layout` takes the AVAILABLE space, not the size — a root whose
@@ -371,19 +377,36 @@ fn settle_splits(node: *core::Node) -> bool {
     return wrote;
 }
 
-// A TAB STRIP, across the top of the tabs host and divided evenly. This
-// package's own view, like the split's divider and the swipe strip, so nothing
-// else in the walk places it — and its buttons are placed here too, because
-// their width is the host's over the count and the host's width is this pass's
-// answer.
+// A TAB STRIP, across the top of the tabs host and divided evenly — or, with
+// `bar_placement: Bottom`, across its bottom as a Material 3 navigation bar.
+// This package's own view, like the split's divider and the swipe strip, so
+// nothing else in the walk places it — and its buttons are placed here too,
+// because their width is the host's over the count and the host's width is this
+// pass's answer.
+//
+// A BOTTOM BAR REACHES THE SCREEN EDGE. The window is edge-to-edge and facet
+// keeps the root inside the safe area, so a bar at the bottom of the safe box
+// would stop above the gesture handle with bare window beneath it. When the
+// tabs node's bottom IS the safe box's bottom, the strip's frame runs on by the
+// bottom inset (a FacetHost does not clip); its buttons stay in the top `h`.
 fn place_tab_strip(n: *core::Node, v: *u8, frame: flex::Frame) {
     if core::kind_of(n) != props::K_TABS { return; }
     if !e::have_env() { return; }
     let env: rt::Env = e::env();
     let strip: jni::jobject = controls::tab_strip_of(v);
     if strip == (0 as jni::jobject) { return; }
-    let h: f64 = controls::strip_height();
-    place(strip, 0.0f64, 0.0f64, frame.width, h);
+    let bottom: bool = controls::tabs_at_bottom(n);
+    let h: f64 = controls::tab_bar_height(n);
+    var y: f64 = 0.0f64;
+    var extra: f64 = 0.0f64;
+    if bottom {
+        y = frame.height - h;
+        let edge: f64 = frame.top + frame.height;
+        if INSET_BOTTOM > 0.0f64 && edge > SAFE_HEIGHT - 0.5f64 && edge < SAFE_HEIGHT + 0.5f64 {
+            extra = INSET_BOTTOM;
+        }
+    }
+    place(strip, 0.0f64, y, frame.width, h + extra);
     var g: w::ViewGroup = w::ViewGroup::from_global(env, env.new_global_ref({ strip as *u8 }));
     let count: i32 = g.get_child_count();
     if count > (0 as i32) {
@@ -393,6 +416,7 @@ fn place_tab_strip(n: *core::Node, v: *u8, frame: flex::Frame) {
             let b: jni::jobject = g.get_child_at(i);
             if b != (0 as jni::jobject) {
                 place({ b as *u8 }, { i as f64 } * each, 0.0f64, each, h);
+                if bottom { controls::dress_bottom_tab(env, n, b, { i as i64 }, each, h); }
                 env.delete_local_ref(b);
             }
             i = i +% (1 as i32);
