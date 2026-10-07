@@ -1838,6 +1838,62 @@ fn inline_asm_tier3_naked_fn_runs_aarch64() {
 // GAP 3 (v0.0.19): a lower-pass error (E0911 bad static initializer) in an
 // imported file must render against THAT file in a multi-file build, not the
 // entry file. Before `lower_multi`, the diagnostic pointed at the entry file.
+// An interface DEFAULT body is copied into each implementor's impl block,
+// which may sit in another file with other import aliases. Its paths must be
+// resolved against the INTERFACE's imports, before the copy: the resolver
+// rewrote a default's signature and skipped its body, so `lib::seven()` in a
+// default was E0303 "unknown type `lib`" in every implementor (found making
+// facet's `Screen::menu_items` default to an empty Vec).
+fn default_body_project(body_call: &str) -> std::path::PathBuf {
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/lib.cplus"), "fn seven() -> i32 { return 7; }\n").unwrap();
+    std::fs::write(
+        dir.join("src/named.cplus"),
+        format!(
+            "import \"./lib\" as lib;\ninterface Named {{\n    fn n(this) -> i32 {{ return {body_call}; }}\n}}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./named\" as named;\nstruct A { }\nimpl A: named::Named { }\n\
+         fn main() -> i32 { let a: A = A { }; return a.n() - 7; }\n",
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn an_interface_default_body_resolves_its_own_imports() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = default_body_project("lib::seven()");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(dir.join("src/main.cplus"))
+        .output()
+        .expect("invoke cpc check");
+    assert!(
+        out.status.success(),
+        "a default body naming an import must check: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn an_interface_default_body_with_an_unknown_alias_is_still_refused() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = default_body_project("nope::seven()");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(dir.join("src/main.cplus"))
+        .output()
+        .expect("invoke cpc check");
+    assert!(!out.status.success(), "an unknown alias in a default body must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("named.cplus"), "the error points at the interface's file: {stderr}");
+}
+
 #[test]
 fn multi_file_static_init_error_points_at_imported_file_gap3() {
     let cpc = env!("CARGO_BIN_EXE_cpc");

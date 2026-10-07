@@ -2630,6 +2630,24 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
                 if let Some(rt) = &mut m.return_type {
                     rewrite_type(rt, ctx)?;
                 }
+                // A DEFAULT BODY is rewritten like any method body, in the
+                // interface's own file. `lower::expand_interface_defaults`
+                // copies it into each implementor's impl block — possibly in
+                // another file, with other import aliases — so this is the
+                // only place its paths can be resolved against the imports
+                // the interface's author wrote. Before this, a default body
+                // that named anything through an import (`vec::new`) was
+                // E0303 in every implementor.
+                if let Some(body) = &mut m.body {
+                    let mut scope: HashSet<String> = HashSet::new();
+                    if m.receiver.is_some() {
+                        scope.insert("self".to_string());
+                    }
+                    for p in &m.params {
+                        scope.insert(p.name.name.clone());
+                    }
+                    rewrite_block(body, ctx, &mut scope)?;
+                }
             }
             ItemKind::Interface(i)
         }
