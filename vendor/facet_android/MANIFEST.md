@@ -379,6 +379,18 @@ rows has closed: what is left is PROPS on controls that already work.
   `honours_safe_area` says so. Measured both ways on the emulator: `Default`
   puts the root at 159..2920 of a 2992-tall window, `None` gives it all 2992.
 
+  THE ACTION BAR IS PART OF THE TOP INSET. It is not a WindowInset — it is a
+  decor view — and on an edge-to-edge window `android:id/content` spans the
+  whole window beneath it, so a root inset by the status bar alone put its first
+  56dp under the bar (reports/spendwise/S07; measured: content 0..2992,
+  `action_bar_container` 0..327, facet's root at 159). `windowInsets` adds the
+  theme's `actionBarSize` while the Activity's ActionBar is showing.
+
+  THE NAVIGATION BAR IS TRANSPARENT. Below target SDK 35 the system paints its
+  own `navigationBarBackground` over the app, so nothing facet drew reached the
+  bottom edge; `FacetActivity` sets it transparent wherever it goes
+  edge-to-edge, and the root stays inset clear of the gesture handle.
+
   The insets are CACHED, and `C_SAFE_AREA` is what drops the cache. Reading
   them is a JNI round trip and the layout pass runs constantly; they move only
   when the window does — a rotation, a split-screen resize, the IME — or when a

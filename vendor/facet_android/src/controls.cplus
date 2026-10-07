@@ -5222,7 +5222,16 @@ fn dress_bottom_tab(env: rt::Env, n: *core::Node, b: jni::jobject, at: i64, each
     let db: i32 = { e::px(h - top - 32.0f64) as i32 };
     let inset: jni::jobject = inset_drawable(env, pill.as_obj(), dx, dt, dx, db);
     if inset != (0 as jni::jobject) {
+        // AN INSETDRAWABLE REPORTS ITS INSETS AS PADDING, and `setBackground`
+        // gives the view that padding — so the selected tab's label was pushed
+        // down and clipped (Pixel 9 Pro XL emulator, 2026-10-07). The cell's
+        // own padding is put back: the pill is decoration, not layout.
+        let pl: i32 = bv.get_padding_left();
+        let pt: i32 = bv.get_padding_top();
+        let pr: i32 = bv.get_padding_right();
+        let pb: i32 = bv.get_padding_bottom();
         bv.set_background(inset);
+        bv.set_padding(pl, pt, pr, pb);
         env.delete_local_ref(inset);
     }
     paint::unwrap_keep(bv);

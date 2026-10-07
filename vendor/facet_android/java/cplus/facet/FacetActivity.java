@@ -55,6 +55,18 @@ public class FacetActivity extends android.app.Activity {
         // nothing, because the window it is given is already inside the bars.
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             getWindow().setDecorFitsSystemWindows(false);
+            // AND THE NAVIGATION BAR IS SEE-THROUGH, or edge-to-edge stops at
+            // it. Below target SDK 35 the system still paints its own
+            // `navigationBarBackground` view OVER the app, so nothing facet
+            // drew could reach the screen's bottom edge — a bottom tab bar
+            // stopped at the gesture handle with a black band beneath it
+            // (measured on a Pixel 9 Pro XL emulator, 2026-10-07). Android 15
+            // makes this the default for apps that target it; facet says it
+            // for every level it goes edge-to-edge on. The handle keeps its
+            // own contrast scrim off: the content under it is facet's to
+            // colour, and the root is already inset clear of it.
+            getWindow().setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+            getWindow().setNavigationBarContrastEnforced(false);
         }
         setContentView(nativeCreateView(this));
         // AFTER setContentView, and that ordering is the whole cold-start
@@ -166,8 +178,28 @@ public class FacetActivity extends android.app.Activity {
             android.view.WindowInsets.Type.systemBars()
                 | android.view.WindowInsets.Type.displayCutout()
                 | android.view.WindowInsets.Type.ime());
-        return ((long) (i.left & 0xffff) << 48) | ((long) (i.top & 0xffff) << 32)
+        // THE ACTION BAR IS NOT A WINDOW INSET. WindowInsets describe the
+        // status and navigation bars; the ActionBar is a decor view of its own,
+        // and on an edge-to-edge window `android:id/content` spans the WHOLE
+        // window beneath it — so a root inset by the status bar alone sat its
+        // first 56dp under the ActionBar (reports/spendwise/S07, measured:
+        // content 0..2992, action_bar_container 0..327, facet's root at 159).
+        // The bar's height is the THEME's `actionBarSize`, not the view's
+        // live height, which is 0 until the bar's first layout.
+        int top = i.top + actionBarHeight(v);
+        return ((long) (i.left & 0xffff) << 48) | ((long) (top & 0xffff) << 32)
              | ((long) (i.right & 0xffff) << 16) | (long) (i.bottom & 0xffff);
+    }
+
+    private static int actionBarHeight(android.view.View v) {
+        if (!(v.getContext() instanceof android.app.Activity)) return 0;
+        android.app.Activity a = (android.app.Activity) v.getContext();
+        android.app.ActionBar ab = a.getActionBar();
+        if (ab == null || !ab.isShowing()) return 0;
+        android.util.TypedValue tv = new android.util.TypedValue();
+        if (!a.getTheme().resolveAttribute(android.R.attr.actionBarSize, tv, true)) return 0;
+        return android.util.TypedValue.complexToDimensionPixelSize(
+            tv.data, a.getResources().getDisplayMetrics());
     }
 
     // THE SYSTEM BACK IS THE APP'S TO ANSWER, and closing was the wrong default.
