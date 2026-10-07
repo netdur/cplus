@@ -1626,6 +1626,47 @@ fn a_gradient_box_keeps_its_corner_radius() -> bool {
     return r == 14.0f64;
 }
 
+// spendwise S20 item 5: MAUI's BlurEffect on any node. A UIVisualEffectView at
+// the BACK of the node's view — Liquid Glass on iOS 26, a blur before — with
+// the node's corners; None takes it away again. An unkeyed column asking for
+// one gets a view to carry it, the same claim a background makes.
+fn a_blurred_node_carries_a_material_behind_its_content() -> bool {
+    var n: core::Node = ui::box(vocab::Color::clear(), key: "st:glass",
+                                corner_radius: vocab::Corners::all(20.0f64));
+    n.set_blur_effect(vocab::BlurEffect::Light);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    uik::View::from_raw(v).add_subview(uik::View::from_raw(rt::alloc_init(#str_ptr("UIView\0"))));
+    core::clear_dirty(p);
+    // A child arrives after; the material must still be at the back.
+    paint::apply_blur_effect(v, p);
+    let fx: *u8 = paint::blur_view_of(v);
+    var ok: bool = fx != (0 as *u8);
+    var why: text::Text = text::new();
+    if ok {
+        ok = agent::is_kind(fx, #str_ptr("UIVisualEffectView\0"));
+        let effect: *u8 = { rt::msg_id(fx, rt::sel(#str_ptr("effect\0"))) };
+        let glass_os: bool = rt::get_class(#str_ptr("UIGlassEffect\0")) != (0 as *u8);
+        if glass_os { ok = ok && agent::is_kind(effect, #str_ptr("UIGlassEffect\0")); }
+        let back: *u8 = agent::subview_at(v, 0 as usize);
+        let r: f64 = { rt::msg_f64(uik::View::from_raw(fx).layer().raw(), rt::sel(#str_ptr("cornerRadius\0"))) };
+        ok = ok && back == fx && r == 20.0f64;
+        why = "kind/glass/back/radius ${r}";
+    } else { why = text::from_str("no material view"); }
+    // None removes it.
+    n.set_blur_effect(vocab::BlurEffect::None);
+    paint::apply_blur_effect(v, p);
+    let gone: bool = paint::blur_view_of(v) == (0 as *u8);
+    // A bare column that asks for a material gets a view to carry it.
+    var c: core::Node = ui::column(core::Builder::new());
+    c.set_blur_effect(vocab::BlurEffect::Dark);
+    let wants: bool = views::wants_view(#addr_of(c));
+    views::view_release(v);
+    if !(ok && gone && wants) { io::eprintln(text::from_str("  ${why.view()} gone ${gone} wants ${wants}")); }
+    return ok && gone && wants;
+}
+
 // spendwise S20 D4: a root screen asking for `SafeArea::Content` stopped at
 // the status bar while a pushed one ran under it. With nothing pushed, the
 // root's own request now decides, as a pushed screen's does.
@@ -4513,6 +4554,8 @@ fn run_all() -> i32 {
           a_date_pickers_date_is_read_and_picked_by_an_agent());
     check("an open alert is read and answered by an agent",
           an_open_alert_is_read_and_answered_by_an_agent());
+    check("a blurred node carries a material behind its content",
+          a_blurred_node_carries_a_material_behind_its_content());
     check("a gradient box keeps its corner radius",
           a_gradient_box_keeps_its_corner_radius());
     check("a root asking for Content runs under the bars",

@@ -36,6 +36,7 @@ apply — `set_opacity(0)` and `animate_opacity(1)` in one tick are not a fade-i
 |---|---|
 | `set_opacity` `set_background_color` `set_background` | paint |
 | `set_background_image` `set_shadow` `set_clip` | paint |
+| `set_blur_effect` | the material behind the node (below) |
 | `set_enabled` `set_visible` `set_input_transparent` | state |
 | `set_flow_direction` `set_safe_area` | direction and insets |
 | `set_rotation` `set_scale` `set_translation` `set_anchor` | transform |
@@ -45,6 +46,17 @@ apply — `set_opacity(0)` and `animate_opacity(1)` in one tick are not a fade-i
 | `animate_opacity` `animate_scale` `animate_scale_x` `animate_scale_y` | animate to end state |
 | `animate_rotation` `animate_rotation_x` `animate_rotation_y` | animate to end state |
 | `animate_translation(x:, y:)` `cancel_animations` | animate / abort |
+
+`set_blur_effect(vocab::BlurEffect)` is MAUI's `BlurEffect`: what is behind
+the node shows through it, blurred, with the node's children drawn on top.
+`Light` and `Dark` pin the material's appearance; `ExtraLight` is the lightest,
+most see-through one; `None` (the default) removes it. It is Liquid Glass on
+iOS 26 and macOS 26 (`UIGlassEffect` / `NSGlassEffectView`), a blur or
+vibrancy material on earlier systems, and nothing on Android, Windows and GTK,
+as in MAUI, where it is iOS-only. The node's corners round the material. A
+background colour draws under the material and tints it, so a blurred node
+normally leaves it clear; give it one per platform where you want a solid
+surface instead (`examples/glass_music_ios/src/mini_player.cplus`).
 
 `set_*` on opacity and the transform band **snaps**. `animate_*` writes the
 same end values and asks the backend to interpolate over `duration` (default

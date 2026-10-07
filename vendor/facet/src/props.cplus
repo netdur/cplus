@@ -66,6 +66,8 @@ struct CommonProps {
     background_image: text::Text,
     shadow: vocab::Shadow,
     clip: vocab::Shape,
+    // MAUI's VisualElement.BlurEffect: a material, behind the node's content.
+    blur_effect: vocab::BlurEffect,
     // Whether this node keeps its content clear of the window's own chrome.
     // `scroll` has taken one of these since Stage 2 and nothing else could,
     // which is what left the ledger's three Page rows (ContainerArea,
@@ -129,6 +131,7 @@ impl CommonProps {
             background_image: text::new(),
             shadow: vocab::Shadow::none(),
             clip: vocab::Shape::none(),
+            blur_effect: vocab::BlurEffect::None,
             safe_area: vocab::SafeArea::Default,
             accessibility_label: text::new(),
             accessibility_hint: text::new(),
@@ -257,6 +260,10 @@ const C_CORNER_RADIUS: u64 = 17592186044416u64;
 // re-read it as a side effect of a label change would be a backend where the
 // pin's timing is decided somewhere else.
 const C_AGENT: u64 = 8796093022208u64;
+// 2^40, under the animation pair. The material behind a node
+// (VisualElement.BlurEffect) — its own bit because applying it adds or removes
+// a native view, which nothing else in the paint band does.
+const C_BLUR_EFFECT: u64 = 1099511627776u64;
 
 // ---- state versus commands ---------------------------------------------------
 // C_FOCUS, C_BLUR, C_FLUSH, C_ANIMATE and C_CANCEL_ANIMATIONS are VERBS: the

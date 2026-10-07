@@ -35,6 +35,14 @@ enum BarPlacement {
     Bottom,
 }
 
+// BlurEffectStyle (authored: no manifest source)
+enum BlurEffect {
+    None,
+    ExtraLight,
+    Light,
+    Dark,
+}
+
 // ButtonsMask
 enum Buttons {
     Primary,

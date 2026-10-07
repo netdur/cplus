@@ -4379,19 +4379,21 @@ fn shared_bits_are_pairwise_disjoint() {
         | props::C_FOCUS | props::C_BLUR | props::C_FLUSH | props::C_HANDLERS
         | props::C_LAYOUT | props::C_SAFE_AREA | facet::C_GESTURES
         | props::C_SEMANTICS | props::C_TOOLTIP | props::C_CORNER_RADIUS
-        | props::C_AGENT | props::C_ANIMATE | props::C_CANCEL_ANIMATIONS;
+        | props::C_AGENT | props::C_ANIMATE | props::C_CANCEL_ANIMATIONS
+        | props::C_BLUR_EFFECT;
     let summed: u64 = props::C_OPACITY +% props::C_BACKGROUND_COLOR +% props::C_BACKGROUND
         +% props::C_SHADOW +% props::C_CLIP +% props::C_IS_ENABLED +% props::C_IS_VISIBLE
         +% props::C_INPUT_TRANSPARENT +% props::C_FLOW_DIRECTION +% props::C_TRANSFORM
         +% props::C_FOCUS +% props::C_BLUR +% props::C_FLUSH +% props::C_HANDLERS
         +% props::C_LAYOUT +% props::C_SAFE_AREA +% facet::C_GESTURES
         +% props::C_SEMANTICS +% props::C_TOOLTIP +% props::C_CORNER_RADIUS
-        +% props::C_AGENT +% props::C_ANIMATE +% props::C_CANCEL_ANIMATIONS;
+        +% props::C_AGENT +% props::C_ANIMATE +% props::C_CANCEL_ANIMATIONS
+        +% props::C_BLUR_EFFECT;
     assert ored == summed;
-    // Twenty-three bits, so twenty-three ones. A new shared bit must be added
+    // Twenty-four bits, so twenty-four ones. A new shared bit must be added
     // here — and C_SEMANTICS / C_TOOLTIP / C_AGENT show what happens when it
     // is not: declared, unlisted, and the collision guard was not watching.
-    assert count_bits(ored) == (23 as u64);
+    assert count_bits(ored) == (24 as u64);
 
     // The two masks are built from these bits and must stay consistent with
     // them: every command is a real bit, and state is exactly the rest.
@@ -4423,7 +4425,8 @@ fn no_shared_bit_reaches_into_the_per_control_space() {
         | props::C_FOCUS | props::C_BLUR | props::C_FLUSH | props::C_HANDLERS
         | props::C_LAYOUT | props::C_SAFE_AREA | facet::C_GESTURES
         | props::C_SEMANTICS | props::C_TOOLTIP | props::C_CORNER_RADIUS
-        | props::C_AGENT | props::C_ANIMATE | props::C_CANCEL_ANIMATIONS;
+        | props::C_AGENT | props::C_ANIMATE | props::C_CANCEL_ANIMATIONS
+        | props::C_BLUR_EFFECT;
     let per_control_space: u64 = 8388607u64;   // bits 0..22
     assert (shared & per_control_space) == (0 as u64);
 }

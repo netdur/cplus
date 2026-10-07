@@ -349,6 +349,10 @@ HAND_ENUMS = {
     "NamedSize": ["Default", "Micro", "Small", "Medium", "Large", "Body",
                   "Header", "Title", "Subtitle", "Caption"],
     "ContentLayout": ["ImageLeft", "ImageTop", "ImageRight", "ImageBottom"],
+    # MAUI's iOSSpecific.BlurEffectStyle, in the ledger's own order and values
+    # (None 0 .. Dark 3) — by hand only so `None` stays the zero; the manifest
+    # harvest sorts. What is behind a node shows through it, blurred.
+    "BlurEffect": ["None", "ExtraLight", "Light", "Dark"],
     # WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT. Not in either manifest —
     # the ledger predates agents — and authored here because the agent surface
     # (agent_core::identity) is the authority for what the values MEAN.
@@ -391,7 +395,7 @@ def read_enums():
     out = {}
     # Enums whose facet shape deliberately DIVERGES from the ledger members —
     # the hand list is the contract, the manifest is only provenance.
-    hand_wins = {"FontWeight", "ToolbarPlacement", "NamedSize"}
+    hand_wins = {"FontWeight", "ToolbarPlacement", "NamedSize", "BlurEffect"}
     for row_type, facet in ledger_map.ENUMS.items():
         # The map is keyed by the BARE type name; the manifest spells whatever
         # namespace declared it, so match the tail rather than the whole path.
@@ -2280,6 +2284,8 @@ struct CommonProps {
     background_image: text::Text,
     shadow: vocab::Shadow,
     clip: vocab::Shape,
+    // MAUI's VisualElement.BlurEffect: a material, behind the node's content.
+    blur_effect: vocab::BlurEffect,
     // Whether this node keeps its content clear of the window's own chrome.
     // `scroll` has taken one of these since Stage 2 and nothing else could,
     // which is what left the ledger's three Page rows (ContainerArea,
@@ -2343,6 +2349,7 @@ impl CommonProps {
             background_image: text::new(),
             shadow: vocab::Shadow::none(),
             clip: vocab::Shape::none(),
+            blur_effect: vocab::BlurEffect::None,
             safe_area: vocab::SafeArea::Default,
             accessibility_label: text::new(),
             accessibility_hint: text::new(),
@@ -2471,6 +2478,10 @@ const C_CORNER_RADIUS: u64 = 17592186044416u64;
 // re-read it as a side effect of a label change would be a backend where the
 // pin's timing is decided somewhere else.
 const C_AGENT: u64 = 8796093022208u64;
+// 2^40, under the animation pair. The material behind a node
+// (VisualElement.BlurEffect) — its own bit because applying it adds or removes
+// a native view, which nothing else in the paint band does.
+const C_BLUR_EFFECT: u64 = 1099511627776u64;
 
 // ---- state versus commands ---------------------------------------------------
 // C_FOCUS, C_BLUR, C_FLUSH, C_ANIMATE and C_CANCEL_ANIMATIONS are VERBS: the
@@ -3009,6 +3020,10 @@ SHARED_FORWARDS = [
     ("shadow", "", "return core::shadow(this._p)", "vocab::Shadow"),
     ("set_clip", "v: vocab::Shape", "core::set_clip(this._p, v)", None),
     ("clip", "", "return core::clip(this._p)", "vocab::Shape"),
+    # VisualElement.BlurEffect — an iOS PlatformConfiguration in MAUI, every
+    # backend's here where the platform has a material (spendwise S20 item 5).
+    ("set_blur_effect", "v: vocab::BlurEffect", "core::set_blur_effect(this._p, v)", None),
+    ("blur_effect", "", "return core::blur_effect(this._p)", "vocab::BlurEffect"),
     # -- state
     ("set_enabled", "v: bool", "core::set_enabled(this._p, v)", None),
     ("is_enabled", "", "return core::is_enabled(this._p)", "bool"),

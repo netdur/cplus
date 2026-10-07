@@ -816,6 +816,8 @@ impl Collection {
     fn shadow(this) -> vocab::Shadow { return core::shadow(this._p); }
     fn set_clip(this, v: vocab::Shape) -> Collection { core::set_clip(this._p, v); return this; }
     fn clip(this) -> vocab::Shape { return core::clip(this._p); }
+    fn set_blur_effect(this, v: vocab::BlurEffect) -> Collection { core::set_blur_effect(this._p, v); return this; }
+    fn blur_effect(this) -> vocab::BlurEffect { return core::blur_effect(this._p); }
     fn set_enabled(this, v: bool) -> Collection { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
     fn set_visible(this, v: bool) -> Collection { core::set_visible(this._p, v); return this; }

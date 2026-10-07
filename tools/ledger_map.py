@@ -155,6 +155,7 @@ ENUMS = {
     "KeyboardAcceleratorModifiers": "KeyModifiers",
     "ToolbarItemOrder": "ToolbarPlacement",
     "NamedSize": "NamedSize",
+    "BlurEffectStyle": "BlurEffect",
 }
 
 # ---- types that carry the ledger's model, wherever they appear ---------------------
@@ -506,6 +507,11 @@ METHOD_VOCABULARY = {
     ("VisualElement", "Measure"): "measure(width:height:)",
     ("VisualElement", "BatchBegin"): "begin_updates",
     ("VisualElement", "BatchCommit"): "end_updates",
+    # The iOS PlatformConfiguration rows for the material behind a node,
+    # carried on every node (spendwise S20 item 5).
+    ("VisualElement", "SetBlurEffect"): "set_blur_effect",
+    ("VisualElement", "UseBlurEffect"): "set_blur_effect",
+    ("VisualElement", "GetBlurEffect"): "blur_effect",
     # The same inversion dropped the whole of `web`'s navigation band, and a
     # web view you cannot navigate, reload or script is not one. Stage 4 item 5
     # (adopting vendor/webkit) is what surfaced it.

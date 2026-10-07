@@ -1,0 +1,39 @@
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/vocabulary" as vocab;
+import "facet/icons" as icons;
+
+import "./helpers" as helpers;
+
+fn mini_player() -> core::Node {
+    return @ui {
+        hstack(key: "player") {
+            helpers::artwork(helpers::pink(), helpers::rose(), 40.0)
+            vstack {
+                label("Cloud 9", font_weight: vocab::FontWeight::Semibold)
+                label("Megan Moroney", named_size: vocab::NamedSize::Caption,
+                      text_color: vocab::Color::text_secondary())
+            }
+                .grow(1.0)
+                .gap(2.0)
+            button("", key: "player:play", symbol: icons::play_arrow, bordered: false)
+                .width(44.0)
+            button("", key: "player:next", symbol: icons::skip_next, bordered: false)
+                .width(44.0)
+        }
+            .set_blur_effect(vocab::BlurEffect::Light)
+            .set_background_color(if #platform() == "android" { vocab::Color::raised() }
+                                  else { vocab::Color::clear() })
+            .set_corner_radius(vocab::Corners::all(28.0))
+            .set_position_type(flex::PositionType::Absolute)
+            .set_position(flex::Edge::Left, flex::StyleLength::points(22.0))
+            .set_position(flex::Edge::Right, flex::StyleLength::points(22.0))
+            .set_position(flex::Edge::Bottom,
+                          flex::StyleLength::points(if #platform() == "macos" { 16.0 } else { 96.0 }))
+            .height(56.0)
+            .padding_edge(flex::Edge::Horizontal, 8.0)
+            .align(flex::Align::Center)
+            .gap(12.0)
+    };
+}

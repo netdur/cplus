@@ -953,6 +953,24 @@ fn shadow(n: *Node) -> vocab::Shadow {
     return { (*d).common.shadow };
 }
 
+// MAUI's VisualElement.BlurEffect (an iOS-specific there; every backend's here
+// where the platform has a material). What is BEHIND the node shows through it,
+// blurred: Liquid Glass on iOS 26 and macOS 26, a blur or vibrancy material
+// before. The node's own background colour, if any, draws on top of the
+// material, so a blurred node normally leaves it clear.
+fn set_blur_effect(n: *Node, v: vocab::BlurEffect) {
+    let d: *Data = ensure_data(n);
+    if d.is_null() { return; }
+    { (*d).common.blur_effect = v };
+    touch(n, props::C_BLUR_EFFECT);
+}
+
+fn blur_effect(n: *Node) -> vocab::BlurEffect {
+    let d: *Data = node_data(n);
+    if d.is_null() { return vocab::BlurEffect::None; }
+    return { (*d).common.blur_effect };
+}
+
 fn set_clip(n: *Node, v: vocab::Shape) {
     let d: *Data = ensure_data(n);
     if d.is_null() { return; }
@@ -2389,6 +2407,8 @@ impl flex::Node {
     fn safe_area(this) -> vocab::SafeArea { return safe_area(#addr_of(this)); }
     fn set_shadow(ref this, v: vocab::Shadow) { set_shadow(#addr_of(this), v); return; }
     fn shadow(this) -> vocab::Shadow { return shadow(#addr_of(this)); }
+    fn set_blur_effect(ref this, v: vocab::BlurEffect) { set_blur_effect(#addr_of(this), v); return; }
+    fn blur_effect(this) -> vocab::BlurEffect { return blur_effect(#addr_of(this)); }
     fn set_clip(ref this, v: vocab::Shape) { set_clip(#addr_of(this), v); return; }
     fn clip(this) -> vocab::Shape { return clip(#addr_of(this)); }
     fn set_enabled(ref this, v: bool) { set_enabled(#addr_of(this), v); return; }

@@ -142,6 +142,9 @@ fn wants_painting(n: *core::Node) -> bool {
     if r.bottom_leading != 0.0f64 { return true; }
     if r.bottom_trailing != 0.0f64 { return true; }
     if core::clip(n).kind != (0 as i64) { return true; }
+    // A material behind the node (blur_effect) is a native view inside this one
+    // where the platform has one; every backend agrees on the shape either way.
+    match core::blur_effect(n) { vocab::BlurEffect::None => { }, _ => { return true; } }
     // A shadow needs BOTH a colour and an opacity to draw anything, which is
     // what `Shadow::none()` is — asking for either alone is not a request for
     // a rectangle.

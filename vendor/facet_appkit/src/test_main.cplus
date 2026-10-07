@@ -19669,3 +19669,42 @@ fn an_outline_item_from_a_replaced_root_never_reaches_the_row_builder() {
     assert recycler::tree_view_for_item_body(ov, old).is_null();
     rt::release(old);
 }
+
+// ---- the material behind a node (reports/spendwise/S20 item 5) -----------------
+// MAUI's BlurEffect on any node: a material view at the BACK of the node's view,
+// Liquid Glass on macOS 26 (NSVisualEffectView before), with the node's corners.
+// None takes it away again.
+
+#[test]
+fn a_blurred_node_carries_a_material_behind_its_content() {
+    backend::install();
+    var n: core::Node = box_view::box(vocab::Color::clear(), key: "glass");
+    n.set_corner_radius(vocab::Corners::all(20.0f64));
+    n.set_blur_effect(vocab::BlurEffect::Light);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let fx: *u8 = paint::blur_view_of(v);
+    assert fx.is_not_null();
+    let glass_os: bool = rt::get_class(#str_ptr("NSGlassEffectView\0")).is_not_null();
+    if glass_os {
+        assert { rt::msg_i8_id(fx, rt::sel(#str_ptr("isKindOfClass:\0")),
+                               rt::get_class(#str_ptr("NSGlassEffectView\0"))) } != (0 as i8);
+        assert { rt::msg_f64(fx, rt::sel(#str_ptr("cornerRadius\0"))) } == 20.0f64;
+    }
+    // At the BACK: the node's own children draw on it.
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    assert { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) } == fx;
+    // None removes it.
+    n.set_blur_effect(vocab::BlurEffect::None);
+    views::apply(0 as *u8, p);
+    assert paint::blur_view_of(v).is_null();
+}
+
+#[test]
+fn a_bare_column_asking_for_a_material_gets_a_view() {
+    var c: core::Node = core::column(core::Builder::new());
+    assert !views::wants_view(#addr_of(c));
+    c.set_blur_effect(vocab::BlurEffect::Dark);
+    assert views::wants_view(#addr_of(c));
+}

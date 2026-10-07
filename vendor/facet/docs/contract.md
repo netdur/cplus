@@ -664,6 +664,8 @@ type exists.
 | `shadow()` | vocab::Shadow |
 | `set_clip(v:)` | the cursor, so writes chain |
 | `clip()` | vocab::Shape |
+| `set_blur_effect(v:)` | the cursor, so writes chain |
+| `blur_effect()` | vocab::BlurEffect |
 | `set_enabled(v:)` | the cursor, so writes chain |
 | `is_enabled()` | bool |
 | `set_visible(v:)` | the cursor, so writes chain |

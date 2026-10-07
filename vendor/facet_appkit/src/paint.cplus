@@ -843,6 +843,10 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
         apply_corner_radius(view, core::corner_radius(n), { core::clip(n).kind } != (0 as i64),
                             shadow_is_drawn(core::shadow(n)));
     }
+    // After the corners, whose radius it takes.
+    if (dirty & (props::C_BLUR_EFFECT | props::C_CORNER_RADIUS)) != (0 as u64) {
+        apply_blur_effect(view.raw(), n);
+    }
     if (dirty & props::C_TRANSFORM) != (0 as u64) {
         apply_transform(view, n);
     }
@@ -919,6 +923,99 @@ fn apply_flow_direction(view: ak::View, n: *core::Node) {
 fn shadow_is_drawn(s: vocab::Shadow) -> bool {
     if s.opacity <= 0.0f64 { return false; }
     return s.color.is_set();
+}
+
+// THE MATERIAL BEHIND A NODE — MAUI's VisualElement.BlurEffect (spendwise S20
+// item 5), the same recipe as a sidebar pane's glass (controls.cplus): a view
+// at the BACK of the node's own, autoresized to fill it, so the node's children
+// draw on it and what is behind the node shows through.
+//
+//   macOS 26  NSGlassEffectView — Liquid Glass; ExtraLight is the clear style.
+//   earlier   NSVisualEffectView, blending within the window: a popover
+//             material for the light styles, the HUD material for Dark.
+//
+// Light and Dark pin the appearance, as the style names say; ExtraLight is a
+// light material too. Rebuilt whole on a change of style or radius, both rare.
+fn blur_backing_key() -> *u8 { return { 29064 as *u8 }; }
+
+fn apply_blur_effect(v: *u8, n: *core::Node) {
+    if v.is_null() { return; }
+    let have: *u8 = { synth::get_associated(v, blur_backing_key()) };
+    if have.is_not_null() {
+        ak::View::from_raw(have).remove_from_superview();
+        synth::set_associated(v, blur_backing_key(), 0 as *u8);
+    }
+    let style: vocab::BlurEffect = core::blur_effect(n);
+    let wanted: bool = match style { vocab::BlurEffect::None => false, _ => true };
+    if !wanted { return; }
+    let host: ak::View = ak::View::from_raw(v);
+    // The shared band's radius, or the one a control drew on its own layer
+    // (`box(corner_radius:)`), whichever the view is wearing.
+    var r: f64 = largest_corner(core::corner_radius(n));
+    if host.wants_layer() {
+        let own: f64 = host.layer().corner_radius();
+        if own > r { r = own; }
+    }
+    var backing: *u8 = 0 as *u8;
+    if rt::get_class(#str_ptr("NSGlassEffectView\0")).is_not_null() {
+        let g: ak::GlassEffectView = ak::GlassEffectView::new_with_frame(host.bounds());
+        if matches_extra_light(style) { g.set_style(ak::GlassEffectViewStyle::Clear); }
+        g.set_corner_radius(r);
+        backing = g.as_view().raw();
+        place_behind(host, backing, style);
+    } else {
+        backing = { synth::alloc_init_class(rt::get_class(#str_ptr("NSVisualEffectView\0"))) };
+        if backing.is_null() { return; }
+        { rt::msg_void_rect(backing, rt::sel(#str_ptr("setFrame:\0")), host.bounds()) };
+        let fx: ak::VisualEffectView = ak::VisualEffectView::from_raw(backing);
+        fx.set_material(match style {
+            vocab::BlurEffect::Dark => ak::VisualEffectMaterial::HUDWindow,
+            _ => ak::VisualEffectMaterial::Popover,
+        });
+        fx.set_blending_mode(ak::VisualEffectBlendingMode::WithinWindow);
+        fx.set_state(ak::VisualEffectState::Active);
+        if r > 0.0f64 {
+            ak::View::from_raw(backing).set_wants_layer(true);
+            let l: quartz::Layer = ak::View::from_raw(backing).layer();
+            l.set_corner_radius(r);
+            l.set_masks_to_bounds(true);
+        }
+        place_behind(host, backing, style);
+        // The superview holds it now; this was the alloc's +1.
+        { rt::msg_void(backing, rt::sel(#str_ptr("release\0"))) };
+    }
+    synth::set_associated(v, blur_backing_key(), backing);
+    return;
+}
+
+fn matches_extra_light(style: vocab::BlurEffect) -> bool {
+    return match style { vocab::BlurEffect::ExtraLight => true, _ => false };
+}
+
+fn place_behind(host: ak::View, backing: *u8, style: vocab::BlurEffect) {
+    let name: str = match style {
+        vocab::BlurEffect::Dark => "NSAppearanceNameDarkAqua",
+        _ => "NSAppearanceNameAqua",
+    };
+    let appearance: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSAppearance\0")),
+                                          rt::sel(#str_ptr("appearanceNamed:\0")),
+                                          bridge::nsstring(name)) };
+    if appearance.is_not_null() {
+        { rt::msg_void_id(backing, rt::sel(#str_ptr("setAppearance:\0")), appearance) };
+    }
+    ak::View::from_raw(backing).set_autoresizing_mask(
+        ak::autoresizing_mask_options_n_s_view_width_sizable
+        | ak::autoresizing_mask_options_n_s_view_height_sizable);
+    // A nil `relativeTo` is AppKit's "below everything".
+    host.add_subview_positioned(ak::View::from_raw(backing), ak::WindowOrderingMode::NSWindowBelow,
+                                ak::View::from_raw(0 as *u8));
+    return;
+}
+
+// The material view a node carries, or null — for tests.
+fn blur_view_of(v: *u8) -> *u8 {
+    if v.is_null() { return 0 as *u8; }
+    return { synth::get_associated(v, blur_backing_key()) };
 }
 
 fn apply_corner_radius(view: ak::View, c: vocab::Corners, has_clip: bool,
