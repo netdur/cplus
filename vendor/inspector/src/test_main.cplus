@@ -12,6 +12,10 @@ import "stdlib/io" as io;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
+import "stdlib/box" as box;
+import "stdlib/net" as net;
+import "stdlib/future" as future;
+import "stdlib/result" as result;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/elements" as ui;
@@ -4668,6 +4672,58 @@ fn connecting_in_app_attaches_without_a_transport() {
     assert widget::is_connected(st) == false;
     assert widget::target(st).view() == "inapp";
     assert p.node_count() > (0 as usize);
+}
+
+// A HOST MAY DROP ITS PANEL WHILE `connect` WAITS. iris did, on a project open,
+// and the resume wrote the fault sentence into the freed panel — libmalloc
+// aborted on the Text it dropped there (bugs/a-spawned-ui-task-resumes-into-a-
+// freed-inspect-panel). The target is a listener that never accepts, so the
+// worker sits in `reachable` for the call timeout: the connect is certainly
+// suspended when the panel goes, which a refused address does not guarantee.
+fn quiet_listener() -> option::Option[net::TcpListener] {
+    var port: u16 = 47913 as u16;
+    while port < (47933 as u16) {
+        match net::listen_tcp(port) {
+            result::Result[net::TcpListener, result::IoError]::Ok(l) => {
+                QUIET_PORT = port;
+                return option::Option[net::TcpListener]::Some(l);
+            }
+            result::Result[net::TcpListener, result::IoError]::Err(_e) => { }
+        }
+        port = port + (1 as u16);
+    }
+    return option::Option[net::TcpListener]::None;
+}
+
+static QUIET_PORT: u16 = 0 as u16;
+
+#[test]
+fn a_panel_dropped_while_connect_waits_is_not_written_to() {
+    fresh();
+    var root: core::Node = api_tree();
+    app::open_window(#addr_of(root));
+    let held: option::Option[net::TcpListener] = quiet_listener();
+    match held {
+        option::Option[net::TcpListener]::Some(_l) => { }
+        option::Option[net::TcpListener]::None => { assert false; }
+    }
+    var raw: *u8 = 0 as *u8;
+    match box::new::[widget::Inspector](api_panel()) {
+        option::Option[box::Box[widget::Inspector]]::Some(b) => { raw = b.into_raw(); }
+        option::Option[box::Box[widget::Inspector]]::None => { assert false; }
+    }
+    let st: *widget::Inspector = raw as *widget::Inspector;
+    widget::on_fault(st, note_fault_cb);
+    SEEN_FAULT = text::new();
+    let port: u16 = QUIET_PORT;
+    let f: future::Future[status::Status] = widget::connect(st, text::from_str("${port}"));
+    // The host drops its panel while the worker dials.
+    {
+        let _gone: box::Box[widget::Inspector] = box::from_raw::[widget::Inspector](raw);
+    }
+    assert f.wait() == status::Status::Cancelled;
+    // And nothing was said to a host that is no longer there.
+    assert SEEN_FAULT.is_empty();
 }
 
 // An address this panel cannot read is refused with a sentence, before any

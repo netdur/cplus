@@ -28,6 +28,7 @@ import "stdlib/net" as net;
 import "stdlib/atomic" as atomic;
 import "stdlib/io" as io;
 import "stdlib/status" as status;
+import "stdlib/time" as time;
 import "events/events" as events;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
@@ -287,6 +288,15 @@ fn worker_start[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> i32 {
     var fds: [i32; 2] = [0, 0];
     let _p: i32 = { pipe(#addr_of(fds) as *i32) };
     let _np: i32 = platform_sys::prepare_worker_pipe(fds[1]);
+    // THE READ END MUST NOT BLOCK, or `run_on_worker` is not async at all.
+    // `read_fd_async` suspends only when a read answers EAGAIN, and a blocking
+    // pipe never does: the eager first step of the awaiting task sat in
+    // `read(2)` until the worker finished, on whatever thread spawned it. For
+    // the inspector that was the MAIN thread — measured 2026-10-07, 6.7s of a
+    // 16s project open spent in `recv_fd` under `widget::connect`, the window
+    // frozen while a suspended simulator app failed to accept. Windows is left
+    // alone: its pipe half peeks and naps in `recv_fd` instead (see net).
+    if #platform() != "windows" { let _nb: i32 = net::set_nonblocking(fds[0]); }
     let input_raw: usize = match box::new::[I](input) {
         option::Option[box::Box[I]]::Some(b) => { b.into_raw() } as usize,
         option::Option[box::Box[I]]::None => 0 as usize,
@@ -1424,6 +1434,22 @@ fn a_dropped_subscription_stops_delivery_to_a_dead_watcher() {
     assert IDX_SEEN == (1 as i64);          // nothing delivered to the dead watcher
     assert INDEXER.hits == (4 as i64);      // but the service still ran
     uninstall_scheduler();
+}
+
+// Awaiting a worker SUSPENDS the caller. Calling the async fn runs it to its
+// first suspension on this thread — which, with a blocking pipe, was the whole
+// worker's run: the call itself took as long as the work.
+extern fn usleep(us: u32) -> i32;
+fn slow_worker(take ms: i64) -> i64 { let _s: i32 = { usleep((ms * 1000) as u32) }; return ms; }
+#[test]
+fn awaiting_a_worker_suspends_instead_of_blocking_the_caller() {
+    if #platform() == "windows" { return; }
+    let t0: i64 = time::now_millis();
+    let f: future::Future[i64] = run_on_worker::[i64, i64](300 as i64, slow_worker);
+    let handed_back: i64 = time::now_millis() - t0;
+    assert handed_back < (150 as i64);      // not the worker's 300ms
+    assert f.wait() == (300 as i64);         // and the result still arrives
+    assert time::now_millis() - t0 >= (250 as i64);
 }
 
 // A worker finishing after its receiver has gone must neither terminate the

@@ -20,6 +20,7 @@ import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
+import "stdlib/rc" as rc;
 import "stdlib/str" as _;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
@@ -220,6 +221,16 @@ struct Inspector {
     // The listener's own receiver. BORROWED — the host owns it, and it is
     // typically the address of the component holding this panel.
     opaque select_ctx: *u8,
+
+    // WHETHER THIS PANEL STILL EXISTS, for the one caller that cannot ask any
+    // other way: `connect`, resumed after an await. The host holds the panel
+    // and hands `connect` its address; the connect suspends on a worker, and
+    // nothing stops the host from dropping the panel meanwhile — a project
+    // closed, a tab rebuilt. Resuming then and writing through the address was
+    // a use-after-free (iris, 2026-10-07: `note_fault` dropped a Text at a
+    // freed address). The panel holds the only strong reference; `connect`
+    // holds a weak one across the await and touches nothing when it is gone.
+    life: option::Option[rc::Rc[u8]],
 }
 
 fn new(take backend: insp::Backend, hide_self: bool = true) -> Inspector {
@@ -241,6 +252,21 @@ fn new(take backend: insp::Backend, hide_self: bool = true) -> Inspector {
         change_ctx: 0 as *u8,
         select_fn: #zero::[fn(str, *u8)](),
         select_ctx: 0 as *u8,
+        life: rc::new::[u8](1 as u8),
+    };
+}
+
+// A weak reference to the panel's life, taken before an await. None when the
+// strong one could not be allocated, which `still_here` reads as "assume so":
+// the behaviour before the token existed, and no worse.
+fn life_token(st: *Inspector) -> option::Option[rc::Weak[u8]] {
+    return { (*st).life_weak() };
+}
+
+fn still_here(w: option::Option[rc::Weak[u8]]) -> bool {
+    return match w {
+        option::Option[rc::Weak[u8]]::Some(x) => x.strong_count() > (0 as u64),
+        option::Option[rc::Weak[u8]]::None => true,
     };
 }
 
@@ -364,8 +390,23 @@ fn target(st: *Inspector) -> text::Text {
 // app may never answer. So `reachable` asks a question rather than opening a
 // door, and both waits are spent here instead of on the thread drawing the
 // window. Bounded either way — see `remote::CALL_TIMEOUT_SECS`.
-fn reach(take target: text::Text) -> bool {
-    return remote::reachable(target.view());
+//
+// AND THE "WHICH KIND OF NO" PROBE TOO, which is a third wait. `accepts` is a
+// bare `connect(2)`, and it used to run on the CALLER after this said no, on
+// the grounds that a refused loopback connect comes back at once. A listener
+// that has stopped accepting does not refuse: a suspended simulator app keeps
+// its port bound, its backlog fills, and every further SYN waits out the
+// stack's retries — 6.8s, measured 2026-10-07, on the main thread, on every
+// project open while that app sat in the background. So the answer comes back
+// as one of three, and the panel's thread never dials anything.
+const REACH_ANSWERED: i32 = 2;   // a server answered `initialize`
+const REACH_SILENT: i32 = 1;     // something accepted, then said nothing
+const REACH_NOTHING: i32 = 0;    // nothing accepted at all
+fn reach(take target: text::Text) -> i32 {
+    let t: str = target;
+    if remote::reachable(t) { return REACH_ANSWERED; }
+    if remote::accepts(t) { return REACH_SILENT; }
+    return REACH_NOTHING;
 }
 
 // ATTACH. `inapp`, a socket path, a loopback port, or `http://host:port/` —
@@ -415,15 +456,23 @@ async fn connect(st: *Inspector, take target: text::Text) -> status::Status {
         _ => { }
     }
 
-    let ok: bool = await services::run_on_worker::[text::Text, bool](
+    // Taken BEFORE the await: after it, `st` may point at a panel the host has
+    // already dropped, and reading the token through it would be the very
+    // read this exists to avoid.
+    let alive: option::Option[rc::Weak[u8]] = life_token(st);
+    let how: i32 = await services::run_on_worker::[text::Text, i32](
         text::from_str(t), reach);
-    if !ok {
+    // The panel went away while the worker dialled. Nothing to tell and
+    // nothing to write: `Cancelled` is the whole answer, and a host that sees
+    // it must not touch its own state either — it is usually gone with us.
+    if !still_here(alive) { return status::Status::Cancelled; }
+    if how != REACH_ANSWERED {
         // WHICH KIND OF NO, because the two send a developer to different
         // places. Nothing listening means the app is not running or the
         // address is stale; something that accepted and then went quiet means
         // the door is someone else's — a port forward standing in for a device
         // whose app is not serving is the case this was found on.
-        if remote::accepts(t) {
+        if how == REACH_SILENT {
             note_fault(st, "something accepted the connection there and never answered - on a device that is usually the port forward standing up for an app that is not serving");
         } else {
             note_fault(st, "nothing is listening there");
@@ -564,6 +613,13 @@ fn reset_all(st: *Inspector) {
 fn embedded() -> Inspector { return new(tree::local_backend()); }
 
 impl Inspector {
+    fn life_weak(this) -> option::Option[rc::Weak[u8]] {
+        return match this.life {
+            option::Option[rc::Rc[u8]]::Some(r) => option::Option[rc::Weak[u8]]::Some(r.downgrade()),
+            option::Option[rc::Rc[u8]]::None => option::Option[rc::Weak[u8]]::None,
+        };
+    }
+
     // ---- what a HOST reads -----------------------------------------------------
     //
     // The panel is a control an application embeds, so everything a host needs

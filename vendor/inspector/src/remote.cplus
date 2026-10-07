@@ -331,8 +331,10 @@ fn reachable(target: str, secs: i64 = CALL_TIMEOUT_SECS) -> bool {
 // them to check what is behind the forward. Answering both with the same
 // sentence sends half of them to the wrong place.
 //
-// Cheap enough to ask on the UI thread — a refused `connect(2)` to loopback or
-// to a socket path comes back at once — which is where the sentence is needed.
+// NOT CHEAP, and not for the UI thread. A REFUSED connect to loopback comes
+// back at once, but a listener that has stopped accepting does not refuse: its
+// backlog fills and the connect waits out the stack's retries (6.8s measured
+// against a backgrounded simulator app). `widget::reach` asks it on the worker.
 fn accepts(target: str) -> bool {
     return match classify(target) {
         Target::InApp => true,
