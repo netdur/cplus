@@ -730,7 +730,87 @@ fn same_indexes(a: *IndexList, b: *IndexList) -> bool {
 }
 
 struct Date { year: i64, month: i64, day: i64 }
-impl Date { fn zero() -> Date { return Date { year: 0 as i64, month: 0 as i64, day: 0 as i64 }; } }
+impl Date {
+    fn zero() -> Date { return Date { year: 0 as i64, month: 0 as i64, day: 0 as i64 }; }
+
+    // The zero is "no date": what a picker's minimum and maximum default to,
+    // and they then bound nothing.
+    fn is_set(this) -> bool {
+        return this.year != (0 as i64) || this.month != (0 as i64) || this.day != (0 as i64);
+    }
+
+    // YYYY-MM-DD, ISO-8601's calendar date: the spelling an agent reads and
+    // writes a date in (spendwise S22), and the one stdlib/date reads.
+    fn iso(this) -> text::Text {
+        let y: text::Text = padded(this.year, 4 as i64);
+        let m: text::Text = padded(this.month, 2 as i64);
+        let d: text::Text = padded(this.day, 2 as i64);
+        return "${y.view()}-${m.view()}-${d.view()}";
+    }
+
+    // The date `s` spells as YYYY-MM-DD, or None. A day the month does not
+    // have is None, not the next month's first: an agent that typed
+    // 2026-02-30 is told, rather than handed March the 2nd.
+    fn from_iso(s: str) -> option::Option[Date] {
+        if #str_len(s) != (10 as usize) { return option::Option[Date]::None; }
+        let p: *u8 = #str_ptr(s);
+        if { p[4] } != (45 as u8) || { p[7] } != (45 as u8) { return option::Option[Date]::None; }
+        let y: i64 = digits_at(p, 0 as usize, 4 as usize);
+        let m: i64 = digits_at(p, 5 as usize, 2 as usize);
+        let d: i64 = digits_at(p, 8 as usize, 2 as usize);
+        if y < (1 as i64) || m < (1 as i64) || m > (12 as i64) || d < (1 as i64) {
+            return option::Option[Date]::None;
+        }
+        if d > days_in_month(y, m) { return option::Option[Date]::None; }
+        return option::Option[Date]::Some(Date { year: y, month: m, day: d });
+    }
+
+    // Before, the same day, or after: -1, 0, 1.
+    fn compare(this, o: Date) -> i64 {
+        if this.year != o.year { if this.year < o.year { return -1 as i64; } return 1 as i64; }
+        if this.month != o.month { if this.month < o.month { return -1 as i64; } return 1 as i64; }
+        if this.day != o.day { if this.day < o.day { return -1 as i64; } return 1 as i64; }
+        return 0 as i64;
+    }
+
+    // Inside `lo`..`hi`, both ends included. An unset bound bounds nothing.
+    fn within(this, lo: Date, hi: Date) -> bool {
+        if lo.is_set() && this.compare(lo) < (0 as i64) { return false; }
+        if hi.is_set() && this.compare(hi) > (0 as i64) { return false; }
+        return true;
+    }
+}
+
+fn days_in_month(y: i64, m: i64) -> i64 {
+    if m == (2 as i64) {
+        let leap: bool = (y % (4 as i64) == (0 as i64) && y % (100 as i64) != (0 as i64))
+            || y % (400 as i64) == (0 as i64);
+        if leap { return 29 as i64; }
+        return 28 as i64;
+    }
+    if m == (4 as i64) || m == (6 as i64) || m == (9 as i64) || m == (11 as i64) { return 30 as i64; }
+    return 31 as i64;
+}
+
+// `count` ASCII digits from `at`, as a number; -1 when any is not a digit.
+fn digits_at(p: *u8, at: usize, count: usize) -> i64 {
+    var v: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < count {
+        let b: u8 = { p[at +% i] };
+        if b < (48 as u8) || b > (57 as u8) { return -1 as i64; }
+        v = v * (10 as i64) + ((b - (48 as u8)) as i64);
+        i = i +% (1 as usize);
+    }
+    return v;
+}
+
+// `n` in at least `width` digits, zero-filled on the left.
+fn padded(n: i64, width: i64) -> text::Text {
+    var t: text::Text = "${n}";
+    while (t.count() as i64) < width { t = "0${t.view()}"; }
+    return t;
+}
 
 struct Duration { seconds: f64 }
 impl Duration {
@@ -738,6 +818,41 @@ impl Duration {
     // MAUI's default basic-animation length (250 ms).
     fn animation() -> Duration { return Duration { seconds: 0.25f64 }; }
     fn of_seconds(s: f64) -> Duration { return Duration { seconds: s }; }
+
+    // A time of day as a clock reads it: HH:MM, or HH:MM:SS when the seconds
+    // are not whole minutes. What a time picker's value is spelled in for an
+    // agent (spendwise S22).
+    fn clock(this) -> text::Text {
+        let total: i64 = this.seconds as i64;
+        let h: text::Text = padded(total / (3600 as i64), 2 as i64);
+        let m: text::Text = padded((total / (60 as i64)) % (60 as i64), 2 as i64);
+        let s: i64 = total % (60 as i64);
+        if s == (0 as i64) { return "${h.view()}:${m.view()}"; }
+        let ss: text::Text = padded(s, 2 as i64);
+        return "${h.view()}:${m.view()}:${ss.view()}";
+    }
+
+    // The time of day `s` spells as HH:MM or HH:MM:SS, or None. Inside one
+    // day: 24:00 is None.
+    fn from_clock(s: str) -> option::Option[Duration] {
+        let n: usize = #str_len(s);
+        if n != (5 as usize) && n != (8 as usize) { return option::Option[Duration]::None; }
+        let p: *u8 = #str_ptr(s);
+        if { p[2] } != (58 as u8) { return option::Option[Duration]::None; }
+        let h: i64 = digits_at(p, 0 as usize, 2 as usize);
+        let m: i64 = digits_at(p, 3 as usize, 2 as usize);
+        var sec: i64 = 0 as i64;
+        if n == (8 as usize) {
+            if { p[5] } != (58 as u8) { return option::Option[Duration]::None; }
+            sec = digits_at(p, 6 as usize, 2 as usize);
+        }
+        if h < (0 as i64) || h > (23 as i64) || m < (0 as i64) || m > (59 as i64)
+            || sec < (0 as i64) || sec > (59 as i64) {
+            return option::Option[Duration]::None;
+        }
+        return option::Option[Duration]::Some(
+            Duration { seconds: (h * (3600 as i64) + m * (60 as i64) + sec) as f64 });
+    }
 }
 
 // Timing curve for animate_* commands. Named for what it is (not EasingCurve /

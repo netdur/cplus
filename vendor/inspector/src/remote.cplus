@@ -407,6 +407,7 @@ fn backend_of(r: *Remote) -> insp::Backend {
         journal_count: insp::no_journal_count,
         journal_at: insp::no_journal_at,
         maker_names: insp::no_maker_names,
+        control_descriptors: insp::no_control_descriptors,
         kind_name: insp::no_kind_name,
     };
 }

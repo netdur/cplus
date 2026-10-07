@@ -463,6 +463,7 @@ fn no_journal_at(_s: *u8, _i: usize) -> option::Option[text::Text] {
     return option::Option[text::Text]::None;
 }
 fn no_maker_names(_s: *u8) -> vec::Vec[str] { return vec::new::[str](); }
+fn no_control_descriptors(_s: *u8) -> vec::Vec[Descriptor] { return vec::new::[Descriptor](); }
 fn no_kind_name(_s: *u8, _k: u32) -> str { return "node"; }
 
 // Every fn takes the type-erased receiver first; the implementor casts it back.
@@ -537,6 +538,11 @@ struct Backend {
     journal_at: fn(*u8, usize) -> option::Option[text::Text],
     // Element kinds `insert` can make.
     maker_names: fn(*u8) -> vec::Vec[str],
+    // The toolkit's own control properties — every one `inspect` and `set`
+    // answer beyond `table()` — described the same way, so the `vocabulary`
+    // verb names what an agent can write (spendwise S22: `date` was writable
+    // nowhere and listed nowhere, and `format` was writable and unlisted).
+    control_descriptors: fn(*u8) -> vec::Vec[Descriptor],
     // What a control kind is CALLED, for a row with no key to show. The
     // ordinal is the toolkit's; only the toolkit can name it.
     kind_name: fn(*u8, u32) -> str,
@@ -565,6 +571,7 @@ impl Backend {
         journal_count: no_journal_count,
         journal_at: no_journal_at,
         maker_names: no_maker_names,
+        control_descriptors: no_control_descriptors,
         kind_name: no_kind_name,
         };
     }

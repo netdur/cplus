@@ -2877,6 +2877,7 @@ fn bk_changes(_s: *u8) -> vec::Vec[insp::Change] { return changes(); }
 fn bk_journal_count(_s: *u8) -> usize { return journal_count(); }
 fn bk_journal_at(_s: *u8, i: usize) -> option::Option[text::Text] { return journal_at(i); }
 fn bk_maker_names(_s: *u8) -> vec::Vec[str] { return maker_names(); }
+fn bk_control_descriptors(_s: *u8) -> vec::Vec[insp::Descriptor] { return generated::descriptors(); }
 fn bk_kind_name(_s: *u8, k: u32) -> str { return kind_name(k); }
 
 fn local_backend() -> insp::Backend {
@@ -2903,6 +2904,7 @@ fn local_backend() -> insp::Backend {
         journal_count: bk_journal_count,
         journal_at: bk_journal_at,
         maker_names: bk_maker_names,
+        control_descriptors: bk_control_descriptors,
         kind_name: bk_kind_name,
     };
 }

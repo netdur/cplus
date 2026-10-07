@@ -48,7 +48,8 @@ agents; `agent_inapp` exposes typed calls over it for embedded assistants.
 `Button`, `Text`, `Input`, `List`, `Group`, `Window`, `Value` — small curated
 set. A role is what an agent may DO with a node, not what the widget is
 called: `Button` covers a checkbox and a switch, and `Value` covers a slider, a
-stepper and a progress bar. The widget's own name is the developer view's
+stepper, a progress bar and a date or time picker (read and written as
+`YYYY-MM-DD` / `HH:MM`). The widget's own name is the developer view's
 answer (`describe_tree` says `"kind": "slider"`).
 
 `Value` was added 2026-09-17. Before it these fell to `Group` — scenery — while

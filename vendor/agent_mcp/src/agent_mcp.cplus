@@ -174,6 +174,8 @@ fn outcome_to_str(o: surface::Outcome) -> str {
     // outcome without adding an arm here is exactly the mistake this line
     // warned about, and it was made once already while writing it.
     if surface::outcome_eq(o, surface::Outcome::NoHandler) { return "no_handler"; }
+    // Nothing was written; the VALUE was wrong, so re-reading will not help.
+    if surface::outcome_eq(o, surface::Outcome::InvalidValue) { return "invalid_value"; }
     return "version_conflict";
 }
 
@@ -4661,6 +4663,7 @@ fn every_outcome_has_its_own_word_on_the_wire() {
     assert outcome_to_str(surface::Outcome::NeedsGrant) == "needs_grant";
     assert outcome_to_str(surface::Outcome::Forbidden) == "forbidden";
     assert outcome_to_str(surface::Outcome::NoHandler) == "no_handler";
+    assert outcome_to_str(surface::Outcome::InvalidValue) == "invalid_value";
     assert outcome_to_str(surface::Outcome::VersionConflict) == "version_conflict";
 }
 

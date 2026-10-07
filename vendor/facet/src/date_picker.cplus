@@ -303,6 +303,24 @@ impl DatePicker {
         return { (*p).text_color };
     }
 
+    // WHAT A PERSON'S PICK DOES: set the value AND tell the application,
+    // the way the picker's own action does. `set_date` is the application's
+    // quiet write and fires nothing, so an agent that used it left the picker
+    // SHOWING a value the app never heard (spendwise S22). Picking the value
+    // already showing does nothing. Main thread only, like any write.
+    // A date outside minimum..maximum is refused, as the picker refuses it.
+    fn pick(this, d: vocab::Date) -> DatePicker {
+        let p: *props::DatePickerProps = this._props();
+        if p == (0 as *props::DatePickerProps) { return this; }
+        if !d.within({ (*p).minimum_date }, { (*p).maximum_date }) { return this; }
+        if { (*p).date }.compare(d) == (0 as i64) { return this; }
+        { (*p).date = d };
+        core::touch(this._p, P_DATE);
+        let h: fn(*u8, *u8) = { (*p).on_date_selected };
+        if h != props::no_handler { h(core::view_of(this._p), { (*p).on_date_selected_ctx }); }
+        return this;
+    }
+
     // The flex node this cursor points at. The DOM division, and the
     // reason facet declares no layout verb of its own:
     //

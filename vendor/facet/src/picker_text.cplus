@@ -1,0 +1,158 @@
+// facet picker_text — a date or time picker's value, as the text an agent reads
+// and writes (reports/spendwise/S22).
+//
+// A picker's value is not a string anywhere a person meets it: it is a wheel or
+// a calendar. So the agent surface had nothing to read (`describe_ui` gave the
+// picker no text) and nothing to write (`set_text` is for text inputs). This is
+// the spelling both directions use, in one place for every backend: a date as
+// YYYY-MM-DD, a time of day as HH:MM or HH:MM:SS.
+//
+// A write is a PICK — the cursor's `pick`, which sets the value and fires
+// `on_date_selected` / `on_time_selected` as the picker's own action does. A
+// value the picker could not show (not a date, outside minimum..maximum) is
+// refused before anything is written.
+
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "./facet" as core;
+import "./props" as props;
+import "./vocabulary" as vocab;
+import "./date_picker" as date_picker;
+import "./time_picker" as time_picker;
+
+enum Write {
+    // Not a date or time picker; the caller's own text path applies.
+    NotAPicker,
+    // Picked, and the application told. Also the answer for the value already
+    // showing, which a person picking it again would not notice either.
+    Picked,
+    // Refused, nothing written: not a value this picker can hold.
+    Invalid,
+}
+
+fn is_picker(n: *core::Node) -> bool {
+    if n == (0 as *core::Node) { return false; }
+    let k: u32 = core::kind_of(n);
+    return k == props::K_DATE_PICKER || k == props::K_TIME_PICKER;
+}
+
+// The picker's value as text, or None when `n` is not a picker.
+fn text_of(n: *core::Node) -> option::Option[text::Text] {
+    if n == (0 as *core::Node) { return option::Option[text::Text]::None; }
+    let k: u32 = core::kind_of(n);
+    if k == props::K_DATE_PICKER {
+        return match date_picker::from(n) {
+            option::Option[date_picker::DatePicker]::Some(c) => option::Option[text::Text]::Some(c.date().iso()),
+            option::Option[date_picker::DatePicker]::None => option::Option[text::Text]::None,
+        };
+    }
+    if k == props::K_TIME_PICKER {
+        return match time_picker::from(n) {
+            option::Option[time_picker::TimePicker]::Some(c) => option::Option[text::Text]::Some(c.time().clock()),
+            option::Option[time_picker::TimePicker]::None => option::Option[text::Text]::None,
+        };
+    }
+    return option::Option[text::Text]::None;
+}
+
+// Pick the value `s` spells. Main thread only, like any write.
+fn pick(n: *core::Node, s: str) -> Write {
+    if n == (0 as *core::Node) { return Write::NotAPicker; }
+    let k: u32 = core::kind_of(n);
+    if k == props::K_DATE_PICKER {
+        let d: vocab::Date = match vocab::Date::from_iso(s) {
+            option::Option[vocab::Date]::Some(x) => x,
+            option::Option[vocab::Date]::None => { return Write::Invalid; },
+        };
+        return match date_picker::from(n) {
+            option::Option[date_picker::DatePicker]::Some(c) => {
+                if !d.within(c.minimum_date(), c.maximum_date()) { return Write::Invalid; }
+                let _c: date_picker::DatePicker = c.pick(d);
+                Write::Picked
+            },
+            option::Option[date_picker::DatePicker]::None => Write::NotAPicker,
+        };
+    }
+    if k == props::K_TIME_PICKER {
+        let t: vocab::Duration = match vocab::Duration::from_clock(s) {
+            option::Option[vocab::Duration]::Some(x) => x,
+            option::Option[vocab::Duration]::None => { return Write::Invalid; },
+        };
+        return match time_picker::from(n) {
+            option::Option[time_picker::TimePicker]::Some(c) => {
+                let _c: time_picker::TimePicker = c.pick(t);
+                Write::Picked
+            },
+            option::Option[time_picker::TimePicker]::None => Write::NotAPicker,
+        };
+    }
+    return Write::NotAPicker;
+}
+
+fn is_picked(w: Write) -> bool {
+    return match w { Write::Picked => true, _ => false };
+}
+
+fn is_invalid(w: Write) -> bool {
+    return match w { Write::Invalid => true, _ => false };
+}
+
+// ---- tests ----------------------------------------------------------------------
+
+static HEARD: i64 = 0 as i64;
+fn heard(sender: *u8, ctx: *u8) { HEARD = HEARD + (1 as i64); return; }
+
+#[test]
+fn a_date_pickers_text_is_its_date_and_a_written_date_is_picked() {
+    HEARD = 0 as i64;
+    var n: core::Node = date_picker::date_picker(
+        vocab::Date { year: 2026 as i64, month: 10 as i64, day: 5 as i64 }, on_date_selected: heard,
+        maximum_date: vocab::Date { year: 2026 as i64, month: 12 as i64, day: 31 as i64 });
+    let p: *core::Node = #addr_of(n);
+    match text_of(p) {
+        option::Option[text::Text]::Some(t) => { assert t.view() == "2026-10-05"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    assert is_picked(pick(p, "2026-10-01"));
+    assert HEARD == (1 as i64);
+    match text_of(p) {
+        option::Option[text::Text]::Some(t) => { assert t.view() == "2026-10-01"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    // NEGATIVE: not a date, and a date past the maximum. Nothing moves.
+    assert is_invalid(pick(p, "yesterday"));
+    assert is_invalid(pick(p, "2027-01-01"));
+    assert HEARD == (1 as i64);
+    match text_of(p) {
+        option::Option[text::Text]::Some(t) => { assert t.view() == "2026-10-01"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_time_pickers_text_is_a_clock_and_a_written_time_is_picked() {
+    HEARD = 0 as i64;
+    var n: core::Node = time_picker::time_picker(vocab::Duration::of_seconds(34200.0f64),
+                                                 on_time_selected: heard);
+    let p: *core::Node = #addr_of(n);
+    match text_of(p) {
+        option::Option[text::Text]::Some(t) => { assert t.view() == "09:30"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    assert is_picked(pick(p, "18:05"));
+    assert HEARD == (1 as i64);
+    assert is_invalid(pick(p, "25:00"));
+    assert HEARD == (1 as i64);
+}
+
+#[test]
+fn anything_else_is_not_a_picker() {
+    var n: core::Node = core::column(core::Builder::new(), key: "c");
+    let p: *core::Node = #addr_of(n);
+    match text_of(p) {
+        option::Option[text::Text]::Some(_t) => { assert false; }
+        option::Option[text::Text]::None => { }
+    }
+    assert !is_picked(pick(p, "2026-10-05"));
+    assert !is_invalid(pick(p, "2026-10-05"));
+}

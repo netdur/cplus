@@ -13,6 +13,8 @@ import "./inspect_platform" as iplatform;
 import "agent_core/inspect" as ainsp;
 import "facet/facet" as fcore;
 import "facet/elements" as fui;
+import "facet/vocabulary" as fvocab;
+import "./inspect_generated" as igen;
 import "facet/application" as fapp;
 import "facet/text_field" as ftf;
 import "flex_layout/flex_layout" as flex;
@@ -279,4 +281,70 @@ fn the_inspector_answers_stars_for_a_secure_field_and_the_value_for_a_plain_one(
         option::Option[*fcore::Node]::None => { assert false; }
     }
     fapp::close_window(#addr_of(root) as *flex::Node);
+}
+
+// ---- a date picker's date is a property (reports/spendwise/S22) ----------------
+// `date`, `minimum_date` and `maximum_date` were skipped by the generator — no
+// inspector Value carried a vocab::Date — so the properties that ARE a
+// picker's value answered unknown_property and the vocabulary never named them.
+
+fn date_str(v: option::Option[ainsp::Value]) -> text::Text {
+    return match v {
+        option::Option[ainsp::Value]::Some(x) => match x {
+            ainsp::Value::Str(t) => t.clone(),
+            _ => text::from_str("<not a string>"),
+        },
+        option::Option[ainsp::Value]::None => text::from_str("<none>"),
+    };
+}
+
+#[test]
+fn a_date_pickers_date_is_read_and_written_by_name() {
+    var b: fcore::Builder = fcore::Builder::new();
+    b.add(fui::date_picker(fvocab::Date { year: 2026 as i64, month: 10 as i64, day: 5 as i64 },
+                           key: "form:date"));
+    var root: fcore::Node = fcore::column(b);
+    assert fapp::open_window(#addr_of(root) as *flex::Node);
+    let w: usize = fapp::window_count() -% (1 as usize);
+    match fcore::find_in(#addr_of(root), "form:date") {
+        option::Option[*fcore::Node]::Some(n) => {
+            let h: ainsp::Handle = ainsp::Handle::of(n as *u8, w);
+            assert date_str(itree::get(h, "date")).view() == "2026-10-05";
+            // An unset bound reads as "" — no bound — and writes back as one.
+            assert date_str(itree::get(h, "minimum_date")).view() == "";
+            assert itree::set(h, "date", ainsp::Value::Str(text::from_str("2026-10-07"))) == ainsp::Outcome::Ok;
+            assert date_str(itree::get(h, "date")).view() == "2026-10-07";
+            assert itree::set(h, "minimum_date", ainsp::Value::Str(text::from_str("2026-01-01"))) == ainsp::Outcome::Ok;
+            assert date_str(itree::get(h, "minimum_date")).view() == "2026-01-01";
+            // NEGATIVE: not a date, and a day February does not have.
+            assert itree::set(h, "date", ainsp::Value::Str(text::from_str("tomorrow"))) == ainsp::Outcome::TypeMismatch;
+            assert itree::set(h, "date", ainsp::Value::Str(text::from_str("2026-02-30"))) == ainsp::Outcome::TypeMismatch;
+            assert date_str(itree::get(h, "date")).view() == "2026-10-07";
+        }
+        option::Option[*fcore::Node]::None => { assert false; }
+    }
+    fapp::close_window(#addr_of(root) as *flex::Node);
+}
+
+#[test]
+fn the_vocabulary_names_a_date_pickers_own_properties() {
+    // What `vocabulary element: date_picker` serves beyond the hand table.
+    let d: vec::Vec[ainsp::Descriptor] = igen::descriptors();
+    var date_ty: text::Text = text::new();
+    var format_seen: bool = false;
+    var i: usize = 0 as usize;
+    while i < d.count() {
+        match d.at_ptr(i) {
+            option::Option[*ainsp::Descriptor]::Some(x) => {
+                if ainsp::covers({ (*x).applies }, "date_picker") {
+                    if { (*x).name } == "date" { date_ty = text::from_str({ (*x).ty }); }
+                    if { (*x).name } == "format" { format_seen = true; }
+                }
+            }
+            option::Option[*ainsp::Descriptor]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert date_ty.view() == "date";
+    assert format_seen;
 }

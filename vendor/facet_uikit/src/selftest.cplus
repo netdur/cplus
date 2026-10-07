@@ -1383,6 +1383,82 @@ fn each_popup_item_is_a_choice_an_agent_can_make() -> bool {
     return ok;
 }
 
+// spendwise S22: a date picker's date is on the agent surface. Read as
+// YYYY-MM-DD, and set_text PICKS: the date moves and on_date_selected runs. The
+// second write comes from a thread, as an MCP request does; `pick` writes the
+// tree, so it has to land on main.
+static DATE_PICKS: i32 = 0;
+fn heard_date_pick(sender: *u8, ctx: *u8) { DATE_PICKS = DATE_PICKS + 1; return; }
+
+fn write_date_from_a_thread(take surface_addr: usize) -> i32 {
+    let s: *agent::Surface = surface_addr as *agent::Surface;
+    let oc: surf::Outcome = { (*s).set_text(auth::operator(), "st:date", "2026-10-09", 0 as u64) };
+    if surf::outcome_eq(oc, surf::Outcome::Allowed) { return 1; }
+    return 0;
+}
+
+fn date_text_on(sp: *u8) -> text::Text {
+    let nodes: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    return match mcp_find(nodes, "st:date") {
+        option::Option[*mcpb::UiNode]::Some(t) => { (*t).text.clone() },
+        option::Option[*mcpb::UiNode]::None => text::from_str("<missing>"),
+    };
+}
+
+fn a_date_pickers_date_is_read_and_picked_by_an_agent() -> bool {
+    DATE_PICKS = 0;
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    if win == (0 as *u8) { return false; }
+    var n: core::Node = ui::date_picker(vocab::Date { year: 2026 as i64, month: 10 as i64, day: 5 as i64 },
+        key: "st:date", on_date_selected: heard_date_pick,
+        maximum_date: vocab::Date { year: 2026 as i64, month: 12 as i64, day: 31 as i64 });
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_id(win, rt::sel(#str_ptr("addSubview:\0")), v) };
+    app::reset_default_for_tests();
+    app::open_window(p);
+    app::set_window_native(p, win);
+    var s: agent::Surface = agent::open_app();
+    let sp: *u8 = #addr_of(s) as *u8;
+    var role_ok: bool = false;
+    let first: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    match mcp_find(first, "st:date") {
+        option::Option[*mcpb::UiNode]::Some(t) => { role_ok = identity::role_eq({ (*t).role }, identity::Role::Value); }
+        option::Option[*mcpb::UiNode]::None => { }
+    }
+    let read_ok: bool = date_text_on(sp).view() == "2026-10-05";
+    let wrote: bool = surf::outcome_eq(s.set_text(auth::operator(), "st:date", "2026-10-07", 0 as u64),
+                                       surf::Outcome::Allowed);
+    let moved: bool = date_text_on(sp).view() == "2026-10-07" && DATE_PICKS == 1;
+    let refused: bool = surf::outcome_eq(s.set_text(auth::operator(), "st:date", "2026-02-30", 0 as u64),
+                                         surf::Outcome::InvalidValue)
+        && surf::outcome_eq(s.set_text(auth::operator(), "st:date", "2027-01-01", 0 as u64),
+                            surf::Outcome::InvalidValue)
+        && DATE_PICKS == 1;
+    let h: thread::JoinHandle[i32] = thread::spawn_with::[usize, i32](
+        #addr_of(s) as usize, write_date_from_a_thread);
+    let rl: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSRunLoop\0")),
+                               rt::sel(#str_ptr("currentRunLoop\0"))) };
+    var spins: i32 = 0;
+    while !h.is_finished() && spins < 500 {
+        let until: *u8 = { rt::msg_id_f64(rt::get_class(#str_ptr("NSDate\0")),
+                                          rt::sel(#str_ptr("dateWithTimeIntervalSinceNow:\0")), 0.01f64) };
+        { rt::msg_void_id(rl, rt::sel(#str_ptr("runUntilDate:\0")), until) };
+        spins = spins + 1;
+    }
+    let from_thread: bool = h.join() == 1 && date_text_on(sp).view() == "2026-10-09" && DATE_PICKS == 2;
+    let ok: bool = role_ok && read_ok && wrote && moved && refused && from_thread;
+    if !ok {
+        let now: text::Text = date_text_on(sp);
+        io::eprintln(text::from_str("  role ${role_ok} read ${read_ok} wrote ${wrote} moved ${moved} refused ${refused} thread ${from_thread} now ${now.view()} picks ${DATE_PICKS}"));
+    }
+    app::reset_default_for_tests();
+    { rt::release(win) };
+    return ok;
+}
+
 // spendwise S20 D1: an open UIAlertController is UIKit's, so the walk never
 // met it. Through `facet/native_dialog` it is listed under the desktop sheet's
 // keys, a click answers it, and the page under it is not reachable. A fake
@@ -4313,6 +4389,8 @@ fn run_all() -> i32 {
           a_tab_click_from_the_server_thread_lands_on_main());
     check("each popup item is a choice an agent can make",
           each_popup_item_is_a_choice_an_agent_can_make());
+    check("a date picker's date is read and picked by an agent",
+          a_date_pickers_date_is_read_and_picked_by_an_agent());
     check("an open alert is read and answered by an agent",
           an_open_alert_is_read_and_answered_by_an_agent());
     check("a gradient box keeps its corner radius",

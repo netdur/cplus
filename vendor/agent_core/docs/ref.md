@@ -27,6 +27,14 @@ progress bar. Its drive is `drive_text`, so `set_text "0.75"` writes it; the
 backends answer the number as the node's `text`, and the typed spelling
 (`value` / `minimum` / `maximum`) is on the inspector's property vocabulary.
 
+A date picker and a time picker are `Value` too. Their `text` is the date
+as `YYYY-MM-DD` and the time of day as `HH:MM` (or `HH:MM:SS`), and
+`set_text` takes the same form. The write is a pick: the value moves and
+the app's `on_date_selected` / `on_time_selected` runs, as it does for a
+person. A value the picker cannot hold answers `invalid_value` and changes
+nothing: a malformed date, a day the month does not have, or a date
+outside `minimum_date`..`maximum_date`.
+
 ```cplus
 fn role_tag(r: Role) -> str
 fn role_index / role_eq / role_from_index
@@ -139,6 +147,9 @@ enum Outcome {
     VersionConflict, Stale,
     NeedsGrant,    // a wider grant opens this — ask the user, then retry
     Forbidden,     // Private tier, or no edit_tree — stop
+    NoHandler,     // the click landed and nothing is wired behind it
+    InvalidValue,  // set_text refused: not a value this control can hold
+                   // (a date that is not YYYY-MM-DD, or outside its range)
 }
 fn outcome_eq / outcome_index
 fn refusal_for_tier(t: u32) -> Outcome

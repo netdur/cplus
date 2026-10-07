@@ -29,6 +29,7 @@ import "facet/tree" as tree;
 import "facet/relist" as frelist;
 import "facet/tabs" as ftabs;
 import "facet/popup" as fpopup;
+import "facet/picker_text" as picker_text;
 
 // A registry index and the facet node behind it, in step by construction: the
 // walk appends to both together.
@@ -66,8 +67,12 @@ fn role_of(kind: u32) -> identity::Role {
     if kind == props::K_STEPPER { return identity::Role::Value; }
     if kind == props::K_SLIDER { return identity::Role::Value; }
     if kind == props::K_PROGRESS { return identity::Role::Value; }
-    // A date picker's field OPENS a picker, which is a button's affordance.
-    if kind == props::K_DATE_PICKER { return identity::Role::Button; }
+    // A DATE OR TIME PICKER IS A VALUE: read as YYYY-MM-DD / HH:MM and written
+    // the same way (spendwise S22). It was a Button here, for the field that
+    // opens the system dialog — a dialog an agent cannot operate, so the role
+    // promised the one affordance it could not use.
+    if kind == props::K_DATE_PICKER { return identity::Role::Value; }
+    if kind == props::K_TIME_PICKER { return identity::Role::Value; }
     if kind == props::K_LABEL { return identity::Role::Text; }
     if kind == props::K_SPAN { return identity::Role::Text; }
     if kind == props::K_TEXT_FIELD { return identity::Role::Input; }
@@ -83,6 +88,10 @@ fn role_of(kind: u32) -> identity::Role {
 // its title and one without reports "" rather than a class name dressed up as
 // content.
 fn text_of(n: *core::Node) -> text::Text {
+    match picker_text::text_of(n) {
+        option::Option[text::Text]::Some(t) => { return t; }
+        option::Option[text::Text]::None => { }
+    }
     let d: *core::Data = core::node_data(n);
     if d == (0 as *core::Data) { return text::new(); }
     let kind: u32 = { (*d).kind };
@@ -166,6 +175,7 @@ fn is_actionable(n: *core::Node) -> bool {
     if kind == props::K_TOGGLE { return true; }
     if kind == props::K_RADIO { return true; }
     if kind == props::K_DATE_PICKER { return true; }
+    if kind == props::K_TIME_PICKER { return true; }
     if controls::input_view_of(n) != (0 as *props::InputViewProps) { return true; }
     return false;
 }
@@ -695,6 +705,17 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
                 let n: *core::Node = node_of(#addr_of(this) as *Surface, node);
                 if n == (0 as *core::Node) { return surface::Outcome::NotFound; }
+                // A picker's value is PICKED — set, and the app's
+                // on_date_selected / on_time_selected told (spendwise S22).
+                // No version bump, like the text path below: this surface lives
+                // across requests and serves no `text_version`, so a bump would
+                // turn the next write of a client that sent no base into a
+                // version_conflict.
+                match picker_text::pick(n, value) {
+                    picker_text::Write::Picked => { return surface::Outcome::Allowed; }
+                    picker_text::Write::Invalid => { return surface::Outcome::InvalidValue; }
+                    picker_text::Write::NotAPicker => { }
+                }
                 if controls::agent_set_text(n, value) { return surface::Outcome::Allowed; }
                 return surface::Outcome::NotFound;
             }

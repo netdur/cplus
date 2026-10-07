@@ -27,6 +27,7 @@ import "facet/obs_vec" as obs_vec;
 import "facet/application" as app;
 import "facet/tabs" as ftabs;
 import "facet/popup" as fpopup;
+import "facet/date_picker" as fdate;
 import "facet/vocabulary" as vocab;
 import "stdlib/thread" as thread;   // the off-main invoke_menu regression below needs a real second thread
 import "./agent_appkit" as agent;
@@ -3221,4 +3222,71 @@ fn a_tab_parts_id_is_the_panes_key_and_its_name_is_the_title() {
         option::Option[*mcpb::UiNode]::None => { assert false; }
     }
     app::reset_default_for_tests();
+}
+
+// ---- a date picker's date is on the surface (reports/spendwise/S22) -----------
+// Read as YYYY-MM-DD, written the same way, and a write is a PICK: the app's
+// on_date_selected runs, as it does for a person's.
+
+static DATE_HEARD: i64 = 0 as i64;
+fn heard_date(sender: *u8, ctx: *u8) { DATE_HEARD = DATE_HEARD + (1 as i64); return; }
+
+fn date_fixture(win: *u8) -> core::Node {
+    let content = content_of(ak::Window::from_raw(win));
+    let dp: *u8 = synth::alloc_init_class({ rt::get_class(#str_ptr("NSDatePicker\0")) });
+    { rt::msg_void_rect(dp, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 10.0, y: 10.0, w: 160.0, h: 24.0 }) };
+    content.add_subview(ak::View::from_raw(dp));
+    var d: core::Node = fdate::date_picker(
+        vocab::Date { year: 2026 as i64, month: 10 as i64, day: 5 as i64 },
+        key: "form:date", on_date_selected: heard_date,
+        maximum_date: vocab::Date { year: 2026 as i64, month: 12 as i64, day: 31 as i64 });
+    core::set_view(#addr_of(d), dp, noop_release);
+    return d;
+}
+
+fn text_of_node(nodes: vec::Vec[mcpb::UiNode], id: str) -> text::Text {
+    return match mcp_named(nodes, id) {
+        option::Option[*mcpb::UiNode]::Some(n) => { (*n).text.clone() },
+        option::Option[*mcpb::UiNode]::None => text::from_str("<missing>"),
+    };
+}
+
+#[test]
+fn a_date_pickers_date_is_read_and_picked_through_the_surface() {
+    DATE_HEARD = 0 as i64;
+    let win = fixture_window(300.0, 200.0);
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    core::set_view(#addr_of(root), content_of(win).raw(), noop_release);
+    let _a: status::Status = root.add_child(date_fixture(win.raw()));
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    let sp: *u8 = #addr_of(s) as *u8;
+
+    let before: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    match mcp_named(before, "form:date") {
+        option::Option[*mcpb::UiNode]::Some(n) => {
+            assert identity::role_eq({ (*n).role }, identity::Role::Value);
+            assert { (*n).text.view() } == "2026-10-05";
+        }
+        option::Option[*mcpb::UiNode]::None => { assert false; }
+    }
+
+    assert surface::outcome_eq(s.set_text(auth::operator(), "form:date", "2026-10-07", 0),
+                               surface::Outcome::Allowed);
+    assert DATE_HEARD == (1 as i64);
+    let after: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    assert text_of_node(after, "form:date").view() == "2026-10-07";
+
+    // NEGATIVE: not a date, a day February does not have, and past the
+    // maximum — refused as a value, and nothing moved or fired.
+    assert surface::outcome_eq(s.set_text(auth::operator(), "form:date", "next tuesday", 0),
+                               surface::Outcome::InvalidValue);
+    assert surface::outcome_eq(s.set_text(auth::operator(), "form:date", "2026-02-30", 0),
+                               surface::Outcome::InvalidValue);
+    assert surface::outcome_eq(s.set_text(auth::operator(), "form:date", "2027-01-01", 0),
+                               surface::Outcome::InvalidValue);
+    assert DATE_HEARD == (1 as i64);
+    let last: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    assert text_of_node(last, "form:date").view() == "2026-10-07";
 }

@@ -57,6 +57,34 @@ fn from_color(c: insp::Color) -> vocab::Color {
                           r2: { c.r2 }, g2: { c.g2 }, b2: { c.b2 }, a2: { c.a2 } };
 }
 
+// A DATE IS SPELLED YYYY-MM-DD (spendwise S22). An unset date — a picker's
+// minimum or maximum left alone — is the empty string, so it reads back as
+// "no bound" and writes back as one.
+fn date_text(d: vocab::Date) -> text::Text {
+    if !d.is_set() { return text::new(); }
+    return d.iso();
+}
+
+fn date_of(v: insp::Value) -> option::Option[vocab::Date] {
+    return match v {
+        insp::Value::Str(t) => {
+            if t.count() == (0 as usize) { return option::Option[vocab::Date]::Some(vocab::Date::zero()); }
+            vocab::Date::from_iso(t.view())
+        },
+        _ => option::Option[vocab::Date]::None,
+    };
+}
+
+// A DURATION IS SECONDS, and a time of day may also arrive as HH:MM[:SS].
+fn duration_of(v: insp::Value) -> option::Option[vocab::Duration] {
+    return match v {
+        insp::Value::Num(x) => option::Option[vocab::Duration]::Some(vocab::Duration::of_seconds(x)),
+        insp::Value::Int(i) => option::Option[vocab::Duration]::Some(vocab::Duration::of_seconds(i as f64)),
+        insp::Value::Str(t) => vocab::Duration::from_clock(t.view()),
+        _ => option::Option[vocab::Duration]::None,
+    };
+}
+
 // A spelling arrives as an Enum or, from a client that has not read the
 // vocabulary, as a plain JSON string.
 fn spelling_of(v: insp::Value) -> option::Option[text::Text] {
@@ -550,7 +578,11 @@ fn names() -> vec::Vec[str] {
     let _increment: status::Status = v.append("increment");
     let _off_color: status::Status = v.append("off_color");
     let _on_color: status::Status = v.append("on_color");
+    let _date: status::Status = v.append("date");
     let _format: status::Status = v.append("format");
+    let _maximum_date: status::Status = v.append("maximum_date");
+    let _minimum_date: status::Status = v.append("minimum_date");
+    let _time: status::Status = v.append("time");
     let _progress: status::Status = v.append("progress");
     let _progress_color: status::Status = v.append("progress_color");
     let _color: status::Status = v.append("color");
@@ -614,6 +646,133 @@ fn names() -> vec::Vec[str] {
     let _selected_dot_color: status::Status = v.append("selected_dot_color");
     let _priority: status::Status = v.append("priority");
     let _placement: status::Status = v.append("placement");
+    return v;
+}
+
+// One descriptor per name and type, naming every kind that carries it.
+fn descriptors() -> vec::Vec[insp::Descriptor] {
+    var v: vec::Vec[insp::Descriptor] = vec::new::[insp::Descriptor]();
+    let _d0: status::Status = v.append(insp::d("character_spacing", "number", "", "label button text_field text_area search_field popup date_picker time_picker radio span", "", "CharacterSpacing, written through the control's own setter."));
+    let _d1: status::Status = v.append(insp::d("font_weight", "enum", "", "label button text_field text_area search_field popup date_picker time_picker radio span", "default ultra_light thin light regular medium semibold bold heavy black", "FontAttributes, written through the control's own setter."));
+    let _d2: status::Status = v.append(insp::d("is_italic", "bool", "", "label button text_field text_area search_field popup date_picker time_picker radio span", "", "FontAttributes (italic axis), written through the control's own setter."));
+    let _d3: status::Status = v.append(insp::d("font_scales", "bool", "", "label button text_field text_area search_field popup date_picker time_picker radio span", "", "FontAutoScalingEnabled, written through the control's own setter."));
+    let _d4: status::Status = v.append(insp::d("font_family", "string", "", "label button text_field text_area search_field popup date_picker time_picker radio span", "", "FontFamily, written through the control's own setter."));
+    let _d5: status::Status = v.append(insp::d("font_size", "number", "", "label button text_field text_area search_field popup date_picker time_picker radio span", "", "FontSize, written through the control's own setter."));
+    let _d6: status::Status = v.append(insp::d("named_size", "enum", "", "label button text_field text_area search_field popup date_picker time_picker radio span", "default micro small medium large body header title subtitle caption", "FontSize (named), written through the control's own setter."));
+    let _d7: status::Status = v.append(insp::d("text_align", "enum", "", "label text_field text_area search_field popup", "center end justify start", "HorizontalTextAlignment, written through the control's own setter."));
+    let _d8: status::Status = v.append(insp::d("line_break", "enum", "", "label button", "character_wrap head_truncation middle_truncation no_wrap tail_truncation word_wrap", "LineBreakMode, written through the control's own setter."));
+    let _d9: status::Status = v.append(insp::d("line_height", "number", "", "label span", "", "LineHeight, written through the control's own setter."));
+    let _d10: status::Status = v.append(insp::d("max_lines", "number", "", "label", "", "MaxLines, written through the control's own setter."));
+    let _d11: status::Status = v.append(insp::d("text", "string", "", "label text_field text_area search_field radio swipe_item span menu_item menu context_menu_item toolbar_item", "", "Text, Content, written through the control's own setter."));
+    let _d12: status::Status = v.append(insp::d("text_color", "color", "", "label button text_field text_area search_field popup date_picker time_picker radio span", "", "TextColor, written through the control's own setter."));
+    let _d13: status::Status = v.append(insp::d("text_decoration", "enum", "", "label span", "none strikethrough underline", "TextDecorations, written through the control's own setter."));
+    let _d14: status::Status = v.append(insp::d("text_transform", "enum", "", "label button text_field text_area search_field radio span", "default lowercase none uppercase", "TextTransform, written through the control's own setter."));
+    let _d15: status::Status = v.append(insp::d("text_format", "enum", "", "label", "html text", "TextType, written through the control's own setter."));
+    let _d16: status::Status = v.append(insp::d("vertical_align", "enum", "", "label text_field text_area search_field popup", "center end justify start", "VerticalTextAlignment, written through the control's own setter."));
+    let _d17: status::Status = v.append(insp::d("border_color", "color", "", "button radio icon_button", "", "BorderColor, written through the control's own setter."));
+    let _d18: status::Status = v.append(insp::d("border_width", "number", "", "button radio icon_button", "", "BorderWidth, written through the control's own setter."));
+    let _d19: status::Status = v.append(insp::d("content_layout", "enum", "", "button", "image_left image_top image_right image_bottom", "ContentLayout, written through the control's own setter."));
+    let _d20: status::Status = v.append(insp::d("image", "string", "", "button", "", "ImageSource, written through the control's own setter."));
+    let _d21: status::Status = v.append(insp::d("title", "string", "", "button popup", "", "Text, Title, written through the control's own setter."));
+    let _d22: status::Status = v.append(insp::d("toggles", "bool", "", "button icon_button", "", "facet's own, written through the control's own setter."));
+    let _d23: status::Status = v.append(insp::d("on", "bool", "", "button toggle checkbox radio icon_button", "", "facet's own, IsToggled, IsChecked, written through the control's own setter."));
+    let _d24: status::Status = v.append(insp::d("bordered", "bool", "", "button icon_button", "", "facet's own, written through the control's own setter."));
+    let _d25: status::Status = v.append(insp::d("clear_button", "enum", "", "text_field", "never while_editing", "ClearButtonVisibility, written through the control's own setter."));
+    let _d26: status::Status = v.append(insp::d("is_secure", "bool", "", "text_field", "", "IsPassword, written through the control's own setter."));
+    let _d27: status::Status = v.append(insp::d("return_key", "enum", "", "text_field search_field", "default done go next search send", "ReturnType, written through the control's own setter."));
+    let _d28: status::Status = v.append(insp::d("cursor_position", "number", "", "text_field text_area search_field", "", "CursorPosition, written through the control's own setter."));
+    let _d29: status::Status = v.append(insp::d("is_read_only", "bool", "", "text_field text_area search_field", "", "IsReadOnly, written through the control's own setter."));
+    let _d30: status::Status = v.append(insp::d("checks_spelling", "bool", "", "text_field text_area search_field", "", "IsSpellCheckEnabled, written through the control's own setter."));
+    let _d31: status::Status = v.append(insp::d("predicts_text", "bool", "", "text_field text_area search_field", "", "IsTextPredictionEnabled, written through the control's own setter."));
+    let _d32: status::Status = v.append(insp::d("keyboard", "enum", "", "text_field text_area search_field", "default plain chat email numeric telephone url text", "Keyboard, written through the control's own setter."));
+    let _d33: status::Status = v.append(insp::d("max_length", "number", "", "text_field text_area search_field", "", "MaxLength, written through the control's own setter."));
+    let _d34: status::Status = v.append(insp::d("placeholder", "string", "", "text_field text_area search_field", "", "Placeholder, written through the control's own setter."));
+    let _d35: status::Status = v.append(insp::d("placeholder_color", "color", "", "text_field text_area search_field", "", "PlaceholderColor, written through the control's own setter."));
+    let _d36: status::Status = v.append(insp::d("selection_length", "number", "", "text_field text_area search_field", "", "SelectionLength, written through the control's own setter."));
+    let _d37: status::Status = v.append(insp::d("auto_size", "enum", "", "text_area", "disabled text_changes", "AutoSize, written through the control's own setter."));
+    let _d38: status::Status = v.append(insp::d("cancel_button_color", "color", "", "search_field", "", "CancelButtonColor, written through the control's own setter."));
+    let _d39: status::Status = v.append(insp::d("search_icon_color", "color", "", "search_field", "", "SearchIconColor, written through the control's own setter."));
+    let _d40: status::Status = v.append(insp::d("is_open", "bool", "", "popup date_picker time_picker", "", "IsOpen, written through the control's own setter."));
+    let _d41: status::Status = v.append(insp::d("selected_index", "number", "", "popup tabs", "", "SelectedIndex, facet's own, written through the control's own setter."));
+    let _d42: status::Status = v.append(insp::d("title_color", "color", "", "popup", "", "TitleColor, written through the control's own setter."));
+    let _d43: status::Status = v.append(insp::d("maximum", "number", "", "slider stepper", "", "Maximum, written through the control's own setter."));
+    let _d44: status::Status = v.append(insp::d("maximum_track_color", "color", "", "slider", "", "MaximumTrackColor, written through the control's own setter."));
+    let _d45: status::Status = v.append(insp::d("minimum", "number", "", "slider stepper", "", "Minimum, written through the control's own setter."));
+    let _d46: status::Status = v.append(insp::d("minimum_track_color", "color", "", "slider", "", "MinimumTrackColor, written through the control's own setter."));
+    let _d47: status::Status = v.append(insp::d("thumb_color", "color", "", "slider toggle", "", "ThumbColor, written through the control's own setter."));
+    let _d48: status::Status = v.append(insp::d("thumb_image", "string", "", "slider", "", "ThumbImageSource, written through the control's own setter."));
+    let _d49: status::Status = v.append(insp::d("value", "number", "", "slider stepper", "", "Value, written through the control's own setter."));
+    let _d50: status::Status = v.append(insp::d("increment", "number", "", "stepper", "", "Increment, written through the control's own setter."));
+    let _d51: status::Status = v.append(insp::d("off_color", "color", "", "toggle", "", "OffColor, written through the control's own setter."));
+    let _d52: status::Status = v.append(insp::d("on_color", "color", "", "toggle", "", "OnColor, written through the control's own setter."));
+    let _d53: status::Status = v.append(insp::d("date", "date", "YYYY-MM-DD", "date_picker", "", "Date, written through the control's own setter."));
+    let _d54: status::Status = v.append(insp::d("format", "string", "", "date_picker time_picker", "", "Format, written through the control's own setter."));
+    let _d55: status::Status = v.append(insp::d("maximum_date", "date", "YYYY-MM-DD", "date_picker", "", "MaximumDate, written through the control's own setter."));
+    let _d56: status::Status = v.append(insp::d("minimum_date", "date", "YYYY-MM-DD", "date_picker", "", "MinimumDate, written through the control's own setter."));
+    let _d57: status::Status = v.append(insp::d("time", "duration", "seconds", "time_picker", "", "Time, written through the control's own setter."));
+    let _d58: status::Status = v.append(insp::d("progress", "number", "", "progress", "", "Progress, written through the control's own setter."));
+    let _d59: status::Status = v.append(insp::d("progress_color", "color", "", "progress", "", "ProgressColor, written through the control's own setter."));
+    let _d60: status::Status = v.append(insp::d("color", "color", "", "spinner checkbox box", "", "Color, written through the control's own setter."));
+    let _d61: status::Status = v.append(insp::d("is_running", "bool", "", "spinner", "", "IsRunning, written through the control's own setter."));
+    let _d62: status::Status = v.append(insp::d("fit", "enum", "", "image icon_button", "aspect_fill aspect_fit center fill", "Aspect, written through the control's own setter."));
+    let _d63: status::Status = v.append(insp::d("is_animation_playing", "bool", "", "image", "", "IsAnimationPlaying, written through the control's own setter."));
+    let _d64: status::Status = v.append(insp::d("is_opaque", "bool", "", "image icon_button", "", "IsOpaque, written through the control's own setter."));
+    let _d65: status::Status = v.append(insp::d("source", "string", "", "image icon_button web", "", "Source, written through the control's own setter."));
+    let _d66: status::Status = v.append(insp::d("horizontal_scroll_bars", "enum", "", "collection list scroll carousel", "always default never", "HorizontalScrollBarVisibility, written through the control's own setter."));
+    let _d67: status::Status = v.append(insp::d("scroll_anchor", "enum", "", "collection carousel", "keep_items_in_view keep_last_item_in_view keep_scroll_offset", "ItemsUpdatingScrollMode, written through the control's own setter."));
+    let _d68: status::Status = v.append(insp::d("remaining_threshold", "number", "", "collection carousel", "", "RemainingItemsThreshold, written through the control's own setter."));
+    let _d69: status::Status = v.append(insp::d("vertical_scroll_bars", "enum", "", "collection list scroll carousel", "always default never", "VerticalScrollBarVisibility, written through the control's own setter."));
+    let _d70: status::Status = v.append(insp::d("item_sizing", "enum", "", "collection carousel", "measure_all_items measure_first_item", "ItemSizingStrategy, written through the control's own setter."));
+    let _d71: status::Status = v.append(insp::d("columns", "number", "", "collection carousel", "", "ItemsLayout, written through the control's own setter."));
+    let _d72: status::Status = v.append(insp::d("selection_mode", "enum", "", "collection list", "multiple none single", "SelectionMode, written through the control's own setter."));
+    let _d73: status::Status = v.append(insp::d("is_grouped", "bool", "", "collection list", "", "IsGrouped, IsGroupingEnabled, written through the control's own setter."));
+    let _d74: status::Status = v.append(insp::d("can_mix_groups", "bool", "", "collection", "", "CanMixGroups, written through the control's own setter."));
+    let _d75: status::Status = v.append(insp::d("can_reorder_items", "bool", "", "collection", "", "CanReorderItems, written through the control's own setter."));
+    let _d76: status::Status = v.append(insp::d("has_uneven_rows", "bool", "", "list table", "", "HasUnevenRows, written through the control's own setter."));
+    let _d77: status::Status = v.append(insp::d("is_refreshable", "bool", "", "list refreshable", "", "IsPullToRefreshEnabled, IsRefreshEnabled, written through the control's own setter."));
+    let _d78: status::Status = v.append(insp::d("is_refreshing", "bool", "", "list refreshable", "", "IsRefreshing, written through the control's own setter."));
+    let _d79: status::Status = v.append(insp::d("can_refresh", "bool", "", "list", "", "RefreshAllowed, written through the control's own setter."));
+    let _d80: status::Status = v.append(insp::d("refresh_color", "color", "", "list refreshable", "", "RefreshControlColor, RefreshColor, written through the control's own setter."));
+    let _d81: status::Status = v.append(insp::d("row_height", "number", "", "list table", "", "RowHeight, written through the control's own setter."));
+    let _d82: status::Status = v.append(insp::d("separator_color", "color", "", "list", "", "SeparatorColor, written through the control's own setter."));
+    let _d83: status::Status = v.append(insp::d("separator", "enum", "", "list", "default none", "SeparatorVisibility, written through the control's own setter."));
+    let _d84: status::Status = v.append(insp::d("style", "enum", "", "table", "data form menu settings", "Intent, written through the control's own setter."));
+    let _d85: status::Status = v.append(insp::d("bar_background_color", "color", "", "tabs", "", "BarBackgroundColor, written through the control's own setter."));
+    let _d86: status::Status = v.append(insp::d("bar_text_color", "color", "", "tabs", "", "BarTextColor, written through the control's own setter."));
+    let _d87: status::Status = v.append(insp::d("selected_tab_color", "color", "", "tabs", "", "SelectedTabColor, written through the control's own setter."));
+    let _d88: status::Status = v.append(insp::d("unselected_tab_color", "color", "", "tabs", "", "UnselectedTabColor, written through the control's own setter."));
+    let _d89: status::Status = v.append(insp::d("bar_placement", "enum", "", "tabs", "default top bottom", "facet's own, written through the control's own setter."));
+    let _d90: status::Status = v.append(insp::d("group", "string", "", "radio", "", "GroupName, written through the control's own setter."));
+    let _d91: status::Status = v.append(insp::d("stroke_dash_offset", "number", "", "bordered", "", "StrokeDashOffset, written through the control's own setter."));
+    let _d92: status::Status = v.append(insp::d("stroke_cap", "enum", "", "bordered", "flat round square", "StrokeLineCap, written through the control's own setter."));
+    let _d93: status::Status = v.append(insp::d("stroke_join", "enum", "", "bordered", "bevel miter round", "StrokeLineJoin, written through the control's own setter."));
+    let _d94: status::Status = v.append(insp::d("stroke_miter_limit", "number", "", "bordered", "", "StrokeMiterLimit, written through the control's own setter."));
+    let _d95: status::Status = v.append(insp::d("stroke_width", "number", "", "bordered", "", "StrokeThickness, written through the control's own setter."));
+    let _d96: status::Status = v.append(insp::d("cascades_input", "bool", "", "scroll", "", "CascadeInputTransparent, written through the control's own setter."));
+    let _d97: status::Status = v.append(insp::d("axis", "enum", "", "scroll", "both horizontal neither vertical", "Orientation, written through the control's own setter."));
+    let _d98: status::Status = v.append(insp::d("scroll_x", "number", "", "scroll", "", "ScrollX, written through the control's own setter."));
+    let _d99: status::Status = v.append(insp::d("scroll_y", "number", "", "scroll", "", "ScrollY, written through the control's own setter."));
+    let _d100: status::Status = v.append(insp::d("user_agent", "string", "", "web", "", "UserAgent, written through the control's own setter."));
+    let _d101: status::Status = v.append(insp::d("default_file", "string", "", "hybrid_web", "", "DefaultFile, written through the control's own setter."));
+    let _d102: status::Status = v.append(insp::d("hybrid_root", "string", "", "hybrid_web", "", "HybridRoot, written through the control's own setter."));
+    let _d103: status::Status = v.append(insp::d("reveal_threshold", "number", "", "swipeable", "", "Threshold, written through the control's own setter."));
+    let _d104: status::Status = v.append(insp::d("icon", "string", "", "swipe_item menu_item context_menu_item toolbar_item", "", "IconImageSource, written through the control's own setter."));
+    let _d105: status::Status = v.append(insp::d("is_destructive", "bool", "", "swipe_item menu_item context_menu_item toolbar_item", "", "IsDestructive, written through the control's own setter."));
+    let _d106: status::Status = v.append(insp::d("bounces", "bool", "", "carousel", "", "IsBounceEnabled, written through the control's own setter."));
+    let _d107: status::Status = v.append(insp::d("animates_scroll", "bool", "", "carousel", "", "IsScrollAnimated, written through the control's own setter."));
+    let _d108: status::Status = v.append(insp::d("is_scrolling", "bool", "", "carousel", "", "IsScrolling, written through the control's own setter."));
+    let _d109: status::Status = v.append(insp::d("is_swipeable", "bool", "", "carousel", "", "IsSwipeEnabled, written through the control's own setter."));
+    let _d110: status::Status = v.append(insp::d("wraps", "bool", "", "carousel", "", "Loop, written through the control's own setter."));
+    let _d111: status::Status = v.append(insp::d("position", "number", "", "carousel page_dots", "", "Position, written through the control's own setter."));
+    let _d112: status::Status = v.append(insp::d("count", "number", "", "page_dots", "", "Count, written through the control's own setter."));
+    let _d113: status::Status = v.append(insp::d("hides_single", "bool", "", "page_dots", "", "HideSingle, written through the control's own setter."));
+    let _d114: status::Status = v.append(insp::d("dot_color", "color", "", "page_dots", "", "IndicatorColor, written through the control's own setter."));
+    let _d115: status::Status = v.append(insp::d("dot_size", "number", "", "page_dots", "", "IndicatorSize, written through the control's own setter."));
+    let _d116: status::Status = v.append(insp::d("dot_shape", "enum", "", "page_dots", "circle square", "IndicatorsShape, written through the control's own setter."));
+    let _d117: status::Status = v.append(insp::d("max_dots", "number", "", "page_dots", "", "MaximumVisible, written through the control's own setter."));
+    let _d118: status::Status = v.append(insp::d("selected_dot_color", "color", "", "page_dots", "", "SelectedIndicatorColor, written through the control's own setter."));
+    let _d119: status::Status = v.append(insp::d("priority", "number", "", "menu toolbar_item", "", "Priority, written through the control's own setter."));
+    let _d120: status::Status = v.append(insp::d("placement", "enum", "", "toolbar_item", "default primary secondary sidebar", "Order, written through the control's own setter."));
     return v;
 }
 
@@ -831,6 +990,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
         match m_date_picker::from(n) {
             option::Option[m_date_picker::DatePicker]::Some(c) => {
                 if prop == "character_spacing" { return option::Option[insp::Value]::Some(insp::Value::Num(c.character_spacing())); }
+                if prop == "date" { return option::Option[insp::Value]::Some(insp::Value::Str(date_text(c.date()))); }
                 if prop == "font_weight" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_FontWeight(c.font_weight())))); }
                 if prop == "is_italic" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_italic())); }
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
@@ -839,6 +999,8 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "format" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.format()))); }
                 if prop == "is_open" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_open())); }
+                if prop == "maximum_date" { return option::Option[insp::Value]::Some(insp::Value::Str(date_text(c.maximum_date()))); }
+                if prop == "minimum_date" { return option::Option[insp::Value]::Some(insp::Value::Str(date_text(c.minimum_date()))); }
                 if prop == "text_color" { return option::Option[insp::Value]::Some(insp::Value::Color(to_color(c.text_color()))); }
             }
             option::Option[m_date_picker::DatePicker]::None => { }
@@ -858,6 +1020,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "format" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.format()))); }
                 if prop == "is_open" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_open())); }
                 if prop == "text_color" { return option::Option[insp::Value]::Some(insp::Value::Color(to_color(c.text_color()))); }
+                if prop == "time" { return option::Option[insp::Value]::Some(insp::Value::Num((c.time()).seconds)); }
             }
             option::Option[m_time_picker::TimePicker]::None => { }
         }
@@ -2554,6 +2717,12 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
                     };
                 }
+                if prop == "date" {
+                    return match date_of(v) {
+                        option::Option[vocab::Date]::Some(a) => { let _c: m_date_picker::DatePicker = c.set_date(a); insp::Outcome::Ok },
+                        option::Option[vocab::Date]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
                 if prop == "font_weight" {
                     return match spelling_of(v) {
                         option::Option[text::Text]::Some(t) => match ev_FontWeight(t.view()) {
@@ -2623,6 +2792,18 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                     return match x {
                         option::Option[bool]::Some(a) => { let _c: m_date_picker::DatePicker = c.set_open(a); insp::Outcome::Ok },
                         option::Option[bool]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "maximum_date" {
+                    return match date_of(v) {
+                        option::Option[vocab::Date]::Some(a) => { let _c: m_date_picker::DatePicker = c.set_maximum_date(a); insp::Outcome::Ok },
+                        option::Option[vocab::Date]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "minimum_date" {
+                    return match date_of(v) {
+                        option::Option[vocab::Date]::Some(a) => { let _c: m_date_picker::DatePicker = c.set_minimum_date(a); insp::Outcome::Ok },
+                        option::Option[vocab::Date]::None => insp::Outcome::TypeMismatch,
                     };
                 }
                 if prop == "text_color" {
@@ -2733,6 +2914,12 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                     return match x {
                         option::Option[vocab::Color]::Some(a) => { let _c: m_time_picker::TimePicker = c.set_text_color(a); insp::Outcome::Ok },
                         option::Option[vocab::Color]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "time" {
+                    return match duration_of(v) {
+                        option::Option[vocab::Duration]::Some(a) => { let _c: m_time_picker::TimePicker = c.set_time(a); insp::Outcome::Ok },
+                        option::Option[vocab::Duration]::None => insp::Outcome::TypeMismatch,
                     };
                 }
             }
@@ -5056,6 +5243,10 @@ fn every_date_picker_property_reads_and_writes_back() {
         option::Option[insp::Value]::Some(v) => { assert set(p, "character_spacing", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
+    match get(p, "date") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "date", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
     match get(p, "font_weight") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_weight", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
@@ -5086,6 +5277,14 @@ fn every_date_picker_property_reads_and_writes_back() {
     }
     match get(p, "is_open") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "is_open", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
+    match get(p, "maximum_date") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "maximum_date", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
+    match get(p, "minimum_date") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "minimum_date", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
     match get(p, "text_color") {
@@ -5168,6 +5367,10 @@ fn every_time_picker_property_reads_and_writes_back() {
     }
     match get(p, "text_color") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "text_color", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
+    match get(p, "time") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "time", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
     match get(p, "is_italic") {

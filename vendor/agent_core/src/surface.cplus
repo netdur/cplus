@@ -68,6 +68,12 @@ enum Outcome {
                     // stop, and an agent told the wrong one either gives up on
                     // work it could have done or nags for a permission that is
                     // never coming.
+    InvalidValue,   // a write the control cannot hold: a date that is not
+                    // YYYY-MM-DD, or one outside the picker's minimum and
+                    // maximum. Refused BEFORE anything is written, so the
+                    // control and the app are as they were. Distinct from
+                    // `NotActionable`, which says the control cannot be
+                    // driven at all; this one says try a different value.
 }
 
 fn outcome_index(o: Outcome) -> i32 {
@@ -81,6 +87,7 @@ fn outcome_index(o: Outcome) -> i32 {
         Outcome::NeedsGrant => 6,
         Outcome::Forbidden => 7,
         Outcome::NoHandler => 8,
+        Outcome::InvalidValue => 9,
     };
 }
 

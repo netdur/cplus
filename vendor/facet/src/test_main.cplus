@@ -48,6 +48,7 @@ import "./tabs" as tabs;
 import "./text_area" as text_area;
 import "./text_field" as text_field;
 import "./time_picker" as time_picker;
+import "./picker_text" as picker_text;
 import "./toggle" as toggle;
 import "./toolbar_item" as toolbar_item;
 import "./web" as web;
@@ -5268,4 +5269,119 @@ fn replacing_a_shared_key_respects_the_requested_window() {
     assert mount::node("shared", within: #addr_of(second)).is_null();
     assert mount::node("changed", within: #addr_of(second)).is_not_null();
     mount::unmount(#addr_of(second)); mount::unmount(#addr_of(first));
+}
+
+// ---- a date and a time of day, spelled for an agent (spendwise S22) ------------
+
+fn is_date(s: str) -> bool {
+    return match vocab::Date::from_iso(s) {
+        option::Option[vocab::Date]::Some(_d) => true,
+        option::Option[vocab::Date]::None => false,
+    };
+}
+
+fn is_clock(s: str) -> bool {
+    return match vocab::Duration::from_clock(s) {
+        option::Option[vocab::Duration]::Some(_t) => true,
+        option::Option[vocab::Duration]::None => false,
+    };
+}
+
+#[test]
+fn a_date_is_spelled_yyyy_mm_dd_and_read_back() {
+    let d: vocab::Date = vocab::Date { year: 2026 as i64, month: 3 as i64, day: 5 as i64 };
+    assert d.iso().view() == "2026-03-05";
+    match vocab::Date::from_iso("2026-03-05") {
+        option::Option[vocab::Date]::Some(r) => { assert r.compare(d) == (0 as i64); }
+        option::Option[vocab::Date]::None => { assert false; }
+    }
+    // A leap day is a day; the 29th of a common February is not.
+    assert is_date("2024-02-29");
+    assert !is_date("2026-02-29");
+}
+
+#[test]
+fn a_date_that_is_not_one_is_refused_rather_than_rolled_over() {
+    assert !is_date("2026-02-30");
+    assert !is_date("2026-13-01");
+    assert !is_date("2026-00-10");
+    assert !is_date("2026-1-05");
+    assert !is_date("05/10/2026");
+    assert !is_date("");
+}
+
+#[test]
+fn an_unset_bound_bounds_nothing() {
+    let d: vocab::Date = vocab::Date { year: 2026 as i64, month: 10 as i64, day: 5 as i64 };
+    let lo: vocab::Date = vocab::Date { year: 2026 as i64, month: 1 as i64, day: 1 as i64 };
+    let hi: vocab::Date = vocab::Date { year: 2026 as i64, month: 10 as i64, day: 5 as i64 };
+    assert d.within(vocab::Date::zero(), vocab::Date::zero());
+    assert d.within(lo, hi);
+    assert !lo.within(d, vocab::Date::zero());
+    assert !(vocab::Date { year: 2026 as i64, month: 10 as i64, day: 6 as i64 }).within(lo, hi);
+}
+
+#[test]
+fn a_time_of_day_is_spelled_as_a_clock_and_read_back() {
+    assert vocab::Duration::of_seconds(34200.0f64).clock().view() == "09:30";
+    assert vocab::Duration::of_seconds(34245.0f64).clock().view() == "09:30:45";
+    match vocab::Duration::from_clock("09:30") {
+        option::Option[vocab::Duration]::Some(t) => { assert t.seconds == 34200.0f64; }
+        option::Option[vocab::Duration]::None => { assert false; }
+    }
+    assert is_clock("23:59:59");
+    assert !is_clock("24:00");
+    assert !is_clock("9:30");
+    assert !is_clock("09:60");
+}
+
+static PICKED_DATES: i64 = 0 as i64;
+fn heard_date(sender: *u8, ctx: *u8) { PICKED_DATES = PICKED_DATES + (1 as i64); return; }
+
+#[test]
+fn a_picked_date_is_set_and_the_app_hears_it_once() {
+    PICKED_DATES = 0 as i64;
+    let start: vocab::Date = vocab::Date { year: 2026 as i64, month: 10 as i64, day: 5 as i64 };
+    var n: facet::Node = date_picker::date_picker(start, on_date_selected: heard_date,
+        minimum_date: vocab::Date { year: 2026 as i64, month: 1 as i64, day: 1 as i64 },
+        maximum_date: vocab::Date { year: 2026 as i64, month: 12 as i64, day: 31 as i64 });
+    match date_picker::from(#addr_of(n)) {
+        option::Option[date_picker::DatePicker]::Some(c) => {
+            let next: vocab::Date = vocab::Date { year: 2026 as i64, month: 10 as i64, day: 7 as i64 };
+            let _c: date_picker::DatePicker = c.pick(next);
+            assert c.date().compare(next) == (0 as i64);
+            assert PICKED_DATES == (1 as i64);
+            // The date already showing: nothing to hear.
+            let _d: date_picker::DatePicker = c.pick(next);
+            assert PICKED_DATES == (1 as i64);
+            // NEGATIVE: outside the range, refused and silent.
+            let _e: date_picker::DatePicker = c.pick(vocab::Date { year: 2027 as i64, month: 1 as i64, day: 1 as i64 });
+            assert c.date().compare(next) == (0 as i64);
+            assert PICKED_DATES == (1 as i64);
+            // The application's own write stays quiet.
+            let _f: date_picker::DatePicker = c.set_date(start);
+            assert PICKED_DATES == (1 as i64);
+        }
+        option::Option[date_picker::DatePicker]::None => { assert false; }
+    }
+}
+
+static PICKED_TIMES: i64 = 0 as i64;
+fn heard_time(sender: *u8, ctx: *u8) { PICKED_TIMES = PICKED_TIMES + (1 as i64); return; }
+
+#[test]
+fn a_picked_time_is_set_and_the_app_hears_it_once() {
+    PICKED_TIMES = 0 as i64;
+    var n: facet::Node = time_picker::time_picker(vocab::Duration::of_seconds(0.0f64),
+                                                  on_time_selected: heard_time);
+    match time_picker::from(#addr_of(n)) {
+        option::Option[time_picker::TimePicker]::Some(c) => {
+            let _c: time_picker::TimePicker = c.pick(vocab::Duration::of_seconds(34200.0f64));
+            assert c.time().seconds == 34200.0f64;
+            assert PICKED_TIMES == (1 as i64);
+            let _d: time_picker::TimePicker = c.pick(vocab::Duration::of_seconds(34200.0f64));
+            assert PICKED_TIMES == (1 as i64);
+        }
+        option::Option[time_picker::TimePicker]::None => { assert false; }
+    }
 }

@@ -34,6 +34,7 @@ import "facet/tree" as ftree;
 import "facet/relist" as frelist;
 import "facet/tabs" as ftabs;
 import "facet/popup" as fpopup;
+import "facet/picker_text" as picker_text;
 import "facet/application" as app;
 import "facet/window" as fwindow;
 import "agent_core/identity" as identity;
@@ -789,6 +790,7 @@ fn classify(view: *u8) -> identity::Role {
     // a box and could not read back what it had done. `node_text` below is the
     // other half: the value, as the control's own string.
     if is_kind(view, #str_ptr("NSSlider\0"))
+        || is_kind(view, #str_ptr("NSDatePicker\0"))
         || is_kind(view, #str_ptr("NSStepper\0"))
         || is_kind(view, #str_ptr("NSProgressIndicator\0"))
         || is_kind(view, #str_ptr("NSLevelIndicator\0")) {
@@ -1047,7 +1049,9 @@ struct ViewRef {
     opaque p: *u8,
     part: u32,
     // The facet node a part acts on, when the view alone cannot say which —
-    // a `tabs` node's TAB parts. Null for every other entry.
+    // a `tabs` node's TAB parts — and a date or time picker's own node, whose
+    // value is the facet date rather than the NSDatePicker's local reading of
+    // it (spendwise S22). Null for every other entry.
     opaque node: *core::Node,
 }
 
@@ -1403,7 +1407,8 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
                 option::Option::None => { }
             }
             let _r: *u8 = rt::retain(view);
-            views.append(ViewRef { p: view, part: PART_SELF, node: 0 as *core::Node });
+            let own: *core::Node = if picker_text::is_picker(n) { n } else { 0 as *core::Node };
+            views.append(ViewRef { p: view, part: PART_SELF, node: own });
 
             // The parts a tree walk cannot reach: a control that carries more
             // than one affordance. Same rule as before — only on a keyed node.
@@ -1790,6 +1795,18 @@ impl Surface {
         };
     }
 
+    // A node's live text: a date or time picker's value as facet spells it
+    // (YYYY-MM-DD, HH:MM), and the view's own text for everything else.
+    fn live_text(this, node: usize, view: *u8, role: identity::Role) -> text::Text {
+        if this.part_of(node) == PART_SELF {
+            match picker_text::text_of(this.facet_node_of(node)) {
+                option::Option[text::Text]::Some(t) => { return t; }
+                option::Option[text::Text]::None => { }
+            }
+        }
+        return node_text(view, role);
+    }
+
     // Live describe_ui snapshot. Reads each node's current frame / hidden / text
     // from its view, so it reflects state *now* (e.g. after a `set_text`). The
     // synthetic app root (NodeId 0) is omitted; snapshot index = NodeId - 1.
@@ -1835,7 +1852,7 @@ impl Surface {
                 // A tab or item PART says its own title, not its owner's text.
                 text: if !may_read { text::new() }
                       else if this.part_of(node) >= PART_TAB_BASE { text::from_str(this.reg.name_of(node)) }
-                      else { node_text(view, role) },
+                      else { this.live_text(node, view, role) },
                 tier: this.reg.tier_of(node),
                 readable: may_read,
                 // The walk already read the accessibility label into the
@@ -2110,6 +2127,20 @@ impl Surface {
                 let v: *u8 = this.view_of(node);
                 if is_detached(v) {
                     return surface::Outcome::Stale;
+                }
+                // A DATE OR TIME PICKER IS WRITTEN AS TEXT and PICKED, the way
+                // a person's pick lands: the value set and on_date_selected /
+                // on_time_selected fired (spendwise S22). A value it cannot
+                // hold is refused before anything moves.
+                if this.part_of(node) == PART_SELF {
+                    match picker_text::pick(this.facet_node_of(node), value) {
+                        picker_text::Write::Picked => {
+                            this.versions.bump(node);
+                            return surface::Outcome::Allowed;
+                        }
+                        picker_text::Write::Invalid => { return surface::Outcome::InvalidValue; }
+                        picker_text::Write::NotAPicker => { }
+                    }
                 }
                 // Declared drive must be text when present (buttons are
                 // drive_click — refuse set_text rather than silently no-op).
@@ -2753,10 +2784,12 @@ fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode
                 // needs both, for the same reason `click` does.
                 var live: *u8 = null();
                 var part: u32 = PART_SELF;
+                var at: usize = 0 as usize;
                 match { (*s).reg.lookup({ (*n).id.view() }) } {
                     option::Option[usize]::Some(idx) => {
                         live = { (*s).view_of(idx) };
                         part = { (*s).part_of(idx) };
+                        at = idx;
                     }
                     option::Option::None => { }
                 }
@@ -2772,7 +2805,7 @@ fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode
                 var shown: text::Text = text::from_str({ (*n).name.view() });
                 if { (*n).tier } != identity::tier_open() {
                     if { (*n).readable } {
-                        if !is_null(live) { shown = node_text(live, { (*n).role }); }
+                        if !is_null(live) { shown = (*s).live_text(at, live, { (*n).role }); }
                     }
                 }
                 // A VALUE CONTROL SHOWS ITS NUMBER HERE TOO, read LIVE. In the
@@ -2782,7 +2815,7 @@ fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode
                 // rather than stored, for the same reason the gated arm above
                 // reads now: the knob moves between walks.
                 if identity::role_eq({ (*n).role }, identity::Role::Value) {
-                    if !is_null(live) { shown = node_text(live, { (*n).role }); }
+                    if !is_null(live) { shown = (*s).live_text(at, live, { (*n).role }); }
                 }
                 out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),

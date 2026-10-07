@@ -1229,6 +1229,18 @@ fn descriptor_json(d: *insp::Descriptor) -> json::Value {
     return json::Value::Object(m);
 }
 
+fn table_names(name: str, ref t: vec::Vec[insp::Descriptor]) -> bool {
+    var i: usize = 0;
+    while i < t.count() {
+        match t.at_ptr(i) {
+            option::Option[*insp::Descriptor]::Some(d) => { if { (*d).name } == name { return true; } }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return false;
+}
+
 fn do_vocabulary(id: f64, params: json::Value) -> json::Value {
     var kind: text::Text = text::from_str("");
     if params.has("element") { kind = as_text(obj_get(params, "element")); }
@@ -1245,7 +1257,7 @@ fn do_vocabulary(id: f64, params: json::Value) -> json::Value {
     }
 
     var props: vec::Vec[json::Value] = vec::new::[json::Value]();
-    let t: vec::Vec[insp::Descriptor] = insp::table();
+    var t: vec::Vec[insp::Descriptor] = insp::table();
     var j: usize = 0;
     while j < t.count() {
         match t.at_ptr(j) {
@@ -1257,6 +1269,22 @@ fn do_vocabulary(id: f64, params: json::Value) -> json::Value {
             option::Option::None => { }
         }
         j = j +% 1;
+    }
+    // ...and the toolkit's control properties, each under the kinds that carry
+    // it. A name the table already describes keeps the table's description:
+    // `set` answers the table's tier first, so that is the one that is true.
+    let cd: vec::Vec[insp::Descriptor] = (BACKEND.control_descriptors)(BACKEND.surface);
+    var k: usize = 0;
+    while k < cd.count() {
+        match cd.at_ptr(k) {
+            option::Option[*insp::Descriptor]::Some(d) => {
+                if insp::covers({ (*d).applies }, kind.view()) && !table_names({ (*d).name }, t) {
+                    props.append(descriptor_json(d));
+                }
+            }
+            option::Option::None => { }
+        }
+        k = k +% 1;
     }
 
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();

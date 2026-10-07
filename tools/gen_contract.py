@@ -1124,7 +1124,87 @@ fn same_indexes(a: *IndexList, b: *IndexList) -> bool {
 }
 
 struct Date { year: i64, month: i64, day: i64 }
-impl Date { fn zero() -> Date { return Date { year: 0 as i64, month: 0 as i64, day: 0 as i64 }; } }
+impl Date {
+    fn zero() -> Date { return Date { year: 0 as i64, month: 0 as i64, day: 0 as i64 }; }
+
+    // The zero is "no date": what a picker's minimum and maximum default to,
+    // and they then bound nothing.
+    fn is_set(this) -> bool {
+        return this.year != (0 as i64) || this.month != (0 as i64) || this.day != (0 as i64);
+    }
+
+    // YYYY-MM-DD, ISO-8601's calendar date: the spelling an agent reads and
+    // writes a date in (spendwise S22), and the one stdlib/date reads.
+    fn iso(this) -> text::Text {
+        let y: text::Text = padded(this.year, 4 as i64);
+        let m: text::Text = padded(this.month, 2 as i64);
+        let d: text::Text = padded(this.day, 2 as i64);
+        return "${y.view()}-${m.view()}-${d.view()}";
+    }
+
+    // The date `s` spells as YYYY-MM-DD, or None. A day the month does not
+    // have is None, not the next month's first: an agent that typed
+    // 2026-02-30 is told, rather than handed March the 2nd.
+    fn from_iso(s: str) -> option::Option[Date] {
+        if #str_len(s) != (10 as usize) { return option::Option[Date]::None; }
+        let p: *u8 = #str_ptr(s);
+        if { p[4] } != (45 as u8) || { p[7] } != (45 as u8) { return option::Option[Date]::None; }
+        let y: i64 = digits_at(p, 0 as usize, 4 as usize);
+        let m: i64 = digits_at(p, 5 as usize, 2 as usize);
+        let d: i64 = digits_at(p, 8 as usize, 2 as usize);
+        if y < (1 as i64) || m < (1 as i64) || m > (12 as i64) || d < (1 as i64) {
+            return option::Option[Date]::None;
+        }
+        if d > days_in_month(y, m) { return option::Option[Date]::None; }
+        return option::Option[Date]::Some(Date { year: y, month: m, day: d });
+    }
+
+    // Before, the same day, or after: -1, 0, 1.
+    fn compare(this, o: Date) -> i64 {
+        if this.year != o.year { if this.year < o.year { return -1 as i64; } return 1 as i64; }
+        if this.month != o.month { if this.month < o.month { return -1 as i64; } return 1 as i64; }
+        if this.day != o.day { if this.day < o.day { return -1 as i64; } return 1 as i64; }
+        return 0 as i64;
+    }
+
+    // Inside `lo`..`hi`, both ends included. An unset bound bounds nothing.
+    fn within(this, lo: Date, hi: Date) -> bool {
+        if lo.is_set() && this.compare(lo) < (0 as i64) { return false; }
+        if hi.is_set() && this.compare(hi) > (0 as i64) { return false; }
+        return true;
+    }
+}
+
+fn days_in_month(y: i64, m: i64) -> i64 {
+    if m == (2 as i64) {
+        let leap: bool = (y % (4 as i64) == (0 as i64) && y % (100 as i64) != (0 as i64))
+            || y % (400 as i64) == (0 as i64);
+        if leap { return 29 as i64; }
+        return 28 as i64;
+    }
+    if m == (4 as i64) || m == (6 as i64) || m == (9 as i64) || m == (11 as i64) { return 30 as i64; }
+    return 31 as i64;
+}
+
+// `count` ASCII digits from `at`, as a number; -1 when any is not a digit.
+fn digits_at(p: *u8, at: usize, count: usize) -> i64 {
+    var v: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < count {
+        let b: u8 = { p[at +% i] };
+        if b < (48 as u8) || b > (57 as u8) { return -1 as i64; }
+        v = v * (10 as i64) + ((b - (48 as u8)) as i64);
+        i = i +% (1 as usize);
+    }
+    return v;
+}
+
+// `n` in at least `width` digits, zero-filled on the left.
+fn padded(n: i64, width: i64) -> text::Text {
+    var t: text::Text = "${n}";
+    while (t.count() as i64) < width { t = "0${t.view()}"; }
+    return t;
+}
 
 struct Duration { seconds: f64 }
 impl Duration {
@@ -1132,6 +1212,41 @@ impl Duration {
     // MAUI's default basic-animation length (250 ms).
     fn animation() -> Duration { return Duration { seconds: 0.25f64 }; }
     fn of_seconds(s: f64) -> Duration { return Duration { seconds: s }; }
+
+    // A time of day as a clock reads it: HH:MM, or HH:MM:SS when the seconds
+    // are not whole minutes. What a time picker's value is spelled in for an
+    // agent (spendwise S22).
+    fn clock(this) -> text::Text {
+        let total: i64 = this.seconds as i64;
+        let h: text::Text = padded(total / (3600 as i64), 2 as i64);
+        let m: text::Text = padded((total / (60 as i64)) % (60 as i64), 2 as i64);
+        let s: i64 = total % (60 as i64);
+        if s == (0 as i64) { return "${h.view()}:${m.view()}"; }
+        let ss: text::Text = padded(s, 2 as i64);
+        return "${h.view()}:${m.view()}:${ss.view()}";
+    }
+
+    // The time of day `s` spells as HH:MM or HH:MM:SS, or None. Inside one
+    // day: 24:00 is None.
+    fn from_clock(s: str) -> option::Option[Duration] {
+        let n: usize = #str_len(s);
+        if n != (5 as usize) && n != (8 as usize) { return option::Option[Duration]::None; }
+        let p: *u8 = #str_ptr(s);
+        if { p[2] } != (58 as u8) { return option::Option[Duration]::None; }
+        let h: i64 = digits_at(p, 0 as usize, 2 as usize);
+        let m: i64 = digits_at(p, 3 as usize, 2 as usize);
+        var sec: i64 = 0 as i64;
+        if n == (8 as usize) {
+            if { p[5] } != (58 as u8) { return option::Option[Duration]::None; }
+            sec = digits_at(p, 6 as usize, 2 as usize);
+        }
+        if h < (0 as i64) || h > (23 as i64) || m < (0 as i64) || m > (59 as i64)
+            || sec < (0 as i64) || sec > (59 as i64) {
+            return option::Option[Duration]::None;
+        }
+        return option::Option[Duration]::Some(
+            Duration { seconds: (h * (3600 as i64) + m * (60 as i64) + sec) as f64 });
+    }
 }
 
 // Timing curve for animate_* commands. Named for what it is (not EasingCurve /
@@ -3451,6 +3566,32 @@ def emit_control(row_type, merged):
         o.append("        if h != props::no_handler { h(core::view_of(this._p), { (*p).on_selected_index_changed_ctx }); }\n")
         o.append("        return this;\n    }\n")
 
+    # ---- facet's own: a date or a time picked the way a person picks it
+    picks = {"date_picker": ("d", "vocab::Date", "date", "P_DATE", "on_date_selected"),
+             "time_picker": ("t", "vocab::Duration", "time", "P_TIME", "on_time_selected")}
+    if mod in picks:
+        arg, aty, field, bit, event = picks[mod]
+        o.append("\n    // WHAT A PERSON'S PICK DOES: set the value AND tell the application,\n")
+        o.append(f"    // the way the picker's own action does. `set_{field}` is the application's\n")
+        o.append("    // quiet write and fires nothing, so an agent that used it left the picker\n")
+        o.append("    // SHOWING a value the app never heard (spendwise S22). Picking the value\n")
+        o.append("    // already showing does nothing. Main thread only, like any write.\n")
+        if mod == "date_picker":
+            o.append("    // A date outside minimum..maximum is refused, as the picker refuses it.\n")
+        o.append(f"    fn pick(this, {arg}: {aty}) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        if mod == "date_picker":
+            o.append(f"        if !{arg}.within({{ (*p).minimum_date }}, {{ (*p).maximum_date }}) {{ return this; }}\n")
+            o.append(f"        if {{ (*p).date }}.compare({arg}) == (0 as i64) {{ return this; }}\n")
+        else:
+            o.append(f"        if {{ (*p).time.seconds }} == {arg}.seconds {{ return this; }}\n")
+        o.append(f"        {{ (*p).{field} = {arg} }};\n")
+        o.append(f"        core::touch(this._p, {bit});\n")
+        o.append(f"        let h: fn(*u8, *u8) = {{ (*p).{event} }};\n")
+        o.append(f"        if h != props::no_handler {{ h(core::view_of(this._p), {{ (*p).{event}_ctx }}); }}\n")
+        o.append("        return this;\n    }\n")
+
     # ---- facet's own: which tab is showing
     if mod in TAB_SOURCE:
         o.append("\n    // facet's own word. The ledger's TabbedPage describes a STRIP and says\n")
@@ -5147,24 +5288,26 @@ def check(rows_by_control, by_type):
 # asks it after its own tiers, so a hand-written answer still wins.
 INSPECT_OUT = os.path.join(ROOT, "vendor", "facet_agent", "src", "inspect_generated.cplus")
 
-INSPECT_SCALARS = {"str", "f64", "i64", "usize", "bool", "Color"}
+INSPECT_SCALARS = {"str", "f64", "i64", "usize", "bool", "Color", "Date", "Duration"}
 
 def inspect_props(row_type, merged):
-    """[(name, ty, getter, setter)] the inspector can carry for one control."""
+    """[(name, ty, getter, setter, origin)] the inspector can carry for one control.
+    `origin` is the ledger member a property carries ("DatePicker.Date"), or
+    "facet" for one facet added."""
     mod = MODULE[row_type]
     writes, reads, _e, _sl, _o, _c = split_rows(merged, row_type)
     taken = {f for f, _t, _m, _s, _p in writes + reads}
     out = []
-    for field, ty, _m, _s, _p in writes:
+    for field, ty, member, src, _p in writes:
         if ty in INSPECT_SCALARS or ty in ENUM_BY_FACET:
-            out.append((field, ty, field, "set_" + verb_stem(field, ty, taken)))
+            out.append((field, ty, field, "set_" + verb_stem(field, ty, taken), f"{src}.{member}"))
     if mod in TAB_SOURCE:
-        out.append(("selected_index", "i64", "selected_index", "set_selected_index"))
-        out.append(("bar_placement", "BarPlacement", "bar_placement", "set_bar_placement"))
+        out.append(("selected_index", "i64", "selected_index", "set_selected_index", "facet"))
+        out.append(("bar_placement", "BarPlacement", "bar_placement", "set_bar_placement", "facet"))
     if mod in BUTTONS:
-        out.append(("toggles", "bool", "toggles", "set_toggles"))
-        out.append(("on", "bool", "is_on", "set_on"))
-        out.append(("bordered", "bool", "is_bordered", "set_bordered"))
+        out.append(("toggles", "bool", "toggles", "set_toggles", "facet"))
+        out.append(("on", "bool", "is_on", "set_on", "facet"))
+        out.append(("bordered", "bool", "is_bordered", "set_bordered", "facet"))
     return out
 
 def _encode(ty, expr):
@@ -5174,6 +5317,8 @@ def _encode(ty, expr):
     if ty == "usize": return f"insp::Value::Int(({expr}) as i64)"
     if ty == "str": return f"insp::Value::Str(text::from_str({expr}))"
     if ty == "Color": return f"insp::Value::Color(to_color({expr}))"
+    if ty == "Date": return f"insp::Value::Str(date_text({expr}))"
+    if ty == "Duration": return f"insp::Value::Num(({expr}).seconds)"
     return f"insp::Value::Enum(text::from_str(en_{ty}({expr})))"
 
 def _decode(ty):
@@ -5192,7 +5337,7 @@ def emit_inspect(rows_by_control):
         ps = inspect_props(row_type, merged)
         if not ps: continue
         per.append((row_type, ps))
-        for _n, ty, _g, _s in ps:
+        for _n, ty, _g, _s, _o in ps:
             if ty in ENUM_BY_FACET: enums.add(ty)
     o = ["// GENERATED by tools/gen_contract.py — DO NOT EDIT.\n",
          "// The inspector's get/set for every control property with an inspector\n",
@@ -5219,6 +5364,34 @@ fn from_color(c: insp::Color) -> vocab::Color {
                           r2: { c.r2 }, g2: { c.g2 }, b2: { c.b2 }, a2: { c.a2 } };
 }
 
+// A DATE IS SPELLED YYYY-MM-DD (spendwise S22). An unset date — a picker's
+// minimum or maximum left alone — is the empty string, so it reads back as
+// "no bound" and writes back as one.
+fn date_text(d: vocab::Date) -> text::Text {
+    if !d.is_set() { return text::new(); }
+    return d.iso();
+}
+
+fn date_of(v: insp::Value) -> option::Option[vocab::Date] {
+    return match v {
+        insp::Value::Str(t) => {
+            if t.count() == (0 as usize) { return option::Option[vocab::Date]::Some(vocab::Date::zero()); }
+            vocab::Date::from_iso(t.view())
+        },
+        _ => option::Option[vocab::Date]::None,
+    };
+}
+
+// A DURATION IS SECONDS, and a time of day may also arrive as HH:MM[:SS].
+fn duration_of(v: insp::Value) -> option::Option[vocab::Duration] {
+    return match v {
+        insp::Value::Num(x) => option::Option[vocab::Duration]::Some(vocab::Duration::of_seconds(x)),
+        insp::Value::Int(i) => option::Option[vocab::Duration]::Some(vocab::Duration::of_seconds(i as f64)),
+        insp::Value::Str(t) => vocab::Duration::from_clock(t.view()),
+        _ => option::Option[vocab::Duration]::None,
+    };
+}
+
 // A spelling arrives as an Enum or, from a client that has not read the
 // vocabulary, as a plain JSON string.
 fn spelling_of(v: insp::Value) -> option::Option[text::Text] {
@@ -5242,12 +5415,36 @@ fn spelling_of(v: insp::Value) -> option::Option[text::Text] {
     # names
     names = []
     for _rt, ps in per:
-        for n, _t, _g, _s in ps:
+        for n, _t, _g, _s, _o in ps:
             if n not in names: names.append(n)
     o.append("\n// Every name below, once, in the order the controls declare them.\n")
     o.append("fn names() -> vec::Vec[str] {\n    var v: vec::Vec[str] = vec::new::[str]();\n")
     for n in names:
         o.append(f'    let _{n}: status::Status = v.append("{n}");\n')
+    o.append("    return v;\n}\n")
+    # descriptors: what the `vocabulary` verb serves for these, so a property
+    # an agent can read and write is also one it can FIND (spendwise S22).
+    spell = {"str": "string", "f64": "number", "i64": "number", "usize": "number",
+             "bool": "bool", "Color": "color", "Date": "date", "Duration": "duration"}
+    units = {"Date": "YYYY-MM-DD", "Duration": "seconds"}
+    desc = {}
+    for row_type, ps in per:
+        for n, ty, _g, _s, origin in ps:
+            key = (n, ty)
+            if key not in desc: desc[key] = ([], [])
+            kinds, origins = desc[key]
+            if MODULE[row_type] not in kinds: kinds.append(MODULE[row_type])
+            member = origin.split(".")[-1] if origin != "facet" else "facet's own"
+            if member not in origins: origins.append(member)
+    o.append("\n// One descriptor per name and type, naming every kind that carries it.\n")
+    o.append("fn descriptors() -> vec::Vec[insp::Descriptor] {\n")
+    o.append("    var v: vec::Vec[insp::Descriptor] = vec::new::[insp::Descriptor]();\n")
+    for i, ((n, ty), (kinds, origins)) in enumerate(desc.items()):
+        values = " ".join(snake(m) for m in ENUM_BY_FACET[ty][0]) if ty in ENUM_BY_FACET else ""
+        tname = "enum" if ty in ENUM_BY_FACET else spell[ty]
+        doc = f"{', '.join(origins)}, written through the control's own setter."
+        o.append(f'    let _d{i}: status::Status = v.append(insp::d("{n}", "{tname}", "{units.get(ty, "")}", '
+                 f'"{" ".join(kinds)}", "{values}", "{doc}"));\n')
     o.append("    return v;\n}\n")
     # get
     o.append("\n// `prop` on `n`, read through its kind's cursor; None when the kind has no\n")
@@ -5259,7 +5456,7 @@ fn spelling_of(v: insp::Value) -> option::Option[text::Text] {
         o.append(f"    if kind == props::K_{up} {{\n")
         o.append(f"        match m_{mod}::from(n) {{\n")
         o.append(f"            option::Option[m_{mod}::{cur}]::Some(c) => {{\n")
-        for name, ty, getter, _setter in ps:
+        for name, ty, getter, _setter, _o in ps:
             o.append(f'                if prop == "{name}" {{ return option::Option[insp::Value]::Some({_encode(ty, "c." + getter + "()")}); }}\n')
         o.append(f"            }}\n            option::Option[m_{mod}::{cur}]::None => {{ }}\n        }}\n")
         o.append("        return option::Option[insp::Value]::None;\n    }\n")
@@ -5276,12 +5473,17 @@ fn spelling_of(v: insp::Value) -> option::Option[text::Text] {
         o.append(f"    if kind == props::K_{up} {{\n")
         o.append(f"        match m_{mod}::from(n) {{\n")
         o.append(f"            option::Option[m_{mod}::{cur}]::Some(c) => {{\n")
-        for name, ty, _getter, setter in ps:
+        for name, ty, _getter, setter, _o in ps:
             o.append(f'                if prop == "{name}" {{\n')
             if ty == "str":
                 o.append("                    return match v {\n")
                 o.append(f"                        insp::Value::Str(t) => {{ let _c: m_{mod}::{cur} = c.{setter}(t.view()); insp::Outcome::Ok }},\n")
                 o.append("                        _ => insp::Outcome::TypeMismatch,\n                    };\n")
+            elif ty in ("Date", "Duration"):
+                of = "date_of" if ty == "Date" else "duration_of"
+                o.append(f"                    return match {of}(v) {{\n")
+                o.append(f"                        option::Option[vocab::{ty}]::Some(a) => {{ let _c: m_{mod}::{cur} = c.{setter}(a); insp::Outcome::Ok }},\n")
+                o.append(f"                        option::Option[vocab::{ty}]::None => insp::Outcome::TypeMismatch,\n                    }};\n")
             elif ty in ENUM_BY_FACET:
                 o.append("                    return match spelling_of(v) {\n")
                 o.append("                        option::Option[text::Text]::Some(t) => match ev_" + ty + "(t.view()) {\n")
@@ -5323,13 +5525,13 @@ fn spelling_of(v: insp::Value) -> option::Option[text::Text] {
         o.append(f"\n#[test]\nfn every_{mod}_property_reads_and_writes_back() {{\n")
         o.append(f"    var n: core::Node = m_{mod}::{mod}({', '.join(args)});\n")
         o.append("    let p: *core::Node = #addr_of(n);\n")
-        for name, ty, _g, _s in ps:
+        for name, ty, _g, _s, _o in ps:
             o.append(f'    match get(p, "{name}") {{\n')
             o.append(f'        option::Option[insp::Value]::Some(v) => {{ assert set(p, "{name}", v) == insp::Outcome::Ok; }}\n')
             o.append("        option::Option[insp::Value]::None => { assert false; }\n    }\n")
         # A write must LAND, not merely answer Ok: every bool is flipped and
         # read back (bools, because nothing clamps them).
-        for name, ty, _g, _s in ps:
+        for name, ty, _g, _s, _o in ps:
             if ty != "bool":
                 continue
             o.append(f'    match get(p, "{name}") {{\n')
@@ -5340,7 +5542,7 @@ fn spelling_of(v: insp::Value) -> option::Option[text::Text] {
             o.append("                _ => { assert false; }\n            }\n        }\n")
             o.append("        _ => { assert false; }\n    }\n")
         o.append('    assert set(p, "no_such_property", insp::Value::Num(1.0f64)) == insp::Outcome::UnknownProperty;\n')
-        for name, ty, _g, _s in ps:
+        for name, ty, _g, _s, _o in ps:
             if ty in ("bool",):
                 o.append(f'    assert set(p, "{name}", insp::Value::Str(text::from_str("x"))) == insp::Outcome::TypeMismatch;\n')
                 break

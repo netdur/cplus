@@ -44,6 +44,7 @@ import "facet/tree" as ftree;
 import "facet/relist" as frelist;
 import "facet/tabs" as ftabs;
 import "facet/popup" as fpopup;
+import "facet/picker_text" as picker_text;
 import "facet/native_dialog" as native_dialog;
 import "facet/application" as app;
 import "agent_core/identity" as identity;
@@ -207,6 +208,8 @@ fn ensure_shims() {
                           cplus_agent_scroll_visible, #str_ptr("v@:@\0"));
     rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentPickTab:\0")),
                           cplus_agent_pick_tab, #str_ptr("v@:@\0"));
+    rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentPickValue:\0")),
+                          cplus_agent_pick_value, #str_ptr("v@:@\0"));
     rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentDialog:\0")),
                           cplus_agent_dialog, #str_ptr("v@:@\0"));
     SHIMS_REGISTERED = true;
@@ -452,6 +455,7 @@ fn classify(view: *u8) -> identity::Role {
     // `Group` on AppKit, and neither answered its VALUE: a control an agent can
     // write and cannot read back. `node_text` has the other half.
     if is_kind(view, #str_ptr("UISlider\0"))
+        || is_kind(view, #str_ptr("UIDatePicker\0"))
         || is_kind(view, #str_ptr("UIStepper\0"))
         || is_kind(view, #str_ptr("UIProgressView\0")) {
         return identity::Role::Value;
@@ -798,6 +802,46 @@ fn cplus_agent_pick_tab(receiver: *u8, _cmd: *u8, boxed: *u8) {
     return;
 }
 
+// A PICKER'S VALUE, written on the main thread for the same reason as a tab:
+// `pick` writes the tree. The request rides the hop on the caller's stack.
+const PICK_NOT_A_PICKER: i64 = 0 as i64;
+const PICK_DONE: i64 = 1 as i64;
+const PICK_INVALID: i64 = 2 as i64;
+
+struct ValuePick {
+    opaque node: *core::Node,
+    value: text::Text,
+    result: i64,
+}
+
+fn pick_value_now(n: *core::Node, value: str) -> i64 {
+    return match picker_text::pick(n, value) {
+        picker_text::Write::Picked => PICK_DONE,
+        picker_text::Write::Invalid => PICK_INVALID,
+        picker_text::Write::NotAPicker => PICK_NOT_A_PICKER,
+    };
+}
+
+fn cplus_agent_pick_value(receiver: *u8, _cmd: *u8, boxed: *u8) {
+    let req: *ValuePick = { rt::msg_id(boxed, rt::sel(#str_ptr("pointerValue\0"))) } as *ValuePick;
+    if req == (0 as *ValuePick) { return; }
+    { (*req).result = pick_value_now({ (*req).node }, { (*req).value.view() }) };
+    return;
+}
+
+fn pick_value(n: *core::Node, value: str) -> i64 {
+    if on_main_thread() { return pick_value_now(n, value); }
+    ensure_shims();
+    var req: ValuePick = ValuePick { node: n, value: text::from_str(value), result: PICK_NOT_A_PICKER };
+    let boxed: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSValue\0")),
+                                     rt::sel(#str_ptr("valueWithPointer:\0")),
+                                     #addr_of(req) as *u8) };
+    let host: *u8 = core::view_of(n);
+    if is_null(host) || is_null(boxed) { return PICK_NOT_A_PICKER; }
+    perform_on_main(host, rt::sel(#str_ptr("cplusAgentPickValue:\0")), boxed);
+    return req.result;
+}
+
 fn click_tab(n: *core::Node, at: i64) -> surface::Outcome {
     if on_main_thread() { return pick_tab_now(n, at); }
     ensure_shims();
@@ -847,7 +891,13 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             let ds: text::Text = view_a11y_string(view, "accessibilityHint\0");
             if { ds.is_empty() } == false { reg.set_description(me, { ds.view() }); }
             let _r: *u8 = rt::retain(view);
-            let _a: status_of_append = append_ref(views, view);
+            if picker_text::is_picker(n) {
+                // A date or time picker keeps its facet node: its value is the
+                // facet date, read and PICKED through it (spendwise S22).
+                views.append(ViewRef { p: view, tab: -1 as i64, node: n, dialog: DIALOG_NONE });
+            } else {
+                let _a: status_of_append = append_ref(views, view);
+            }
             if core::kind_of(n) == props::K_TABS { add_tab_parts(reg, views, view, me, key, n); }
             if core::kind_of(n) == props::K_POPUP { add_item_parts(reg, views, view, me, key, n); }
 
@@ -1199,6 +1249,25 @@ impl Surface {
         };
     }
 
+    // A date or time picker's own facet node, or null. Not a tab part: a part
+    // carries its OWNER's node.
+    fn picker_node_of(this, node: usize) -> *core::Node {
+        if this.tab_of(node) >= (0 as i64) { return 0 as *core::Node; }
+        let n: *core::Node = this.tabs_node_of(node);
+        if picker_text::is_picker(n) { return n; }
+        return 0 as *core::Node;
+    }
+
+    // A node's live text: a picker's value as facet spells it (YYYY-MM-DD,
+    // HH:MM), and the view's own text for everything else.
+    fn live_text(this, node: usize, view: *u8, role: identity::Role) -> text::Text {
+        match picker_text::text_of(this.picker_node_of(node)) {
+            option::Option[text::Text]::Some(t) => { return t; }
+            option::Option[text::Text]::None => { }
+        }
+        return node_text(view, role);
+    }
+
     // A tab part is clickable whatever its owner's view says: `click_tab`
     // answers it.
     fn node_clickable(this, node: usize) -> bool {
@@ -1245,7 +1314,7 @@ impl Surface {
                 is_hidden: if this.dialog_of(node) != DIALOG_NONE { false } else { live_hidden(view) },
                 text: if !may_read { text::new() }
                       else if this.dialog_of(node) != DIALOG_NONE { text::from_str(this.reg.name_of(node)) }
-                      else { node_text(view, role) },
+                      else { this.live_text(node, view, role) },
                 tier: this.reg.tier_of(node),
                 readable: may_read,
                 name: text::from_str(this.reg.name_of(node)),
@@ -1317,6 +1386,19 @@ impl Surface {
                 if this.modal { return surface::Outcome::NotActionable; }
                 if is_detached(v) { return surface::Outcome::Stale; }
                 if !view_still_is(v, id) { return surface::Outcome::Stale; }
+                // A DATE OR TIME PICKER IS PICKED: the value set and the app's
+                // on_date_selected / on_time_selected told, on the main thread
+                // (spendwise S22). A value it cannot hold is refused first.
+                let pn: *core::Node = this.picker_node_of(node);
+                if pn != (0 as *core::Node) {
+                    let w: i64 = pick_value(pn, value);
+                    if w == PICK_INVALID { return surface::Outcome::InvalidValue; }
+                    if w == PICK_DONE {
+                        this.versions.bump(node);
+                        return surface::Outcome::Allowed;
+                    }
+                    return surface::Outcome::Stale;
+                }
                 // A control that cannot take text must REFUSE rather than
                 // silently do nothing: a write that reports success and does
                 // nothing is worse than one that fails.
@@ -1665,8 +1747,10 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                 var is_tab: bool = false;
                 var dlg: i64 = DIALOG_NONE;
                 var under_modal: bool = false;
+                var at: usize = 0 as usize;
                 match { (*s).reg.lookup({ (*n).id.view() }) } {
                     option::Option[usize]::Some(idx) => {
+                        at = idx;
                         live = { (*s).view_of(idx) };
                         is_tab = { (*s).tab_of(idx) } >= (0 as i64);
                         dlg = { (*s).dialog_of(idx) };
@@ -1684,7 +1768,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                 var shown: text::Text = text::from_str({ (*n).name.view() });
                 if { (*n).tier } != identity::tier_open() {
                     if { (*n).readable } {
-                        if !is_null(live) { shown = node_text(live, { (*n).role }); }
+                        if !is_null(live) { shown = (*s).live_text(at, live, { (*n).role }); }
                     }
                 }
                 // A VALUE CONTROL SHOWS ITS NUMBER HERE TOO, read LIVE. In the
@@ -1694,7 +1778,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                 // rather than stored, for the same reason the gated arm above
                 // reads now: the knob moves between walks.
                 if identity::role_eq({ (*n).role }, identity::Role::Value) {
-                    if !is_null(live) { shown = node_text(live, { (*n).role }); }
+                    if !is_null(live) { shown = (*s).live_text(at, live, { (*n).role }); }
                 }
                 out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),

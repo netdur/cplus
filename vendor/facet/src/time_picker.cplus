@@ -267,6 +267,22 @@ impl TimePicker {
         return { (*p).time };
     }
 
+    // WHAT A PERSON'S PICK DOES: set the value AND tell the application,
+    // the way the picker's own action does. `set_time` is the application's
+    // quiet write and fires nothing, so an agent that used it left the picker
+    // SHOWING a value the app never heard (spendwise S22). Picking the value
+    // already showing does nothing. Main thread only, like any write.
+    fn pick(this, t: vocab::Duration) -> TimePicker {
+        let p: *props::TimePickerProps = this._props();
+        if p == (0 as *props::TimePickerProps) { return this; }
+        if { (*p).time.seconds } == t.seconds { return this; }
+        { (*p).time = t };
+        core::touch(this._p, P_TIME);
+        let h: fn(*u8, *u8) = { (*p).on_time_selected };
+        if h != props::no_handler { h(core::view_of(this._p), { (*p).on_time_selected_ctx }); }
+        return this;
+    }
+
     // The flex node this cursor points at. The DOM division, and the
     // reason facet declares no layout verb of its own:
     //
