@@ -105,6 +105,8 @@ fn install() {
     app_window::install_host(window::window_host());
     theme::set_theme_changed_fn(theme_changed);
     component::install_sender_readers(input::sender_readers());
+    // An open UIAlertController, described and answered for an agent.
+    dialogs::install_agent_seam();
     gestures::install_key_reader(keys::reader());
     scheduler::install_sync_tick();
     // The delegate fan-out: the application-level moments an SDK package needs

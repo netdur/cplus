@@ -37,6 +37,7 @@ import "facet/tree" as tree;
 import "facet/vocabulary" as vocab;
 import "facet/tabs" as tabs;
 import "facet/popup" as fpopup;
+import "facet/native_dialog" as native_dialog;
 import "facet/list" as flist;
 import "facet/elements" as ui;
 import "facet/icons" as icons;
@@ -1377,6 +1378,69 @@ fn each_popup_item_is_a_choice_an_agent_can_make() -> bool {
                                                  surf::Outcome::Allowed) && PICK_HEARD == 1;
     let ok: bool = listed && chose && at == (1 as i64) && heard_once && header_refused;
     if !ok { io::eprintln(text::from_str("  listed ${listed} chose ${chose} at ${at} heard ${PICK_HEARD} header ${header_refused}")); }
+    app::reset_default_for_tests();
+    { rt::release(win) };
+    return ok;
+}
+
+// spendwise S20 D1: an open UIAlertController is UIKit's, so the walk never
+// met it. Through `facet/native_dialog` it is listed under the desktop sheet's
+// keys, a click answers it, and the page under it is not reachable. A fake
+// dialog stands in for UIKit here; the live one is checked on the simulator.
+static FAKE_ANSWERED: i32 = -1;
+fn fake_snapshot() -> native_dialog::Snapshot {
+    var b: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let _a = b.append(text::from_str("Delete"));
+    let _c = b.append(text::from_str("Cancel"));
+    return native_dialog::Snapshot { kind: native_dialog::KIND_ALERT,
+        title: text::from_str("Delete album?"), message: text::from_str("This cannot be undone."),
+        buttons: b, field: text::new() };
+}
+fn fake_answer(i: i32) -> bool { FAKE_ANSWERED = i; return true; }
+fn fake_field(v: str) -> bool { return false; }
+
+fn an_open_alert_is_read_and_answered_by_an_agent() -> bool {
+    FAKE_ANSWERED = -1;
+    TAP_FIRED = false;
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    if win == (0 as *u8) { return false; }
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::column(core::Builder::new(), key: "st:under").gesture(on_click: note_tap));
+    var n: core::Node = ui::column(b, key: "st:page");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_id(win, rt::sel(#str_ptr("addSubview:\0")), v) };
+    app::reset_default_for_tests();
+    app::open_window(p);
+    app::set_window_native(p, win);
+    native_dialog::install(fake_snapshot, fake_answer, fake_field);
+    var s: agent::Surface = agent::open_app();
+    let sp: *u8 = #addr_of(s) as *u8;
+    let nodes: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    var titled: bool = false;
+    match mcp_find(nodes, "alert:title") {
+        option::Option[*mcpb::UiNode]::Some(t) => { titled = { (*t).text.view() } == "Delete album?"; }
+        option::Option[*mcpb::UiNode]::None => { }
+    }
+    var primary: bool = false;
+    match mcp_find(nodes, "alert:primary") {
+        option::Option[*mcpb::UiNode]::Some(t) => { primary = { (*t).text.view() } == "Delete" && { (*t).clickable }; }
+        option::Option[*mcpb::UiNode]::None => { }
+    }
+    let has_secondary: bool = match mcp_find(nodes, "alert:secondary") {
+        option::Option[*mcpb::UiNode]::Some(_t) => true,
+        option::Option[*mcpb::UiNode]::None => false,
+    };
+    // The page under the alert cannot be reached, as a finger cannot reach it.
+    let blocked: bool = !surf::outcome_eq(s.click(auth::operator(), "st:under"), surf::Outcome::Allowed)
+        && !TAP_FIRED;
+    let answered: bool = surf::outcome_eq(s.click(auth::operator(), "alert:primary"),
+                                          surf::Outcome::Allowed) && FAKE_ANSWERED == 0;
+    dialogs::install_agent_seam();
+    let ok: bool = titled && primary && has_secondary && blocked && answered;
+    if !ok { io::eprintln(text::from_str("  titled ${titled} primary ${primary} secondary ${has_secondary} blocked ${blocked} answered ${answered}")); }
     app::reset_default_for_tests();
     { rt::release(win) };
     return ok;
@@ -4202,6 +4266,8 @@ fn run_all() -> i32 {
           a_tab_click_from_the_server_thread_lands_on_main());
     check("each popup item is a choice an agent can make",
           each_popup_item_is_a_choice_an_agent_can_make());
+    check("an open alert is read and answered by an agent",
+          an_open_alert_is_read_and_answered_by_an_agent());
     check("an agent can click a tappable view",
           an_agent_can_click_a_tappable_view());
     check("a scroll pane runs under a glass tab bar",

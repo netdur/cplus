@@ -44,6 +44,7 @@ import "facet/tree" as ftree;
 import "facet/relist" as frelist;
 import "facet/tabs" as ftabs;
 import "facet/popup" as fpopup;
+import "facet/native_dialog" as native_dialog;
 import "facet/application" as app;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
@@ -206,6 +207,8 @@ fn ensure_shims() {
                           cplus_agent_scroll_visible, #str_ptr("v@:@\0"));
     rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentPickTab:\0")),
                           cplus_agent_pick_tab, #str_ptr("v@:@\0"));
+    rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentDialog:\0")),
+                          cplus_agent_dialog, #str_ptr("v@:@\0"));
     SHIMS_REGISTERED = true;
     return;
 }
@@ -605,12 +608,22 @@ fn subview_at(view: *u8, i: usize) -> *u8 {
 // tabs' own view, `tab` the pane's index (-1 for every other entry), `node` the
 // tabs node a click picks through. A UITabBar's items are UIKit's, not facet
 // nodes, so the walk never met them.
-struct ViewRef { opaque p: *u8, tab: i64, opaque node: *core::Node }
+// `dialog`: -1 for an ordinary entry; for an open native dialog's entries, the
+// button's index, DIALOG_TEXT for its title/message/group, DIALOG_FIELD for a
+// prompt's field (spendwise S20 D1).
+struct ViewRef { opaque p: *u8, tab: i64, opaque node: *core::Node, dialog: i64 }
+
+const DIALOG_NONE: i64 = -1 as i64;
+const DIALOG_TEXT: i64 = -2 as i64;
+const DIALOG_FIELD: i64 = -3 as i64;
 
 struct Surface {
     reg: identity::Registry,
     versions: surface::TextVersions,
     views: vec::Vec[ViewRef],
+    // A native dialog is OPEN: what a person can reach is the dialog alone, so
+    // the page under it is neither actionable nor clickable for an agent.
+    modal: bool,
 }
 
 fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8,
@@ -660,7 +673,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8,
 struct status_of_append { _u: i32 }
 fn append_ref(ref views: vec::Vec[ViewRef], view: *u8) -> status_of_append {
     let _s: status_of_append = status_of_append { _u: 0 };
-    views.append(ViewRef { p: view, tab: -1 as i64, node: 0 as *core::Node });
+    views.append(ViewRef { p: view, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
     return _s;
 }
 
@@ -686,7 +699,7 @@ fn add_item_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
                 reg.set_name(child, pp.item(i));
                 if (i as i64) == chosen { reg.set_description(child, "selected"); }
                 let _r: *u8 = rt::retain(view);
-                views.append(ViewRef { p: view, tab: i as i64, node: n });
+                views.append(ViewRef { p: view, tab: i as i64, node: n, dialog: DIALOG_NONE });
                 i = i +% (1 as usize);
             }
         }
@@ -745,7 +758,7 @@ fn add_tab_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
         reg.set_name(child, { label.view() });
         if (i as i64) == showing { reg.set_description(child, "selected"); }
         let _r: *u8 = rt::retain(view);
-        views.append(ViewRef { p: view, tab: i as i64, node: n });
+        views.append(ViewRef { p: view, tab: i as i64, node: n, dialog: DIALOG_NONE });
         i = i +% (1 as usize);
     }
     return;
@@ -982,7 +995,7 @@ fn walk_window(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window
             reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window),
     };
     let _rw: *u8 = rt::retain(window);
-    views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node });
+    views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
 
     var ri: usize = 0 as usize;
     while ri < { roots.count() } {
@@ -1002,9 +1015,10 @@ fn open(window: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
     // NodeId 0 is the synthetic app root — no backing view.
-    views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node });
+    views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
     walk_window(reg, views, window);
-    return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+    let modal: bool = add_dialog(reg, views, window);
+    return Surface { reg: reg, versions: surface::new_text_versions(), views: views, modal: modal };
 }
 
 // EVERY WINDOW THE APP HAS OPEN, in OPEN ORDER, in one surface — the same
@@ -1022,19 +1036,100 @@ fn open(window: *u8) -> Surface {
 fn open_app() -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
-    views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node });
+    views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
     var seen: vec::Vec[usize] = vec::new::[usize]();
+    var first_win: *u8 = null();
     let n: usize = app::window_count();
     var i: usize = 0 as usize;
     while i < n {
         let root: *core::Node = app::window_root(i);
         if !is_null(root as *u8) {
             let win: *u8 = app::window_native(root);
-            if !is_null(win) && !first_seen(seen, win) { walk_window(reg, views, win); }
+            if !is_null(win) && !first_seen(seen, win) {
+                if is_null(first_win) { first_win = win; }
+                walk_window(reg, views, win);
+            }
         }
         i = i +% (1 as usize);
     }
-    return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+    let modal: bool = add_dialog(reg, views, first_win);
+    return Surface { reg: reg, versions: surface::new_text_versions(), views: views, modal: modal };
+}
+
+// AN OPEN NATIVE DIALOG (spendwise S20 D1). UIAlertController's title, message
+// and buttons are UIKit's, so the walk never met them and an agent could not
+// read or answer an alert. facet_uikit describes it through
+// `facet/native_dialog`, and it is listed here under the keys the desktop
+// sheet's nodes carry — `alert:title`, `alert:primary`, `choose:opt:2`,
+// `prompt:value` — so one agent script answers both. Its entries hang on the
+// window, which is retained like every other entry's view. True when a dialog
+// is open.
+fn add_dialog(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window: *u8) -> bool {
+    let d: native_dialog::Snapshot = native_dialog::snapshot();
+    if d.kind == native_dialog::KIND_NONE || is_null(window) { return false; }
+    let prefix: str = native_dialog::kind_prefix(d.kind);
+    let group: usize = reg.add_child(reg.root(), option::Option[str]::Some(prefix), identity::Role::Window);
+    let _g: *u8 = rt::retain(window);
+    views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
+    let title_key: text::Text = "${prefix}:title";
+    let t: usize = reg.add_child(group, option::Option[str]::Some({ title_key.view() }), identity::Role::Text);
+    reg.set_name(t, { d.title.view() });
+    let _t: *u8 = rt::retain(window);
+    views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
+    if !d.message.is_empty() {
+        let message_key: text::Text = "${prefix}:message";
+        let m: usize = reg.add_child(group, option::Option[str]::Some({ message_key.view() }), identity::Role::Text);
+        reg.set_name(m, { d.message.view() });
+        let _m: *u8 = rt::retain(window);
+        views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
+    }
+    if d.kind == native_dialog::KIND_PROMPT {
+        let f: usize = reg.add_child(group, option::Option[str]::Some("prompt:value"), identity::Role::Input);
+        reg.set_name(f, { d.field.view() });
+        let _f: *u8 = rt::retain(window);
+        views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_FIELD });
+    }
+    var i: usize = 0 as usize;
+    while i < d.buttons.count() {
+        match d.buttons.at_ptr(i) {
+            option::Option[*text::Text]::Some(title) => {
+                let key: text::Text = native_dialog::button_key(d.kind, i);
+                let b: usize = reg.add_child(group, option::Option[str]::Some({ key.view() }), identity::Role::Button);
+                reg.set_name(b, { (*title).view() });
+                let _b: *u8 = rt::retain(window);
+                views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: i as i64 });
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+// ON THE MAIN THREAD, like every other click here: answering dismisses a
+// UIAlertController and runs the app's handler, and writing a field is UIKit.
+struct DialogCall { index: i64, value: text::Text, ok: bool }
+
+fn cplus_agent_dialog(receiver: *u8, _cmd: *u8, boxed: *u8) {
+    let c: *DialogCall = { rt::msg_id(boxed, rt::sel(#str_ptr("pointerValue\0"))) } as *DialogCall;
+    if c == (0 as *DialogCall) { return; }
+    if { (*c).index } >= (0 as i64) { { (*c).ok = native_dialog::answer({ (*c).index } as i32) }; return; }
+    { (*c).ok = native_dialog::write_field({ (*c).value.view() }) };
+    return;
+}
+
+fn dialog_call(window: *u8, index: i64, value: str) -> bool {
+    var c: DialogCall = DialogCall { index: index, value: text::from_str(value), ok: false };
+    if on_main_thread() {
+        if index >= (0 as i64) { return native_dialog::answer(index as i32); }
+        return native_dialog::write_field(value);
+    }
+    ensure_shims();
+    let boxed: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSValue\0")),
+                                     rt::sel(#str_ptr("valueWithPointer:\0")), #addr_of(c) as *u8) };
+    if is_null(boxed) || is_null(window) { return false; }
+    perform_on_main(window, rt::sel(#str_ptr("cplusAgentDialog:\0")), boxed);
+    return c.ok;
 }
 
 // Have we walked this handle already? Records it when not.
@@ -1078,6 +1173,18 @@ impl Surface {
         };
     }
 
+    fn dialog_of(this, node: usize) -> i64 {
+        return match this.views.at_ptr(node) {
+            option::Option[*ViewRef]::Some(r) => { (*r).dialog },
+            option::Option[*ViewRef]::None => DIALOG_NONE,
+        };
+    }
+
+    // May an agent act on this node NOW? Under an open dialog, only the dialog.
+    fn reachable_under_modal(this, node: usize) -> bool {
+        return !this.modal || this.dialog_of(node) != DIALOG_NONE;
+    }
+
     fn tab_of(this, node: usize) -> i64 {
         return match this.views.at_ptr(node) {
             option::Option[*ViewRef]::Some(r) => { (*r).tab },
@@ -1095,6 +1202,10 @@ impl Surface {
     // A tab part is clickable whatever its owner's view says: `click_tab`
     // answers it.
     fn node_clickable(this, node: usize) -> bool {
+        let dlg: i64 = this.dialog_of(node);
+        if dlg >= (0 as i64) { return true; }
+        if dlg != DIALOG_NONE { return false; }
+        if this.modal { return false; }
         if this.tab_of(node) >= (0 as i64) { return true; }
         return view_clickable(this.view_of(node));
     }
@@ -1131,8 +1242,10 @@ impl Surface {
                 role: role,
                 class_name: class_name_text(view),
                 frame: mcpb::Rect { x: f.x, y: f.y, w: f.w, h: f.h },
-                is_hidden: live_hidden(view),
-                text: if may_read { node_text(view, role) } else { text::new() },
+                is_hidden: if this.dialog_of(node) != DIALOG_NONE { false } else { live_hidden(view) },
+                text: if !may_read { text::new() }
+                      else if this.dialog_of(node) != DIALOG_NONE { text::from_str(this.reg.name_of(node)) }
+                      else { node_text(view, role) },
                 tier: this.reg.tier_of(node),
                 readable: may_read,
                 name: text::from_str(this.reg.name_of(node)),
@@ -1140,7 +1253,7 @@ impl Surface {
                 // What THIS grant may do, not what the widget could take: a
                 // model reads this as its tool list, and reporting the ceiling
                 // advertises writes every attempt then refuses.
-                actionable: this.reg.can_act(grant, node),
+                actionable: this.reg.can_act(grant, node) && this.reachable_under_modal(node),
                 clickable: this.node_clickable(node),
                 // UIKit has the same NSControl-shaped hazard (a UIControl consumes
                 // its own touch), but the reader has not been written here.
@@ -1159,6 +1272,16 @@ impl Surface {
                 let oc: surface::Outcome = surface::authorize_action(this.reg, grant, node);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
                 let v: *u8 = this.view_of(node);
+                // A DIALOG BUTTON is what a tap on it does: the alert goes and
+                // the app's handler runs. Under an open dialog nothing else is
+                // reachable, as a person cannot tap through an alert.
+                let dlg: i64 = this.dialog_of(node);
+                if dlg >= (0 as i64) {
+                    if dialog_call(v, dlg, "") { return surface::Outcome::Allowed; }
+                    return surface::Outcome::Stale;
+                }
+                if dlg != DIALOG_NONE { return surface::Outcome::NotActionable; }
+                if this.modal { return surface::Outcome::NotActionable; }
                 if is_detached(v) { return surface::Outcome::Stale; }
                 // A TAB is answered before the identity check below: its id is
                 // the part's, not the view's.
@@ -1180,6 +1303,18 @@ impl Surface {
                     this.reg, grant, this.versions, node, base_version);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
                 let v: *u8 = this.view_of(node);
+                // A PROMPT'S FIELD: written the way typing leaves it. The rest of
+                // an open dialog takes no text, and nothing under it is reachable.
+                let dlg: i64 = this.dialog_of(node);
+                if dlg == DIALOG_FIELD {
+                    if dialog_call(v, -1 as i64, value) {
+                        this.versions.bump(node);
+                        return surface::Outcome::Allowed;
+                    }
+                    return surface::Outcome::Stale;
+                }
+                if dlg != DIALOG_NONE { return surface::Outcome::NotActionable; }
+                if this.modal { return surface::Outcome::NotActionable; }
                 if is_detached(v) { return surface::Outcome::Stale; }
                 if !view_still_is(v, id) { return surface::Outcome::Stale; }
                 // A control that cannot take text must REFUSE rather than
@@ -1528,10 +1663,14 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
             option::Option[*identity::NodeView]::Some(n) => {
                 var live: *u8 = null();
                 var is_tab: bool = false;
+                var dlg: i64 = DIALOG_NONE;
+                var under_modal: bool = false;
                 match { (*s).reg.lookup({ (*n).id.view() }) } {
                     option::Option[usize]::Some(idx) => {
                         live = { (*s).view_of(idx) };
                         is_tab = { (*s).tab_of(idx) } >= (0 as i64);
+                        dlg = { (*s).dialog_of(idx) };
+                        under_modal = !{ (*s).reachable_under_modal(idx) };
                     }
                     option::Option[usize]::None => { }
                 }
@@ -1562,14 +1701,14 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     role: { (*n).role },
                     class_name: text::new(),
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
-                    is_hidden: if is_null(live) { false } else { live_hidden(live) },
+                    is_hidden: if is_null(live) || dlg != DIALOG_NONE { false } else { live_hidden(live) },
                     text: shown,
                     name: text::from_str({ (*n).name.view() }),
                     description: text::from_str({ (*n).description.view() }),
                     tier: { (*n).tier },
                     readable: { (*n).readable },
-                    actionable: { (*n).actionable },
-                    clickable: is_tab || view_clickable(live),
+                    actionable: { (*n).actionable } && !under_modal,
+                    clickable: dlg >= (0 as i64) || (dlg == DIALOG_NONE && !under_modal && (is_tab || view_clickable(live))),
                     // This backend has not been taught the question; `None` says so
                     // rather than guessing. See backend::UiNode.wired.
                     wired: option::Option[bool]::None,

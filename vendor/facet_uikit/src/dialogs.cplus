@@ -23,6 +23,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "uikit/uikit" as ui;
 import "./window" as window;
+import "facet/native_dialog" as native_dialog;
 
 // ---- the pending answer -------------------------------------------------------
 // ONE AT A TIME, and that is not a simplification: a second alert presented
@@ -37,8 +38,24 @@ static ANSWER_CTX: *u8 = 0 as *u8;
 static TYPED_FN: fn(str, *u8) = 0 as fn(str, *u8);
 static TYPED_CTX: *u8 = 0 as *u8;
 static ALERT: *u8 = 0 as *u8;
+// WHAT IS OPEN, for an agent (spendwise S20 D1). UIAlertController's title,
+// message and buttons are UIKit's, so the walk never met them; these are what
+// `native_dialog::snapshot` reports, under the desktop sheet's keys.
+static OPEN_KIND: u32 = 0u32;
+static OPEN_TITLE: text::Text = #zero::[text::Text]();
+static OPEN_MESSAGE: text::Text = #zero::[text::Text]();
+static OPEN_BUTTONS: vec::Vec[text::Text] = #zero::[vec::Vec[text::Text]]();
+fn record_open(kind: u32, title: str, message: str) {
+    OPEN_KIND = kind;
+    OPEN_TITLE = text::from_str(title);
+    OPEN_MESSAGE = text::from_str(message);
+    OPEN_BUTTONS = vec::new::[text::Text]();
+    return;
+}
 
 fn clear_pending() {
+    OPEN_KIND = native_dialog::KIND_NONE;
+    OPEN_BUTTONS = vec::new::[text::Text]();
     ANSWER_FN = 0 as fn(i32, *u8);
     ANSWER_CTX = 0 as *u8;
     TYPED_FN = 0 as fn(str, *u8);
@@ -152,6 +169,7 @@ fn build(title: str, message: str, want_field: bool, placeholder: str,
 }
 
 fn add_button(alert: *u8, title: str, index: i32, destructive: bool) {
+    let _r = OPEN_BUTTONS.append(text::from_str(title));
     var style: ui::AlertActionStyle = ui::AlertActionStyle::Default;
     if destructive { style = ui::AlertActionStyle::Cancel; }
     let a: *u8 = ui::AlertAction::action_with_title(title, style, action_fired,
@@ -170,6 +188,7 @@ fn alert(title: str, message: str, primary: str, secondary: str,
     ALERT = a;
     ANSWER_FN = on_answer;
     ANSWER_CTX = on_answer_ctx;
+    record_open(native_dialog::KIND_ALERT, title, message);
     add_button(a, primary, 0 as i32, false);
     // A second button only when one was named: an alert with an empty
     // secondary is a one-button alert, not a two-button alert with a blank.
@@ -185,6 +204,7 @@ fn choose(title: str, message: str, options: *vec::Vec[text::Text],
     ALERT = a;
     ANSWER_FN = on_answer;
     ANSWER_CTX = on_answer_ctx;
+    record_open(native_dialog::KIND_CHOOSE, title, message);
     var i: usize = 0 as usize;
     let n: usize = { (*options).count() };
     while i < n {
@@ -211,6 +231,7 @@ fn prompt(title: str, message: str, placeholder: str, primary: str, secondary: s
     ANSWER_CTX = on_answer_ctx;
     TYPED_FN = on_typed;
     TYPED_CTX = on_typed_ctx;
+    record_open(native_dialog::KIND_PROMPT, title, message);
     add_button(a, primary, 0 as i32, false);
     if secondary != "" { add_button(a, secondary, 1 as i32, true); }
     if !present(a) { clear_pending(); }
@@ -220,6 +241,59 @@ fn prompt(title: str, message: str, placeholder: str, primary: str, secondary: s
 // Whether a question is on screen. The facade asks before presenting a second
 // one, because UIKit's answer to that is a warning and a stack.
 fn is_showing() -> bool { return ALERT != (0 as *u8); }
+
+// ---- the agent's seam (native_dialog) ------------------------------------------
+
+fn open_snapshot() -> native_dialog::Snapshot {
+    if ALERT == (0 as *u8) { return native_dialog::none(); }
+    var buttons: vec::Vec[text::Text] = vec::new::[text::Text]();
+    var i: usize = 0 as usize;
+    while i < OPEN_BUTTONS.count() {
+        match OPEN_BUTTONS.at_ptr(i) {
+            option::Option[*text::Text]::Some(t) => { let _a = buttons.append({ (*t).clone() }); }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    var field: text::Text = text::new();
+    if OPEN_KIND == native_dialog::KIND_PROMPT { field = first_field_text(ALERT); }
+    return native_dialog::Snapshot {
+        kind: OPEN_KIND, title: OPEN_TITLE.clone(), message: OPEN_MESSAGE.clone(),
+        buttons: buttons, field: field,
+    };
+}
+
+// What a tap on button `index` does: the alert goes, then the answer arrives.
+// Dismissed by facet because UIKit runs an action's handler only for a real
+// tap; then the same `action_fired` the action would have called.
+fn answer_pending(index: i32) -> bool {
+    if ALERT == (0 as *u8) { return false; }
+    if index < (0 as i32) || (index as usize) >= OPEN_BUTTONS.count() { return false; }
+    { msg_void_i8_id(ALERT, rt::sel(#str_ptr("dismissViewControllerAnimated:completion:\0")),
+                     1 as i8, 0 as *u8) };
+    action_fired(0 as *u8, (index as usize) as *u8);
+    return true;
+}
+
+// A prompt's field, written the way typing would leave it.
+fn write_pending_field(value: str) -> bool {
+    if ALERT == (0 as *u8) || OPEN_KIND != native_dialog::KIND_PROMPT { return false; }
+    let fields: *u8 = { rt::msg_id(ALERT, rt::sel(#str_ptr("textFields\0"))) };
+    if fields == (0 as *u8) { return false; }
+    if { rt::msg_u64(fields, rt::sel(#str_ptr("count\0"))) } == (0 as u64) { return false; }
+    let f: *u8 = { rt::msg_id_u64(fields, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    if f == (0 as *u8) { return false; }
+    { rt::msg_void_id(f, rt::sel(#str_ptr("setText:\0")), bridge::nsstring(value)) };
+    return true;
+}
+
+fn install_agent_seam() {
+    native_dialog::install(open_snapshot, answer_pending, write_pending_field);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_i8_id(recv: *u8, sel: *u8, a: i8, b: *u8);
 
 #[link_name = "objc_msgSend"]
 extern fn msg_void_id_i8_id(recv: *u8, sel: *u8, a: *u8, b: i8, c: *u8);

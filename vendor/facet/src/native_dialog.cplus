@@ -1,0 +1,117 @@
+// facet native_dialog — what an agent needs from a dialog the PLATFORM draws.
+//
+// facet's `alert` / `choose` / `prompt` are facet trees on the desktop: a sheet
+// of keyed labels and buttons, so an agent reads and answers them like any
+// other node. On iOS they are UIAlertController, the system's own glass alert,
+// and its title, message and buttons are UIKit's, not facet nodes. The walk
+// never met them, so an open alert was invisible to the agent surface: it could
+// not be read or answered, and the page under it still looked actionable
+// (spendwise S20, D1).
+//
+// This is the seam between the two packages that cannot import each other. A
+// backend that presents a native dialog installs three functions; an agent
+// reads and answers it only through them, under the SAME keys the desktop
+// sheet's nodes carry (`alert:title`, `alert:primary`, `choose:opt:2`,
+// `prompt:value`, …), so one agent script works on both.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+
+const KIND_NONE: u32 = 0u32;
+const KIND_ALERT: u32 = 1u32;
+const KIND_CHOOSE: u32 = 2u32;
+const KIND_PROMPT: u32 = 3u32;
+
+// The open dialog, as the backend describes it. `buttons` are in the order the
+// application named them: the answer index IS the position. `field` is a
+// prompt's current text, empty for the other two.
+struct Snapshot {
+    kind: u32,
+    title: text::Text,
+    message: text::Text,
+    buttons: vec::Vec[text::Text],
+    field: text::Text,
+}
+
+fn none() -> Snapshot {
+    return Snapshot { kind: KIND_NONE, title: text::new(), message: text::new(),
+                      buttons: vec::new::[text::Text](), field: text::new() };
+}
+
+fn no_snapshot() -> Snapshot { return none(); }
+fn no_answer(index: i32) -> bool { return false; }
+fn no_field(value: str) -> bool { return false; }
+
+static SNAPSHOT_FN: fn() -> Snapshot = no_snapshot;
+static ANSWER_FN: fn(i32) -> bool = no_answer;
+static FIELD_FN: fn(str) -> bool = no_field;
+
+// The backend's half. Main thread only, at backend install.
+fn install(snapshot: fn() -> Snapshot, answer: fn(i32) -> bool, write_field: fn(str) -> bool) {
+    SNAPSHOT_FN = snapshot;
+    ANSWER_FN = answer;
+    FIELD_FN = write_field;
+    return;
+}
+
+fn uninstall() {
+    SNAPSHOT_FN = no_snapshot;
+    ANSWER_FN = no_answer;
+    FIELD_FN = no_field;
+    return;
+}
+
+// The agent's half. Answering and writing touch the platform's UI, so they run
+// on the main thread; reading is a copy of state the backend keeps.
+fn snapshot() -> Snapshot {
+    let f: fn() -> Snapshot = SNAPSHOT_FN;
+    return f();
+}
+
+fn answer(index: i32) -> bool {
+    let f: fn(i32) -> bool = ANSWER_FN;
+    return f(index);
+}
+
+fn write_field(value: str) -> bool {
+    let f: fn(str) -> bool = FIELD_FN;
+    return f(value);
+}
+
+// The key a button carries, the desktop sheet's: an alert's and a prompt's two
+// buttons are named by role, a choice's by position.
+fn button_key(kind: u32, index: usize) -> text::Text {
+    if kind == KIND_CHOOSE { return "choose:opt:${index}"; }
+    if kind == KIND_PROMPT {
+        if index == (0 as usize) { return text::from_str("prompt:ok"); }
+        return text::from_str("prompt:cancel");
+    }
+    if index == (0 as usize) { return text::from_str("alert:primary"); }
+    return text::from_str("alert:secondary");
+}
+
+// The prefix of every key in a dialog of this kind: `alert`, `choose`, `prompt`.
+fn kind_prefix(kind: u32) -> str {
+    if kind == KIND_CHOOSE { return "choose"; }
+    if kind == KIND_PROMPT { return "prompt"; }
+    return "alert";
+}
+
+// ---- tests ----------------------------------------------------------------------
+
+#[test]
+fn a_dialog_s_buttons_carry_the_desktop_sheet_s_keys() {
+    assert button_key(KIND_ALERT, 0 as usize).view() == "alert:primary";
+    assert button_key(KIND_ALERT, 1 as usize).view() == "alert:secondary";
+    assert button_key(KIND_CHOOSE, 2 as usize).view() == "choose:opt:2";
+    assert button_key(KIND_PROMPT, 0 as usize).view() == "prompt:ok";
+    assert button_key(KIND_PROMPT, 1 as usize).view() == "prompt:cancel";
+}
+
+#[test]
+fn with_no_backend_nothing_is_open_and_nothing_answers() {
+    uninstall();
+    assert snapshot().kind == KIND_NONE;
+    assert !answer(0);
+    assert !write_field("x");
+}
