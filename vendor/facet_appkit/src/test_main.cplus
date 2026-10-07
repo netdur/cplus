@@ -1760,6 +1760,18 @@ fn a_time_is_an_offset_into_a_day() {
     views::view_release(v);
 }
 
+// The tabs' native control and what each segment says.
+fn tab_control(host: *u8) -> ak::SegmentedControl {
+    return ak::SegmentedControl::from_raw(controls::tab_control_of(host));
+}
+fn segment_label(host: *u8, i: i64) -> text::Text {
+    return bridge::to_text({ rt::msg_id_i64(controls::tab_control_of(host),
+                                            rt::sel(#str_ptr("labelForSegment:\0")), i) });
+}
+fn segment_image(host: *u8, i: i64) -> *u8 {
+    return { rt::msg_id_i64(controls::tab_control_of(host), rt::sel(#str_ptr("imageForSegment:\0")), i) };
+}
+
 #[test]
 fn a_tab_pane_is_an_ordinary_subview_and_gains_a_tab_for_it() {
     // NSTabView's panes were NSTabViewItems it sized itself, and facet lays
@@ -1781,18 +1793,80 @@ fn a_tab_pane_is_an_ordinary_subview_and_gains_a_tab_for_it() {
     views::insert(0 as *u8, host, child, 0 as usize);
     // The pane is a subview of the host, not an item of anything.
     assert { rt::msg_i8_id(child, rt::sel(#str_ptr("isDescendantOf:\0")), host) } != (0 as i8);
-    // And the strip gained a button whose title is the pane's KEY, because a
-    // tab needs a title and every addressable node already has one.
-    let strip: *u8 = controls::tab_strip_of(host);
-    assert strip.is_not_null();
-    let tabs_in: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
-    assert tabs_in.count() == (1 as usize);
-    match tabs_in.at_ptr(0 as usize) {
-        option::Option[*ak::View]::Some(b) => {
-            assert ak::Button::from_raw({ (*b).raw() }).title().view() == "Settings";
-        }
-        option::Option[*ak::View]::None => { assert false; }
+    // And the strip's control gained a segment titled by the pane's KEY,
+    // because a tab needs a title and every addressable node already has one.
+    assert controls::tab_control_of(host).is_not_null();
+    assert tab_control(host).segment_count() == (1 as i64);
+    assert segment_label(host, 0 as i64).view() == "Settings";
+}
+
+// examples/glass_music_ios on macOS, 2026-10-07: every pane of the shell is a
+// `slot` — a column with no view of its own — and the window drew all five
+// screens stacked, the last on top. A viewless pane switched off has to hide
+// the views it holds.
+fn tab_slot_pane(label_key: str) -> core::Node {
+    var inner: core::Builder = core::Builder::new();
+    inner.add(label::label(label_key, key: label_key));
+    return core::column(inner);
+}
+
+#[test]
+fn a_hidden_tab_pane_with_no_view_hides_what_it_holds() {
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    var t: core::Node = tabs::tabs(key: "tabs:v", selected_index: 0 as i64);
+    t.add_child(tab_slot_pane("pane:a"));
+    t.add_child(tab_slot_pane("pane:b"));
+    b.add(t);
+    var root: core::Node = core::column(b, key: "root:v");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 400.0f64, 300.0f64, 1.0f64);
+    var shown: bool = false;
+    var gone: bool = false;
+    match core::find_in(rp, "pane:a") {
+        option::Option[*core::Node]::Some(a) => { shown = !ak::View::from_raw(core::view_of(a)).is_hidden(); }
+        option::Option[*core::Node]::None => { }
     }
+    match core::find_in(rp, "pane:b") {
+        option::Option[*core::Node]::Some(bn) => { gone = ak::View::from_raw(core::view_of(bn)).is_hidden(); }
+        option::Option[*core::Node]::None => { }
+    }
+    mount::unmount(rp);
+    backend::uninstall();
+    assert shown;
+    assert gone;
+}
+
+// A click on a tab button changed the panes' display and asked for nothing,
+// so no tick ran and the window was never laid out again.
+#[test]
+fn a_tab_click_asks_for_a_layout_pass() {
+    backend::install();
+    var t: core::Node = tabs::tabs(key: "tabs:c", selected_index: 0 as i64);
+    // GROWN already, as a `slot` pane is: a pane without a grow is given one
+    // when it is shown, and that write marked the layout by accident — the
+    // test passed while the app's tabs did nothing.
+    t.add_child(core::column(core::Builder::new(), key: "One").grow(1.0f64));
+    t.add_child(core::column(core::Builder::new(), key: "Two").grow(1.0f64));
+    let p: *core::Node = #addr_of(t);
+    let host: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, host, views::view_release);
+    controls::apply_tabs(host, p, paint::all_bits());
+    controls::rebuild_tabs(host, p);
+    core::clear_dirty(p);
+    var second: *core::Node = match_child(p, 1 as usize);
+    core::clear_dirty(second);
+    // What a click does: the control selects the segment, then sends its action.
+    tab_control(host).set_selected_segment(1 as i64);
+    controls::tab_clicked(controls::tab_control_of(host), p as *u8);
+    // The second pane is now in the layout, and the change is MARKED, which is
+    // what makes the next tick lay the window out again.
+    assert core::is_hidden(second) == false;
+    assert (core::dirty_of(second) & props::C_LAYOUT) != (0 as u64);
+    core::set_view(p, 0 as *u8, views::view_release);
+    views::view_release(host);
+    backend::uninstall();
 }
 
 #[test]
@@ -1826,15 +1900,8 @@ fn a_tab_button_shows_its_panes_title_not_its_key() {
     let host: *u8 = views::create(0 as *u8, p);
     core::set_view(p, host, views::view_release);
     controls::rebuild_tabs(host, p);
-    let buttons: vec::Vec[ak::View] = ak::View::from_raw(controls::tab_strip_of(host)).subviews();
-    match buttons.at_ptr(0 as usize) {
-        option::Option[*ak::View]::Some(b) => { assert ak::Button::from_raw({ (*b).raw() }).title().view() == "Tableau de bord"; }
-        option::Option[*ak::View]::None => { assert false; }
-    }
-    match buttons.at_ptr(1 as usize) {
-        option::Option[*ak::View]::Some(b) => { assert ak::Button::from_raw({ (*b).raw() }).title().view() == "goals"; }
-        option::Option[*ak::View]::None => { assert false; }
-    }
+    assert segment_label(host, 0 as i64).view() == "Tableau de bord";
+    assert segment_label(host, 1 as i64).view() == "goals";
 }
 
 #[test]
@@ -1850,20 +1917,39 @@ fn a_panes_tab_symbol_is_its_tab_buttons_image() {
     let host: *u8 = views::create(0 as *u8, p);
     core::set_view(p, host, views::view_release);
     controls::rebuild_tabs(host, p);
-    let buttons: vec::Vec[ak::View] = ak::View::from_raw(controls::tab_strip_of(host)).subviews();
-    assert buttons.count() == (2 as usize);
-    var img0: *u8 = 0 as *u8;
-    var img1: *u8 = 1 as *u8;
-    match buttons.at_ptr(0 as usize) {
-        option::Option[*ak::View]::Some(b) => { img0 = { rt::msg_id({ (*b).raw() }, rt::sel(#str_ptr("image\0"))) }; }
-        option::Option[*ak::View]::None => { }
-    }
-    match buttons.at_ptr(1 as usize) {
-        option::Option[*ak::View]::Some(b) => { img1 = { rt::msg_id({ (*b).raw() }, rt::sel(#str_ptr("image\0"))) }; }
-        option::Option[*ak::View]::None => { }
-    }
-    assert img0.is_not_null();
-    assert img1.is_null();
+    assert tab_control(host).segment_count() == (2 as i64);
+    assert segment_image(host, 0 as i64).is_not_null();
+    assert segment_image(host, 1 as i64).is_null();
+}
+
+// THE BAR FOLLOWS THE NODE'S OWN HORIZONTAL PADDING — the flex vocabulary a
+// developer already has, rather than a bar-only knob — and its control sits
+// CENTRED in it, so nothing hugs the window's edge (glass_music_ios on macOS:
+// the first tab's icon was on the border).
+#[test]
+fn the_tab_bar_takes_the_nodes_horizontal_padding_and_centres_its_control() {
+    backend::install();
+    var t: core::Node = tabs::tabs(key: "tabs:pad");
+    t.add_child(core::column(core::Builder::new(), key: "One"));
+    t.add_child(core::column(core::Builder::new(), key: "Two"));
+    t.set_padding(flex::Edge::Horizontal, flex::StyleLength::points(24.0f64));
+    let p: *core::Node = #addr_of(t);
+    let host: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, host, views::view_release);
+    ak::View::from_raw(host).set_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: 600.0f64, h: 400.0f64 });
+    controls::rebuild_tabs(host, p);
+    controls::apply_tabs(host, p, paint::all_bits());
+    let sf: rt::Rect = ak::View::from_raw(controls::tab_strip_of(host)).frame();
+    assert sf.x == 24.0f64;
+    assert sf.w == 600.0f64 - 48.0f64;
+    let cf: rt::Rect = tab_control(host).as_view().frame();
+    let left: f64 = cf.x;
+    let right: f64 = sf.w - (cf.x + cf.w);
+    assert left > 0.0f64;
+    assert left - right < 1.0f64 && right - left < 1.0f64;
+    core::set_view(p, 0 as *u8, views::view_release);
+    views::view_release(host);
+    backend::uninstall();
 }
 
 #[test]
@@ -12223,13 +12309,9 @@ fn clicking_a_tab_switches_it_and_reports_the_change() {
     let p: *core::Node = #addr_of(t);
     assert mount::mount(p);
     let v: *u8 = core::view_of(p);
-    let strip: *u8 = controls::tab_strip_of(v);
-    let tabs_in: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
-    assert tabs_in.count() == (2 as usize);
-    match tabs_in.at_ptr(1 as usize) {
-        option::Option[*ak::View]::Some(b) => { send_action({ (*b).raw() }); }
-        option::Option[*ak::View]::None => { assert false; }
-    }
+    assert tab_control(v).segment_count() == (2 as i64);
+    tab_control(v).set_selected_segment(1 as i64);
+    send_action(controls::tab_control_of(v));
     assert TAB_CHANGES == (1 as i64);
     match tabs::find("tabs4", within: p) {
         option::Option[tabs::Tabs]::Some(x) => { assert x.selected_index() == (1 as i64); }
@@ -12239,9 +12321,10 @@ fn clicking_a_tab_switches_it_and_reports_the_change() {
 }
 
 #[test]
-fn the_five_bar_colours_reach_the_strip_facet_draws() {
-    // They were unreachable for one reason — NSTabView drew the strip — and it
-    // is not the reason they were recorded under. The strip is ours now.
+fn the_bar_colours_reach_the_strip_and_its_control() {
+    // The strip's background is ours to draw; the selected segment's highlight
+    // is the native control's bezel colour. Text and unselected fills have no
+    // NSSegmentedControl counterpart.
     backend::install();
     var t: core::Node = tabs::tabs(key: "tabs5",
         bar_background_color: vocab::Color::rgba(0.1f64, 0.1f64, 0.1f64),
@@ -12257,17 +12340,9 @@ fn the_five_bar_colours_reach_the_strip_facet_draws() {
     assert ak::View::from_raw(strip).wants_layer();
     assert { rt::msg_id(ak::View::from_raw(strip).layer().raw(),
                         rt::sel(#str_ptr("backgroundColor\0"))) } != (0 as *u8);
-    let tabs_in: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
-    // Both tabs are filled, and the selected one differently from the other.
-    match tabs_in.at_ptr(0 as usize) {
-        option::Option[*ak::View]::Some(b) => {
-            assert { (*b).wants_layer() };
-            // The text colour landed as an attributed title, because NSButton
-            // has no setTextColor:.
-            assert { rt::msg_id({ (*b).raw() }, rt::sel(#str_ptr("attributedTitle\0"))) } != (0 as *u8);
-        }
-        option::Option[*ak::View]::None => { assert false; }
-    }
+    assert { rt::msg_id(controls::tab_control_of(v),
+                        rt::sel(#str_ptr("selectedSegmentBezelColor\0"))) } != (0 as *u8);
+    assert tab_control(v).selected_segment() == (0 as i64);
     mount::unmount(p);
 }
 

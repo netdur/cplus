@@ -3645,10 +3645,10 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
 //   - a pane is an ordinary subview, so `views::insert` loses its second
 //     special case and the menu tier's is the only one left.
 
-fn strip_height() -> f64 { return 28.0f64; }
+fn strip_height() -> f64 { return 36.0f64; }
 fn tab_strip_key() -> *u8 { return { 29072 as *u8 }; }
 fn tab_node_key() -> *u8 { return { 29073 as *u8 }; }
-fn tab_index_key() -> *u8 { return { 29074 as *u8 }; }
+fn tab_control_key() -> *u8 { return { 29075 as *u8 }; }
 
 fn create_tabs(n: *core::Node) -> *u8 {
     let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
@@ -3662,6 +3662,42 @@ fn create_tabs(n: *core::Node) -> *u8 {
 }
 
 fn tab_strip_of(v: *u8) -> *u8 { return { synth::get_associated(v, tab_strip_key()) }; }
+
+// The strip's one control: an NSSegmentedControl, as a Mac app's tabs are —
+// the same control MAUI's TabbedPage becomes on the Mac. It is CENTRED in the
+// strip, at its own size, with the system's own selected-segment highlight.
+// The first version was a row of borderless buttons, each width/count wide
+// from x = 0: the first icon sat on the window's edge and no tab looked
+// selected.
+fn tab_control_of(v: *u8) -> *u8 {
+    let strip: *u8 = tab_strip_of(v);
+    if strip.is_null() { return 0 as *u8; }
+    return { synth::get_associated(strip, tab_control_key()) };
+}
+
+// A point length, or none. The strip honours the tabs node's own horizontal
+// padding, so `.padding_edge(flex::Edge::Horizontal, 16.0)` insets the bar
+// with the panes — the flex vocabulary, not a bar-only knob.
+fn points_of(l: flex::StyleLength) -> f64 {
+    return match l.unit {
+        flex::Unit::Point => l.value,
+        _ => 0.0f64,
+    };
+}
+
+// Centred in the strip, kept there as the strip resizes: both side margins
+// flexible (MinX 1 | MaxX 4), vertically centred once.
+fn centre_tab_control(v: *u8) {
+    let strip: *u8 = tab_strip_of(v);
+    let sc: *u8 = tab_control_of(v);
+    if strip.is_null() || sc.is_null() { return; }
+    let sb: rt::Rect = ak::View::from_raw(strip).bounds();
+    let f: rt::Rect = ak::View::from_raw(sc).frame();
+    ak::View::from_raw(sc).set_frame(rt::Rect {
+        x: (sb.w - f.w) / 2.0f64, y: (sb.h - f.h) / 2.0f64, w: f.w, h: f.h });
+    { rt::msg_void_u64(sc, rt::sel(#str_ptr("setAutoresizingMask:\0")), 5 as u64) };
+    return;
+}
 
 // MAUI's AndroidSpecific ToolbarPlacement, made every platform's. Default is the
 // desktop convention, the top — NSTabView's own place for its tabs.
@@ -3690,13 +3726,18 @@ fn place_tab_strip(v: *u8, n: *core::Node, bottom: bool) {
     if strip.is_null() { return; }
     let host: rt::Rect = ak::View::from_raw(v).bounds();
     let sv: ak::View = ak::View::from_raw(strip);
+    let left: f64 = points_of({ (*n).style.padding_left });
+    let right: f64 = points_of({ (*n).style.padding_right });
+    var w: f64 = host.w - left - right;
+    if w < 0.0f64 { w = 0.0f64; }
     if bottom {
         { rt::msg_void_u64(strip, rt::sel(#str_ptr("setAutoresizingMask:\0")), 10 as u64) };
-        sv.set_frame(rt::Rect { x: 0.0f64, y: host.h - h, w: host.w, h: h });
+        sv.set_frame(rt::Rect { x: left, y: host.h - h, w: w, h: h });
     } else {
         { rt::msg_void_u64(strip, rt::sel(#str_ptr("setAutoresizingMask:\0")), 34 as u64) };
-        sv.set_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: host.w, h: h });
+        sv.set_frame(rt::Rect { x: left, y: 0.0f64, w: w, h: h });
     }
+    centre_tab_control(v);
     return;
 }
 
@@ -3715,7 +3756,7 @@ fn tab_clicked(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
     if p.is_null() { return; }
-    let at: i64 = { synth::get_associated(sender, tab_index_key()) as i64 } - (1 as i64);
+    let at: i64 = ak::SegmentedControl::from_raw(sender).selected_segment();
     if at < (0 as i64) { return; }
     { (*p).selected_index = at };
     let v: *u8 = core::view_of(n);
@@ -3727,61 +3768,51 @@ fn tab_clicked(sender: *u8, ctx: *u8) {
     if h != props::no_handler { h(sender, { (*p).on_tab_changed_ctx }); }
 }
 
-// One button per pane, rebuilt when the panes change. A tab strip is short and
-// a diff would be more code than the rebuild it replaces — the same call
+// One segment per pane, rebuilt when the panes change. A tab strip is short
+// and a diff would be more code than the rebuild it replaces — the same call
 // `style_popup_items` makes about a popup's menu.
 fn rebuild_tabs(v: *u8, n: *core::Node) {
     let strip: *u8 = tab_strip_of(v);
     if strip.is_null() { return; }
-    let subs: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
-    var i: usize = 0 as usize;
-    while i < subs.count() {
-        match subs.at_ptr(i) {
-            option::Option[*ak::View]::Some(b) => {
-                { rt::msg_void({ (*b).raw() }, rt::sel(#str_ptr("removeFromSuperview\0"))) };
-            }
-            option::Option[*ak::View]::None => { }
-        }
-        i = i +% (1 as usize);
+    let old: *u8 = tab_control_of(v);
+    if old.is_not_null() {
+        { rt::msg_void(old, rt::sel(#str_ptr("removeFromSuperview\0"))) };
+        synth::set_associated(strip, tab_control_key(), 0 as *u8);
     }
     let count: usize = core::child_count_of(n);
     if count == (0 as usize) { return; }
-    var x: f64 = 0.0f64;
-    let each: f64 = tab_width(v, count);
+    let sc: ak::SegmentedControl = ak::SegmentedControl::from_raw(
+        rt::alloc_init(#str_ptr("NSSegmentedControl\0")));
+    sc.set_segment_count(count as i64);
+    sc.set_tracking_mode(ak::SegmentSwitchTracking::SelectOne);
     var k: usize = 0 as usize;
     while k < count {
         match core::child_of(n, k) {
             option::Option[*core::Node]::Some(c) => {
-                let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
-                b.set_button_type(ak::ButtonType::MomentaryChange);
-                b.set_bordered(false);
-                b.set_title(core::tab_label(c));
-                // The pane's icon (MAUI's Page.IconImageSource), leading the
-                // title — the bundled glyph at the strip's text size, a
-                // template so the strip's colours tint it.
+                sc.set_label(core::tab_label(c), k as i64);
+                // The pane's icon (MAUI's Page.IconImageSource), beside the
+                // title — the bundled glyph at the control's text size, a
+                // template so the control tints it selected and not.
                 let sym: u32 = core::tab_symbol(c);
                 if sym != 0u32 {
                     match bundled_glyph_image(sym, 14.0f64) {
-                        option::Option[ak::Image]::Some(img) => {
-                            b.set_image(img);
-                            b.set_image_position(ak::CellImagePosition::NSImageLeading);
-                        }
+                        option::Option[ak::Image]::Some(img) => { sc.set_image(img, k as i64); }
                         option::Option[ak::Image]::None => { }
                     }
                 }
-                let bv: ak::View = b.as_view();
-                bv.set_frame(rt::Rect { x: x, y: 0.0f64, w: each, h: strip_height() });
-                // One-based, so 0 can mean "no index": the slot is a pointer.
-                synth::set_associated(bv.raw(), tab_index_key(), { (k +% (1 as usize)) as *u8 });
-                let f: fn(*u8, *u8) = tab_clicked;
-                akx::set_control_action_ctx(b.as_control(), f, n as *u8);
-                ak::View::from_raw(strip).add_subview(bv);
-                x = x + each;
             }
             option::Option[*core::Node]::None => { }
         }
         k = k +% (1 as usize);
     }
+    let f: fn(*u8, *u8) = tab_clicked;
+    akx::set_control_action_ctx(sc.as_control(), f, n as *u8);
+    { rt::msg_void(sc.raw(), rt::sel(#str_ptr("sizeToFit\0"))) };
+    ak::View::from_raw(strip).add_subview(sc.as_view());
+    synth::set_associated(strip, tab_control_key(), sc.raw());
+    // The strip's retain keeps it; this releases the +1 of alloc.
+    rt::release(sc.raw());
+    centre_tab_control(v);
     let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
     if p.is_not_null() {
         show_selected_pane(n, { (*p).selected_index });
@@ -3789,24 +3820,30 @@ fn rebuild_tabs(v: *u8, n: *core::Node) {
     }
 }
 
-fn tab_width(v: *u8, count: usize) -> f64 {
-    let box: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
-    if box.w <= 0.0f64 || count == (0 as usize) { return 80.0f64; }
-    return box.w / (count as f64);
-}
-
 // Only the selected pane is IN the layout. `display: none` is flex's own word
 // for it, so the showing pane gets the whole box below the strip — hiding the
 // others with `hidden` would leave them stacked in the layout and give the
 // selected one a fraction of the space.
+//
+// THROUGH `core::set_display`, which marks the layout dirty and asks for a
+// sync. Writing the flex style directly changed nothing on screen after a
+// CLICK: nothing asked for a tick, so the window was never laid out again and
+// every tab click did nothing (examples/glass_music_ios on macOS, 2026-10-07).
+// Only a pane whose display actually changes is touched, as facet_uikit does.
 fn show_selected_pane(n: *core::Node, at: i64) {
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
-                if (i as i64) == at { { (*c).set_display(flex::Display::Flex) }; core::fill_tab_pane(c); }
-                else { { (*c).set_display(flex::Display::None) }; }
+                let want: bool = (i as i64) == at;
+                let showing: bool = match { (*c).style.display } {
+                    flex::Display::None => false,
+                    _ => true,
+                };
+                if want && !showing { core::set_display(c, flex::Display::Flex); }
+                if want { core::fill_tab_pane(c); }
+                if !want && showing { core::set_display(c, flex::Display::None); }
             }
             option::Option[*core::Node]::None => { }
         }
@@ -3814,7 +3851,10 @@ fn show_selected_pane(n: *core::Node, at: i64) {
     }
 }
 
-// The five bar colours, which are ordinary drawing now that the strip is ours.
+// The bar colours. The strip's background is ours to draw. The selected
+// segment's highlight is the control's own bezel colour. An NSSegmentedControl
+// has no per-segment text colour and no unselected fill, so `bar_text_color`
+// and `unselected_tab_color` have no AppKit counterpart on the native control.
 fn style_tabs(v: *u8, p: *props::TabsProps, at: i64) {
     let strip: *u8 = tab_strip_of(v);
     if strip.is_null() { return; }
@@ -3824,35 +3864,12 @@ fn style_tabs(v: *u8, p: *props::TabsProps, at: i64) {
         sv.set_wants_layer(true);
         sv.layer().set_background_color(paint::ns_color(back).c_g_color());
     }
-    let subs: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
-    var i: usize = 0 as usize;
-    while i < subs.count() {
-        match subs.at_ptr(i) {
-            option::Option[*ak::View]::Some(bv) => {
-                let raw: *u8 = { (*bv).raw() };
-                let idx: i64 = { synth::get_associated(raw, tab_index_key()) as i64 } - (1 as i64);
-                let fill: vocab::Color = tab_fill(p, idx == at);
-                if fill.is_set() {
-                    { (*bv).set_wants_layer(true) };
-                    { (*bv).layer().set_background_color(paint::ns_color(fill).c_g_color()) };
-                }
-                let ink: vocab::Color = { (*p).bar_text_color };
-                if ink.is_set() {
-                    let b: ak::Button = ak::Button::from_raw(raw);
-                    let a: *u8 = paint::attributed(b.title().view(),
-                        paint::rich_attributes(option::Option[ak::Font]::None, ink, 0.0f64, 0.0f64,
-                                               option::Option[vocab::TextAlign]::None,
-                                               vocab::TextDecoration::None));
-                    if a.is_not_null() {
-                        { rt::msg_void_id(raw, rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
-                        rt::release(a);
-                    }
-                }
-            }
-            option::Option[*ak::View]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
+    let sc: *u8 = tab_control_of(v);
+    if sc.is_null() { return; }
+    let seg: ak::SegmentedControl = ak::SegmentedControl::from_raw(sc);
+    seg.set_selected_segment(at);
+    let pick: vocab::Color = { (*p).selected_tab_color };
+    if pick.is_set() { seg.set_selected_segment_bezel_color(paint::ns_color(pick)); }
 }
 
 // `BarBackground` is a Brush and `BarBackgroundColor` a Color — ledger row carries
@@ -3866,11 +3883,6 @@ fn bar_color(p: *props::TabsProps) -> vocab::Color {
     return { (*p).bar_background_color };
 }
 
-fn tab_fill(p: *props::TabsProps, selected: bool) -> vocab::Color {
-    if selected { return { (*p).selected_tab_color }; }
-    return { (*p).unselected_tab_color };
-}
-
 fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
     if p.is_null() { return; }
@@ -3880,7 +3892,9 @@ fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     // The strip lives in the node's PADDING, which is how flex is told it is
     // there. Without this a pane is laid out over the strip, which is the shape
     // of the bug NSTabView had from the other direction.
-    if dirty == paint::all_bits() || (dirty & tabs::P_BAR_PLACEMENT) != (0 as u64) {
+    // And on a LAYOUT write: the node's horizontal padding insets the strip.
+    if dirty == paint::all_bits()
+        || (dirty & (tabs::P_BAR_PLACEMENT | props::C_LAYOUT)) != (0 as u64) {
         place_tab_strip(v, n, tabs_at_bottom(p));
     }
     if (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) {

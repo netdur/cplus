@@ -398,6 +398,14 @@ edge, with its content inset to clear the bar, as in the system's own apps.
 Make the pane itself the `scroll` to get that. Any other pane stops above the
 bar.
 
+On macOS the bar is an `NSSegmentedControl` centred in a strip at the top,
+the control MAUI's TabbedPage becomes on the Mac. The strip follows the tabs
+node's own horizontal padding, so `.padding_edge(flex::Edge::Horizontal, 24.0)`
+insets the bar with the panes. Use `#platform()` to do that on one platform
+only. The native control has no per-tab text colour and no unselected fill, so
+`bar_text_color` and `unselected_tab_color` have no effect there.
+`selected_tab_color` is the selected segment's highlight.
+
 The panes are written INSIDE the block, each carrying its own icon —
 MAUI's `Page.IconImageSource` — as a leading-dot line. The showing pane fills
 the tabs' box unless it states a grow of its own.

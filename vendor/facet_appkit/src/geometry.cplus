@@ -303,6 +303,24 @@ fn split_pane_host(split_view: *u8, slot: usize) -> *u8 {
     }
 }
 
+// The nearest views under a viewless node, hidden: a view's own subviews go
+// with it, so the walk stops at the first backed node on each path.
+fn hide_views_under(n: *core::Node) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let v: *u8 = core::view_of(c);
+                if v.is_not_null() { ak::View::from_raw(v).set_hidden(true); }
+                else { hide_views_under(c); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+}
+
 fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
     apply_z_order(node);
     // A CONTROLLER-BACKED SPLIT OWNS ITS PANES' GEOMETRY, and this is the one
@@ -412,6 +430,15 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     // the views already sit exactly there — the prune that took
                     // the horizontal drag from ~105 ms to ~30 ms.
                     if { (*c).layout_changed() } { reposition_children(c, cf); }
+                } else if core::is_hidden(c) {
+                    // A HIDDEN node WITH NO VIEW has nothing to hide itself,
+                    // so the views it holds are hidden one by one. Without
+                    // this, a tab pane that is a `slot` (a viewless column)
+                    // went on drawing every screen it held: all five tabs of
+                    // the glass_music_ios shell stacked, the last on top. When
+                    // it is shown again its layout changes, and the walk
+                    // below un-hides each one by its own state.
+                    hide_views_under(c);
                 } else {
                     // Unbacked: its children hang from the SAME host, placed
                     // against that host's frame — mirroring mount_walk's
