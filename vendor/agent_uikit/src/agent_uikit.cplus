@@ -243,6 +243,39 @@ fn enclosing_table(v: *u8) -> *u8 {
 
 // The nearest UIScrollView ABOVE `v` — not `v` itself, since the point is to
 // bring `v` into view within whatever scrolls it.
+// Sort views top to bottom, then left to right, by their frames in the shared
+// superview. A list holds a screenful of cells, so an insertion sort is the
+// whole cost.
+fn sort_by_position(ref cells: vec::Vec[usize]) {
+    var i: usize = 1 as usize;
+    while i < cells.count() {
+        var j: usize = i;
+        while j > (0 as usize) && comes_before(cell_at(cells, j), cell_at(cells, j -% (1 as usize))) {
+            let a: usize = cell_at(cells, j);
+            let b: usize = cell_at(cells, j -% (1 as usize));
+            let _x = cells.set(b, j);
+            let _y = cells.set(a, j -% (1 as usize));
+            j = j -% (1 as usize);
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn cell_at(ref cells: vec::Vec[usize], i: usize) -> usize {
+    return match cells.at(i) {
+        option::Option[usize]::Some(c) => c,
+        option::Option[usize]::None => 0 as usize,
+    };
+}
+
+fn comes_before(a: usize, b: usize) -> bool {
+    let fa: rt::Rect = { rt::msg_rect(a as *u8, rt::sel(#str_ptr("frame\0"))) };
+    let fb: rt::Rect = { rt::msg_rect(b as *u8, rt::sel(#str_ptr("frame\0"))) };
+    if fa.y != fb.y { return fa.y < fb.y; }
+    return fa.x < fb.x;
+}
+
 fn enclosing_scroll_view(v: *u8) -> *u8 {
     if is_null(v) || !responds_to(v, #str_ptr("superview\0")) { return null(); }
     var cur: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
@@ -932,6 +965,7 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
                 || (kind == ftree::K_TREE);
             if hosts_cells && (core::child_count_of(n) == (0 as usize)) {
                 let sub: usize = subview_count(view);
+                var cells: vec::Vec[usize] = vec::new::[usize]();
                 var si: usize = 0 as usize;
                 while si < sub {
                     let cell: *u8 = subview_at(view, si);
@@ -942,8 +976,23 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
                     // `row:values` at once on the gallery, one of them a cell
                     // in the reuse pool — and a click on the stale one landed
                     // on whatever row the cell showed next.
-                    if !is_pooled_cell(view, cell) { walk(reg, views, cell, me); }
+                    if !is_pooled_cell(view, cell) { let _c = cells.append(cell as usize); }
                     si = si +% (1 as usize);
+                }
+                // IN THE ORDER THE USER SEES. A table's subviews are in the
+                // order UIKit happened to add or reuse the cells, which on a
+                // fresh list is bottom to top: the probe described rows 3, 2,
+                // 1, 0 over a screen reading 0 to 3, and an agent planning
+                // from that list plans backwards. Top to bottom, then left to
+                // right, which is a grid's reading order too.
+                sort_by_position(cells);
+                var ci: usize = 0 as usize;
+                while ci < cells.count() {
+                    match cells.at(ci) {
+                        option::Option[usize]::Some(c) => { walk(reg, views, c as *u8, me); }
+                        option::Option[usize]::None => { }
+                    }
+                    ci = ci +% (1 as usize);
                 }
             }
         }

@@ -21,6 +21,7 @@
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/str" as _str;
 import "stdlib/io" as io;
 import "stdlib/status" as status;
 import "stdlib/thread" as thread;
@@ -1379,6 +1380,57 @@ fn each_popup_item_is_a_choice_an_agent_can_make() -> bool {
     let ok: bool = listed && chose && at == (1 as i64) && heard_once && header_refused;
     if !ok { io::eprintln(text::from_str("  listed ${listed} chose ${chose} at ${at} heard ${PICK_HEARD} header ${header_refused}")); }
     app::reset_default_for_tests();
+    { rt::release(win) };
+    return ok;
+}
+
+// A LIST'S ROWS ARE DESCRIBED IN THE ORDER THE USER SEES. A table's subviews
+// come in the order UIKit added or reused its cells — on a fresh list, bottom
+// to top — and the agent walk listed them that way: rows 3, 2, 1, 0 over a
+// screen reading 0 to 3 (playground/agentprobe, 2026-10-07).
+fn agent_ids_in_order(nodes: vec::Vec[mcpb::UiNode], prefix: str) -> text::Text {
+    var out: text::Text = text::new();
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*mcpb::UiNode]::Some(n) => {
+                if { (*n).id.view() }.has_prefix(prefix) { out = "${out.view()}${(*n).id.view()} "; }
+            }
+            option::Option[*mcpb::UiNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn a_lists_rows_are_described_top_to_bottom() -> bool {
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    let host: *u8 = rt::alloc_init(#str_ptr("UIView\0"));
+    if win == (0 as *u8) || host == (0 as *u8) { return false; }
+    { rt::msg_void_rect(host, rt::sel(#str_ptr("setFrame:\0")), uikit_rect(0.0, 0.0, 200.0, 300.0)) };
+    { rt::msg_void_id(win, rt::sel(#str_ptr("addSubview:\0")), host) };
+    // Added bottom first, the way a fresh table adds them.
+    var y: f64 = 200.0;
+    var k: i32 = 2;
+    while k >= 0 {
+        let cell: *u8 = rt::alloc_init(#str_ptr("UIView\0"));
+        { rt::msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")), uikit_rect(0.0, y, 200.0, 100.0)) };
+        { rt::msg_void_id(host, rt::sel(#str_ptr("addSubview:\0")), cell) };
+        { rt::release(cell) };
+        agent::set_agent_id(cell, "order:${k}");
+        y = y - 100.0;
+        k = k - 1;
+    }
+    var root: core::Node = core::node_with("order", props::K_LIST, 0 as *u8, noop_release);
+    core::set_view(#addr_of(root), host, noop_release);
+    mount_tree(#addr_of(root), win);
+    var s: agent::Surface = agent::open_app();
+    let nodes: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(#addr_of(s) as *u8, auth::operator());
+    let got: text::Text = agent_ids_in_order(nodes, "order:");
+    let ok: bool = got.view() == "order:0 order:1 order:2 ";
+    if !ok { io::eprintln(text::from_str("  rows described as: ${got.view()}")); }
+    app::reset_default_for_tests();
+    { rt::release(host) };
     { rt::release(win) };
     return ok;
 }
@@ -4419,6 +4471,8 @@ fn run_all() -> i32 {
           a_tab_click_from_the_server_thread_lands_on_main());
     check("each popup item is a choice an agent can make",
           each_popup_item_is_a_choice_an_agent_can_make());
+    check("a list's rows are described top to bottom",
+          a_lists_rows_are_described_top_to_bottom());
     check("an agent scroll reaches a view inside two scrollers",
           an_agent_scroll_reaches_a_view_inside_two_scrollers());
     check("a date picker's date is read and picked by an agent",
