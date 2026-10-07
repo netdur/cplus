@@ -34,6 +34,7 @@ import "facet/application" as app;
 import "facet/app_events" as ev;
 import "facet/tree" as tree;
 import "facet/vocabulary" as vocab;
+import "facet/tabs" as tabs;
 import "facet/list" as flist;
 import "facet/elements" as ui;
 import "facet/icons" as icons;
@@ -1075,6 +1076,96 @@ fn a_sidebar_pane_is_backed_by_glass_once_and_gives_it_back() -> bool {
     controls::set_pane_glass(pane.raw(), false);
     let gone: bool = { synth::get_associated(pane.raw(), controls::glass_backing_key()) } == (0 as *u8);
     return first == g && fills && is_effect && same && gone;
+}
+
+// ---- tabs ------------------------------------------------------------------------
+// reports/spendwise/S11. MAUI's TabbedPage is a UITabBarController on iOS; facet's
+// `tabs` was a UISegmentedControl that never inserted a segment or hid a pane.
+
+fn tabs_probe(placement: vocab::BarPlacement) -> core::Node {
+    var n: core::Node = ui::tabs(key: "tb:probe", selected_index: 0 as i64,
+                                 on_tab_changed: note_tab, bar_placement: placement);
+    let _a: status::Status = n.add_child(ui::column(core::Builder::new(), key: "Dashboard"));
+    let _b: status::Status = n.add_child(ui::column(core::Builder::new(), key: "Income"));
+    let _c: status::Status = n.add_child(ui::column(core::Builder::new(), key: "Goals"));
+    return n;
+}
+
+static TAB_FIRED: bool = false;
+fn note_tab(sender: *u8, ctx: *u8) { TAB_FIRED = true; return; }
+
+fn pane_shown(n: *core::Node, i: usize) -> bool {
+    return match core::child_of(n, i) {
+        option::Option[*core::Node]::Some(c) => match { (*c).style.display } {
+            flex::Display::None => false,
+            _ => true,
+        },
+        option::Option[*core::Node]::None => false,
+    };
+}
+
+fn tab_items(bar: *u8) -> *u8 { return { rt::msg_id(bar, rt::sel(#str_ptr("items\0"))) }; }
+
+fn tabs_is_a_tab_bar_with_one_item_per_pane_and_shows_one() -> bool {
+    var n: core::Node = tabs_probe(vocab::BarPlacement::Default);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    let bar: *u8 = controls::tab_bar_of(v);
+    let ok_kind: bool = bar != (0 as *u8) && is_kind(bar, #str_ptr("UITabBar\0"));
+    var ok_items: bool = false;
+    var ok_title: bool = false;
+    if ok_kind {
+        let items: *u8 = tab_items(bar);
+        ok_items = { rt::msg_u64(items, rt::sel(#str_ptr("count\0"))) } == (3 as u64);
+        let second: *u8 = { rt::msg_id_i64(items, rt::sel(#str_ptr("objectAtIndex:\0")), 1 as i64) };
+        let t: *u8 = { rt::msg_id(second, rt::sel(#str_ptr("title\0"))) };
+        ok_title = bridge::to_text(t).view() == "Income";
+    }
+    let ok_panes: bool = pane_shown(p, 0 as usize) && !pane_shown(p, 1 as usize) && !pane_shown(p, 2 as usize);
+    views::view_release(v);
+    return ok_kind && ok_items && ok_title && ok_panes;
+}
+
+fn picking_a_tab_writes_the_index_swaps_the_pane_and_calls_back() -> bool {
+    TAB_FIRED = false;
+    var n: core::Node = tabs_probe(vocab::BarPlacement::Default);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    let bar: *u8 = controls::tab_bar_of(v);
+    let third: *u8 = { rt::msg_id_i64(tab_items(bar), rt::sel(#str_ptr("objectAtIndex:\0")), 2 as i64) };
+    // Through the delegate object, as UIKit would call it.
+    { rt::msg_void_id_id(controls::tab_delegate(), rt::sel(#str_ptr("tabBar:didSelectItem:\0")), bar, third) };
+    var at: i64 = -1 as i64;
+    match tabs::find("tb:probe", within: p) {
+        option::Option[tabs::Tabs]::Some(t) => { at = t.selected_index(); }
+        option::Option[tabs::Tabs]::None => { }
+    }
+    let ok: bool = at == (2 as i64) && TAB_FIRED && pane_shown(p, 2 as usize) && !pane_shown(p, 0 as usize);
+    views::view_release(v);
+    return ok;
+}
+
+fn padding_of(n: *core::Node, top: bool) -> f64 {
+    if top { return { (*n).style.padding_top.value }; }
+    return { (*n).style.padding_bottom.value };
+}
+
+fn a_tab_bar_sits_in_the_padding_of_the_edge_it_is_placed_on() -> bool {
+    var b: core::Node = tabs_probe(vocab::BarPlacement::Default);
+    let pb: *core::Node = #addr_of(b);
+    let vb: *u8 = views::create(0 as *u8, pb);
+    var t: core::Node = tabs_probe(vocab::BarPlacement::Top);
+    let pt: *core::Node = #addr_of(t);
+    let vt: *u8 = views::create(0 as *u8, pt);
+    if vb == (0 as *u8) || vt == (0 as *u8) { return false; }
+    // Default is the iOS convention: the bottom.
+    let ok_bottom: bool = padding_of(pb, false) > 40.0f64 && padding_of(pb, true) == 0.0f64;
+    let ok_top: bool = padding_of(pt, true) > 40.0f64 && padding_of(pt, false) == 0.0f64;
+    views::view_release(vb);
+    views::view_release(vt);
+    return ok_bottom && ok_top;
 }
 
 // ---- the keyboard ---------------------------------------------------------------
@@ -3962,6 +4053,12 @@ fn run_all() -> i32 {
           a_sender_that_is_not_a_key_command_fires_nothing());
     check("a sidebar pane is backed by glass, once, and gives it back",
           a_sidebar_pane_is_backed_by_glass_once_and_gives_it_back());
+    check("tabs is a UITabBar with one item per pane, and shows one pane",
+          tabs_is_a_tab_bar_with_one_item_per_pane_and_shows_one());
+    check("picking a tab writes the index, swaps the pane and calls back",
+          picking_a_tab_writes_the_index_swaps_the_pane_and_calls_back());
+    check("a tab bar sits in the padding of the edge it is placed on",
+          a_tab_bar_sits_in_the_padding_of_the_edge_it_is_placed_on());
 
     let ran: i32 = RAN;
     let failed: i32 = FAILED;

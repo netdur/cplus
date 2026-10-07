@@ -379,6 +379,23 @@ interface Lifecycle {
 `item_of(sender)` answers what a node stands for, when the application set one
 with `set_item`. Borrowed: facet never frees it.
 
+## facet/tabs
+
+`tabs` is MAUI's TabbedPage: a bar plus the panes that are its children, one
+showing at a time. A pane's title is its key. `selected_index` says which pane
+shows and `on_tab_changed` reports the user picking another; the five `bar_*` /
+`*_tab_color` props colour the bar.
+
+`bar_placement` is MAUI's Android `ToolbarPlacement`, made every platform's:
+`Default` is the platform's convention — the BOTTOM on iOS (a `UITabBar`, Liquid
+Glass on iOS 26), the TOP elsewhere — and `Top` / `Bottom` override it. A bottom
+bar on a phone reaches the screen edge under the home indicator.
+
+```cplus
+var t: core::Node = ui::tabs(key: "nav", on_tab_changed: this.on_tab,
+                             bar_placement: vocab::BarPlacement::Bottom);
+```
+
 ## facet/screen
 
 `Chrome::new(...)` describes a window. Fields: `title`, `subtitle`, `width`,

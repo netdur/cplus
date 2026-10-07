@@ -485,12 +485,6 @@ fn fire_value_changed(n: *core::Node, sender: *u8) {
         if h != (0 as fn(*u8, *u8)) { h(sender, { (*pp).on_selected_index_changed_ctx }); }
         return;
     }
-    if kind == props::K_TABS {
-        let tp: *props::TabsProps = p as *props::TabsProps;
-        let h: fn(*u8, *u8) = { (*tp).on_tab_changed };
-        if h != (0 as fn(*u8, *u8)) { h(sender, { (*tp).on_tab_changed_ctx }); }
-        return;
-    }
     // PULL TO REFRESH. The UIRefreshControl is armed with the LIST's node, so
     // its valueChanged arrives here wearing the list's kind — which is what
     // lets one action serve both. Without this the spinner appeared, span, and
@@ -566,11 +560,6 @@ fn read_back(n: *core::Node, sender: *u8) {
     if kind == props::K_POPUP {
         let pp: *props::PopupProps = p as *props::PopupProps;
         { (*pp).selected_index = ui::SegmentedControl::from_raw(sender).selected_segment_index() };
-        return;
-    }
-    if kind == props::K_TABS {
-        let tp: *props::TabsProps = p as *props::TabsProps;
-        { (*tp).selected_index = ui::SegmentedControl::from_raw(sender).selected_segment_index() };
         return;
     }
     if kind == props::K_PAGE_DOTS {

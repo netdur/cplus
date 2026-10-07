@@ -28,6 +28,13 @@ enum AutoSize {
     TextChanges,
 }
 
+// hand (authored: no manifest source)
+enum BarPlacement {
+    Default,
+    Top,
+    Bottom,
+}
+
 // ButtonsMask
 enum Buttons {
     Primary,

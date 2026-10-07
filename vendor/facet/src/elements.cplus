@@ -920,6 +920,7 @@ fn tabs(
     selected_index: i64 = 0 as i64,
     on_tab_changed: fn(*u8, *u8) = props::no_handler,
     on_tab_changed_ctx: *u8 = 0 as *u8,
+    bar_placement: vocab::BarPlacement = vocab::BarPlacement::Default,
 ) -> core::Node {
     return m_tabs::tabs(
         key: key,
@@ -931,6 +932,7 @@ fn tabs(
         selected_index: selected_index,
         on_tab_changed: on_tab_changed,
         on_tab_changed_ctx: on_tab_changed_ctx,
+        bar_placement: bar_placement,
     );
 }
 

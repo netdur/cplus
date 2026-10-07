@@ -261,7 +261,7 @@ fn has_intrinsic_size(kind: u32) -> bool {
         || kind == props::K_STEPPER || kind == props::K_POPUP
         || kind == props::K_DATE_PICKER || kind == props::K_TIME_PICKER
         || kind == props::K_IMAGE || kind == props::K_ICON_BUTTON
-        || kind == props::K_PAGE_DOTS || kind == props::K_TABS
+        || kind == props::K_PAGE_DOTS
         || kind == symbol::K_SYMBOL
         || kind == text_button::K_TEXT_BUTTON;
 }

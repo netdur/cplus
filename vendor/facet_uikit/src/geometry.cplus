@@ -264,6 +264,9 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     // And a split: its clamps are against its OWN extent, so
                     // the division is recomputed whenever that extent changes.
                     if core::kind_of(c) == split::K_SPLIT { controls::resize_split(v, c); }
+                    // And a tab bar: it spans the host's width, and at the
+                    // bottom of the safe box it reaches the screen edge.
+                    if core::kind_of(c) == props::K_TABS { controls::place_tab_bar(v, c); }
                     // And a swipeable: its action strip is as tall as it is,
                     // and it is not that tall until flex has run.
                     if core::kind_of(c) == props::K_SWIPEABLE { swipe::resize_strip(v, c); }

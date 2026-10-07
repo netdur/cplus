@@ -2655,66 +2655,248 @@ fn content_v_align_of(a: vocab::TextAlign) -> i64 {
     };
 }
 
-// facet's `tabs` is a strip plus panes. UISegmentedControl is the strip; the
-// panes are the node's children, shown and hidden by the selected index — which
-// is what `apply_tabs` does rather than adopting UITabBarController, a whole
-// view-controller container that would own the window rather than a rectangle.
+// ---- tabs --------------------------------------------------------------------
+// MAUI's TabbedPage IS A UITabBarController on iOS — tabs at the BOTTOM, the
+// system's own bar — and facet is built off MAUI. This backend used a
+// UISegmentedControl instead, and never finished it: no segment was ever
+// inserted and no pane was ever hidden, so `tabs` rendered as an empty strip
+// over every pane at once (reports/spendwise/S11). The MANIFEST described the
+// design; the code did not do it.
+//
+// A UITabBar, then — the BAR, not the controller. UITabBarController owns the
+// window's root rather than a rectangle in a tree, which is why it was turned
+// down, and that reason stands. The bar alone is the same native view the
+// controller shows, so it is drawn by the system: on iOS 26 it is LIQUID GLASS
+// with nothing asked of facet (S09).
+//
+// The shape is facet_appkit's and facet_android's: the bar lives in the
+// node's own PADDING, which is how flex is told it exists, and the panes are
+// the node's children, shown and hidden by `selected_index`. A pane's title is
+// its key, as on the other two.
+//
+// `bar_placement` (MAUI's AndroidSpecific ToolbarPlacement, made every
+// platform's): Default is the iOS convention, the bottom.
+//
+// THE BAR REACHES THE SCREEN EDGE. A system tab bar's material runs under the
+// home indicator and its items sit above it. facet lays the root out inside
+// the safe area, so a bar at the bottom of the safe box would stop short of the
+// edge with bare window below it. When the bar's bottom IS the safe box's
+// bottom, its frame is extended by the inset — and UIKit, seeing the bar now
+// overlap the unsafe region, keeps the items above it by itself.
+
+fn tab_bar_key() -> *u8 { return 29075 as *u8; }
+fn tab_node_key() -> *u8 { return 29076 as *u8; }
+fn tab_count_key() -> *u8 { return 29077 as *u8; }
+
+static TAB_DELEGATE: ui::TabBarDelegate = #zero::[ui::TabBarDelegate]();
+static TAB_DELEGATE_OBJ: *u8 = 0 as *u8;
+
+// One delegate object for every tab bar: the bar names its node, so the
+// handler needs no context of its own. A static struct is what makes the
+// pointer the generated class keeps stable.
+fn tab_delegate() -> *u8 {
+    if TAB_DELEGATE_OBJ == (0 as *u8) {
+        TAB_DELEGATE = ui::TabBarDelegate_new(0 as *u8);
+        TAB_DELEGATE.set_tab_bar_did_select_item(tab_bar_selected);
+        TAB_DELEGATE_OBJ = ui::create_TabBarDelegate(#addr_of(TAB_DELEGATE));
+    }
+    return TAB_DELEGATE_OBJ;
+}
+
+fn tab_bar_of(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    return { synth::get_associated(v, tab_bar_key()) };
+}
+
+// What the bar takes from the node's box, before any safe-area extension.
+fn tab_bar_height(bar: *u8) -> f64 {
+    let s: rt::Size = { msg_size_size_tabs(bar, rt::sel(#str_ptr("sizeThatFits:\0")),
+                                           rt::Size { w: 320.0f64, h: 0.0f64 }) };
+    if s.h > 0.0f64 { return s.h; }
+    return 49.0f64;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_size_size_tabs(recv: *u8, sel: *u8, s: rt::Size) -> rt::Size;
+
+fn tabs_at_bottom(p: *props::TabsProps) -> bool {
+    return match { (*p).bar_placement } {
+        vocab::BarPlacement::Default => true,
+        vocab::BarPlacement::Bottom => true,
+        vocab::BarPlacement::Top => false,
+    };
+}
+
 fn create_tabs(n: *core::Node) -> *u8 {
-    let s: ui::SegmentedControl = ui::SegmentedControl::new(zero_rect());
-    let v: *u8 = rt::retain(s.as_view().raw());
-    input::arm_value(v, n);
+    let host: ui::View = ui::View::new_with_frame(zero_rect());
+    let v: *u8 = rt::retain(host.raw());
+    let bar: ui::TabBar = ui::TabBar::from_raw(
+        { rt::msg_id_rect(rt::msg_id(rt::get_class(#str_ptr("UITabBar\0")), rt::sel(#str_ptr("alloc\0"))),
+                          rt::sel(#str_ptr("initWithFrame:\0")), zero_rect()) });
+    bar.set_delegate(tab_delegate());
+    host.add_subview(bar.as_view());
+    synth::set_associated(v, tab_bar_key(), bar.raw());
+    synth::set_associated(bar.raw(), tab_node_key(), n as *u8);
+    // The host's retain keeps it; this releases the +1 of alloc.
+    { rt::release(bar.raw()) };
     return v;
 }
 
 fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
     if p == (0 as *props::TabsProps) { return; }
-    let s: ui::SegmentedControl = ui::SegmentedControl::from_raw(v);
-    if (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) {
-        s.set_selected_segment_index({ (*p).selected_index });
-    }
-    if (dirty & tabs::P_SELECTED_TAB_COLOR) != (0 as u64) {
-        let c: vocab::Color = { (*p).selected_tab_color };
-        if c.is_set() { s.set_selected_segment_tint_color(paint::ui_color(c)); }
-    }
-    // The STRIP's own fill. A UISegmentedControl paints its track with its
-    // background colour, which is the bar in facet's word.
-    if (dirty & (tabs::P_BAR_BACKGROUND_COLOR | tabs::P_BAR_BACKGROUND)) != (0 as u64) {
-        let c: vocab::Color = { (*p).bar_background_color };
-        if c.is_set() {
-            paint::apply_background(s.as_view(), c);
+    let raw: *u8 = tab_bar_of(v);
+    if raw == (0 as *u8) { return; }
+    let bar: ui::TabBar = ui::TabBar::from_raw(raw);
+    let all: bool = dirty == paint::all_bits();
+    if all || (dirty & tabs::P_BAR_PLACEMENT) != (0 as u64) {
+        let h: f64 = tab_bar_height(raw);
+        if tabs_at_bottom(p) {
+            core::set_padding_edge(n, flex::Edge::Bottom, h);
+            core::set_padding_edge(n, flex::Edge::Top, 0.0f64);
         } else {
-            let b: vocab::Brush = { (*p).bar_background };
-            if b.start.is_set() { paint::apply_brush(s.as_view(), b); }
+            core::set_padding_edge(n, flex::Edge::Top, h);
+            core::set_padding_edge(n, flex::Edge::Bottom, 0.0f64);
         }
     }
-    // Tab TEXT, selected and not. A segmented control carries per-state title
-    // attributes, which is the same two-state split facet describes.
-    if (dirty & (tabs::P_BAR_TEXT_COLOR | tabs::P_UNSELECTED_TAB_COLOR)) != (0 as u64) {
-        var c: vocab::Color = { (*p).unselected_tab_color };
-        if c.is_set() == false { c = { (*p).bar_text_color }; }
-        if c.is_set() { set_segment_title_color(v, c, 0 as u64); }
+    if all || (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) {
+        rebuild_tab_items(v, n, p);
     }
-    if (dirty & tabs::P_BAR_TEXT_COLOR) != (0 as u64) {
-        let c: vocab::Color = { (*p).bar_text_color };
-        // State 4 is UIControlStateSelected.
-        if c.is_set() { set_segment_title_color(v, c, 4 as u64); }
+    if all || (dirty & (tabs::P_BAR_BACKGROUND_COLOR | tabs::P_BAR_BACKGROUND)) != (0 as u64) {
+        // A GRADIENT BAR IS ITS FIRST COLOUR — the same reduction
+        // facet_android makes. Unset leaves the system's material alone, which
+        // on iOS 26 is the glass.
+        var c: vocab::Color = { (*p).bar_background_color };
+        if !c.is_set() { c = { { (*p).bar_background }.start }; }
+        if c.is_set() { bar.set_bar_tint_color(paint::ui_color(c)); }
+    }
+    if all || (dirty & (tabs::P_SELECTED_TAB_COLOR | tabs::P_BAR_TEXT_COLOR)) != (0 as u64) {
+        var c: vocab::Color = { (*p).selected_tab_color };
+        if !c.is_set() { c = { (*p).bar_text_color }; }
+        if c.is_set() { bar.as_view().set_tint_color(paint::ui_color(c)); }
+    }
+    if all || (dirty & (tabs::P_UNSELECTED_TAB_COLOR | tabs::P_BAR_TEXT_COLOR)) != (0 as u64) {
+        var c: vocab::Color = { (*p).unselected_tab_color };
+        if !c.is_set() { c = { (*p).bar_text_color }; }
+        if c.is_set() { bar.set_unselected_item_tint_color(paint::ui_color(c)); }
+    }
+    show_selected_pane(n, { (*p).selected_index });
+    return;
+}
+
+// One item per pane, titled by the pane's key; the TAG is the index, which is
+// what a selection reports back. Rebuilt rather than diffed — a tab bar is
+// short, the same call the other two backends make.
+fn rebuild_tab_items(v: *u8, n: *core::Node, p: *props::TabsProps) {
+    let bar: ui::TabBar = ui::TabBar::from_raw(tab_bar_of(v));
+    let count: usize = core::child_count_of(n);
+    var items: vec::Vec[ui::TabBarItem] = vec::new::[ui::TabBarItem]();
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                var title: text::Text = text::from_str({ (*c).key() });
+                if title.count() == (0 as usize) { title = "${i +% (1 as usize)}"; }
+                let item: ui::TabBarItem = ui::TabBarItem::new_with_title_image_tag(
+                    title.view(), ui::Image::from_raw(0 as *u8), i as i64);
+                let _a: status::Status = items.append(item);
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let at: i64 = { (*p).selected_index };
+    let chosen: usize = at as usize;
+    let have: usize = items.count();
+    var selected: *u8 = 0 as *u8;
+    if at >= (0 as i64) && chosen < have {
+        match items.at_ptr(chosen) {
+            option::Option[*ui::TabBarItem]::Some(it) => { selected = { (*it).raw() }; }
+            option::Option[*ui::TabBarItem]::None => { }
+        }
+    }
+    bar.set_items(items);
+    { rt::msg_void_id(bar.raw(), rt::sel(#str_ptr("setSelectedItem:\0")), selected) };
+    synth::set_associated(v, tab_count_key(), count as *u8);
+    return;
+}
+
+fn show_selected_pane(n: *core::Node, at: i64) {
+    let count: usize = core::child_count_of(n);
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let want: bool = (i as i64) == at;
+                let showing: bool = match { (*c).style.display } {
+                    flex::Display::None => false,
+                    _ => true,
+                };
+                if want && !showing { core::set_display(c, flex::Display::Flex); }
+                if !want && showing { core::set_display(c, flex::Display::None); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
     }
     return;
 }
 
-// `setTitleTextAttributes:forState:` takes a dictionary keyed by attribute
-// name, which is how a segmented control colours its rows.
-fn set_segment_title_color(v: *u8, c: vocab::Color, state: u64) {
-    let dict: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
-    if dict == (0 as *u8) { return; }
-    { rt::msg_void_id_id(dict, rt::sel(#str_ptr("setObject:forKey:\0")),
-                         paint::ui_color(c).raw(), bridge::nsstring("NSColor")) };
-    { rt::msg_void_id_u64(v, rt::sel(#str_ptr("setTitleTextAttributes:forState:\0")),
-                          dict, state) };
-    { rt::release(dict) };
+// The user picked a tab. `selected_index` is written BEFORE the handler, the
+// rule every read in this backend follows; the sender is the node's view.
+fn tab_bar_selected(user: *u8, bar: *u8, item: *u8) {
+    let n: *core::Node = { synth::get_associated(bar, tab_node_key()) as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) != props::K_TABS { return; }
+    let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
+    if p == (0 as *props::TabsProps) { return; }
+    let at: i64 = { rt::msg_i64(item, rt::sel(#str_ptr("tag\0"))) };
+    if { (*p).selected_index } == at { return; }
+    { (*p).selected_index = at };
+    show_selected_pane(n, at);
+    let h: fn(*u8, *u8) = { (*p).on_tab_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_tab_changed_ctx }); }
     return;
 }
+
+// From the layout pass: the bar along its edge, the host's full width, and —
+// at the bottom of the safe box — down to the screen edge.
+fn place_tab_bar(v: *u8, n: *core::Node) {
+    let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
+    if p == (0 as *props::TabsProps) { return; }
+    let raw: *u8 = tab_bar_of(v);
+    if raw == (0 as *u8) { return; }
+    // A pane added or removed since the last apply.
+    let had: usize = { synth::get_associated(v, tab_count_key()) as usize };
+    if had != core::child_count_of(n) { rebuild_tab_items(v, n, p); }
+    let host: ui::View = ui::View::from_raw(v);
+    let b: rt::Rect = host.bounds();
+    let h: f64 = tab_bar_height(raw);
+    var r: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: b.w, h: h };
+    if tabs_at_bottom(p) {
+        r = rt::Rect { x: 0.0f64, y: b.h - h, w: b.w, h: h + below_safe_edge(v, b) };
+    }
+    ui::View::from_raw(raw).set_frame(r);
+    return;
+}
+
+// How far below this view's bottom the screen continues, when that bottom is
+// the window's safe edge; zero otherwise.
+fn below_safe_edge(v: *u8, b: rt::Rect) -> f64 {
+    let win: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("window\0"))) };
+    if win == (0 as *u8) { return 0.0f64; }
+    let wv: ui::View = ui::View::from_raw(win);
+    let inset: f64 = wv.safe_area_insets().bottom;
+    if inset <= 0.0f64 { return 0.0f64; }
+    let r: rt::Rect = { msg_rect_rect_id_tabs(v, rt::sel(#str_ptr("convertRect:toView:\0")), b, 0 as *u8) };
+    let edge: f64 = wv.bounds().h - inset;
+    let bottom: f64 = r.y + r.h;
+    if bottom > edge - 0.5f64 && bottom < edge + 0.5f64 { return inset; }
+    return 0.0f64;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_rect_rect_id_tabs(recv: *u8, sel: *u8, r: rt::Rect, view: *u8) -> rt::Rect;
 
 // ---- page_dots -------------------------------------------------------------------
 // UIPageControl IS this control, where AppKit has none and facet_appkit draws

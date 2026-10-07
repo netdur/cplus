@@ -1878,6 +1878,7 @@ struct TabsProps {
     selected_index: i64,    // facet — which tab is showing
     on_tab_changed: fn(*u8, *u8),    // facet — the user picked another tab
     opaque on_tab_changed_ctx: *u8,
+    bar_placement: vocab::BarPlacement,    // AndroidSpecific.ToolbarPlacement — which edge the bar sits on; Default = the platform's
 }
 
 impl TabsProps {
@@ -1891,6 +1892,7 @@ impl TabsProps {
             selected_index: 0 as i64,
             on_tab_changed: no_handler,
             on_tab_changed_ctx: 0 as *u8,
+            bar_placement: vocab::BarPlacement::Default,
         };
     }
 }

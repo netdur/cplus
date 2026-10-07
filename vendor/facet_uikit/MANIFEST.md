@@ -880,10 +880,23 @@ over the mounted tree, which is the only place the siblings can be found. A
 radio's tap is EXCLUSION rather than a toggle — tapping the selected member
 leaves it selected.
 
-### `tabs` is a segmented control plus shown/hidden panes
+### `tabs` is a `UITabBar` plus shown/hidden panes
 
-Not `UITabBarController`, which is a view-controller container that owns the
-whole window rather than a rectangle in a tree.
+MAUI's TabbedPage is a `UITabBarController` on iOS, and facet is built off
+MAUI, so `tabs` is the system's TAB BAR — the bar alone, not the controller,
+which owns the window's root rather than a rectangle in a tree. The bar sits in
+the node's own padding (bottom by default; `bar_placement: Top` moves it), the
+panes are the node's children shown and hidden by `selected_index`, and a
+pane's title is its key, as on the other backends. On iOS 26 the bar is Liquid
+Glass because it is the system's view.
+
+At the bottom of the window's safe box the bar's frame is extended by the
+bottom inset, so its material reaches the screen edge; UIKit keeps the items
+above the home indicator itself.
+
+This was a `UISegmentedControl` until 2026-10-07, and it never inserted a
+segment or hid a pane — the section above described a design the code did not
+carry out (reports/spendwise/S11).
 
 ### Four colour roles have no iOS twin
 

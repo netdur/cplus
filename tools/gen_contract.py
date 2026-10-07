@@ -329,6 +329,16 @@ HAND_ENUMS = {
     # everywhere else.
     "ToolbarPlacement": ["Default", "Primary", "Secondary", "Sidebar"],
     "SafeArea": ["Default", "None", "Container", "Content", "All"],
+    # WHICH EDGE A TAB BAR SITS ON. The ledger's own word, from a slice Stage 1
+    # did not read: MAUI's `PlatformConfiguration.AndroidSpecific.
+    # ToolbarPlacement { Default, Top, Bottom }` on TabbedPage. facet makes it
+    # every platform's, because the convention it overrides is per platform:
+    # MAUI's TabbedPage is a UITabBarController on iOS — tabs at the BOTTOM —
+    # and a TabLayout on Android, Windows and the desktop — tabs at the TOP.
+    # `Default` is that convention; `Top`/`Bottom` override it. Named for the
+    # `bar_*` props beside it, because facet's `ToolbarPlacement` already means
+    # where a toolbar ITEM goes.
+    "BarPlacement": ["Default", "Top", "Bottom"],
     "ContentLayout": ["ImageLeft", "ImageTop", "ImageRight", "ImageBottom"],
     # WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT. Not in either manifest —
     # the ledger predates agents — and authored here because the agent surface
@@ -2559,6 +2569,8 @@ TAB_SOURCE_FIELDS = [
     ("selected_index", "i64", "0 as i64", "facet — which tab is showing"),
     ("on_tab_changed", "fn(*u8, *u8)", "no_handler", "facet — the user picked another tab"),
     ("opaque on_tab_changed_ctx", "*u8", "0 as *u8", None),
+    ("bar_placement", "vocab::BarPlacement", "vocab::BarPlacement::Default",
+     "AndroidSpecific.ToolbarPlacement — which edge the bar sits on; Default = the platform's"),
 ]
 
 # A CHOOSER SAYS WHAT IT IS SEPARATELY FROM WHAT IT SHOWS.
@@ -3104,6 +3116,7 @@ def ctor_params(row_type, writes, reads, events, owned=()):
         params.append(("selected_index", "i64", "0 as i64"))
         params.append(("on_tab_changed", "fn(*u8, *u8)", "props::no_handler"))
         params.append(("on_tab_changed_ctx", "*u8", "0 as *u8"))
+        params.append(("bar_placement", "vocab::BarPlacement", "vocab::BarPlacement::Default"))
     if MODULE.get(row_type) in SELECTABLE_TEXT:
         params.append(("selectable", "bool", "false"))
     if MODULE.get(row_type) in ROW_SOURCE:
@@ -3177,7 +3190,7 @@ def emit_control(row_type, merged):
             + (["COUNT", "ROW", "GROUP_COUNT", "GROUP", "SELECTED_INDEX", "REORDER",
                 "INVALIDATE_ROW", "SPLICE_ROWS"]
                if mod in ROW_SOURCE else [])
-            + (["SELECTED_INDEX"] if mod in TAB_SOURCE else [])
+            + (["SELECTED_INDEX", "BAR_PLACEMENT"] if mod in TAB_SOURCE else [])
             + (["LABEL", "ITEM_ENABLED"] if mod in PICKER_LABEL else [])
             + (["STYLE_RUNS"] if mod in EDITOR_TIER else [])
             + (["TOGGLES", "ON", "BORDERED", "SYMBOL"] if mod in BUTTONS else [])
@@ -3218,6 +3231,7 @@ def emit_control(row_type, merged):
         o.append("    p.selected_index = selected_index;\n")
         o.append("    p.on_tab_changed = on_tab_changed;\n")
         o.append("    p.on_tab_changed_ctx = on_tab_changed_ctx;\n")
+        o.append("    p.bar_placement = bar_placement;\n")
     if mod in ROW_SOURCE:
         o.append("    p.count = count as i64;\n")
         o.append("    p.row = row;\n")
@@ -3421,6 +3435,17 @@ def emit_control(row_type, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return 0 as i64; }}\n")
         o.append("        return { (*p).selected_index };\n    }\n")
+        o.append("\n    // MAUI's AndroidSpecific ToolbarPlacement, made every platform's.\n")
+        o.append(f"    fn set_bar_placement(this, v: vocab::BarPlacement) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).bar_placement = v };\n")
+        o.append("        core::touch(this._p, P_BAR_PLACEMENT);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    fn bar_placement(this) -> vocab::BarPlacement {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return vocab::BarPlacement::Default; }}\n")
+        o.append("        return { (*p).bar_placement };\n    }\n")
 
     # ---- facet's own: styling the text that is already there, and the caret
     if mod in EDITOR_TIER:
@@ -4473,7 +4498,9 @@ def emit_manifest(rows_by_control):
         if mod in TAB_SOURCE:
             o.append("| `set_selected_index` / `selected_index()` | i64 | **facet's own** |\n")
             o.append("| `on_tab_changed` | callback + ctx | **facet's own** |\n")
-            total += 2
+            o.append("| `set_bar_placement` / `bar_placement()` | BarPlacement "
+                     "| AndroidSpecific.TabbedPage.ToolbarPlacement |\n")
+            total += 3
         if mod in ROW_SOURCE:
             o.append("| `set_count` / `count()` | usize | **facet's own** |\n")
             o.append("| `set_row(_:ctx:)` / `build_row(at:)` | fn(usize, *u8) -> Node "
@@ -4944,7 +4971,7 @@ def check(rows_by_control, by_type):
                 if k and (k[0] == "owned" or k[0] == "command"
                           or (k[0] == "prop" and band == "writes")))
         n += 7 if MODULE[row_type] in ROW_SOURCE else 0
-        n += 1 if MODULE[row_type] in TAB_SOURCE else 0
+        n += 2 if MODULE[row_type] in TAB_SOURCE else 0
         if n > 48:
             problems.append(f"{MODULE[row_type]}: {n} dirty bits, and props::C_* owns "
                             "bits 48 and up.")
