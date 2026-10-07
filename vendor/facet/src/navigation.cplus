@@ -1,5 +1,6 @@
 // Retained content navigation, owned by one live window instance.
 import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/box" as box;
@@ -272,6 +273,13 @@ fn set_active(s: *model::Session, id: u64, active: bool) {
     if active { (*sb).on_attach(component::Attach::Active); }
     else { (*sb).on_detach(component::Detach::Inactive); }
 }
+fn entry_detach_none(p: *u8) { return; }
+fn entry_visibility(p: *u8, why: u32) {
+    let sb = p as *screen::ScreenBox;
+    if why == component::LC_FOREGROUND { (*sb).on_attach(component::Attach::Foreground); return; }
+    if why == component::LC_BACKGROUND { (*sb).on_detach(component::Detach::Background); return; }
+    return;
+}
 fn attach_entries(s: *model::Session) {
     var i: usize = 0 as usize;
     while i < (*s).entries.count() {
@@ -281,6 +289,15 @@ fn attach_entries(s: *model::Session) {
                     (*e).attached = true;
                     let p = (*e).screen as *screen::ScreenBox;
                     let _b = component::bind_app_lifecycle::[screen::ScreenBox](p);
+                    // THE SCREEN HEARS ITS SLOT BEING PARKED AND SHOWN
+                    // (spendwise S19). A tab switch hides one slot and shows
+                    // another; `mount::notify_visibility` sees that and tells
+                    // every PRESENTED record, and an entry's wrapper was not
+                    // one, so a screen in a tab heard nothing when you left it
+                    // or came back. The navigator still owns the screen and its
+                    // Mount/Unmount; this record carries only the reasons.
+                    core::set_presented((*e).root, p as *u8, entry_detach_none,
+                                        lifecycle: entry_visibility);
                     (*p).on_attach(component::Attach::Mount);
                 }
             }
@@ -587,6 +604,8 @@ fn release(n: model::Navigator) {
 static TEST_DROPS: i32 = 0;
 static TEST_MOUNTS: i32 = 0;
 static TEST_UNMOUNTS: i32 = 0;
+static TEST_FOREGROUNDS: i32 = 0;
+static TEST_BACKGROUNDS: i32 = 0;
 struct TestScreen { context: model::Context, shell: bool, edits: i32, changes: usize }
 impl TestScreen { fn drop(ref this) { TEST_DROPS = TEST_DROPS + 1; } }
 impl TestScreen: component::Component {
@@ -602,9 +621,11 @@ impl TestScreen: component::Component {
 impl TestScreen: component::Lifecycle {
     fn on_attach(ref this, why: component::Attach) {
         if why == component::Attach::Mount { TEST_MOUNTS = TEST_MOUNTS + 1; }
+        if why == component::Attach::Foreground && !this.shell { TEST_FOREGROUNDS = TEST_FOREGROUNDS + 1; }
     }
     fn on_detach(ref this, why: component::Detach) {
         if why == component::Detach::Unmount { TEST_UNMOUNTS = TEST_UNMOUNTS + 1; }
+        if why == component::Detach::Background && !this.shell { TEST_BACKGROUNDS = TEST_BACKGROUNDS + 1; }
     }
 }
 impl TestScreen: screen::Screen {
@@ -690,6 +711,34 @@ fn record_presentation(p: Presentation, title: str) {
     PRESENTED_SHOWN = p.shown;
     PRESENTED_LEFT = p.left;
 }
+// spendwise S19: a tab switch parks one slot and shows another. The screen
+// routed into the parked slot hears Background, and Foreground when it is
+// shown again, the same as a component in a `switch_to` pane.
+#[test]
+fn a_screen_hears_its_slot_parked_and_shown() {
+    let owner = app::new_instance("navigation test");
+    app::make_current(owner);
+    let n = test_open(owner, "vis");
+    mount::notify_visibility();
+    TEST_FOREGROUNDS = 0;
+    TEST_BACKGROUNDS = 0;
+    var slot_host: *core::Node = 0 as *core::Node;
+    match core::find_in(root(n), "slot:details") {
+        option::Option[*core::Node]::Some(h) => { slot_host = h; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    core::set_display(slot_host, flex::Display::None);
+    mount::notify_visibility();
+    assert TEST_BACKGROUNDS == 1;
+    assert TEST_FOREGROUNDS == 0;
+    core::set_display(slot_host, flex::Display::Flex);
+    mount::notify_visibility();
+    assert TEST_FOREGROUNDS == 1;
+    assert TEST_BACKGROUNDS == 1;
+    test_close(n);
+    app::release_current();
+}
+
 #[test]
 fn a_whole_window_change_is_presented_and_a_slot_change_is_not() {
     // A native stack (iOS) pushes a controller for a whole-window push and pops
