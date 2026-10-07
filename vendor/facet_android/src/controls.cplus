@@ -5167,12 +5167,30 @@ fn tabs_at_bottom(n: *core::Node) -> bool {
     };
 }
 
-// A Material 3 navigation bar is 80dp with an icon over the label; facet's tabs
-// carry a label only, so the bar is the label row and the indicator around it.
+// A Material 3 navigation bar is 80dp with an icon over the label. A bar whose
+// panes carry no icon (MAUI's Page.IconImageSource left unset) is the label row
+// alone, 64dp, with the indicator around the label.
 fn bottom_bar_height() -> f64 { return 64.0f64; }
+fn bottom_bar_height_with_icons() -> f64 { return 80.0f64; }
+
+fn tabs_have_icons(n: *core::Node) -> bool {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { if core::tab_symbol(c) != 0u32 { return true; } }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
 
 fn tab_bar_height(n: *core::Node) -> f64 {
-    if tabs_at_bottom(n) { return bottom_bar_height(); }
+    if tabs_at_bottom(n) {
+        if tabs_have_icons(n) { return bottom_bar_height_with_icons(); }
+        return bottom_bar_height();
+    }
     return strip_height();
 }
 
@@ -5196,8 +5214,13 @@ fn dress_bottom_tab(env: rt::Env, n: *core::Node, b: jni::jobject, at: i64, each
     var pw: f64 = 64.0f64;
     if pw > each - 8.0f64 { pw = each - 8.0f64; }
     let dx: i32 = { e::px((each - pw) / 2.0f64) as i32 };
-    let dy: i32 = { e::px((h - 32.0f64) / 2.0f64) as i32 };
-    let inset: jni::jobject = inset_drawable(env, pill.as_obj(), dx, dy, dx, dy);
+    // Around the ICON when there is one — Material 3's indicator sits 12dp
+    // from the top of the 80dp bar — and around the label when there is not.
+    var top: f64 = (h - 32.0f64) / 2.0f64;
+    if tabs_have_icons(n) { top = 12.0f64; }
+    let dt: i32 = { e::px(top) as i32 };
+    let db: i32 = { e::px(h - top - 32.0f64) as i32 };
+    let inset: jni::jobject = inset_drawable(env, pill.as_obj(), dx, dt, dx, db);
     if inset != (0 as jni::jobject) {
         bv.set_background(inset);
         env.delete_local_ref(inset);
@@ -5219,6 +5242,12 @@ fn a_tab_bar_is_at_the_top_by_default_and_at_the_bottom_when_asked() {
     assert tab_bar_height(#addr_of(b)) == bottom_bar_height();
     var t: core::Node = tabs::tabs(key: "t:top", bar_placement: vocab::BarPlacement::Top);
     assert tabs_at_bottom(#addr_of(t)) == false;
+    // A pane with an icon makes the bottom bar Material's full 80dp.
+    var pane: core::Node = core::column(core::Builder::new(), key: "Home");
+    pane.set_tab_symbol(0xE9B2u32);
+    let _a = b.add_child(pane);
+    assert tabs_have_icons(#addr_of(b));
+    assert tab_bar_height(#addr_of(b)) == bottom_bar_height_with_icons();
 }
 
 // `new InsetDrawable(drawable, l, t, r, b)` — five arguments, more than the
@@ -5264,10 +5293,10 @@ fn tab_strip_of(v: *u8) -> jni::jobject {
 fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TabsProps = tabs_props(n);
     if p == (0 as *props::TabsProps) { return; }
-    if dirty == paint::all_bits() || (dirty & tabs::P_BAR_PLACEMENT) != (0 as u64) {
+    if dirty == paint::all_bits() || (dirty & (tabs::P_BAR_PLACEMENT | tabs::P_TAB_ITEMS)) != (0 as u64) {
         // The strip lives in the PADDING of the edge it is on.
         if tabs_at_bottom(n) {
-            core::ensure_padding_edge(n, flex::Edge::Bottom, bottom_bar_height());
+            core::ensure_padding_edge(n, flex::Edge::Bottom, tab_bar_height(n));
             core::ensure_padding_edge(n, flex::Edge::Top, 0.0f64);
         } else {
             core::ensure_padding_edge(n, flex::Edge::Top, strip_height());
@@ -5280,7 +5309,7 @@ fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     let rebuild: u64 = tabs::P_BAR_BACKGROUND | tabs::P_BAR_BACKGROUND_COLOR
                      | tabs::P_BAR_TEXT_COLOR | tabs::P_SELECTED_TAB_COLOR
                      | tabs::P_UNSELECTED_TAB_COLOR | tabs::P_SELECTED_INDEX
-                     | tabs::P_BAR_PLACEMENT;
+                     | tabs::P_BAR_PLACEMENT | tabs::P_TAB_ITEMS;
     if (dirty & rebuild) != (0 as u64) || dirty == paint::all_bits() {
         rebuild_tab_strip(v, n, p);
     }
@@ -5347,6 +5376,20 @@ fn rebuild_tab_strip(v: *u8, n: *core::Node, p: *props::TabsProps) {
                 }
                 // A bottom tab is a label on the bar, not a raised button.
                 if bottom { btv.as_view().set_background(0 as jni::jobject); }
+                // THE PANE'S ICON (Page.IconImageSource), above the label: a
+                // compound drawable tinted by the label's own colours, so the
+                // selected tab's icon follows its text. 24dp, Material's size.
+                let sym: u32 = core::tab_symbol(c);
+                if sym != 0u32 {
+                    let d: jni::jobject = glyph_drawable(env, sym, { e::px(24.0f64) as i32 });
+                    if d != (0 as jni::jobject) {
+                        set_compound(btv, d, vocab::ContentLayout::ImageTop);
+                        env.delete_local_ref(d);
+                        let colors: jni::jobject = btv.get_text_colors();
+                        btv.set_compound_drawable_tint_list(colors);
+                        if colors != (0 as jni::jobject) { env.delete_local_ref(colors); }
+                    }
+                }
                 if fg.is_set() { btv.set_text_color_i(paint::argb_of(fg)); }
                 // A TAB IS A NODE'S INDEX, and the click carries it: the tab
                 // token packs the node with the index rather than pointing at
@@ -5378,7 +5421,7 @@ fn show_selected_pane(n: *core::Node, at: i64) {
     while i < count {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
-                if { i as i64 } == at { core::set_display(c, flex::Display::Flex); }
+                if { i as i64 } == at { core::set_display(c, flex::Display::Flex); core::fill_tab_pane(c); }
                 else { core::set_display(c, flex::Display::None); }
             }
             option::Option[*core::Node]::None => { }

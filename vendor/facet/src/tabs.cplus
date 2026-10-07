@@ -24,6 +24,7 @@ const P_SELECTED_TAB_COLOR: u64 = 8u64;
 const P_UNSELECTED_TAB_COLOR: u64 = 16u64;
 const P_SELECTED_INDEX: u64 = 32u64;
 const P_BAR_PLACEMENT: u64 = 64u64;
+const P_TAB_ITEMS: u64 = 128u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -191,6 +192,25 @@ impl Tabs {
         let p: *props::TabsProps = this._props();
         if p == (0 as *props::TabsProps) { return vocab::BarPlacement::Default; }
         return { (*p).bar_placement };
+    }
+
+    // A TAB'S ICON lives on its pane (MAUI's Page.IconImageSource); this is
+    // the live door to it, because a pane cannot reach its tabs to say it
+    // changed. At build time say `.set_tab_symbol(icons::x)` on the pane.
+    fn set_tab_symbol(this, at: usize, symbol: u32) -> Tabs {
+        match core::child_of(this._p, at) {
+            option::Option[*core::Node]::Some(c) => { core::set_tab_symbol(c, symbol); }
+            option::Option[*core::Node]::None => { return this; }
+        }
+        core::touch(this._p, P_TAB_ITEMS);
+        return this;
+    }
+
+    fn tab_symbol(this, at: usize) -> u32 {
+        return match core::child_of(this._p, at) {
+            option::Option[*core::Node]::Some(c) => core::tab_symbol(c),
+            option::Option[*core::Node]::None => 0u32,
+        };
     }
 
     // The flex node this cursor points at. The DOM division, and the

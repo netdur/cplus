@@ -3452,7 +3452,8 @@ fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     // One button per pane, rebuilt when the panes change. A strip is short and
     // a diff would be more code than the rebuild it replaces.
     let want: usize = core::child_count_of(n);
-    if want != (g::get_data(v, tab_count_key()) as usize) {
+    if want != (g::get_data(v, tab_count_key()) as usize)
+        || (dirty & tabs::P_TAB_ITEMS) != (0 as u64) {
         rebuild_tab_strip(v, n, want);
         g::set_data(v, tab_count_key(), want as *u8);
     }
@@ -3476,7 +3477,7 @@ fn show_selected_pane(n: *core::Node, at: i64) {
     while i < count {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
-                if (i as i64) == at { { (*c).set_display(flex::Display::Flex) }; }
+                if (i as i64) == at { { (*c).set_display(flex::Display::Flex) }; core::fill_tab_pane(c); }
                 else { { (*c).set_display(flex::Display::None) }; }
             }
             option::Option[*core::Node]::None => { }
@@ -3504,6 +3505,18 @@ fn rebuild_tab_strip(v: *u8, n: *core::Node, count: usize) {
                 // title of its own, and a key is the one name every node has.
                 let b: gtk::Button = gtk::Button::new_with_label({ (*pane).key() });
                 b.upcast().add_css_class("flat");
+                // The pane's icon (MAUI's Page.IconImageSource): on this backend
+                // a bundled glyph is TEXT, so it is a markup label before the
+                // title, in a box like a button's own image + label.
+                let sym: u32 = core::tab_symbol(pane);
+                if sym != 0u32 {
+                    let bx: gtk::Box = gtk::Box::new(0 as i32, 6 as i32);
+                    let glyph: gtk::Label = gtk::Label::new("");
+                    show_glyph(glyph, sym, button_glyph_size());
+                    bx.append(glyph.upcast());
+                    bx.append(gtk::Label::new({ (*pane).key() }).upcast());
+                    b.set_child(bx.upcast());
+                }
                 input::arm_tab(b.raw(), n, i);
                 bx.append(b.upcast());
             }

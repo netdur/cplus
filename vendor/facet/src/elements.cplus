@@ -9,6 +9,7 @@
 import "flex_layout/flex_layout" as flex;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/status" as status;
 import "./facet" as core;
 import "./props" as props;
 import "./vocabulary" as vocab;
@@ -911,6 +912,7 @@ fn table(
 }
 
 fn tabs(
+    take b: Builder = Builder::new(),
     key: str = "",
     bar_background: vocab::Brush = vocab::Brush::none(),
     bar_background_color: vocab::Color = vocab::Color::clear(),
@@ -922,7 +924,7 @@ fn tabs(
     on_tab_changed_ctx: *u8 = 0 as *u8,
     bar_placement: vocab::BarPlacement = vocab::BarPlacement::Default,
 ) -> core::Node {
-    return m_tabs::tabs(
+    var n: core::Node = m_tabs::tabs(
         key: key,
         bar_background: bar_background,
         bar_background_color: bar_background_color,
@@ -934,6 +936,14 @@ fn tabs(
         on_tab_changed_ctx: on_tab_changed_ctx,
         bar_placement: bar_placement,
     );
+    var held: core::Node = core::container(b);
+    while held.child_count() > (0 as usize) {
+        match held.remove_child(0 as usize) {
+            option::Option[core::Node]::Some(c) => { let _a: status::Status = n.add_child(c); }
+            option::Option[core::Node]::None => { return n; }
+        }
+    }
+    return n;
 }
 
 fn checkbox(

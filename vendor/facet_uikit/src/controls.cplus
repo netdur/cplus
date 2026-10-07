@@ -2808,7 +2808,7 @@ fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
             core::ensure_padding_edge(n, flex::Edge::Bottom, 0.0f64);
         }
     }
-    if all || (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) {
+    if all || (dirty & (tabs::P_SELECTED_INDEX | tabs::P_TAB_ITEMS)) != (0 as u64) {
         rebuild_tab_items(v, n, p);
     }
     if all || (dirty & (tabs::P_BAR_BACKGROUND_COLOR | tabs::P_BAR_BACKGROUND)) != (0 as u64) {
@@ -2846,8 +2846,19 @@ fn rebuild_tab_items(v: *u8, n: *core::Node, p: *props::TabsProps) {
             option::Option[*core::Node]::Some(c) => {
                 var title: text::Text = text::from_str({ (*c).key() });
                 if title.count() == (0 as usize) { title = "${i +% (1 as usize)}"; }
+                // The pane's icon (MAUI's Page.IconImageSource): the bundled
+                // glyph at the system tab bar's 25pt, a TEMPLATE so the bar
+                // tints it selected and not.
+                var image: ui::Image = ui::Image::from_raw(0 as *u8);
+                let sym: u32 = core::tab_symbol(c);
+                if sym != 0u32 {
+                    match bundled_glyph_image(sym, 25.0f64) {
+                        option::Option[ui::Image]::Some(img) => { image = img; }
+                        option::Option[ui::Image]::None => { }
+                    }
+                }
                 let item: ui::TabBarItem = ui::TabBarItem::new_with_title_image_tag(
-                    title.view(), ui::Image::from_raw(0 as *u8), i as i64);
+                    title.view(), image, i as i64);
                 let _a: status::Status = items.append(item);
             }
             option::Option[*core::Node]::None => { }
@@ -2882,6 +2893,7 @@ fn show_selected_pane(n: *core::Node, at: i64) {
                     _ => true,
                 };
                 if want && !showing { core::set_display(c, flex::Display::Flex); }
+                if want { core::fill_tab_pane(c); }
                 if !want && showing { core::set_display(c, flex::Display::None); }
             }
             option::Option[*core::Node]::None => { }

@@ -1796,6 +1796,54 @@ fn a_tab_pane_is_an_ordinary_subview_and_gains_a_tab_for_it() {
 }
 
 #[test]
+fn the_showing_tab_pane_fills_the_box_beside_the_strip() {
+    // MAUI's TabbedPage gives its page the whole area; a pane laid out at its
+    // content height left the rest bare (iPhone simulator, 2026-10-07).
+    backend::install();
+    var t: core::Node = tabs::tabs(key: "tabs:f");
+    var pane: core::Node = core::column(core::Builder::new(), key: "Only");
+    t.add_child(pane);
+    let p: *core::Node = #addr_of(t);
+    let host: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, host, views::view_release);
+    controls::apply_tabs(host, p, tabs::P_SELECTED_INDEX);
+    t.calculate_layout(width: 300.0f64, height: 400.0f64);
+    match t.child_frame(0 as usize) {
+        option::Option[flex::Frame]::Some(f) => { assert f.height == 400.0f64 - controls::strip_height(); }
+        option::Option[flex::Frame]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_panes_tab_symbol_is_its_tab_buttons_image() {
+    // MAUI's Page.IconImageSource: the icon lives on the pane.
+    backend::install();
+    var t: core::Node = tabs::tabs(key: "tabs:i");
+    var with_icon: core::Node = core::column(core::Builder::new(), key: "Home");
+    with_icon.set_tab_symbol(icons::home);
+    t.add_child(with_icon);
+    t.add_child(core::column(core::Builder::new(), key: "Plain"));
+    let p: *core::Node = #addr_of(t);
+    let host: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, host, views::view_release);
+    controls::rebuild_tabs(host, p);
+    let buttons: vec::Vec[ak::View] = ak::View::from_raw(controls::tab_strip_of(host)).subviews();
+    assert buttons.count() == (2 as usize);
+    var img0: *u8 = 0 as *u8;
+    var img1: *u8 = 1 as *u8;
+    match buttons.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(b) => { img0 = { rt::msg_id({ (*b).raw() }, rt::sel(#str_ptr("image\0"))) }; }
+        option::Option[*ak::View]::None => { }
+    }
+    match buttons.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(b) => { img1 = { rt::msg_id({ (*b).raw() }, rt::sel(#str_ptr("image\0"))) }; }
+        option::Option[*ak::View]::None => { }
+    }
+    assert img0.is_not_null();
+    assert img1.is_null();
+}
+
+#[test]
 fn a_tab_strip_sits_in_the_padding_of_the_edge_bar_placement_names() {
     // MAUI's AndroidSpecific ToolbarPlacement, made every platform's
     // (reports/spendwise/S11). Default is the desktop convention, the top.

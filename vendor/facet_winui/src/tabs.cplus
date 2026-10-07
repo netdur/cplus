@@ -23,7 +23,7 @@ fn control(r: *record::View) -> ui::ITabView {return native::must::[ui::ITabView
 fn entries(r: *record::View) -> ui::IVector_Object {return native::must::[ui::IVector_Object](ui::IVector_Object::query(native::must::[rt::Object](control(r).tab_items())));}
 fn prepare(r: *record::View) {
     let s=state(r);let p: *props::TabsProps=(*core::node_data((*r).node)).props as *props::TabsProps;var i: usize=0;
-    while i<(*s).panes.count() {match (*s).panes.at_ptr(i) {option::Option::Some(pane)=>{(*(*pane).node).set_display(if i as i64==(*p).selected_index {(*pane).display} else {flex::Display::None});},option::Option::None=>{}}i=i+1;}
+    while i<(*s).panes.count() {match (*s).panes.at_ptr(i) {option::Option::Some(pane)=>{(*(*pane).node).set_display(if i as i64==(*p).selected_index {(*pane).display} else {flex::Display::None});if i as i64==(*p).selected_index {core::fill_tab_pane((*pane).node);}},option::Option::None=>{}}i=i+1;}
 }
 fn sync_selection(r: *record::View) {
     let index=(*((*core::node_data((*r).node)).props as *props::TabsProps)).selected_index;
@@ -68,7 +68,10 @@ fn item_background(value: rt::Object,p: *props::TabsProps) {
     else {let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());typography::clear(value,native::must::[rt::Object](defaults.background_property()));}
 }
 fn apply(r: *record::View) {
-    pad(r);(*r).applying=true;let s=state(r);let d=core::node_data((*r).node);let p: *props::TabsProps=(*d).props as *props::TabsProps;
+    pad(r);
+    let items_changed: bool=(core::dirty_of((*r).node)&tabs::P_TAB_ITEMS)!=(0 as u64);
+    if items_changed {refresh_headers(r);}
+    (*r).applying=true;let s=state(r);let d=core::node_data((*r).node);let p: *props::TabsProps=(*d).props as *props::TabsProps;
     let bar=native::must::[ui::IControl](ui::IControl::query((*s).strip));native::check(bar.set_is_enabled((*d).common.is_enabled));
     if (*p).bar_background.start.is_set() || (*p).bar_background_color.is_set() {native::check(bar.set_background(style::paint(if (*p).bar_background.start.is_set() {(*p).bar_background} else {vocab::Brush::solid((*p).bar_background_color)})));}
     else {let defaults=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());typography::clear((*s).strip,native::must::[rt::Object](defaults.background_property()));}
@@ -80,7 +83,7 @@ fn apply(r: *record::View) {
             // realization. The Facet pane and its retained state stay mounted.
             let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*pane).item));let old_focus=native::must::[i32](visual.focus_state());
             if old_focus!=ui::focus_state_unfocused {focus_index=i as i64;focus_state=old_focus;}
-            let replacement=native::must::[ui::TabViewItem](ui::TabViewItem::new());native::check(replacement.set_is_closable(false));native::check(replacement.set_header(colors::key((*(*pane).node).key())));
+            let replacement=native::must::[ui::TabViewItem](ui::TabViewItem::new());native::check(replacement.set_is_closable(false));native::check(replacement.set_header(header((*pane).node)));
             let styled=item_palette(replacement.object(),p);item_background(replacement.object(),p);
             native::check(entries(r).set_at(i as u32,replacement.object()));(*pane).item=replacement.object();
         } else {item_background((*pane).item,p);}
@@ -89,8 +92,26 @@ fn apply(r: *record::View) {
     if focus_index>=0 {let value=native::must::[rt::Object](entries(r).get_at(focus_index as u32));let visual=native::must::[ui::IUIElement](ui::IUIElement::query(value));let focused=native::must::[bool](visual.focus(focus_state));}
     (*r).applying=false;
 }
+// A TAB'S HEADER: its title (the pane's key), and the pane's icon before it
+// when it carries one — MAUI's Page.IconImageSource. A FontIcon from the bundled
+// font, in a horizontal panel, so the header's Foreground tints both.
+fn header(node: *core::Node) -> rt::Object {
+    let sym: u32=core::tab_symbol(node);
+    if sym==0u32 {return colors::key((*node).key());}
+    let panel=native::must::[ui::StackPanel](ui::StackPanel::new());let stack=native::must::[ui::IStackPanel](ui::IStackPanel::query(panel.object()));native::check(stack.set_orientation(ui::orientation_horizontal));native::check(stack.set_spacing(8.0f64));
+    let icon=native::must::[ui::FontIcon](ui::FontIcon::new());let font=native::must::[ui::IFontIcon](ui::IFontIcon::query(icon.object()));native::check(font.set_glyph(typography::glyph(sym).view()));native::check(font.set_font_family(typography::font("ms-appx:///MaterialSymbolsOutlined.ttf#Material Symbols Outlined")));native::check(font.set_font_size(16.0f64));
+    let label=native::must::[ui::TextBlock](ui::TextBlock::new());let text=native::must::[ui::ITextBlock](ui::ITextBlock::query(label.object()));native::check(text.set_text((*node).key()));
+    let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](native::must::[ui::IPanel](ui::IPanel::query(panel.object())).children())));native::check(children.append(icon.object()));native::check(children.append(label.object()));
+    return panel.object();
+}
+// A pane's icon changed (tabs::Tabs::set_tab_symbol): every header is re-made.
+fn refresh_headers(r: *record::View) {
+    let s=state(r);var i: usize=0;while i<(*s).panes.count() {match (*s).panes.at_ptr(i) {option::Option::Some(pane)=>{
+        let item=native::must::[ui::ITabViewItem](ui::ITabViewItem::query((*pane).item));native::check(item.set_header(header((*pane).node)));
+    },option::Option::None=>{}}i=i+1;}
+}
 fn insert(r: *record::View,child: *record::View,index: usize) {
-    (*r).applying=true;let item=native::must::[ui::TabViewItem](ui::TabViewItem::new());native::check(item.set_is_closable(false));native::check(item.set_header(colors::key((*(*child).node).key())));
+    (*r).applying=true;let item=native::must::[ui::TabViewItem](ui::TabViewItem::new());native::check(item.set_is_closable(false));native::check(item.set_header(header((*child).node)));
     assert (*state(r)).panes.insert(Pane {node:(*child).node,display:core::display_of((*child).node),item:item.object()},index).is_ok();native::check(entries(r).insert_at(index as u32,item.object()));apply(r);
 }
 fn remove(r: *record::View,child: *record::View) {

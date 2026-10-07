@@ -4155,6 +4155,57 @@ fn tabs_carry_a_bar_placement_and_report_its_change() {
     }
 }
 
+// SPENDWISE S11, the follow-up: MAUI's TabbedPage with its pages written
+// inside it, each carrying its own icon (Page.IconImageSource).
+#[test]
+fn dsl_tabs_take_their_panes_as_a_block_with_icons_on_the_panes() {
+    var root: facet::Node = @ui {
+        tabs(key: "nav", bar_placement: vocab::BarPlacement::Bottom) {
+            column(key: "Dashboard") { label("d") }
+                .set_tab_symbol(icons::home)
+            column(key: "Income") { label("i") }
+                .set_tab_symbol(icons::payments)
+            column(key: "Goals") { label("g") }
+        }
+    };
+    assert root.key() == "nav";
+    assert root.child_count() == (3 as usize);
+    match facet::child_of(#addr_of(root), 1 as usize) {
+        option::Option[*facet::Node]::Some(c) => {
+            assert { (*c).key() } == "Income";
+            assert facet::tab_symbol(c) == icons::payments;
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    match tabs::find("nav", within: #addr_of(root)) {
+        option::Option[tabs::Tabs]::Some(t) => {
+            assert t.tab_symbol(0 as usize) == icons::home;
+            assert t.tab_symbol(2 as usize) == 0u32;
+            facet::clear_dirty(#addr_of(root));
+            let _t: tabs::Tabs = t.set_tab_symbol(2 as usize, icons::flag);
+            assert t.tab_symbol(2 as usize) == icons::flag;
+            // A live change raises the tabs' own bit, so its bar rebuilds.
+            assert (facet::dirty_of(#addr_of(root)) & tabs::P_TAB_ITEMS) != (0 as u64);
+            // Past the end: nothing written, nothing raised.
+            facet::clear_dirty(#addr_of(root));
+            let _u: tabs::Tabs = t.set_tab_symbol(9 as usize, icons::flag);
+            assert facet::dirty_of(#addr_of(root)) == (0 as u64);
+        }
+        option::Option[tabs::Tabs]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_tab_pane_fills_unless_it_said_otherwise() {
+    var plain: facet::Node = facet::column(facet::Builder::new(), key: "a");
+    facet::fill_tab_pane(#addr_of(plain));
+    assert plain.style.flex_grow == 1.0f64;
+    // An app that stated a grow keeps it.
+    var stated: facet::Node = facet::column(facet::Builder::new(), key: "b").grow(2.0f64);
+    facet::fill_tab_pane(#addr_of(stated));
+    assert stated.style.flex_grow == 2.0f64;
+}
+
 #[test]
 fn ensure_padding_edge_writes_only_a_change() {
     var n: facet::Node = facet::column(facet::Builder::new(), key: "p");

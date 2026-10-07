@@ -391,10 +391,22 @@ shows and `on_tab_changed` reports the user picking another; the five `bar_*` /
 Glass on iOS 26), the TOP elsewhere — and `Top` / `Bottom` override it. A bottom
 bar on a phone reaches the screen edge under the home indicator.
 
+The panes are written INSIDE the block, each carrying its own icon —
+MAUI's `Page.IconImageSource` — as a leading-dot line. The showing pane fills
+the tabs' box unless it states a grow of its own.
+
 ```cplus
-var t: core::Node = ui::tabs(key: "nav", on_tab_changed: this.on_tab,
-                             bar_placement: vocab::BarPlacement::Bottom);
+tabs(key: "nav", on_tab_changed: this.on_tab, bar_placement: vocab::BarPlacement::Bottom) {
+    column(key: "Dashboard") { … }
+        .set_tab_symbol(icons::home)
+    column(key: "Income") { … }
+        .set_tab_symbol(icons::payments)
+}
 ```
+
+Once mounted, change an icon through the cursor —
+`tabs::find("nav").set_tab_symbol(at: 1, symbol: icons::savings)` — because a
+pane cannot reach its tabs to say it changed.
 
 ## facet/screen
 

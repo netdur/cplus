@@ -3756,6 +3756,19 @@ fn rebuild_tabs(v: *u8, n: *core::Node) {
                 b.set_button_type(ak::ButtonType::MomentaryChange);
                 b.set_bordered(false);
                 b.set_title({ (*c).key() });
+                // The pane's icon (MAUI's Page.IconImageSource), leading the
+                // title — the bundled glyph at the strip's text size, a
+                // template so the strip's colours tint it.
+                let sym: u32 = core::tab_symbol(c);
+                if sym != 0u32 {
+                    match bundled_glyph_image(sym, 14.0f64) {
+                        option::Option[ak::Image]::Some(img) => {
+                            b.set_image(img);
+                            b.set_image_position(ak::CellImagePosition::NSImageLeading);
+                        }
+                        option::Option[ak::Image]::None => { }
+                    }
+                }
                 let bv: ak::View = b.as_view();
                 bv.set_frame(rt::Rect { x: x, y: 0.0f64, w: each, h: strip_height() });
                 // One-based, so 0 can mean "no index": the slot is a pointer.
@@ -3792,7 +3805,7 @@ fn show_selected_pane(n: *core::Node, at: i64) {
     while i < count {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
-                if (i as i64) == at { { (*c).set_display(flex::Display::Flex) }; }
+                if (i as i64) == at { { (*c).set_display(flex::Display::Flex) }; core::fill_tab_pane(c); }
                 else { { (*c).set_display(flex::Display::None) }; }
             }
             option::Option[*core::Node]::None => { }
@@ -3873,6 +3886,9 @@ fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) {
         show_selected_pane(n, { (*p).selected_index });
     }
+    // A pane's icon changed through the cursor: the strip is rebuilt, as it is
+    // when a pane arrives.
+    if (dirty & tabs::P_TAB_ITEMS) != (0 as u64) { rebuild_tabs(v, n); }
     let colours: u64 = tabs::P_BAR_BACKGROUND | tabs::P_BAR_BACKGROUND_COLOR
         | tabs::P_BAR_TEXT_COLOR | tabs::P_SELECTED_TAB_COLOR
         | tabs::P_UNSELECTED_TAB_COLOR | tabs::P_SELECTED_INDEX;

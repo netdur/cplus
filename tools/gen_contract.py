@@ -3190,7 +3190,7 @@ def emit_control(row_type, merged):
             + (["COUNT", "ROW", "GROUP_COUNT", "GROUP", "SELECTED_INDEX", "REORDER",
                 "INVALIDATE_ROW", "SPLICE_ROWS"]
                if mod in ROW_SOURCE else [])
-            + (["SELECTED_INDEX", "BAR_PLACEMENT"] if mod in TAB_SOURCE else [])
+            + (["SELECTED_INDEX", "BAR_PLACEMENT", "TAB_ITEMS"] if mod in TAB_SOURCE else [])
             + (["LABEL", "ITEM_ENABLED"] if mod in PICKER_LABEL else [])
             + (["STYLE_RUNS"] if mod in EDITOR_TIER else [])
             + (["TOGGLES", "ON", "BORDERED", "SYMBOL"] if mod in BUTTONS else [])
@@ -3446,6 +3446,21 @@ def emit_control(row_type, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return vocab::BarPlacement::Default; }}\n")
         o.append("        return { (*p).bar_placement };\n    }\n")
+        o.append("\n    // A TAB'S ICON lives on its pane (MAUI's Page.IconImageSource); this is\n")
+        o.append("    // the live door to it, because a pane cannot reach its tabs to say it\n")
+        o.append("    // changed. At build time say `.set_tab_symbol(icons::x)` on the pane.\n")
+        o.append(f"    fn set_tab_symbol(this, at: usize, symbol: u32) -> {cur} {{\n")
+        o.append("        match core::child_of(this._p, at) {\n")
+        o.append("            option::Option[*core::Node]::Some(c) => { core::set_tab_symbol(c, symbol); }\n")
+        o.append("            option::Option[*core::Node]::None => { return this; }\n")
+        o.append("        }\n")
+        o.append("        core::touch(this._p, P_TAB_ITEMS);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    fn tab_symbol(this, at: usize) -> u32 {\n")
+        o.append("        return match core::child_of(this._p, at) {\n")
+        o.append("            option::Option[*core::Node]::Some(c) => core::tab_symbol(c),\n")
+        o.append("            option::Option[*core::Node]::None => 0u32,\n")
+        o.append("        };\n    }\n")
 
     # ---- facet's own: styling the text that is already there, and the caret
     if mod in EDITOR_TIER:
@@ -4198,6 +4213,9 @@ CONTAINER_FORWARDS = ["container", "column", "row", "hstack", "vstack",
 # Controls whose `@ui` element takes an OPTIONAL content block, attached
 # through the cursor's `set_content` — see emit_elements.
 BLOCK_CONTROLS = ("scroll",)
+# Controls whose block's items become CHILDREN — `tabs { pane… }`, MAUI's
+# TabbedPage with its pages written inside it.
+CHILD_BLOCK_CONTROLS = ("tabs",)
 
 FACET_ORIGIN_FORWARDS = """\
 // ---- facet-origin controls (hand-written modules; forwards mirrored here,
@@ -4351,6 +4369,7 @@ def emit_elements(rows_by_control):
          'import "flex_layout/flex_layout" as flex;\n',
          'import "stdlib/text" as text;\n',
          'import "stdlib/option" as option;\n',
+         'import "stdlib/status" as status;\n',
          'import "./facet" as core;\n',
          'import "./props" as props;\n',
          'import "./vocabulary" as vocab;\n',
@@ -4413,7 +4432,7 @@ def emit_elements(rows_by_control):
         # that also keeps a horizontal scroll's content unstretched, and is
         # finished by `finish_for_slot` — several items need a BACKED holder
         # to carry the slot's name.
-        takes_block = mod in BLOCK_CONTROLS
+        takes_block = mod in BLOCK_CONTROLS or mod in CHILD_BLOCK_CONTROLS
         if takes_block:
             assert all(d is not None for _n, _t, d in params), \
                 f"{mod}: a defaulted Builder needs every later parameter defaulted (E1007)"
@@ -4434,7 +4453,16 @@ def emit_elements(rows_by_control):
             fwd.append(f"        {arg}" if (i == 0 and dflt is None)
                        else f"        {arg}: {arg}")
         o.append(",\n".join(fwd) + ",\n    );\n")
-        if takes_block:
+        if mod in CHILD_BLOCK_CONTROLS:
+            # Each item of the block is a PANE: moved out of the builder's
+            # holder, in order, onto the node itself.
+            o.append("    var held: core::Node = core::container(b);\n")
+            o.append("    while held.child_count() > (0 as usize) {\n")
+            o.append("        match held.remove_child(0 as usize) {\n")
+            o.append("            option::Option[core::Node]::Some(c) => { let _a: status::Status = n.add_child(c); }\n")
+            o.append("            option::Option[core::Node]::None => { return n; }\n")
+            o.append("        }\n    }\n    return n;\n")
+        elif takes_block:
             cur = "".join(w.capitalize() for w in mod.split("_"))
             o.append("    if !b.is_empty() {\n")
             o.append(f"        if let option::Option::Some(c) = m_{mod}::from(#addr_of(n)) {{\n")
@@ -4500,7 +4528,9 @@ def emit_manifest(rows_by_control):
             o.append("| `on_tab_changed` | callback + ctx | **facet's own** |\n")
             o.append("| `set_bar_placement` / `bar_placement()` | BarPlacement "
                      "| AndroidSpecific.TabbedPage.ToolbarPlacement |\n")
-            total += 3
+            o.append("| `set_tab_symbol(at:)` / `tab_symbol(at:)` | u32 (`facet/icons`), on the pane "
+                     "| Page.IconImageSource |\n")
+            total += 4
         if mod in ROW_SOURCE:
             o.append("| `set_count` / `count()` | usize | **facet's own** |\n")
             o.append("| `set_row(_:ctx:)` / `build_row(at:)` | fn(usize, *u8) -> Node "
@@ -4971,7 +5001,7 @@ def check(rows_by_control, by_type):
                 if k and (k[0] == "owned" or k[0] == "command"
                           or (k[0] == "prop" and band == "writes")))
         n += 7 if MODULE[row_type] in ROW_SOURCE else 0
-        n += 2 if MODULE[row_type] in TAB_SOURCE else 0
+        n += 3 if MODULE[row_type] in TAB_SOURCE else 0
         if n > 48:
             problems.append(f"{MODULE[row_type]}: {n} dirty bits, and props::C_* owns "
                             "bits 48 and up.")

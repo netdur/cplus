@@ -53,6 +53,11 @@ struct Data {
     // outliving the bytes it views is a use-after-free the checker cannot see
     // through the raw-pointer store that writes it.
     slot: text::Text,
+    // A bundled glyph (`facet/icons`) for the TAB this node is, when it is a
+    // pane of a `tabs`; 0 = none. MAUI keeps a tab's icon on the CHILD page
+    // (`Page.IconImageSource`), not on the TabbedPage, and so does facet — the
+    // same shape as `slot` above, a parent's annotation carried by the child.
+    tab_symbol: u32,
     kind: u32,              // which control — the tag the cast is checked against
     opaque props: *u8,      // owned *<Control>Props
     release: fn(*u8),       // frees `props` with the right type
@@ -253,7 +258,7 @@ fn ensure_data(n: *Node) -> *Data {
     if n.is_null() { return 0 as *Data; }
     let d: *Data = { (*n).data() };
     if d.is_not_null() { return d; }
-    let fresh: Data = Data { key: text::new(), slot: text::new(), kind: K_NODE, props: 0 as *u8,
+    let fresh: Data = Data { key: text::new(), slot: text::new(), tab_symbol: 0u32, kind: K_NODE, props: 0 as *u8,
                              release: no_release, common: props::CommonProps::new(),
                              view: 0 as *u8, view_release: no_release,
                              view_adopted: false,
@@ -280,7 +285,7 @@ fn ensure_data(n: *Node) -> *Data {
 // Build a node carrying `props` under `key`. The one place Data is created.
 fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
     var n: Node = flex::Node::new();
-    let d: Data = Data { key: text::from_str(key), slot: text::new(), kind: kind, props: props_ptr,
+    let d: Data = Data { key: text::from_str(key), slot: text::new(), tab_symbol: 0u32, kind: kind, props: props_ptr,
                          release: release, common: props::CommonProps::new(),
                          view: 0 as *u8, view_release: no_release,
                          view_adopted: false,
@@ -2370,6 +2375,8 @@ impl flex::Node {
     fn set_background_image(ref this, v: str) { set_background_image(#addr_of(this), v); return; }
     fn background_image(this) -> str { return background_image(#addr_of(this)); }
     fn set_safe_area(ref this, v: vocab::SafeArea) { set_safe_area(#addr_of(this), v); return; }
+    fn set_tab_symbol(ref this, symbol: u32) { set_tab_symbol(#addr_of(this), symbol); return; }
+    fn tab_symbol(this) -> u32 { return tab_symbol(#addr_of(this)); }
     fn safe_area(this) -> vocab::SafeArea { return safe_area(#addr_of(this)); }
     fn set_shadow(ref this, v: vocab::Shadow) { set_shadow(#addr_of(this), v); return; }
     fn shadow(this) -> vocab::Shadow { return shadow(#addr_of(this)); }
@@ -2522,6 +2529,35 @@ impl flex::Node {
 
 // A slot is recorded on the CHILD, in its own field, not by overwriting the
 // key: the application named that node and must keep being able to find it.
+// The glyph this node shows as a TAB (`Data.tab_symbol`). Written at build
+// time by the leading-dot line `.set_tab_symbol(icons::home)`; once the tabs
+// node is mounted, `tabs::Tabs::set_tab_symbol(at:)` is the door, because a
+// child cannot reach its parent to say it changed.
+fn set_tab_symbol(n: *Node, symbol: u32) {
+    let d: *Data = ensure_data(n);
+    if d.is_null() { return; }
+    { (*d).tab_symbol = symbol };
+}
+
+fn tab_symbol(n: *Node) -> u32 {
+    let d: *Data = node_data(n);
+    if d.is_null() { return 0u32; }
+    return { (*d).tab_symbol };
+}
+
+// A TAB'S PANE FILLS THE TABS. MAUI's TabbedPage gives its page the whole
+// area beside the bar, and a pane is facet's page — but a pane is an ordinary
+// node in a column, so without this it was laid out at its CONTENT height and
+// the rest of the box was bare (seen on an iPhone simulator, 2026-10-07). Each
+// backend calls this for the pane it shows. It fills a SILENCE: a pane whose
+// grow is still the untouched zero grows; one the app gave a grow keeps it.
+fn fill_tab_pane(c: *Node) {
+    if c.is_null() { return; }
+    if { (*c).style.flex_grow } != 0.0f64 { return; }
+    set_grow(c, 1.0f64);
+    set_shrink(c, 1.0f64);
+}
+
 fn slot_of(n: *Node) -> str {
     let d: *Data = node_data(n);
     if d.is_null() { return ""; }

@@ -1085,7 +1085,9 @@ fn a_sidebar_pane_is_backed_by_glass_once_and_gives_it_back() -> bool {
 fn tabs_probe(placement: vocab::BarPlacement) -> core::Node {
     var n: core::Node = ui::tabs(key: "tb:probe", selected_index: 0 as i64,
                                  on_tab_changed: note_tab, bar_placement: placement);
-    let _a: status::Status = n.add_child(ui::column(core::Builder::new(), key: "Dashboard"));
+    var dash: core::Node = ui::column(core::Builder::new(), key: "Dashboard");
+    dash.set_tab_symbol(icons::home);
+    let _a: status::Status = n.add_child(dash);
     let _b: status::Status = n.add_child(ui::column(core::Builder::new(), key: "Income"));
     let _c: status::Status = n.add_child(ui::column(core::Builder::new(), key: "Goals"));
     return n;
@@ -1121,6 +1123,11 @@ fn tabs_is_a_tab_bar_with_one_item_per_pane_and_shows_one() -> bool {
         let second: *u8 = { rt::msg_id_i64(items, rt::sel(#str_ptr("objectAtIndex:\0")), 1 as i64) };
         let t: *u8 = { rt::msg_id(second, rt::sel(#str_ptr("title\0"))) };
         ok_title = bridge::to_text(t).view() == "Income";
+        // The pane's icon reaches its item; a pane without one has none.
+        let first: *u8 = { rt::msg_id_i64(items, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as i64) };
+        let img0: *u8 = { rt::msg_id(first, rt::sel(#str_ptr("image\0"))) };
+        let img1: *u8 = { rt::msg_id(second, rt::sel(#str_ptr("image\0"))) };
+        ok_title = ok_title && img0 != (0 as *u8) && img1 == (0 as *u8);
     }
     let ok_panes: bool = pane_shown(p, 0 as usize) && !pane_shown(p, 1 as usize) && !pane_shown(p, 2 as usize);
     views::view_release(v);
