@@ -9,6 +9,7 @@ import "./auth" as auth;
 import "./events" as events;
 import "./surface" as surface;
 import "./inspect" as inspect;
+import "./backend" as backend;
 
 // Convenience constructor re-export; also keeps `identity` in the module graph.
 fn new_registry() -> identity::Registry {

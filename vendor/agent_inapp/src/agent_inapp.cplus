@@ -88,8 +88,10 @@ impl Session {
     // one view that reports what the platform actually did rather than what
     // the framework believes; it is not for a model's prompt.
     fn describe_ui(this, full: bool = false) -> vec::Vec[backend::UiNode] {
-        if full { return (this.vt.describe)(this.surf, this.grant); }
-        return (this.vt.describe_exposed)(this.surf, this.grant);
+        var nodes: vec::Vec[backend::UiNode] = if full { (this.vt.describe)(this.surf, this.grant) }
+                                               else { (this.vt.describe_exposed)(this.surf, this.grant) };
+        backend::inherit_hidden(nodes);
+        return nodes;
     }
 
     fn click(this, id: str) -> surface::Outcome {

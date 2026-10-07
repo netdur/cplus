@@ -101,6 +101,39 @@ struct UiNode {
     parent: option::Option[usize],
 }
 
+// A NODE IS HIDDEN IF IT OR ANY ANCESTOR IS (spendwise S16). Each backend reads
+// `is_hidden` off its own node or view, and a hidden ancestor does not make a
+// descendant's own flag true: the screens inside an unselected tab's slot read
+// visible while only the slot read hidden, so describe_ui told an agent that
+// every tab's content was on screen at once. One pass here, after the walk,
+// for every backend. Parents precede children in the array (`parent` is an
+// index into it), so one forward pass carries the flag all the way down.
+fn inherit_hidden(ref nodes: vec::Vec[UiNode]) {
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        var parent_hidden: bool = false;
+        match nodes.at_ptr(i) {
+            option::Option[*UiNode]::Some(n) => {
+                match { (*n).parent } {
+                    option::Option[usize]::Some(pi) => {
+                        if pi < i {
+                            match nodes.at_ptr(pi) {
+                                option::Option[*UiNode]::Some(pn) => { parent_hidden = { (*pn).is_hidden }; }
+                                option::Option[*UiNode]::None => { }
+                            }
+                        }
+                    }
+                    option::Option[usize]::None => { }
+                }
+                if parent_hidden { { (*n).is_hidden = true }; }
+            }
+            option::Option[*UiNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
 // The backend vtable. Every fn takes the type-erased surface pointer as its
 // first argument (the implementor casts `*u8` back to its `Surface`) and the
 // caller's `auth::Grant` as its second.
@@ -212,4 +245,40 @@ struct Backend {
     // Optional version reader for optimistic text edits. None means no version
     // is available (including a refused read); consumers must not invent zero.
     text_version: fn(*u8, auth::Grant, str) -> option::Option[u64],
+}
+
+fn probe_node(id: str, hidden: bool, parent: option::Option[usize]) -> UiNode {
+    return UiNode {
+        id: text::from_str(id), role: identity::Role::Group, class_name: text::new(),
+        frame: Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        is_hidden: hidden, text: text::new(), name: text::new(), description: text::new(),
+        actionable: false, clickable: false, wired: option::Option[bool]::None,
+        tier: 0u32, readable: true, parent: parent,
+    };
+}
+
+fn hidden_at(nodes: vec::Vec[UiNode], i: usize) -> bool {
+    return match nodes.at_ptr(i) {
+        option::Option[*UiNode]::Some(n) => { (*n).is_hidden },
+        option::Option[*UiNode]::None => false,
+    };
+}
+
+// spendwise S16: an unselected tab's slot is hidden, and so is everything in it.
+#[test]
+fn a_hidden_ancestor_hides_every_descendant_and_no_sibling() {
+    var v: vec::Vec[UiNode] = vec::new::[UiNode]();
+    let _a = v.append(probe_node("tabs", false, option::Option[usize]::None));
+    let _b = v.append(probe_node("slot:dashboard", true, option::Option[usize]::Some(0 as usize)));
+    let _c = v.append(probe_node("dash:scroll", false, option::Option[usize]::Some(1 as usize)));
+    let _d = v.append(probe_node("dash:label", false, option::Option[usize]::Some(2 as usize)));
+    let _e = v.append(probe_node("slot:goals", false, option::Option[usize]::Some(0 as usize)));
+    let _f = v.append(probe_node("goals:empty", false, option::Option[usize]::Some(4 as usize)));
+    inherit_hidden(v);
+    assert !hidden_at(v, 0 as usize);
+    assert hidden_at(v, 1 as usize);
+    assert hidden_at(v, 2 as usize);
+    assert hidden_at(v, 3 as usize);
+    assert !hidden_at(v, 4 as usize);
+    assert !hidden_at(v, 5 as usize);
 }

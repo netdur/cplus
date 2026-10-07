@@ -1383,11 +1383,13 @@ fn route_verb(
         // as before.
         let prefix: text::Text = val_as_text(obj_get(params, "prefix"));
         if { mode.view() } == "full" {
-            return ok_response(id,
-                describe_to_json((vt.describe)(surf, grant), true, { prefix.view() }));
+            var all: vec::Vec[backend::UiNode] = (vt.describe)(surf, grant);
+            backend::inherit_hidden(all);
+            return ok_response(id, describe_to_json(all, true, { prefix.view() }));
         }
-        return ok_response(id,
-            describe_to_json((vt.describe_exposed)(surf, grant), false, { prefix.view() }));
+        var shown: vec::Vec[backend::UiNode] = (vt.describe_exposed)(surf, grant);
+        backend::inherit_hidden(shown);
+        return ok_response(id, describe_to_json(shown, false, { prefix.view() }));
     }
     if method == "click" {
         if !params.has("id") { return missing_param(id, "click", "id"); }

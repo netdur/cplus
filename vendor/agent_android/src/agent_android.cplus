@@ -417,6 +417,20 @@ fn row_text(n: *core::Node) -> text::Text {
 // off the tree each time, because they change without the shape changing. The
 // same split the other three backends make.
 
+// The bar cell of tab `at`: the bar runs the tabs node's width along the edge
+// it is on, one equal cell per pane — what facet_android's frame walk places.
+fn tab_cell_frame(owner: *core::Node, at: i64) -> mcpb::Rect {
+    if owner == (0 as *core::Node) { return mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 }; }
+    let f: flex::Frame = core::frame_of(owner);
+    let count: usize = core::child_count_of(owner);
+    if count == (0 as usize) { return mcpb::Rect { x: f.left, y: f.top, w: 0.0f64, h: 0.0f64 }; }
+    let h: f64 = controls::tab_bar_height(owner);
+    let w: f64 = f.width / { count as f64 };
+    var y: f64 = f.top;
+    if controls::tabs_at_bottom(owner) { y = f.top + f.height - h; }
+    return mcpb::Rect { x: f.left + { at as f64 } * w, y: y, w: w, h: h };
+}
+
 fn frame_of(n: *core::Node) -> mcpb::Rect {
     let f: flex::Frame = core::frame_of(n);
     return mcpb::Rect { x: f.left, y: f.top, w: f.width, h: f.height };
@@ -443,6 +457,35 @@ fn live_node(s: *Surface, index: usize, view: identity::NodeView) -> mcpb::UiNod
             actionable: view.actionable, clickable: false,
             wired: option::Option[bool]::None,
             tier: view.tier, readable: view.readable, parent: view.parent,
+        };
+    }
+    // A TAB PART IS ITS BAR CELL, not its pane (spendwise S17). It is
+    // registered against the pane so a click reaches the right index, and
+    // reading the pane's facts made every unselected tab `hidden` — the pane
+    // is, the button is on screen — with an empty text and the pane's frame.
+    // A part shows when its tabs node does, says its title, and sits in its
+    // cell of the bar.
+    let tab: i64 = tab_part_index(s, index);
+    if tab >= (0 as i64) {
+        let owner: *core::Node = match { (*s).reg.parent_of(index) } {
+            option::Option[usize]::Some(pi) => node_of(s, pi),
+            option::Option[usize]::None => 0 as *core::Node,
+        };
+        return mcpb::UiNode {
+            id: { view.id.clone() },
+            role: view.role,
+            class_name: class_name_of(n),
+            frame: tab_cell_frame(owner, tab),
+            is_hidden: owner == (0 as *core::Node) || core::is_hidden(owner),
+            text: if view.readable { text::from_str(core::tab_label(n)) } else { text::new() },
+            name: { view.name.clone() },
+            description: { view.description.clone() },
+            actionable: view.actionable,
+            clickable: true,
+            wired: option::Option[bool]::Some(true),
+            tier: view.tier,
+            readable: view.readable,
+            parent: view.parent,
         };
     }
     return mcpb::UiNode {
