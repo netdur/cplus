@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.cplus.glassmusic">
+    <!-- The agent surface listens on a loopback port, which needs the inet group. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="Music"
+                 android:theme="@android:style/Theme.DeviceDefault.DayNight">
+        <!-- facet_android's own Activity: it loads cplus.facet.lib and calls
+             cplus.facet.main, the export in src/main_android.cplus. -->
+        <activity android:name="cplus.facet.FacetActivity"
+                  android:exported="true"
+                  android:launchMode="singleTop"
+                  android:configChanges="orientation|screenSize|keyboardHidden">
+            <meta-data android:name="cplus.facet.lib" android:value="glass_music_ios" />
+            <meta-data android:name="cplus.facet.main" android:value="glass_music_android_main" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

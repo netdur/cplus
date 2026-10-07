@@ -10,6 +10,9 @@ entry = "src/main_ios.cplus"
 [macos]
 entry = "src/main.cplus"
 
+[android]
+entry = "src/main_android.cplus"
+
 [dependencies]
 stdlib        = "*"
 facet         = "*"
@@ -50,3 +53,17 @@ agent_core   = "*"
 agent_inapp  = "*"
 agent_mcp    = "*"
 json         = "*"
+
+# facet's Android backend and its closure. The Activity the manifest names
+# ships inside facet_android as a precompiled dex.
+[android.dependencies]
+facet_android = "*"
+android_view  = "*"
+jni           = "*"
+inspector     = "*"
+facet_agent   = "*"
+agent_android = "*"
+agent_core    = "*"
+agent_inapp   = "*"
+agent_mcp     = "*"
+json          = "*"

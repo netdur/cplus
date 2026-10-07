@@ -1,0 +1,5 @@
+import "./app" as app;
+
+export extern fn glass_music_android_main() -> i32 {
+    return app::run();
+}
