@@ -2362,7 +2362,80 @@ fn resize_split(v: *u8, n: *core::Node) {
     if p == (0 as *split::SplitProps) { return; }
     settle_split(v, n, p);
     place_divider(v, n, p);
+    apply_pane_roles(n, p);
     return;
+}
+
+// ---- pane roles: the glass a sidebar is made of ------------------------------
+//
+// `split::PaneRole::Sidebar` says a pane is the window's navigation surface,
+// and on iOS 26 that surface is LIQUID GLASS. facet_appkit has put
+// NSGlassEffectView there since 2026-09-11; this backend read the role and did
+// nothing with it, so the same source was glass on a Mac and a flat pane on an
+// iPad (reports/spendwise/S09).
+//
+// The same design as facet_appkit's `set_pane_glass`, for the same reason: the
+// backing goes INSIDE the pane, autoresized to fill it, below every subview,
+// so it adds no authority over the pane's size — flex sizes the pane and the
+// glass follows. `UIGlassEffect` is iOS 26 and is LOOKED UP, not assumed; an
+// older system keeps a plain pane rather than inventing a blur that is not
+// the system's sidebar material.
+fn glass_backing_key() -> *u8 { return 29071 as *u8; }
+
+fn glass_available() -> bool {
+    return rt::get_class(#str_ptr("UIGlassEffect\0")) != (0 as *u8);
+}
+
+// Idempotent both ways: this runs after every layout pass.
+fn set_pane_glass(pane_view: *u8, want: bool) {
+    if pane_view == (0 as *u8) { return; }
+    let have: *u8 = { synth::get_associated(pane_view, glass_backing_key()) };
+    if want && have != (0 as *u8) { return; }
+    if !want && have == (0 as *u8) { return; }
+    if !want {
+        ui::View::from_raw(have).remove_from_superview();
+        synth::set_associated(pane_view, glass_backing_key(), 0 as *u8);
+        return;
+    }
+    if !glass_available() { return; }
+    let host: ui::View = ui::View::from_raw(pane_view);
+    let glass: ui::GlassEffect = ui::GlassEffect::effect_with_style(ui::GlassEffectStyle::Regular);
+    let fx: ui::VisualEffectView = ui::VisualEffectView::new(glass.as_visual_effect());
+    let fv: ui::View = fx.as_view();
+    fv.set_frame(host.bounds());
+    fv.set_autoresizing_mask(
+        ui::view_autoresizing_flexible_width | ui::view_autoresizing_flexible_height);
+    // Concentric with the window's own corner, as on the Mac.
+    fv.layer().set_corner_radius(12.0f64);
+    fv.set_clips_to_bounds(true);
+    // BELOW every existing subview: the pane's content draws on the glass.
+    host.add_subview(fv);
+    host.send_subview_to_back(fv);
+    // The superview's retain is what keeps it; the wrapper releases its own.
+    synth::set_associated(pane_view, glass_backing_key(), fv.raw());
+}
+
+fn apply_pane_roles(n: *core::Node, p: *split::SplitProps) {
+    match core::child_of(n, 0 as usize) {
+        option::Option[*core::Node]::Some(pn) => {
+            set_pane_glass(core::view_of(pn), is_sidebar({ (*p).role_leading }));
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    match core::child_of(n, 1 as usize) {
+        option::Option[*core::Node]::Some(pn) => {
+            set_pane_glass(core::view_of(pn), is_sidebar({ (*p).role_trailing }));
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+fn is_sidebar(r: split::PaneRole) -> bool {
+    return match r {
+        split::PaneRole::Sidebar => true,
+        split::PaneRole::Content => false,
+    };
 }
 
 // ---- canvas ------------------------------------------------------------------

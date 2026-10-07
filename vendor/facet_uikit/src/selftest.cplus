@@ -1045,6 +1045,38 @@ fn a_scroll_node_reports_where_it_is_and_calls_back() -> bool {
     return ok_fired && ok_recorded;
 }
 
+// ---- pane roles ------------------------------------------------------------------
+// reports/spendwise/S09. A Sidebar pane is LIQUID GLASS on iOS 26: a
+// UIVisualEffectView carrying a UIGlassEffect, behind the pane's content. Below
+// iOS 26 there is no UIGlassEffect and the pane stays plain — which this
+// asserts too, rather than skipping.
+fn a_sidebar_pane_is_backed_by_glass_once_and_gives_it_back() -> bool {
+    let pane: uik::View = uik::View::new_with_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 600.0f64 });
+    let content: uik::View = uik::View::new_with_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
+    pane.add_subview(content);
+    if !controls::glass_available() {
+        controls::set_pane_glass(pane.raw(), true);
+        return { rt::msg_id(pane.raw(), rt::sel(#str_ptr("subviews\0"))) } != (0 as *u8)
+            && { synth::get_associated(pane.raw(), controls::glass_backing_key()) } == (0 as *u8);
+    }
+    controls::set_pane_glass(pane.raw(), true);
+    let g: *u8 = { synth::get_associated(pane.raw(), controls::glass_backing_key()) };
+    if g == (0 as *u8) { return false; }
+    // Behind the content, filling the pane.
+    let first: *u8 = { rt::msg_id_i64(rt::msg_id(pane.raw(), rt::sel(#str_ptr("subviews\0"))),
+                                       rt::sel(#str_ptr("objectAtIndex:\0")), 0 as i64) };
+    let fills: bool = uik::View::from_raw(g).frame().h == 600.0f64;
+    let is_effect: bool = synth::class_responds(synth::object_class(g),
+        rt::sel(#str_ptr("setEffect:\0"))) != (0 as i8);
+    // Idempotent: a second pass adds no second pane of glass.
+    controls::set_pane_glass(pane.raw(), true);
+    let same: bool = { synth::get_associated(pane.raw(), controls::glass_backing_key()) } == g;
+    // And a Content role takes it away.
+    controls::set_pane_glass(pane.raw(), false);
+    let gone: bool = { synth::get_associated(pane.raw(), controls::glass_backing_key()) } == (0 as *u8);
+    return first == g && fills && is_effect && same && gone;
+}
+
 // ---- the keyboard ---------------------------------------------------------------
 // A software keyboard covers the bottom of the screen and UIKit moves nothing out
 // from under it, so a tapped field stays hidden behind it. The flip itself needs
@@ -3928,6 +3960,8 @@ fn run_all() -> i32 {
           the_key_in_the_property_list_decides_which_item());
     check("a sender that is not a key command fires nothing",
           a_sender_that_is_not_a_key_command_fires_nothing());
+    check("a sidebar pane is backed by glass, once, and gives it back",
+          a_sidebar_pane_is_backed_by_glass_once_and_gives_it_back());
 
     let ran: i32 = RAN;
     let failed: i32 = FAILED;

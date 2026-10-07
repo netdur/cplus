@@ -224,6 +224,11 @@ every split was before roles existed. `role_leading` and `role_trailing` are
 separate because a window can have a navigation sidebar leading and an
 inspector trailing.
 
+A `Sidebar` pane is the system's sidebar material where the platform has one:
+Liquid Glass on macOS 26 (`NSGlassEffectView`) and on iOS/iPadOS 26
+(`UIVisualEffectView` + `UIGlassEffect`), behind the pane's content. Older
+systems keep a plain pane — the class is looked up, never assumed.
+
 A split you are already holding can be told later through its cursor —
 `s.set_role(split::Pane::Leading, split::PaneRole::Sidebar)`, with `role(pane)`
 and `has_role()` reading back — but prefer the parameters. Reaching for a

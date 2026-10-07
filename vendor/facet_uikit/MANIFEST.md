@@ -345,6 +345,13 @@ resizable pane pair, and there is no pointer to grab a hairline with.
 **Instead:** an app that wants an iPad sidebar wants the navigation tier, which
 is `screen` and `chrome`, not `split`.
 
+**A `Sidebar` pane IS glass.** `role_leading`/`role_trailing:
+PaneRole::Sidebar` puts a `UIVisualEffectView` carrying a `UIGlassEffect`
+inside the pane, autoresized to fill it and behind its content — facet_appkit's
+design, for its reason: it adds no authority over the pane's size. Applied from
+`resize_split`, after every layout pass, and idempotent both ways. iOS 26 only;
+`UIGlassEffect` is looked up, and an older system keeps a plain pane.
+
 ### A date or time picker's font
 
 `UIDatePicker` draws its own wheels and its own calendar, and the class has no
