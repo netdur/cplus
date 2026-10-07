@@ -42,6 +42,38 @@ fn all_bits() -> u64 { return props::C_ALL_STATE; }
 //
 // The order is facet_appkit's, because a role must substitute BEFORE anything
 // else looks at the token.
+// ---- a named size is Material 3's TYPE SCALE ---------------------------------
+// MAUI resolves `NamedSize` per platform (IFontNamedSizeService); Android's own
+// answer is Material 3's type scale, in sp, so a role follows the reader's
+// font-size setting — and from Android 14 along the platform's NON-LINEAR
+// curve, which an sp size gets for free and a multiplied one does not.
+//
+//     Micro labelSmall 11   Caption bodySmall 12   Small bodyMedium 14
+//     Medium titleMedium 16  Body bodyLarge 16      Subtitle titleLarge 22
+//     Large headlineSmall 24  Title headlineMedium 28  Header displaySmall 36
+fn named_sp(n: vocab::NamedSize) -> f64 {
+    return match n {
+        vocab::NamedSize::Default => 0.0f64,
+        vocab::NamedSize::Micro => 11.0f64,
+        vocab::NamedSize::Caption => 12.0f64,
+        vocab::NamedSize::Small => 14.0f64,
+        vocab::NamedSize::Medium => 16.0f64,
+        vocab::NamedSize::Body => 16.0f64,
+        vocab::NamedSize::Subtitle => 22.0f64,
+        vocab::NamedSize::Large => 24.0f64,
+        vocab::NamedSize::Title => 28.0f64,
+        vocab::NamedSize::Header => 36.0f64,
+    };
+}
+
+// The size a text control draws at: the stated one, else the role's, else 0 —
+// "leave the platform's default", which every reader of a size here already
+// understands. An explicit `font_size` wins over the name.
+fn sized(size: f64, named: vocab::NamedSize) -> f64 {
+    if size > 0.0f64 { return size; }
+    return named_sp(named);
+}
+
 fn argb_of(c: vocab::Color) -> i32 {
     return argb_resolved(c, 0 as i32);
 }

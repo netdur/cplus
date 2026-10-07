@@ -123,7 +123,7 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     // answer to the same question.
     let rich: u64 = label::P_TEXT | label::P_TEXT_TRANSFORM | label::P_CHARACTER_SPACING
         | label::P_LINE_HEIGHT | label::P_TEXT_DECORATION | label::P_IS_ITALIC
-        | label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
+        | label::P_FONT_SIZE | label::P_NAMED_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
         | label::P_FONT_SCALES | span::P_FONT_SCALES
         | label::P_TEXT_COLOR | label::P_TEXT_ALIGN | label::P_TEXT_FORMAT
         | label::P_FORMATTED_TEXT;
@@ -170,9 +170,9 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { f.set_text_color(paint::ns_color(c)); }
     }
-    if (dirty & (label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
+    if (dirty & (label::P_FONT_SIZE | label::P_NAMED_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
                  | label::P_IS_ITALIC | label::P_FONT_SCALES)) != (0 as u64) {
-        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                     { (*p).font_family.view() }, { (*p).is_italic },
                                     { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { f.as_control().set_font(font); }
@@ -233,7 +233,7 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // NSButton also has no plain setter for — is given an attributed title.
     let title_bits: u64 = button::P_TITLE | button::P_TEXT_TRANSFORM
         | button::P_CHARACTER_SPACING | button::P_TEXT_COLOR | button::P_IS_ITALIC
-        | button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY
+        | button::P_FONT_SIZE | button::P_NAMED_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY
         | button::P_FONT_SCALES;
     if (dirty & title_bits) != (0 as u64) {
         let shown: text::Text = paint::transformed({ (*p).title.view() }, { (*p).text_transform });
@@ -247,9 +247,9 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
             b.set_title(shown.view());
         }
     }
-    if (dirty & (button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY
+    if (dirty & (button::P_FONT_SIZE | button::P_NAMED_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY
                  | button::P_IS_ITALIC | button::P_FONT_SCALES)) != (0 as u64) {
-        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                     { (*p).font_family.view() }, { (*p).is_italic },
                                     { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
@@ -259,7 +259,7 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // The image slot holds the bundled glyph when there is one, and the image
     // source otherwise. The glyph is sized by the title's font, so a font
     // change re-draws it — which is why this runs AFTER the font is set.
-    let glyph_bits: u64 = button::P_SYMBOL | button::P_FONT_SIZE | button::P_FONT_WEIGHT
+    let glyph_bits: u64 = button::P_SYMBOL | button::P_FONT_SIZE | button::P_NAMED_SIZE | button::P_FONT_WEIGHT
         | button::P_FONT_FAMILY | button::P_IS_ITALIC | button::P_FONT_SCALES;
     let has_glyph: bool = { (*p).symbol } != 0u32;
     if (dirty & (button::P_IMAGE | button::P_SYMBOL)) != (0 as u64)
@@ -347,7 +347,7 @@ fn button_wants_rich(p: *props::ButtonProps) -> bool {
 
 fn button_attributes(p: *props::ButtonProps) -> *u8 {
     return paint::rich_attributes(
-        paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                               { (*p).font_family.view() }, { (*p).is_italic },
                               { (*p).font_scales }),
         { (*p).text_color }, { (*p).character_spacing }, 0.0f64,
@@ -862,7 +862,7 @@ fn build_value_runs(p: *props::LabelProps) -> *u8 {
 
 fn append_value_run(ms: *u8, r: *vocab::TextSpan, p: *props::LabelProps) {
     let attrs: *u8 = paint::rich_attributes(
-        paint::ns_font_styled({ (*r).font_size }, { (*r).font_weight },
+        paint::ns_font_styled(paint::sized({ (*r).font_size }, { (*r).named_size }), { (*r).font_weight },
                               { (*r).font_family.view() }, { (*r).is_italic }),
         { (*r).color }, { (*p).character_spacing }, { (*p).line_height },
         option::Option[vocab::TextAlign]::None, { (*r).decoration });
@@ -888,7 +888,7 @@ fn label_wants_rich(p: *props::LabelProps) -> bool {
 
 fn label_attributes(p: *props::LabelProps) -> *u8 {
     return paint::rich_attributes(
-        paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                               { (*p).font_family.view() }, { (*p).is_italic },
                               { (*p).font_scales }),
         { (*p).text_color }, { (*p).character_spacing }, { (*p).line_height },
@@ -1106,7 +1106,7 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     // the same rule `apply_button` follows.
     let title_bits: u64 = radio::P_TEXT | radio::P_TEXT_TRANSFORM
         | radio::P_TEXT_COLOR | radio::P_CHARACTER_SPACING
-        | radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
+        | radio::P_FONT_SIZE | radio::P_NAMED_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
         | radio::P_FONT_SCALES
         | radio::P_IS_ITALIC;
     if (dirty & title_bits) != (0 as u64) {
@@ -1121,9 +1121,9 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
             b.set_title(shown.view());
         }
     }
-    if (dirty & (radio::P_FONT_SCALES | radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
+    if (dirty & (radio::P_FONT_SCALES | radio::P_FONT_SIZE | radio::P_NAMED_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
                  | radio::P_IS_ITALIC)) != (0 as u64) {
-        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                     { (*p).font_family.view() }, { (*p).is_italic },
                                     { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
@@ -1162,7 +1162,7 @@ fn radio_wants_rich(p: *props::RadioProps) -> bool {
 
 fn radio_attributes(p: *props::RadioProps) -> *u8 {
     return paint::rich_attributes(
-        paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                               { (*p).font_family.view() }, { (*p).is_italic },
                               { (*p).font_scales }),
         { (*p).text_color }, { (*p).character_spacing }, 0.0f64,
@@ -1463,7 +1463,7 @@ fn text_button_wants_rich(p: *text_button::TextButtonProps) -> bool {
 
 fn text_button_attributes(p: *text_button::TextButtonProps) -> *u8 {
     return paint::rich_attributes(
-        paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                               { (*p).font_family.view() }, { (*p).is_italic },
                               { (*p).font_scales }),
         { (*p).text_color }, { (*p).character_spacing }, 0.0f64,
@@ -1477,7 +1477,7 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     let b: ak::Button = ak::Button::from_raw(v);
     let title_bits: u64 = text_button::P_TITLE | text_button::P_TEXT_TRANSFORM
         | text_button::P_CHARACTER_SPACING | text_button::P_TEXT_COLOR
-        | text_button::P_IS_ITALIC | text_button::P_FONT_SIZE
+        | text_button::P_IS_ITALIC | text_button::P_FONT_SIZE | text_button::P_NAMED_SIZE
         | text_button::P_FONT_WEIGHT | text_button::P_FONT_FAMILY
         | text_button::P_FONT_SCALES | text_button::P_TEXT_DECORATION
         | text_button::P_TEXT_ALIGN;
@@ -1502,10 +1502,10 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & text_button::P_TEXT_ALIGN) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_alignment(paint::ns_text_align({ (*p).text_align }));
     }
-    if (dirty & (text_button::P_FONT_SIZE | text_button::P_FONT_WEIGHT
+    if (dirty & (text_button::P_FONT_SIZE | text_button::P_NAMED_SIZE | text_button::P_FONT_WEIGHT
                  | text_button::P_FONT_FAMILY | text_button::P_IS_ITALIC
                  | text_button::P_FONT_SCALES)) != (0 as u64) || dirty == paint::all_bits() {
-        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                     { (*p).font_family.view() }, { (*p).is_italic },
                                     { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
@@ -2098,11 +2098,11 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
             // hidden as soon as there is any.
             if (dirty & (text_area::P_PLACEHOLDER | text_area::P_PLACEHOLDER_COLOR
                          | text_area::P_FONT_SCALES
-                         | text_area::P_FONT_SIZE | text_area::P_FONT_WEIGHT
+                         | text_area::P_FONT_SIZE | text_area::P_NAMED_SIZE | text_area::P_FONT_WEIGHT
                          | text_area::P_FONT_FAMILY | text_area::P_IS_ITALIC)) != (0 as u64) {
                 compose::apply_editor_placeholder(tv.raw(), { (*iv).placeholder.view() },
                     { (*iv).placeholder_color },
-                    paint::ns_font_scaled({ (*iv).font_size }, { (*iv).font_weight },
+                    paint::ns_font_scaled({ (*iv).font_size }, { (*iv).named_size }, { (*iv).font_weight },
                                           { (*iv).font_family.view() }, { (*iv).is_italic },
                                           { (*iv).font_scales }));
             }
@@ -2239,7 +2239,7 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
         // item: disabled, at the top, showing exactly while the selection is
         // empty. Which is what a prompt is on every platform that has one.
         compose::install_popup_title(b, { (*p).title.view() }, { (*p).title_color },
-                                     paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                     paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                                            { (*p).font_family.view() },
                                                            { (*p).is_italic },
                                                            { (*p).font_scales }),
@@ -2260,9 +2260,9 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
                  | popup::P_TITLE)) != (0 as u64) {
         apply_popup_label(b, { (*p).label.view() });
     }
-    if (dirty & (popup::P_FONT_SCALES | popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
+    if (dirty & (popup::P_FONT_SCALES | popup::P_FONT_SIZE | popup::P_NAMED_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
                  | popup::P_IS_ITALIC)) != (0 as u64) {
-        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                     { (*p).font_family.view() }, { (*p).is_italic },
                                     { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
@@ -2273,7 +2273,7 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     // attributed title per item — there is no `setTextColor:` on the button.
     if (dirty & (popup::P_TEXT_COLOR | popup::P_CHARACTER_SPACING | popup::P_ITEMS
                  | popup::P_IS_ITALIC | popup::P_FONT_SCALES
-                 | popup::P_FONT_SIZE | popup::P_FONT_WEIGHT
+                 | popup::P_FONT_SIZE | popup::P_NAMED_SIZE | popup::P_FONT_WEIGHT
                  | popup::P_FONT_FAMILY)) != (0 as u64) {
         style_popup_items(b, p);
     }
@@ -2359,7 +2359,7 @@ fn style_popup_items(b: ak::PopUpButton, p: *props::PopupProps) {
         match b.item_at_index(i) {
             option::Option[ak::MenuItem]::Some(item) => {
                 let attrs: *u8 = paint::rich_attributes(
-                    paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                    paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                           { (*p).font_family.view() }, { (*p).is_italic },
                                           { (*p).font_scales }),
                     c, kern, 0.0f64, option::Option[vocab::TextAlign]::None,
@@ -3471,9 +3471,9 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
         let d: *u8 = ns_date({ (*p).date });
         if d.is_not_null() { dp.set_date_value(ak::Date::from_raw(d)); }
     }
-    if (dirty & (date_picker::P_FONT_SCALES | date_picker::P_FONT_SIZE | date_picker::P_FONT_WEIGHT
+    if (dirty & (date_picker::P_FONT_SCALES | date_picker::P_FONT_SIZE | date_picker::P_NAMED_SIZE | date_picker::P_FONT_WEIGHT
                  | date_picker::P_FONT_FAMILY | date_picker::P_IS_ITALIC)) != (0 as u64) {
-        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                     { (*p).font_family.view() }, { (*p).is_italic },
                                     { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { dp.as_control().set_font(font); }
@@ -3508,7 +3508,7 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
                  | date_picker::P_FORMAT)) != (0 as u64) {
         let shown: text::Text = shown_date(dp);
         compose::apply_picker_kern(v, { (*p).character_spacing }, shown.view(),
-            paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+            paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                   { (*p).font_family.view() }, { (*p).is_italic },
                                   { (*p).font_scales }),
             { (*p).text_color });
@@ -3571,9 +3571,9 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & time_picker::P_TIME) != (0 as u64) {
         dp.set_date_value(ak::Date::from_raw(ns_time({ (*p).time })));
     }
-    if (dirty & (time_picker::P_FONT_SCALES | time_picker::P_FONT_SIZE | time_picker::P_FONT_WEIGHT
+    if (dirty & (time_picker::P_FONT_SCALES | time_picker::P_FONT_SIZE | time_picker::P_NAMED_SIZE | time_picker::P_FONT_WEIGHT
                  | time_picker::P_FONT_FAMILY | time_picker::P_IS_ITALIC)) != (0 as u64) {
-        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                     { (*p).font_family.view() }, { (*p).is_italic },
                                     { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { dp.as_control().set_font(font); }
@@ -3595,7 +3595,7 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
                  | time_picker::P_FORMAT)) != (0 as u64) {
         let shown: text::Text = shown_date(dp);
         compose::apply_picker_kern(v, { (*p).character_spacing }, shown.view(),
-            paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+            paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                                   { (*p).font_family.view() }, { (*p).is_italic },
                                   { (*p).font_scales }),
             { (*p).text_color });
@@ -4116,7 +4116,7 @@ fn append_run(ms: *u8, c: *core::Node) {
     // Every one of them comes from the shared builder, so a span's styling
     // band is the same band a label, a button and an input field get.
     let attrs: *u8 = paint::rich_attributes(
-        paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+        paint::ns_font_scaled({ (*p).font_size }, { (*p).named_size }, { (*p).font_weight },
                               { (*p).font_family.view() }, { (*p).is_italic },
                               { (*p).font_scales }),
         { (*p).text_color }, { (*p).character_spacing }, { (*p).line_height },

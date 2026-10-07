@@ -543,6 +543,16 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
     let root: *core::Node = app::window_root(window);
     let kind: u32 = core::kind_of(n);
 
+    // A text button's ROLE (S14). It is hand-written, so the generated tier
+    // that reads `named_size` on every other text control does not reach it.
+    if prop == "named_size" && kind == text_button::K_TEXT_BUTTON {
+        return match text_button::find(k, within: root) {
+            option::Option[text_button::TextButton]::Some(t) => option::Option[insp::Value]::Some(
+                insp::Value::Enum(text::from_str(generated::en_NamedSize(t.named_size())))),
+            option::Option::None => option::Option[insp::Value]::None,
+        };
+    }
+
     if is_type_face(prop) {
         if kind == props::K_LABEL {
             return match label::find(k, within: root) {
@@ -1515,6 +1525,24 @@ fn is_value_prop(prop: str) -> bool {
 
 fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> insp::Outcome {
     let kind: u32 = core::kind_of(n);
+    if prop == "named_size" && kind == text_button::K_TEXT_BUTTON {
+        if !keyed_resolves_here(n, window) { return insp::Outcome::Unsupported; }
+        let root: *core::Node = app::window_root(window);
+        let named: option::Option[vocab::NamedSize] = match generated::spelling_of(v) {
+            option::Option[text::Text]::Some(t) => generated::ev_NamedSize(t.view()),
+            option::Option[text::Text]::None => option::Option[vocab::NamedSize]::None,
+        };
+        return match named {
+            option::Option[vocab::NamedSize]::Some(e) => match text_button::find({ (*n).key() }, within: root) {
+                option::Option[text_button::TextButton]::Some(t) => {
+                    let _h: text_button::TextButton = t.set_named_size(e);
+                    insp::Outcome::Ok
+                },
+                option::Option::None => insp::Outcome::NotFound,
+            },
+            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+        };
+    }
     let known: bool = (prop == "text") || (prop == "title") || (prop == "on")
         || is_type_face(prop) || is_button_border(prop) || is_value_prop(prop)
         || is_scroll_offset(prop);

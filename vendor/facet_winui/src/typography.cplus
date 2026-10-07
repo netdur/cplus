@@ -39,6 +39,17 @@ fn alignment(value: vocab::TextAlign) -> i32 {
 fn decoration(value: vocab::TextDecoration) -> u32 {
     return match value {vocab::TextDecoration::Underline=>ui::text_decorations_underline,vocab::TextDecoration::Strikethrough=>ui::text_decorations_strikethrough,_=>ui::text_decorations_none};
 }
+// A named size is Fluent's TYPE RAMP — MAUI resolves NamedSize per platform
+// (IFontNamedSizeService), and these are the sizes of WinUI's own TextBlock
+// styles: Caption 12, Body 14, BodyLarge 18, Subtitle 20, Title 28,
+// TitleLarge 40. Micro sits below the ramp. Windows text scaling applies to
+// every size, so a role needs nothing more. An explicit font_size wins.
+fn named_size(value: vocab::NamedSize) -> f64 {
+    return match value {vocab::NamedSize::Micro=>10.0f64,vocab::NamedSize::Caption=>12.0f64,vocab::NamedSize::Small=>12.0f64,
+        vocab::NamedSize::Medium=>14.0f64,vocab::NamedSize::Body=>14.0f64,vocab::NamedSize::Subtitle=>18.0f64,
+        vocab::NamedSize::Large=>20.0f64,vocab::NamedSize::Title=>28.0f64,vocab::NamedSize::Header=>40.0f64,_=>0.0f64};
+}
+fn sized(size: f64,named: vocab::NamedSize) -> f64 {return if size>0.0f64 {size} else {named_size(named)};}
 fn spacing(value: f64,size: f64) -> i32 {return (value*1000.0f64/size) as i32;}
 fn vertical(value: vocab::TextAlign) -> i32 {
     return match value {vocab::TextAlign::Center=>ui::vertical_alignment_center,vocab::TextAlign::End=>ui::vertical_alignment_bottom,vocab::TextAlign::Justify=>ui::vertical_alignment_stretch,_=>ui::vertical_alignment_top};
@@ -66,7 +77,7 @@ fn runs(label: ui::ITextBlock, spans: vocab::Spans) {
     while i<spans.count() {
         let span: *vocab::TextSpan=spans.at(i);let run: ui::Run=native::must::[ui::Run](ui::Run::new());native::check(run.set_text((*span).text.view()));
         let element: ui::ITextElement=native::must::[ui::ITextElement](ui::ITextElement::query(run.object()));
-        if (*span).font_size>0.0f64 {native::check(element.set_font_size((*span).font_size));}
+        if sized((*span).font_size,(*span).named_size)>0.0f64 {native::check(element.set_font_size(sized((*span).font_size,(*span).named_size)));}
         native::check(element.set_font_weight(style::weight((*span).font_weight)));
         native::check(element.set_font_style(if (*span).is_italic {ui::font_style_italic} else {ui::font_style_normal}));
         if (*span).color.is_set() {native::check(element.set_foreground(style::brush((*span).color)));}

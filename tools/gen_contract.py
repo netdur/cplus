@@ -339,6 +339,15 @@ HAND_ENUMS = {
     # `bar_*` props beside it, because facet's `ToolbarPlacement` already means
     # where a toolbar ITEM goes.
     "BarPlacement": ["Default", "Top", "Bottom"],
+    # A TEXT ROLE (S14), the ledger's own members in the ledger's own order —
+    # listed by hand only so `Default` stays first; the manifest harvest sorts.
+    # MAUI resolves a name per platform (IFontNamedSizeService); facet does the
+    # same in each backend, to the platform's text style where it has one
+    # (UIFont/NSFont.TextStyle, Material 3's scale, Fluent's ramp), so a role
+    # follows the reader's Dynamic Type / font-scale setting. `Default` is
+    # "no role": the body font, exactly what an unsized label had before.
+    "NamedSize": ["Default", "Micro", "Small", "Medium", "Large", "Body",
+                  "Header", "Title", "Subtitle", "Caption"],
     "ContentLayout": ["ImageLeft", "ImageTop", "ImageRight", "ImageBottom"],
     # WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT. Not in either manifest —
     # the ledger predates agents — and authored here because the agent surface
@@ -382,7 +391,7 @@ def read_enums():
     out = {}
     # Enums whose facet shape deliberately DIVERGES from the ledger members —
     # the hand list is the contract, the manifest is only provenance.
-    hand_wins = {"FontWeight", "ToolbarPlacement"}
+    hand_wins = {"FontWeight", "ToolbarPlacement", "NamedSize"}
     for row_type, facet in ledger_map.ENUMS.items():
         # The map is keyed by the BARE type name; the manifest spells whatever
         # namespace declared it, so match the tail rather than the whole path.
@@ -884,6 +893,8 @@ impl Shape {
 struct TextSpan {
     text: text::Text,
     font_size: f64,
+    // A text role, as on the controls; an explicit font_size wins.
+    named_size: NamedSize,
     font_family: text::Text,
     font_weight: FontWeight,
     is_italic: bool,
@@ -897,6 +908,7 @@ struct TextSpan {
 impl TextSpan {
     fn of(text: str,
           font_size: f64 = 0.0f64,
+          named_size: NamedSize = NamedSize::Default,
           font_family: str = "",
           font_weight: FontWeight = FontWeight::Default,
           italic: bool = false,
@@ -905,7 +917,7 @@ impl TextSpan {
           decoration: TextDecoration = TextDecoration::None,
           link: str = "") -> TextSpan {
         return TextSpan {
-            text: text::from_str(text), font_size: font_size,
+            text: text::from_str(text), font_size: font_size, named_size: named_size,
             font_family: text::from_str(font_family), font_weight: font_weight,
             is_italic: italic,
             color: color, background_color: background_color,
@@ -2023,6 +2035,7 @@ impl Canvas {
                 var e0: status::Status = copy.add(TextSpan {
                     text: text::from_str({ (*r).view() }),
                     font_size: { (*r).font_size },
+                    named_size: { (*r).named_size },
                     font_family: text::from_str({ (*r).font_family.view() }),
                     font_weight: { (*r).font_weight },
                     is_italic: { (*r).is_italic },
@@ -4256,6 +4269,7 @@ fn text_button(
     key: str = "",
     text_color: vocab::Color = vocab::Color::clear(),
     font_size: f64 = 0.0f64,
+    named_size: vocab::NamedSize = vocab::NamedSize::Default,
     font_weight: vocab::FontWeight = vocab::FontWeight::Default,
     font_family: str = "",
     italic: bool = false,
@@ -4274,7 +4288,8 @@ fn text_button(
     on_click_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_text_button::text_button(title, key: key, text_color: text_color,
-                                      font_size: font_size, font_weight: font_weight,
+                                      font_size: font_size, named_size: named_size,
+                                      font_weight: font_weight,
                                       font_family: font_family, italic: italic,
                                       font_scales: font_scales,
                                       character_spacing: character_spacing,

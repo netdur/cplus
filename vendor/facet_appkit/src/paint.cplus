@@ -417,13 +417,87 @@ fn body_scale() -> f64 {
     if { rt::msg_i8_id(cls, rt::sel(#str_ptr("respondsToSelector:\0")), sel) } == (0 as i8) {
         return 1.0f64;
     }
-    let f: *u8 = { msg_id_id_font(cls, sel, bridge::nsstring("NSCTFontTextStyleBody"),
-                                  { rt::alloc_init(#str_ptr("NSDictionary\0")) }) };
-    if f.is_null() { return 1.0f64; }
-    let got: f64 = { rt::msg_f64(f, rt::sel(#str_ptr("pointSize\0"))) };
+    let got: f64 = style_point_size(vocab::NamedSize::Body);
     let base: f64 = ak::Font::system_font_size();
     if base <= 0.0f64 || got <= 0.0f64 { return 1.0f64; }
     return got / base;
+}
+
+// ---- a named size is the platform's TEXT STYLE -----------------------------
+// MAUI resolves `NamedSize` per platform (IFontNamedSizeService); on Apple the
+// platform's own answer is the text style, which follows the reader's text-size
+// preference along the system's ramp rather than by one multiplier. The table
+// is shared with facet_uikit so one name means one style on both.
+//
+// The STRING is CoreText's, on macOS as on iOS: `NSFontTextStyleBody` is
+// "UICTFontTextStyleBody" and the large title is "UICTFontTextStyleTitle0".
+// Any other string is not an error — AppKit answers 12pt Helvetica — which is
+// how body_scale() once asked for "NSCTFontTextStyleBody" and shrank every
+// label to 12/13 of its size.
+fn text_style_name(n: vocab::NamedSize) -> str {
+    return match n {
+        vocab::NamedSize::Default => "UICTFontTextStyleBody",
+        vocab::NamedSize::Micro => "UICTFontTextStyleCaption2",
+        vocab::NamedSize::Caption => "UICTFontTextStyleCaption1",
+        vocab::NamedSize::Small => "UICTFontTextStyleFootnote",
+        vocab::NamedSize::Medium => "UICTFontTextStyleCallout",
+        vocab::NamedSize::Body => "UICTFontTextStyleBody",
+        vocab::NamedSize::Subtitle => "UICTFontTextStyleTitle3",
+        vocab::NamedSize::Large => "UICTFontTextStyleTitle2",
+        vocab::NamedSize::Title => "UICTFontTextStyleTitle1",
+        vocab::NamedSize::Header => "UICTFontTextStyleTitle0",
+    };
+}
+
+// The style's size with no reader preference — what `font_scales: false` asks
+// for. macOS's own table (`+preferredFontForTextStyle:` on a stock system).
+fn text_style_base_size(n: vocab::NamedSize) -> f64 {
+    return match n {
+        vocab::NamedSize::Default => 13.0f64,
+        vocab::NamedSize::Micro => 10.0f64,
+        vocab::NamedSize::Caption => 10.0f64,
+        vocab::NamedSize::Small => 10.0f64,
+        vocab::NamedSize::Medium => 12.0f64,
+        vocab::NamedSize::Body => 13.0f64,
+        vocab::NamedSize::Subtitle => 15.0f64,
+        vocab::NamedSize::Large => 17.0f64,
+        vocab::NamedSize::Title => 22.0f64,
+        vocab::NamedSize::Header => 26.0f64,
+    };
+}
+
+fn is_named_size(n: vocab::NamedSize) -> bool {
+    return match n {
+        vocab::NamedSize::Default => false,
+        _ => true,
+    };
+}
+
+// The size a run draws at when all it has is a size and a name: the stated
+// size, else the named style's as the reader has it set, else 0 — the
+// control's own. A formatted run has no `font_scales` of its own, so a role
+// on one follows the reader the way the run's label would.
+fn sized(size: f64, named: vocab::NamedSize) -> f64 {
+    if size > 0.0f64 { return size; }
+    if is_named_size(named) { return style_point_size(named); }
+    return 0.0f64;
+}
+
+// The style's size as the reader has it set. `preferredFontForTextStyle:options:`
+// arrived in macOS 11; a system without it has no preference to follow, so the
+// base size is the right answer there.
+fn style_point_size(n: vocab::NamedSize) -> f64 {
+    let cls: *u8 = rt::get_class(#str_ptr("NSFont\0"));
+    let sel: *u8 = rt::sel(#str_ptr("preferredFontForTextStyle:options:\0"));
+    if { rt::msg_i8_id(cls, rt::sel(#str_ptr("respondsToSelector:\0")), sel) } == (0 as i8) {
+        return text_style_base_size(n);
+    }
+    let f: *u8 = { msg_id_id_font(cls, sel, bridge::nsstring(text_style_name(n)),
+                                  { rt::alloc_init(#str_ptr("NSDictionary\0")) }) };
+    if f.is_null() { return text_style_base_size(n); }
+    let got: f64 = { rt::msg_f64(f, rt::sel(#str_ptr("pointSize\0"))) };
+    if got <= 0.0f64 { return text_style_base_size(n); }
+    return got;
 }
 
 #[link_name = "objc_msgSend"]
@@ -437,8 +511,17 @@ fn ns_font_styled(size: f64, weight: vocab::FontWeight, family: str,
 // The same font at a size the reader's preference has scaled. A named FAMILY
 // still applies — the multiplier is on the SIZE, so a font the application chose
 // by name keeps its face — and the weight and the slant are unchanged.
-fn ns_font_scaled(size: f64, weight: vocab::FontWeight, family: str,
+//
+// A NAMED size with no explicit one is the style's size — already the reader's
+// when the control scales, so it is not multiplied a second time. An explicit
+// `font_size` wins over the name.
+fn ns_font_scaled(size: f64, named: vocab::NamedSize, weight: vocab::FontWeight, family: str,
                   italic: bool, scales: bool) -> option::Option[ak::Font] {
+    if size <= 0.0f64 && is_named_size(named) {
+        var pt: f64 = text_style_base_size(named);
+        if scales { pt = style_point_size(named); }
+        return ns_font_styled_at(pt, weight, family, italic);
+    }
     var want: f64 = size;
     if scales {
         let ratio: f64 = body_scale();

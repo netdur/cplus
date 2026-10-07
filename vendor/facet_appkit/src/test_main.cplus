@@ -13012,6 +13012,116 @@ fn a_font_that_scales_multiplies_its_size_rather_than_replacing_it() {
     views::view_release(nv);
 }
 
+// S14. A text-style string AppKit does not know is not an error — it answers
+// 12pt Helvetica — so every name in the table is checked for being a STYLE:
+// the system face. That is how body_scale() asked for "NSCTFontTextStyleBody"
+// and shrank every scaling label to 12/13 of its size, while the test above
+// compared against the same wrong ratio and passed.
+#[test]
+fn every_named_size_is_a_text_style_appkit_knows() {
+    let cls: *u8 = rt::get_class(#str_ptr("NSFont\0"));
+    let sel: *u8 = rt::sel(#str_ptr("preferredFontForTextStyle:options:\0"));
+    var want: text::Text = text::new();
+    match ak::Font::system_font_of_size(13.0f64).family_name() {
+        option::Option[text::Text]::Some(w) => { want = w; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    let names: [vocab::NamedSize; 10] = [
+        vocab::NamedSize::Default, vocab::NamedSize::Micro, vocab::NamedSize::Small,
+        vocab::NamedSize::Medium, vocab::NamedSize::Large, vocab::NamedSize::Body,
+        vocab::NamedSize::Header, vocab::NamedSize::Title, vocab::NamedSize::Subtitle,
+        vocab::NamedSize::Caption,
+    ];
+    var i: usize = 0 as usize;
+    while i < (10 as usize) {
+        let f: *u8 = rt::msg_id_id_id(cls, sel, bridge::nsstring(paint::text_style_name(names[i])),
+                                      { rt::alloc_init(#str_ptr("NSDictionary\0")) });
+        assert f.is_not_null();
+        let got: option::Option[text::Text] = ak::Font::from_raw(f).family_name();
+        match got {
+            option::Option[text::Text]::Some(g) => { assert g.view() == want.view(); }
+            option::Option[text::Text]::None => { assert false; }
+        }
+        i = i +% (1 as usize);
+    }
+    // With the style real, the body ratio is the reader's preference and
+    // nothing else: the body style over the system size.
+    assert paint::body_scale() == paint::style_point_size(vocab::NamedSize::Body)
+        / ak::Font::system_font_size();
+}
+
+#[test]
+fn a_named_size_is_its_text_style_and_a_stated_size_still_wins() {
+    backend::install();
+    // Scaling (the default): the style as the reader has it set.
+    var t: core::Node = label::label("Hi", key: "ns1", named_size: vocab::NamedSize::Title);
+    let tv: *u8 = views::create(0 as *u8, #addr_of(t));
+    match ak::Control::from_raw(tv).font() {
+        option::Option[ak::Font]::Some(f) => {
+            assert f.point_size() == paint::style_point_size(vocab::NamedSize::Title);
+            assert f.point_size() > paint::style_point_size(vocab::NamedSize::Body);
+        }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+    // Pinned: macOS's own size for the style, whatever the reader prefers.
+    var pinned: core::Node = label::label("Hi", key: "ns2", named_size: vocab::NamedSize::Title,
+                                          font_scales: false);
+    let pv: *u8 = views::create(0 as *u8, #addr_of(pinned));
+    match ak::Control::from_raw(pv).font() {
+        option::Option[ak::Font]::Some(f) => { assert f.point_size() == 22.0f64; }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+    // A stated size wins over the name.
+    var both: core::Node = label::label("Hi", key: "ns3", font_size: 30.0f64,
+                                        named_size: vocab::NamedSize::Title, font_scales: false);
+    let bv: *u8 = views::create(0 as *u8, #addr_of(both));
+    match ak::Control::from_raw(bv).font() {
+        option::Option[ak::Font]::Some(f) => { assert f.point_size() == 30.0f64; }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+    // The ramp is ordered the way the names read.
+    assert paint::text_style_base_size(vocab::NamedSize::Micro)
+        <= paint::text_style_base_size(vocab::NamedSize::Caption);
+    assert paint::text_style_base_size(vocab::NamedSize::Caption)
+        <= paint::text_style_base_size(vocab::NamedSize::Small);
+    assert paint::text_style_base_size(vocab::NamedSize::Small)
+        <= paint::text_style_base_size(vocab::NamedSize::Medium);
+    assert paint::text_style_base_size(vocab::NamedSize::Medium)
+        <= paint::text_style_base_size(vocab::NamedSize::Body);
+    assert paint::text_style_base_size(vocab::NamedSize::Body)
+        < paint::text_style_base_size(vocab::NamedSize::Subtitle);
+    assert paint::text_style_base_size(vocab::NamedSize::Subtitle)
+        < paint::text_style_base_size(vocab::NamedSize::Large);
+    assert paint::text_style_base_size(vocab::NamedSize::Large)
+        < paint::text_style_base_size(vocab::NamedSize::Title);
+    assert paint::text_style_base_size(vocab::NamedSize::Title)
+        < paint::text_style_base_size(vocab::NamedSize::Header);
+    views::view_release(tv);
+    views::view_release(pv);
+    views::view_release(bv);
+}
+
+// The cursor's write reaches the view: `P_NAMED_SIZE` is one of the bits the
+// font re-read waits on.
+#[test]
+fn set_named_size_re_reads_the_font() {
+    backend::install();
+    var n: core::Node = label::label("Hi", key: "ns4", font_scales: false);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match label::from(p) {
+        option::Option[label::Label]::Some(c) => { let _c: label::Label = c.set_named_size(vocab::NamedSize::Header); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    match ak::Control::from_raw(v).font() {
+        option::Option[ak::Font]::Some(f) => { assert f.point_size() == 26.0f64; }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+}
+
 #[test]
 fn a_return_key_that_says_next_moves_to_the_next_field() {
     // Five of the six name a LABEL on a keyboard macOS does not have. The sixth
@@ -15951,11 +16061,13 @@ fn a_row_is_laid_out_at_ITS_height_not_the_lists() {
     assert inner.is_not_null();
     assert { rt::msg_u64(inner, rt::sel(#str_ptr("count\0"))) } == (2 as u64);
     // ...at their natural sizes inside it. MEASURED both ways: the card's two
-    // labels report y=10 h=15 and y=29 h=15 whether the row is given 72 or 38,
-    // so a row that is too short CLIPS its content and does not crush it. The
-    // cell height above is the assertion with teeth.
+    // labels report the same frames whether the row is given 72 or 38, so a row
+    // that is too short CLIPS its content and does not crush it. The cell
+    // height above is the assertion with teeth. 16 is a 13pt system label; it
+    // read 15 while body_scale() shrank every label to 12pt (bugs/closed/
+    // appkit-body-scale-asked-for-a-text-style-that-does-not-exist.md).
     let first: *u8 = { rt::msg_id_u64(inner, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
-    assert { rt::msg_rect(first, rt::sel(#str_ptr("frame\0"))) }.h == 15.0f64;
+    assert { rt::msg_rect(first, rt::sel(#str_ptr("frame\0"))) }.h == 16.0f64;
     views::view_release(v);
 }
 

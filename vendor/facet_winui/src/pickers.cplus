@@ -126,7 +126,7 @@ fn apply(r: *record::View) {
     }
     if k==props::K_POPUP {
         let p: *props::PopupProps=raw as *props::PopupProps;
-        if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
+        if typography::sized((*p).font_size,(*p).named_size)>0.0f64 {native::check(control.set_font_size(typography::sized((*p).font_size,(*p).named_size)));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
         native::check(control.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](control.font_size()))));
         native::check(control.set_font_weight(style::weight((*p).font_weight)));
         native::check(control.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));
@@ -136,7 +136,7 @@ fn apply(r: *record::View) {
     }
     if k==props::K_DATE_PICKER {
         let p: *props::DatePickerProps=raw as *props::DatePickerProps;
-        if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
+        if typography::sized((*p).font_size,(*p).named_size)>0.0f64 {native::check(control.set_font_size(typography::sized((*p).font_size,(*p).named_size)));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
         native::check(control.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](control.font_size()))));
         native::check(control.set_font_weight(style::weight((*p).font_weight)));
         native::check(control.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));
@@ -146,7 +146,7 @@ fn apply(r: *record::View) {
     }
     if k==props::K_TIME_PICKER {
         let p: *props::TimePickerProps=raw as *props::TimePickerProps;
-        if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
+        if typography::sized((*p).font_size,(*p).named_size)>0.0f64 {native::check(control.set_font_size(typography::sized((*p).font_size,(*p).named_size)));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
         native::check(control.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](control.font_size()))));
         native::check(control.set_font_weight(style::weight((*p).font_weight)));
         native::check(control.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));

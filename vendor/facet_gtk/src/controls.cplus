@@ -240,7 +240,7 @@ fn state_rule(state: str, decls: str) -> text::Text {
 // its CSS is written once here and its non-CSS writes once below.
 
 fn input_decls(p: *props::InputViewProps) -> text::Text {
-    var body: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+    var body: text::Text = font_decls({ (*p).font_family.view() }, paint::sized({ (*p).font_size }, { (*p).named_size }),
                                       { (*p).font_weight }, { (*p).is_italic },
                                       { (*p).font_scales });
     body = body.appending(text_decls({ (*p).character_spacing },
@@ -319,7 +319,7 @@ fn apply_editable(e: gtk::Editable, p: *props::InputViewProps,
 
 fn css_bits(kind: u32) -> u64 {
     if kind == props::K_LABEL {
-        return label::P_FONT_SIZE | label::P_FONT_FAMILY | label::P_FONT_WEIGHT
+        return (label::P_FONT_SIZE | label::P_NAMED_SIZE) | label::P_FONT_FAMILY | label::P_FONT_WEIGHT
              | label::P_IS_ITALIC | label::P_FONT_SCALES | label::P_TEXT_COLOR
              | label::P_CHARACTER_SPACING | label::P_TEXT_TRANSFORM
              | label::P_TEXT_DECORATION;
@@ -329,21 +329,21 @@ fn css_bits(kind: u32) -> u64 {
     // number counts a kind that is genuinely answered rather than one that
     // merely has no body.
     if kind == props::K_SPAN {
-        return span::P_TEXT | span::P_FONT_SIZE | span::P_FONT_FAMILY
+        return span::P_TEXT | span::P_FONT_SIZE | span::P_NAMED_SIZE | span::P_FONT_FAMILY
              | span::P_FONT_WEIGHT | span::P_IS_ITALIC | span::P_FONT_SCALES
              | span::P_TEXT_COLOR | span::P_TEXT_DECORATION
              | span::P_TEXT_TRANSFORM | span::P_CHARACTER_SPACING
              | span::P_LINE_HEIGHT;
     }
     if kind == props::K_BUTTON {
-        return button::P_FONT_SIZE | button::P_FONT_FAMILY | button::P_FONT_WEIGHT
+        return (button::P_FONT_SIZE | button::P_NAMED_SIZE) | button::P_FONT_FAMILY | button::P_FONT_WEIGHT
              | button::P_IS_ITALIC | button::P_FONT_SCALES | button::P_TEXT_COLOR
              | button::P_CHARACTER_SPACING | button::P_TEXT_TRANSFORM
              | button::P_BORDER_COLOR | button::P_BORDER_WIDTH
              | button::P_CORNER_RADIUS | button::P_BORDERED;
     }
     if kind == text_button::K_TEXT_BUTTON {
-        return text_button::P_FONT_SIZE | text_button::P_FONT_FAMILY
+        return text_button::P_FONT_SIZE | text_button::P_NAMED_SIZE | text_button::P_FONT_FAMILY
              | text_button::P_FONT_WEIGHT | text_button::P_IS_ITALIC
              | text_button::P_FONT_SCALES | text_button::P_TEXT_COLOR
              | text_button::P_CHARACTER_SPACING | text_button::P_TEXT_TRANSFORM
@@ -356,21 +356,21 @@ fn css_bits(kind: u32) -> u64 {
              | icon_button::P_CORNER_RADIUS | icon_button::P_BORDERED;
     }
     if kind == props::K_RADIO {
-        return radio::P_FONT_SIZE | radio::P_FONT_FAMILY | radio::P_FONT_WEIGHT
+        return (radio::P_FONT_SIZE | radio::P_NAMED_SIZE) | radio::P_FONT_FAMILY | radio::P_FONT_WEIGHT
              | radio::P_IS_ITALIC | radio::P_FONT_SCALES | radio::P_TEXT_COLOR
              | radio::P_CHARACTER_SPACING | radio::P_TEXT_TRANSFORM
              | radio::P_BORDER_COLOR | radio::P_BORDER_WIDTH
              | radio::P_CORNER_RADIUS;
     }
     if kind == props::K_TEXT_FIELD {
-        return text_field::P_FONT_SIZE | text_field::P_FONT_FAMILY
+        return (text_field::P_FONT_SIZE | text_field::P_NAMED_SIZE) | text_field::P_FONT_FAMILY
              | text_field::P_FONT_WEIGHT | text_field::P_IS_ITALIC
              | text_field::P_FONT_SCALES | text_field::P_TEXT_COLOR
              | text_field::P_CHARACTER_SPACING | text_field::P_TEXT_TRANSFORM
              | text_field::P_PLACEHOLDER_COLOR;
     }
     if kind == props::K_SEARCH_FIELD {
-        return search_field::P_FONT_SIZE | search_field::P_FONT_FAMILY
+        return (search_field::P_FONT_SIZE | search_field::P_NAMED_SIZE) | search_field::P_FONT_FAMILY
              | search_field::P_FONT_WEIGHT | search_field::P_IS_ITALIC
              | search_field::P_FONT_SCALES | search_field::P_TEXT_COLOR
              | search_field::P_CHARACTER_SPACING | search_field::P_TEXT_TRANSFORM
@@ -379,26 +379,26 @@ fn css_bits(kind: u32) -> u64 {
              | search_field::P_CANCEL_BUTTON_COLOR;
     }
     if kind == props::K_TEXT_AREA {
-        return text_area::P_FONT_SIZE | text_area::P_FONT_FAMILY
+        return (text_area::P_FONT_SIZE | text_area::P_NAMED_SIZE) | text_area::P_FONT_FAMILY
              | text_area::P_FONT_WEIGHT | text_area::P_IS_ITALIC
              | text_area::P_FONT_SCALES | text_area::P_TEXT_COLOR
              | text_area::P_CHARACTER_SPACING | text_area::P_TEXT_TRANSFORM
              | text_area::P_PLACEHOLDER_COLOR;
     }
     if kind == props::K_DATE_PICKER {
-        return date_picker::P_FONT_SIZE | date_picker::P_FONT_FAMILY
+        return (date_picker::P_FONT_SIZE | date_picker::P_NAMED_SIZE) | date_picker::P_FONT_FAMILY
              | date_picker::P_FONT_WEIGHT | date_picker::P_IS_ITALIC
              | date_picker::P_FONT_SCALES | date_picker::P_TEXT_COLOR
              | date_picker::P_CHARACTER_SPACING;
     }
     if kind == props::K_TIME_PICKER {
-        return time_picker::P_FONT_SIZE | time_picker::P_FONT_FAMILY
+        return (time_picker::P_FONT_SIZE | time_picker::P_NAMED_SIZE) | time_picker::P_FONT_FAMILY
              | time_picker::P_FONT_WEIGHT | time_picker::P_IS_ITALIC
              | time_picker::P_FONT_SCALES | time_picker::P_TEXT_COLOR
              | time_picker::P_CHARACTER_SPACING;
     }
     if kind == props::K_POPUP {
-        return popup::P_FONT_SIZE | popup::P_FONT_FAMILY | popup::P_FONT_WEIGHT
+        return (popup::P_FONT_SIZE | popup::P_NAMED_SIZE) | popup::P_FONT_FAMILY | popup::P_FONT_WEIGHT
              | popup::P_IS_ITALIC | popup::P_FONT_SCALES | popup::P_TEXT_COLOR
              | popup::P_CHARACTER_SPACING | popup::P_TITLE_COLOR;
     }
@@ -463,7 +463,7 @@ fn css_decls(kind: u32, n: *core::Node) -> text::Text {
     if kind == props::K_LABEL {
         let p: *props::LabelProps = props_of(n, kind) as *props::LabelProps;
         if p == (0 as *props::LabelProps) { return text::from_str(""); }
-        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+        var b: text::Text = font_decls({ (*p).font_family.view() }, paint::sized({ (*p).font_size }, { (*p).named_size }),
                                        { (*p).font_weight }, { (*p).is_italic },
                                        { (*p).font_scales });
         b = b.appending(text_decls({ (*p).character_spacing }, { (*p).text_transform },
@@ -473,7 +473,7 @@ fn css_decls(kind: u32, n: *core::Node) -> text::Text {
     if kind == props::K_BUTTON {
         let p: *props::ButtonProps = props_of(n, kind) as *props::ButtonProps;
         if p == (0 as *props::ButtonProps) { return text::from_str(""); }
-        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+        var b: text::Text = font_decls({ (*p).font_family.view() }, paint::sized({ (*p).font_size }, { (*p).named_size }),
                                        { (*p).font_weight }, { (*p).is_italic },
                                        { (*p).font_scales });
         b = b.appending(text_decls({ (*p).character_spacing }, { (*p).text_transform },
@@ -487,7 +487,7 @@ fn css_decls(kind: u32, n: *core::Node) -> text::Text {
         let p: *text_button::TextButtonProps =
             props_of(n, kind) as *text_button::TextButtonProps;
         if p == (0 as *text_button::TextButtonProps) { return text::from_str(""); }
-        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+        var b: text::Text = font_decls({ (*p).font_family.view() }, paint::sized({ (*p).font_size }, { (*p).named_size }),
                                        { (*p).font_weight }, { (*p).is_italic },
                                        { (*p).font_scales });
         b = b.appending(text_decls({ (*p).character_spacing }, { (*p).text_transform },
@@ -508,7 +508,7 @@ fn css_decls(kind: u32, n: *core::Node) -> text::Text {
     if kind == props::K_RADIO {
         let p: *props::RadioProps = props_of(n, kind) as *props::RadioProps;
         if p == (0 as *props::RadioProps) { return text::from_str(""); }
-        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+        var b: text::Text = font_decls({ (*p).font_family.view() }, paint::sized({ (*p).font_size }, { (*p).named_size }),
                                        { (*p).font_weight }, { (*p).is_italic },
                                        { (*p).font_scales });
         b = b.appending(text_decls({ (*p).character_spacing }, { (*p).text_transform },
@@ -536,7 +536,7 @@ fn css_decls(kind: u32, n: *core::Node) -> text::Text {
     if kind == props::K_DATE_PICKER {
         let p: *props::DatePickerProps = date_props(n);
         if p == (0 as *props::DatePickerProps) { return text::from_str(""); }
-        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+        var b: text::Text = font_decls({ (*p).font_family.view() }, paint::sized({ (*p).font_size }, { (*p).named_size }),
                                        { (*p).font_weight }, { (*p).is_italic },
                                        { (*p).font_scales });
         b = b.appending(text_decls({ (*p).character_spacing }, vocab::TextTransform::Default,
@@ -546,7 +546,7 @@ fn css_decls(kind: u32, n: *core::Node) -> text::Text {
     if kind == props::K_TIME_PICKER {
         let p: *props::TimePickerProps = time_props(n);
         if p == (0 as *props::TimePickerProps) { return text::from_str(""); }
-        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+        var b: text::Text = font_decls({ (*p).font_family.view() }, paint::sized({ (*p).font_size }, { (*p).named_size }),
                                        { (*p).font_weight }, { (*p).is_italic },
                                        { (*p).font_scales });
         b = b.appending(text_decls({ (*p).character_spacing }, vocab::TextTransform::Default,
@@ -556,7 +556,7 @@ fn css_decls(kind: u32, n: *core::Node) -> text::Text {
     if kind == props::K_POPUP {
         let p: *props::PopupProps = popup_props(n);
         if p == (0 as *props::PopupProps) { return text::from_str(""); }
-        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+        var b: text::Text = font_decls({ (*p).font_family.view() }, paint::sized({ (*p).font_size }, { (*p).named_size }),
                                        { (*p).font_weight }, { (*p).is_italic },
                                        { (*p).font_scales });
         // `title_color` is the colour of the TITLE — what the button reads
@@ -749,7 +749,7 @@ fn span_children_markup(n: *core::Node) -> text::Text {
                 let p: *props::SpanProps = props_of(c, props::K_SPAN) as *props::SpanProps;
                 if p != (0 as *props::SpanProps) {
                     let attrs: text::Text = paint::span_attrs(
-                        { (*p).font_family.view() }, { (*p).font_size },
+                        { (*p).font_family.view() }, paint::sized({ (*p).font_size }, { (*p).named_size }),
                         { (*p).font_weight }, { (*p).is_italic }, { (*p).font_scales },
                         { (*p).text_color }, vocab::Color::clear(),
                         { (*p).text_decoration }, { (*p).character_spacing },
@@ -778,7 +778,7 @@ fn formatted_markup(p: *props::LabelProps) -> text::Text {
         let r: *vocab::TextSpan = { (*runs).at(i) };
         if r != (0 as *vocab::TextSpan) {
             let attrs: text::Text = paint::span_attrs(
-                { (*r).font_family.view() }, { (*r).font_size }, { (*r).font_weight },
+                { (*r).font_family.view() }, paint::sized({ (*r).font_size }, { (*r).named_size }), { (*r).font_weight },
                 { (*r).is_italic }, true, { (*r).color }, { (*r).background_color },
                 { (*r).decoration }, 0.0f64, { (*p).line_height });
             out = out.appending(paint::markup_run(attrs.view(), { (*r).view() }).view());

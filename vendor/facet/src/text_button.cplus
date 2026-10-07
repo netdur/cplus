@@ -69,11 +69,13 @@ const P_BORDER_COLOR: u64 = 16384u64;
 const P_BORDER_WIDTH: u64 = 32768u64;
 const P_CORNER_RADIUS: u64 = 65536u64;
 const P_TEXT_ALIGN: u64 = 131072u64;
+const P_NAMED_SIZE: u64 = 262144u64;
 
 struct TextButtonProps {
     title: text::Text,
     text_color: vocab::Color,        // clear = the platform's own control colour
     font_size: f64,                  // 0 = the platform's default
+    named_size: vocab::NamedSize,    // a text role; an explicit font_size wins
     font_weight: vocab::FontWeight,
     font_family: text::Text,
     is_italic: bool,
@@ -114,6 +116,7 @@ impl TextButtonProps {
             title: text::new(),
             text_color: vocab::Color::clear(),
             font_size: 0.0f64,
+            named_size: vocab::NamedSize::Default,
             font_weight: vocab::FontWeight::Default,
             font_family: text::new(),
             is_italic: false,
@@ -147,6 +150,7 @@ fn text_button(
     key: str = "",
     text_color: vocab::Color = vocab::Color::clear(),
     font_size: f64 = 0.0f64,
+    named_size: vocab::NamedSize = vocab::NamedSize::Default,
     font_weight: vocab::FontWeight = vocab::FontWeight::Default,
     font_family: str = "",
     italic: bool = false,
@@ -169,6 +173,7 @@ fn text_button(
     p.title = text::from_str(title);
     p.text_color = text_color;
     p.font_size = font_size;
+    p.named_size = named_size;
     p.font_weight = font_weight;
     p.font_family = text::from_str(font_family);
     p.is_italic = italic;
@@ -253,6 +258,20 @@ impl TextButton {
         let p: *TextButtonProps = this._props();
         if p.is_null() { return 0.0f64; }
         return { (*p).font_size };
+    }
+
+    fn set_named_size(this, v: vocab::NamedSize) -> TextButton {
+        let p: *TextButtonProps = this._props();
+        if p.is_null() { return this; }
+        { (*p).named_size = v };
+        core::touch(this._p, P_NAMED_SIZE);
+        return this;
+    }
+
+    fn named_size(this) -> vocab::NamedSize {
+        let p: *TextButtonProps = this._props();
+        if p.is_null() { return vocab::NamedSize::Default; }
+        return { (*p).named_size };
     }
 
     fn set_font_weight(this, v: vocab::FontWeight) -> TextButton {

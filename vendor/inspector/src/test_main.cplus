@@ -3082,6 +3082,40 @@ fn a_text_button_reads_and_writes_its_title_and_type_face() {
     assert !lists(tb, "border_width");
 }
 
+// SPENDWISE S14. A text role on every text control, and a text button is
+// hand-written — the generated tier that answers `named_size` everywhere else
+// does not reach it.
+#[test]
+fn a_text_button_reads_and_writes_its_named_size() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::text_button("Dashboard", key: "ns:tab", named_size: vocab::NamedSize::Caption));
+    body.add(ui::label("x", key: "ns:lbl", named_size: vocab::NamedSize::Title));
+    var root: core::Node = ui::column(body, key: "ns:root");
+    app::open_window(#addr_of(root));
+    let tb: insp::Handle = handle_for(#addr_of(root), "ns:tab");
+    let lbl: insp::Handle = handle_for(#addr_of(root), "ns:lbl");
+
+    assert lists(tb, "named_size");
+    assert enum_is(tb, "named_size", "caption");
+    assert tree::set(tb, "named_size", insp::Value::Enum(text::from_str("header"))) == insp::Outcome::Ok;
+    assert enum_is(tb, "named_size", "header");
+    // The write is the cursor's: the application reads what the surface wrote.
+    match text_button::find("ns:tab", within: #addr_of(root)) {
+        option::Option[text_button::TextButton]::Some(t) => {
+            assert t.named_size() == vocab::NamedSize::Header;
+        }
+        option::Option::None => { assert false; }
+    }
+    // A name the vocabulary does not have, and a number, are both refused.
+    assert tree::set(tb, "named_size", insp::Value::Enum(text::from_str("huge"))) == insp::Outcome::TypeMismatch;
+    assert tree::set(tb, "named_size", insp::Value::Num(17.0)) == insp::Outcome::TypeMismatch;
+    assert enum_is(tb, "named_size", "header");
+
+    // A label reaches the same word through the generated tier.
+    assert enum_is(lbl, "named_size", "title");
+}
+
 // SPENDWISE S04, the second instance. `scroll_to` moved a view and nothing
 // could say where it went. The offset is a prop every backend writes back.
 #[test]

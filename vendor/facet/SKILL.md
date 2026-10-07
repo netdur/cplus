@@ -217,6 +217,14 @@ card(key: "summary") {
     .set_corner_radius(vocab::Corners::all(12.0f64))
 ```
 
+**Size text by ROLE, not by number.** `label("Last 30 days", named_size:
+vocab::NamedSize::Caption)` is the platform's own caption style — UIFont/NSFont
+text styles on Apple, Material 3 on Android, Fluent on Windows, Adwaita on GTK —
+and it follows the reader's text-size setting along the platform's ramp. The
+names are MAUI's: `Micro Caption Small Medium Body Subtitle Large Title Header`.
+`font_size:` still works and wins when set; reach for it only for a size no role
+names.
+
 **`card` draws nothing.** It is a `column` with HIG spacing — 16pt padding, 8pt
 gap — and no fill, corner or shadow; the surface is the two lines above. Put
 children straight in its block: a padded `column` inside a `card` is 32pt of

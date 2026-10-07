@@ -673,6 +673,42 @@ system's tonal ramps. A role the theme sets always wins. An app with a brand to
 keep says `Theme::new(primary: brand, fixed_palette: true)`, and the backend's
 fixed values answer instead; `uses_system_palette()` is what a backend asks.
 
+### Type: a named size is the platform's text style
+
+Colour has roles; so does type. Every text control (`label`, `button`,
+`text_button`, `text_field`, `text_area`, `search_field`, `popup`, `radio`,
+`date_picker`, `time_picker`, `span`, and a `TextSpan` run) takes
+`named_size: vocab::NamedSize`, beside `font_size`, with a `set_named_size`
+cursor setter. The vocabulary is MAUI's `NamedSize`, and like MAUI's
+`IFontNamedSizeService` each backend resolves a name to its own scale:
+
+| NamedSize | Apple text style | iOS pt | macOS pt | Material 3 (sp) | Fluent (epx) | Adwaita |
+|---|---|---|---|---|---|---|
+| `Micro` | caption2 | 11 | 10 | labelSmall 11 | 10 | 8pt |
+| `Caption` | caption1 | 12 | 10 | bodySmall 12 | Caption 12 | caption 9pt |
+| `Small` | footnote | 13 | 10 | bodyMedium 14 | 12 | 10pt |
+| `Medium` | callout | 16 | 12 | titleMedium 16 | 14 | 10.5pt |
+| `Body` | body | 17 | 13 | bodyLarge 16 | Body 14 | 11pt |
+| `Subtitle` | title3 | 20 | 15 | titleLarge 22 | BodyLarge 18 | title-4 13pt |
+| `Large` | title2 | 22 | 17 | headlineSmall 24 | Subtitle 20 | title-2 15pt |
+| `Title` | title1 | 28 | 22 | headlineMedium 28 | Title 28 | title-1 20pt |
+| `Header` | largeTitle | 34 | 26 | displaySmall 36 | TitleLarge 40 | large-title 26pt |
+
+- **`Default` is no role.** Text with no role keeps the control's own default,
+  exactly as before.
+- **An explicit `font_size > 0` wins** over the name.
+- **With `font_scales` (the default) a role follows the reader's text size.**
+  On Apple it is the preferred font for the style, so Dynamic Type moves each
+  style along its own ramp: a caption grows faster than a large title, which no
+  single multiplier reproduces. Android sizes are in sp, which Android 14+
+  scales non-linearly. With `font_scales: false` you get the style's base size.
+- **Weight is separate.** A role sets the size; `font_weight` still sets the
+  weight. A section heading is
+  `named_size: Caption, font_weight: Semibold`.
+
+A type scale on `Theme` (a brand face, or a tighter ramp, stated once) is not
+built yet. Today a role always resolves to the platform's own scale.
+
 ## facet/bands
 
 The app's size-band vocabulary. A **band** is a named box constraint; a node

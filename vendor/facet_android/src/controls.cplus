@@ -145,8 +145,8 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     }
     // A SIZE AND WHETHER IT SCALES ARE ONE CALL, so the two bits are one branch.
     // 0 means "the platform's own", which is what a TextView already has.
-    if (dirty & (label::P_FONT_SIZE | label::P_FONT_SCALES)) != (0 as u64) {
-        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
+    if (dirty & (label::P_FONT_SIZE | label::P_NAMED_SIZE | label::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, paint::sized({ (*p).font_size }, { (*p).named_size }), { (*p).font_scales });
     }
     // THE RUN LIST WINS OVER THE PLAIN TEXT when there is one, and it is
     // applied after it: `text` and `formatted_text` are two ways to say what a
@@ -171,13 +171,13 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
                         | label::P_LINE_BREAK | label::P_MAX_LINES
                         | label::P_TEXT_DECORATION | label::P_TEXT_TRANSFORM
                         | label::P_CHARACTER_SPACING | label::P_LINE_HEIGHT
-                        | label::P_FONT_SIZE;
+                        | label::P_FONT_SIZE | label::P_NAMED_SIZE;
     if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
         var st: TextStyle = TextStyle::none();
         st.family = { (*p).font_family.view() };
         st.weight = { (*p).font_weight };
         st.is_italic = { (*p).is_italic };
-        st.size = { (*p).font_size };
+        st.size = paint::sized({ (*p).font_size }, { (*p).named_size });
         st.scales = { (*p).font_scales };
         st.align = { (*p).text_align };
         st.vertical_align = { (*p).vertical_align };
@@ -230,8 +230,8 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
             tv.set_text_str(base);
         }
     }
-    if (dirty & (button::P_FONT_SIZE | button::P_FONT_SCALES)) != (0 as u64) {
-        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
+    if (dirty & (button::P_FONT_SIZE | button::P_NAMED_SIZE | button::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, paint::sized({ (*p).font_size }, { (*p).named_size }), { (*p).font_scales });
     }
     if (dirty & button::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
@@ -254,7 +254,7 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // change re-draws it; its colour is the title's, through the tint list.
     let cp: u32 = { (*p).symbol };
     let glyph_bits: u64 = button::P_SYMBOL | button::P_IMAGE | button::P_CONTENT_LAYOUT
-        | button::P_FONT_SIZE | button::P_FONT_SCALES;
+        | button::P_FONT_SIZE | button::P_NAMED_SIZE | button::P_FONT_SCALES;
     if cp != 0u32 && (dirty & glyph_bits) != (0 as u64) {
         let d: jni::jobject = glyph_drawable(env, cp, tv.get_line_height());
         if d != (0 as jni::jobject) {
@@ -283,13 +283,13 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     let typography: u64 = button::P_FONT_FAMILY | button::P_FONT_WEIGHT
                         | button::P_IS_ITALIC | button::P_LINE_BREAK
                         | button::P_TEXT_TRANSFORM | button::P_CHARACTER_SPACING
-                        | button::P_FONT_SIZE;
+                        | button::P_FONT_SIZE | button::P_NAMED_SIZE;
     if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
         var st: TextStyle = TextStyle::none();
         st.family = { (*p).font_family.view() };
         st.weight = { (*p).font_weight };
         st.is_italic = { (*p).is_italic };
-        st.size = { (*p).font_size };
+        st.size = paint::sized({ (*p).font_size }, { (*p).named_size });
         st.scales = { (*p).font_scales };
         // A BUTTON'S TITLE IS CENTRED, and facet gives a button no alignment
         // verb — so the platform's own posture is kept rather than reset to a
@@ -504,9 +504,9 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
             tv.set_text_color_i(paint::argb_of(col));
         }
     }
-    if (dirty & (radio::P_FONT_SIZE | radio::P_FONT_SCALES)) != (0 as u64) {
+    if (dirty & (radio::P_FONT_SIZE | radio::P_NAMED_SIZE | radio::P_FONT_SCALES)) != (0 as u64) {
         var tv: w::TextView = r.as_compound_button().as_button().as_text_view();
-        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
+        apply_text_size(tv, paint::sized({ (*p).font_size }, { (*p).named_size }), { (*p).font_scales });
     }
     let chrome: u64 = radio::P_BORDER_COLOR | radio::P_BORDER_WIDTH
                     | radio::P_CORNER_RADIUS | props::C_BACKGROUND_COLOR
@@ -519,13 +519,13 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     }
     let typography: u64 = radio::P_FONT_FAMILY | radio::P_FONT_WEIGHT
                         | radio::P_IS_ITALIC | radio::P_TEXT_TRANSFORM
-                        | radio::P_CHARACTER_SPACING | radio::P_FONT_SIZE;
+                        | radio::P_CHARACTER_SPACING | radio::P_FONT_SIZE | radio::P_NAMED_SIZE;
     if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
         var st: TextStyle = TextStyle::none();
         st.family = { (*p).font_family.view() };
         st.weight = { (*p).font_weight };
         st.is_italic = { (*p).is_italic };
-        st.size = { (*p).font_size };
+        st.size = paint::sized({ (*p).font_size }, { (*p).named_size });
         st.scales = { (*p).font_scales };
         // The LABEL of a compound button sits beside its circle, and facet
         // gives a radio no alignment verb — so the platform's own posture
@@ -920,19 +920,19 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
         let c: vocab::Color = { (*p).input_view.text_color };
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
     }
-    if (dirty & (text_field::P_FONT_SIZE | text_field::P_FONT_SCALES)) != (0 as u64) {
-        apply_text_size(tv, { (*p).input_view.font_size }, { (*p).input_view.font_scales });
+    if (dirty & (text_field::P_FONT_SIZE | text_field::P_NAMED_SIZE | text_field::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, paint::sized({ (*p).input_view.font_size }, { (*p).input_view.named_size }), { (*p).input_view.font_scales });
     }
     let typography: u64 = text_field::P_FONT_FAMILY | text_field::P_FONT_WEIGHT
                         | text_field::P_IS_ITALIC | text_field::P_TEXT_TRANSFORM
                         | text_field::P_CHARACTER_SPACING | text_field::P_TEXT_ALIGN
-                        | text_field::P_VERTICAL_ALIGN | text_field::P_FONT_SIZE;
+                        | text_field::P_VERTICAL_ALIGN | text_field::P_FONT_SIZE | text_field::P_NAMED_SIZE;
     if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
         var st: TextStyle = TextStyle::none();
         st.family = { (*p).input_view.font_family.view() };
         st.weight = { (*p).input_view.font_weight };
         st.is_italic = { (*p).input_view.is_italic };
-        st.size = { (*p).input_view.font_size };
+        st.size = paint::sized({ (*p).input_view.font_size }, { (*p).input_view.named_size });
         st.scales = { (*p).input_view.font_scales };
         st.align = { (*p).text_align };
         st.vertical_align = { (*p).vertical_align };
@@ -1061,8 +1061,8 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
     }
-    if (dirty & (text_button::P_FONT_SIZE | text_button::P_FONT_SCALES)) != (0 as u64) {
-        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
+    if (dirty & (text_button::P_FONT_SIZE | text_button::P_NAMED_SIZE | text_button::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, paint::sized({ (*p).font_size }, { (*p).named_size }), { (*p).font_scales });
     }
     if (dirty & (text_button::P_TOGGLES | text_button::P_ON)) != (0 as u64) {
         var sel: w::View = w::View::from_global(env, v);
@@ -1080,13 +1080,13 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
                         | text_button::P_IS_ITALIC | text_button::P_LINE_BREAK
                         | text_button::P_TEXT_TRANSFORM | text_button::P_TEXT_DECORATION
                         | text_button::P_CHARACTER_SPACING | text_button::P_TEXT_ALIGN
-                        | text_button::P_FONT_SIZE;
+                        | text_button::P_FONT_SIZE | text_button::P_NAMED_SIZE;
     if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
         var st: TextStyle = TextStyle::none();
         st.family = { (*p).font_family.view() };
         st.weight = { (*p).font_weight };
         st.is_italic = { (*p).is_italic };
-        st.size = { (*p).font_size };
+        st.size = paint::sized({ (*p).font_size }, { (*p).named_size });
         st.scales = { (*p).font_scales };
         st.align = { (*p).text_align };
         st.vertical_align = vocab::TextAlign::Center;
@@ -1400,7 +1400,7 @@ fn apply_input_common(v: *u8, iv: *props::InputViewProps, text_bit: bool,
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
     }
     if size_bit {
-        apply_text_size(tv, { (*iv).font_size }, { (*iv).font_scales });
+        apply_text_size(tv, paint::sized({ (*iv).font_size }, { (*iv).named_size }), { (*iv).font_scales });
     }
     if flags_bit { apply_input_flags(env, tv, iv, secure, multiline); }
     if placeholder_bit {
@@ -1425,7 +1425,7 @@ fn apply_input_common(v: *u8, iv: *props::InputViewProps, text_bit: bool,
         st.family = { (*iv).font_family.view() };
         st.weight = { (*iv).font_weight };
         st.is_italic = { (*iv).is_italic };
-        st.size = { (*iv).font_size };
+        st.size = paint::sized({ (*iv).font_size }, { (*iv).named_size });
         st.scales = { (*iv).font_scales };
         st.align = align;
         st.vertical_align = vertical;
@@ -1447,7 +1447,7 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
     let typography: u64 = text_area::P_FONT_FAMILY | text_area::P_FONT_WEIGHT
                         | text_area::P_IS_ITALIC | text_area::P_TEXT_TRANSFORM
                         | text_area::P_CHARACTER_SPACING | text_area::P_TEXT_ALIGN
-                        | text_area::P_VERTICAL_ALIGN | text_area::P_FONT_SIZE;
+                        | text_area::P_VERTICAL_ALIGN | text_area::P_FONT_SIZE | text_area::P_NAMED_SIZE;
     // AUTO SIZE, which Android grew in API 26 — this backend's floor exactly.
     // `TextChanges` is the platform's own default axis and granularity; the
     // other answer is the fixed size the style already set.
@@ -1468,7 +1468,7 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
                        (dirty & (text_area::P_PLACEHOLDER
                                  | text_area::P_PLACEHOLDER_COLOR)) != (0 as u64),
                        (dirty & text_area::P_TEXT_COLOR) != (0 as u64),
-                       (dirty & (text_area::P_FONT_SIZE | text_area::P_FONT_SCALES)) != (0 as u64),
+                       (dirty & (text_area::P_FONT_SIZE | text_area::P_NAMED_SIZE | text_area::P_FONT_SCALES)) != (0 as u64),
                        (dirty & typography) != (0 as u64) || dirty == paint::all_bits(),
                        { (*p).text_align }, { (*p).vertical_align },
                        (dirty & flags) != (0 as u64) || dirty == paint::all_bits(),
@@ -1511,7 +1511,7 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
     let typography: u64 = search_field::P_FONT_FAMILY | search_field::P_FONT_WEIGHT
                         | search_field::P_IS_ITALIC | search_field::P_TEXT_TRANSFORM
                         | search_field::P_CHARACTER_SPACING | search_field::P_TEXT_ALIGN
-                        | search_field::P_VERTICAL_ALIGN | search_field::P_FONT_SIZE;
+                        | search_field::P_VERTICAL_ALIGN | search_field::P_FONT_SIZE | search_field::P_NAMED_SIZE;
     let flags: u64 = search_field::P_KEYBOARD | search_field::P_CHECKS_SPELLING
                    | search_field::P_PREDICTS_TEXT | search_field::P_IS_READ_ONLY
                    | search_field::P_MAX_LENGTH;
@@ -1520,7 +1520,7 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
                        (dirty & (search_field::P_PLACEHOLDER
                                  | search_field::P_PLACEHOLDER_COLOR)) != (0 as u64),
                        (dirty & search_field::P_TEXT_COLOR) != (0 as u64),
-                       (dirty & (search_field::P_FONT_SIZE | search_field::P_FONT_SCALES)) != (0 as u64),
+                       (dirty & (search_field::P_FONT_SIZE | search_field::P_NAMED_SIZE | search_field::P_FONT_SCALES)) != (0 as u64),
                        (dirty & typography) != (0 as u64) || dirty == paint::all_bits(),
                        { (*p).text_align }, { (*p).vertical_align },
                        (dirty & flags) != (0 as u64) || dirty == paint::all_bits(),
@@ -3071,8 +3071,8 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
         write_date_title(env, v, p);
     }
     var tv: w::TextView = w::TextView::from_global(env, v);
-    if (dirty & (date_picker::P_FONT_SIZE | date_picker::P_FONT_SCALES)) != (0 as u64) {
-        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
+    if (dirty & (date_picker::P_FONT_SIZE | date_picker::P_NAMED_SIZE | date_picker::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, paint::sized({ (*p).font_size }, { (*p).named_size }), { (*p).font_scales });
     }
     if (dirty & date_picker::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
@@ -3083,13 +3083,13 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
     // alone answered three of the five verbs a picker's font has.
     let typography: u64 = date_picker::P_FONT_FAMILY | date_picker::P_FONT_WEIGHT
                         | date_picker::P_IS_ITALIC | date_picker::P_CHARACTER_SPACING
-                        | date_picker::P_FONT_SCALES | date_picker::P_FONT_SIZE;
+                        | date_picker::P_FONT_SCALES | date_picker::P_FONT_SIZE | date_picker::P_NAMED_SIZE;
     if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
         var st: TextStyle = TextStyle::none();
         st.family = { (*p).font_family.view() };
         st.weight = { (*p).font_weight };
         st.is_italic = { (*p).is_italic };
-        st.size = { (*p).font_size };
+        st.size = paint::sized({ (*p).font_size }, { (*p).named_size });
         st.scales = { (*p).font_scales };
         st.align = vocab::TextAlign::Center;
         st.vertical_align = vocab::TextAlign::Center;
@@ -3261,8 +3261,8 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
         write_time_title(env, v, p);
     }
     var tv: w::TextView = w::TextView::from_global(env, v);
-    if (dirty & (time_picker::P_FONT_SIZE | time_picker::P_FONT_SCALES)) != (0 as u64) {
-        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
+    if (dirty & (time_picker::P_FONT_SIZE | time_picker::P_NAMED_SIZE | time_picker::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, paint::sized({ (*p).font_size }, { (*p).named_size }), { (*p).font_scales });
     }
     if (dirty & time_picker::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
@@ -3270,13 +3270,13 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
     }
     let typography: u64 = time_picker::P_FONT_FAMILY | time_picker::P_FONT_WEIGHT
                         | time_picker::P_IS_ITALIC | time_picker::P_CHARACTER_SPACING
-                        | time_picker::P_FONT_SIZE;
+                        | time_picker::P_FONT_SIZE | time_picker::P_NAMED_SIZE;
     if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
         var st: TextStyle = TextStyle::none();
         st.family = { (*p).font_family.view() };
         st.weight = { (*p).font_weight };
         st.is_italic = { (*p).is_italic };
-        st.size = { (*p).font_size };
+        st.size = paint::sized({ (*p).font_size }, { (*p).named_size });
         st.scales = { (*p).font_scales };
         st.align = vocab::TextAlign::Center;
         st.vertical_align = vocab::TextAlign::Center;
@@ -3531,7 +3531,7 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     // and the drop-down list are both ArrayAdapter views, so the style is
     // stored per picker and applied as each row is handed back. Written BEFORE
     // the items when both change, so the first rows built already carry it.
-    let type_bits: u64 = popup::P_FONT_SIZE | popup::P_FONT_SCALES
+    let type_bits: u64 = popup::P_FONT_SIZE | popup::P_NAMED_SIZE | popup::P_FONT_SCALES
                        | popup::P_FONT_WEIGHT | popup::P_IS_ITALIC
                        | popup::P_FONT_FAMILY | popup::P_TEXT_COLOR
                        | popup::P_TEXT_ALIGN | popup::P_VERTICAL_ALIGN
@@ -3540,7 +3540,7 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
         var fam: [u8; 128] = #zero::[[u8; 128]]();
         let fbase: *u8 = { #addr_of(fam[0]) };
         let _f: bool = paint::cstr({ (*p).font_family.view() }, fbase, 128 as usize);
-        let size: f64 = { (*p).font_size };
+        let size: f64 = paint::sized({ (*p).font_size }, { (*p).named_size });
         // EMs, because `setLetterSpacing` is a multiple of the font size and
         // facet states an absolute distance. The same conversion every text
         // control here does, and it needs the size — which is why it happens on
@@ -5010,10 +5010,10 @@ fn apply_span_children(env: rt::Env, v: *u8, n: *core::Node) {
                         // the same split `apply_text_size` makes for a whole
                         // label.
                         var size_px: i32 = 0 as i32;
-                        if { (*sp).font_size } > 0.0f64 {
+                        if paint::sized({ (*sp).font_size }, { (*sp).named_size }) > 0.0f64 {
                             var scale: f64 = e::density();
                             if { (*sp).font_scales } { scale = e::font_scale(); }
-                            size_px = { ({ (*sp).font_size } * scale) as i32 };
+                            size_px = { (paint::sized({ (*sp).font_size }, { (*sp).named_size }) * scale) as i32 };
                         }
                         var nolink: [u8; 4] = #zero::[[u8; 4]]();
                         dex::spans_add(env, { v as jni::jobject }, at, units,
@@ -5037,7 +5037,7 @@ fn apply_span_children(env: rt::Env, v: *u8, n: *core::Node) {
                         // the label's when the span names none.
                         var em: f32 = 0.0f32;
                         if { (*sp).character_spacing } != 0.0f64 {
-                            var basis: f64 = { (*sp).font_size };
+                            var basis: f64 = paint::sized({ (*sp).font_size }, { (*sp).named_size });
                             if basis <= 0.0f64 { basis = 14.0f64; }
                             em = { ({ (*sp).character_spacing } / basis) as f32 };
                         }
@@ -5092,7 +5092,7 @@ fn apply_formatted_text(env: rt::Env, v: *u8, f: *vocab::Spans) {
         let fg: vocab::Color = { (*r).color };
         let bg: vocab::Color = { (*r).background_color };
         var size_px: i32 = 0 as i32;
-        if { (*r).font_size } > 0.0f64 { size_px = { e::px({ (*r).font_size }) as i32 }; }
+        if paint::sized({ (*r).font_size }, { (*r).named_size }) > 0.0f64 { size_px = { e::px(paint::sized({ (*r).font_size }, { (*r).named_size })) as i32 }; }
         dex::spans_add(env, { v as jni::jobject }, at, units,
                        paint::argb_of(fg), fg.is_set(),
                        paint::argb_of(bg), bg.is_set(),

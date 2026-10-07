@@ -15,7 +15,7 @@ fn apply(r: *record::View) {
     let value=(*r).object.clone();let control=native::must::[ui::IControl](ui::IControl::query(value));
     native::check(control.set_is_enabled((*core::node_data((*r).node)).common.is_enabled));
         let defaults: ui::IControlStatics=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());
-        if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
+        if typography::sized((*p).font_size,(*p).named_size)>0.0f64 {native::check(control.set_font_size(typography::sized((*p).font_size,(*p).named_size)));} else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
         native::check(control.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](control.font_size()))));
         native::check(control.set_font_weight(style::weight((*p).font_weight)));
         native::check(control.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));

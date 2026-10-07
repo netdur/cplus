@@ -81,6 +81,37 @@ fn is_dark() -> bool { return DARK; }
 // units — see `window::text_scale` for why the unit switch is wrong.
 static TEXT_SCALE: f64 = 1.0f64;
 
+// ---- a named size is Adwaita's TYPE RAMP --------------------------------------
+// MAUI resolves `NamedSize` per platform (IFontNamedSizeService); GNOME's own
+// answer is the Adwaita stylesheet's ramp — `.large-title`, `.title-1`..`-4`,
+// `.caption` — over an 11pt body. Stated here in the px this backend writes
+// (pt × 96/72), so a role scales with `text_scale` like any other size.
+//
+//     Micro 8pt  Caption 9pt (82%)  Small 10pt  Medium 10.5pt  Body 11pt
+//     Subtitle title-4 13pt  Large title-2 15pt  Title title-1 20pt
+//     Header large-title 26pt
+fn named_px(n: vocab::NamedSize) -> f64 {
+    return match n {
+        vocab::NamedSize::Default => 0.0f64,
+        vocab::NamedSize::Micro => 11.0f64,
+        vocab::NamedSize::Caption => 12.0f64,
+        vocab::NamedSize::Small => 13.0f64,
+        vocab::NamedSize::Medium => 14.0f64,
+        vocab::NamedSize::Body => 15.0f64,
+        vocab::NamedSize::Subtitle => 17.0f64,
+        vocab::NamedSize::Large => 20.0f64,
+        vocab::NamedSize::Title => 27.0f64,
+        vocab::NamedSize::Header => 35.0f64,
+    };
+}
+
+// The size a text control draws at: the stated one, else the role's, else 0 —
+// "leave the theme's default". An explicit `font_size` wins over the name.
+fn sized(size: f64, named: vocab::NamedSize) -> f64 {
+    if size > 0.0f64 { return size; }
+    return named_px(named);
+}
+
 fn set_text_scale(v: f64) { if v > (0.0 as f64) { TEXT_SCALE = v; } return; }
 fn text_scale() -> f64 { return TEXT_SCALE; }
 

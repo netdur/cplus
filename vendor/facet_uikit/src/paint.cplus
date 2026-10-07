@@ -243,25 +243,80 @@ fn is_default_weight(w: vocab::FontWeight) -> bool {
 // draw something other than what was recorded.
 fn ui_font_plain(size: f64, weight: vocab::FontWeight, family: str)
     -> option::Option[ui::Font] {
-    return ui_font(size, weight, family, false, false);
+    return ui_font(size, vocab::NamedSize::Default, weight, family, false, false);
 }
 
-fn ui_font(size: f64, weight: vocab::FontWeight, family: str, italic: bool,
-           scales: bool) -> option::Option[ui::Font] {
+// ---- a named size is the platform's TEXT STYLE -----------------------------
+// MAUI resolves `NamedSize` per platform (IFontNamedSizeService); on Apple the
+// platform's own answer is the text style, and Dynamic Type scales each style
+// along its OWN ramp — a caption grows faster than a large title — which no
+// point size times one factor reproduces. The same table as facet_appkit's,
+// so one name is one style on both. The strings are CoreText's: the large
+// title is "UICTFontTextStyleTitle0".
+fn text_style_name(n: vocab::NamedSize) -> str {
+    return match n {
+        vocab::NamedSize::Default => "UICTFontTextStyleBody",
+        vocab::NamedSize::Micro => "UICTFontTextStyleCaption2",
+        vocab::NamedSize::Caption => "UICTFontTextStyleCaption1",
+        vocab::NamedSize::Small => "UICTFontTextStyleFootnote",
+        vocab::NamedSize::Medium => "UICTFontTextStyleCallout",
+        vocab::NamedSize::Body => "UICTFontTextStyleBody",
+        vocab::NamedSize::Subtitle => "UICTFontTextStyleTitle3",
+        vocab::NamedSize::Large => "UICTFontTextStyleTitle2",
+        vocab::NamedSize::Title => "UICTFontTextStyleTitle1",
+        vocab::NamedSize::Header => "UICTFontTextStyleTitle0",
+    };
+}
+
+// The style's size at the default content-size category — what
+// `font_scales: false` asks for. Apple's own table.
+fn text_style_base_size(n: vocab::NamedSize) -> f64 {
+    return match n {
+        vocab::NamedSize::Default => 17.0f64,
+        vocab::NamedSize::Micro => 11.0f64,
+        vocab::NamedSize::Caption => 12.0f64,
+        vocab::NamedSize::Small => 13.0f64,
+        vocab::NamedSize::Medium => 16.0f64,
+        vocab::NamedSize::Body => 17.0f64,
+        vocab::NamedSize::Subtitle => 20.0f64,
+        vocab::NamedSize::Large => 22.0f64,
+        vocab::NamedSize::Title => 28.0f64,
+        vocab::NamedSize::Header => 34.0f64,
+    };
+}
+
+fn is_named_size(n: vocab::NamedSize) -> bool {
+    return match n {
+        vocab::NamedSize::Default => false,
+        _ => true,
+    };
+}
+
+// A NAMED size with no explicit one is its text style: with `scales` the
+// preferred font (Dynamic Type), without it the style's base size. Unnamed and
+// unsized, `scales` is the body style, as it always was. An explicit `size`
+// wins over both.
+fn ui_font(size: f64, named: vocab::NamedSize, weight: vocab::FontWeight, family: str,
+           italic: bool, scales: bool) -> option::Option[ui::Font] {
     var f: ui::Font = ui::Font::system_font_of_size(ui::Font::system_font_size());
     var have: bool = false;
-    if scales && size <= 0.0f64 {
-        // Dynamic Type, the body style — the scale a paragraph is set at.
-        f = ui::Font::preferred_font_for_text_style("UICTFontTextStyleBody");
-        have = true;
-    }
     var pt: f64 = size;
-    if pt <= 0.0f64 {
-        if have { pt = f.point_size(); } else { pt = ui::Font::system_font_size(); }
+    if size <= 0.0f64 {
+        if scales {
+            // Dynamic Type: the named style, or the body style a paragraph is set at.
+            f = ui::Font::preferred_font_for_text_style(text_style_name(named));
+            have = true;
+            pt = f.point_size();
+        } else if is_named_size(named) {
+            pt = text_style_base_size(named);
+            have = true;
+        } else {
+            pt = ui::Font::system_font_size();
+        }
     }
     if family != "" {
         match ui::Font::font_with_name(family, pt) {
-            option::Option[ui::Font]::Some(named) => { return option::some(named); }
+            option::Option[ui::Font]::Some(named_face) => { return option::some(named_face); }
             option::Option[ui::Font]::None => { }
         }
     }

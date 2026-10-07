@@ -273,6 +273,35 @@ fn ev_LineJoin(s: str) -> option::Option[vocab::LineJoin] {
     return option::Option[vocab::LineJoin]::None;
 }
 
+fn en_NamedSize(v: vocab::NamedSize) -> str {
+    return match v {
+        vocab::NamedSize::Default => "default",
+        vocab::NamedSize::Micro => "micro",
+        vocab::NamedSize::Small => "small",
+        vocab::NamedSize::Medium => "medium",
+        vocab::NamedSize::Large => "large",
+        vocab::NamedSize::Body => "body",
+        vocab::NamedSize::Header => "header",
+        vocab::NamedSize::Title => "title",
+        vocab::NamedSize::Subtitle => "subtitle",
+        vocab::NamedSize::Caption => "caption",
+    };
+}
+
+fn ev_NamedSize(s: str) -> option::Option[vocab::NamedSize] {
+    if s == "default" { return option::Option[vocab::NamedSize]::Some(vocab::NamedSize::Default); }
+    if s == "micro" { return option::Option[vocab::NamedSize]::Some(vocab::NamedSize::Micro); }
+    if s == "small" { return option::Option[vocab::NamedSize]::Some(vocab::NamedSize::Small); }
+    if s == "medium" { return option::Option[vocab::NamedSize]::Some(vocab::NamedSize::Medium); }
+    if s == "large" { return option::Option[vocab::NamedSize]::Some(vocab::NamedSize::Large); }
+    if s == "body" { return option::Option[vocab::NamedSize]::Some(vocab::NamedSize::Body); }
+    if s == "header" { return option::Option[vocab::NamedSize]::Some(vocab::NamedSize::Header); }
+    if s == "title" { return option::Option[vocab::NamedSize]::Some(vocab::NamedSize::Title); }
+    if s == "subtitle" { return option::Option[vocab::NamedSize]::Some(vocab::NamedSize::Subtitle); }
+    if s == "caption" { return option::Option[vocab::NamedSize]::Some(vocab::NamedSize::Caption); }
+    return option::Option[vocab::NamedSize]::None;
+}
+
 fn en_ReturnKey(v: vocab::ReturnKey) -> str {
     return match v {
         vocab::ReturnKey::Default => "default",
@@ -474,6 +503,7 @@ fn names() -> vec::Vec[str] {
     let _font_scales: status::Status = v.append("font_scales");
     let _font_family: status::Status = v.append("font_family");
     let _font_size: status::Status = v.append("font_size");
+    let _named_size: status::Status = v.append("named_size");
     let _text_align: status::Status = v.append("text_align");
     let _line_break: status::Status = v.append("line_break");
     let _line_height: status::Status = v.append("line_height");
@@ -600,6 +630,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
                 if prop == "font_family" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.font_family()))); }
                 if prop == "font_size" { return option::Option[insp::Value]::Some(insp::Value::Num(c.font_size())); }
+                if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "text_align" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_TextAlign(c.text_align())))); }
                 if prop == "line_break" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_LineBreak(c.line_break())))); }
                 if prop == "line_height" { return option::Option[insp::Value]::Some(insp::Value::Num(c.line_height())); }
@@ -627,6 +658,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
                 if prop == "font_family" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.font_family()))); }
                 if prop == "font_size" { return option::Option[insp::Value]::Some(insp::Value::Num(c.font_size())); }
+                if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "image" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.image()))); }
                 if prop == "line_break" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_LineBreak(c.line_break())))); }
                 if prop == "title" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.title()))); }
@@ -655,6 +687,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
                 if prop == "font_family" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.font_family()))); }
                 if prop == "font_size" { return option::Option[insp::Value]::Some(insp::Value::Num(c.font_size())); }
+                if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "is_read_only" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_read_only())); }
                 if prop == "checks_spelling" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.checks_spelling())); }
                 if prop == "predicts_text" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.predicts_text())); }
@@ -684,6 +717,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
                 if prop == "font_family" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.font_family()))); }
                 if prop == "font_size" { return option::Option[insp::Value]::Some(insp::Value::Num(c.font_size())); }
+                if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "is_read_only" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_read_only())); }
                 if prop == "checks_spelling" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.checks_spelling())); }
                 if prop == "predicts_text" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.predicts_text())); }
@@ -715,6 +749,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
                 if prop == "font_family" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.font_family()))); }
                 if prop == "font_size" { return option::Option[insp::Value]::Some(insp::Value::Num(c.font_size())); }
+                if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "is_read_only" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_read_only())); }
                 if prop == "checks_spelling" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.checks_spelling())); }
                 if prop == "predicts_text" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.predicts_text())); }
@@ -740,6 +775,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
                 if prop == "font_family" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.font_family()))); }
                 if prop == "font_size" { return option::Option[insp::Value]::Some(insp::Value::Num(c.font_size())); }
+                if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "text_align" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_TextAlign(c.text_align())))); }
                 if prop == "is_open" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_open())); }
                 if prop == "selected_index" { return option::Option[insp::Value]::Some(insp::Value::Int(c.selected_index())); }
@@ -800,6 +836,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
                 if prop == "font_family" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.font_family()))); }
                 if prop == "font_size" { return option::Option[insp::Value]::Some(insp::Value::Num(c.font_size())); }
+                if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "format" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.format()))); }
                 if prop == "is_open" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_open())); }
                 if prop == "text_color" { return option::Option[insp::Value]::Some(insp::Value::Color(to_color(c.text_color()))); }
@@ -817,6 +854,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
                 if prop == "font_family" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.font_family()))); }
                 if prop == "font_size" { return option::Option[insp::Value]::Some(insp::Value::Num(c.font_size())); }
+                if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "format" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.format()))); }
                 if prop == "is_open" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_open())); }
                 if prop == "text_color" { return option::Option[insp::Value]::Some(insp::Value::Color(to_color(c.text_color()))); }
@@ -942,6 +980,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
                 if prop == "font_family" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.font_family()))); }
                 if prop == "font_size" { return option::Option[insp::Value]::Some(insp::Value::Num(c.font_size())); }
+                if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "group" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.group()))); }
                 if prop == "on" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.on())); }
                 if prop == "text_color" { return option::Option[insp::Value]::Some(insp::Value::Color(to_color(c.text_color()))); }
@@ -1099,6 +1138,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "font_scales" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.font_scales())); }
                 if prop == "font_family" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.font_family()))); }
                 if prop == "font_size" { return option::Option[insp::Value]::Some(insp::Value::Num(c.font_size())); }
+                if prop == "named_size" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_NamedSize(c.named_size())))); }
                 if prop == "line_height" { return option::Option[insp::Value]::Some(insp::Value::Num(c.line_height())); }
                 if prop == "text" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.text()))); }
                 if prop == "text_color" { return option::Option[insp::Value]::Some(insp::Value::Color(to_color(c.text_color()))); }
@@ -1221,6 +1261,15 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                     return match x {
                         option::Option[f64]::Some(a) => { let _c: m_label::Label = c.set_font_size(a); insp::Outcome::Ok },
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "named_size" {
+                    return match spelling_of(v) {
+                        option::Option[text::Text]::Some(t) => match ev_NamedSize(t.view()) {
+                            option::Option[vocab::NamedSize]::Some(e) => { let _c: m_label::Label = c.set_named_size(e); insp::Outcome::Ok },
+                            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+                        },
+                        option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
                     };
                 }
                 if prop == "text_align" {
@@ -1408,6 +1457,15 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                     return match x {
                         option::Option[f64]::Some(a) => { let _c: m_button::Button = c.set_font_size(a); insp::Outcome::Ok },
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "named_size" {
+                    return match spelling_of(v) {
+                        option::Option[text::Text]::Some(t) => match ev_NamedSize(t.view()) {
+                            option::Option[vocab::NamedSize]::Some(e) => { let _c: m_button::Button = c.set_named_size(e); insp::Outcome::Ok },
+                            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+                        },
+                        option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
                     };
                 }
                 if prop == "image" {
@@ -1600,6 +1658,15 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                     return match x {
                         option::Option[f64]::Some(a) => { let _c: m_text_field::TextField = c.set_font_size(a); insp::Outcome::Ok },
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "named_size" {
+                    return match spelling_of(v) {
+                        option::Option[text::Text]::Some(t) => match ev_NamedSize(t.view()) {
+                            option::Option[vocab::NamedSize]::Some(e) => { let _c: m_text_field::TextField = c.set_named_size(e); insp::Outcome::Ok },
+                            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+                        },
+                        option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
                     };
                 }
                 if prop == "is_read_only" {
@@ -1805,6 +1872,15 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                     return match x {
                         option::Option[f64]::Some(a) => { let _c: m_text_area::TextArea = c.set_font_size(a); insp::Outcome::Ok },
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "named_size" {
+                    return match spelling_of(v) {
+                        option::Option[text::Text]::Some(t) => match ev_NamedSize(t.view()) {
+                            option::Option[vocab::NamedSize]::Some(e) => { let _c: m_text_area::TextArea = c.set_named_size(e); insp::Outcome::Ok },
+                            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+                        },
+                        option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
                     };
                 }
                 if prop == "is_read_only" {
@@ -2032,6 +2108,15 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
                     };
                 }
+                if prop == "named_size" {
+                    return match spelling_of(v) {
+                        option::Option[text::Text]::Some(t) => match ev_NamedSize(t.view()) {
+                            option::Option[vocab::NamedSize]::Some(e) => { let _c: m_search_field::SearchField = c.set_named_size(e); insp::Outcome::Ok },
+                            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+                        },
+                        option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
                 if prop == "is_read_only" {
                     let x: option::Option[bool] = match v {
                         insp::Value::Bool(b) => option::Option[bool]::Some(b),
@@ -2197,6 +2282,15 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                     return match x {
                         option::Option[f64]::Some(a) => { let _c: m_popup::Popup = c.set_font_size(a); insp::Outcome::Ok },
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "named_size" {
+                    return match spelling_of(v) {
+                        option::Option[text::Text]::Some(t) => match ev_NamedSize(t.view()) {
+                            option::Option[vocab::NamedSize]::Some(e) => { let _c: m_popup::Popup = c.set_named_size(e); insp::Outcome::Ok },
+                            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+                        },
+                        option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
                     };
                 }
                 if prop == "text_align" {
@@ -2506,6 +2600,15 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
                     };
                 }
+                if prop == "named_size" {
+                    return match spelling_of(v) {
+                        option::Option[text::Text]::Some(t) => match ev_NamedSize(t.view()) {
+                            option::Option[vocab::NamedSize]::Some(e) => { let _c: m_date_picker::DatePicker = c.set_named_size(e); insp::Outcome::Ok },
+                            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+                        },
+                        option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
                 if prop == "format" {
                     return match v {
                         insp::Value::Str(t) => { let _c: m_date_picker::DatePicker = c.set_format(t.view()); insp::Outcome::Ok },
@@ -2595,6 +2698,15 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                     return match x {
                         option::Option[f64]::Some(a) => { let _c: m_time_picker::TimePicker = c.set_font_size(a); insp::Outcome::Ok },
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "named_size" {
+                    return match spelling_of(v) {
+                        option::Option[text::Text]::Some(t) => match ev_NamedSize(t.view()) {
+                            option::Option[vocab::NamedSize]::Some(e) => { let _c: m_time_picker::TimePicker = c.set_named_size(e); insp::Outcome::Ok },
+                            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+                        },
+                        option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
                     };
                 }
                 if prop == "format" {
@@ -3177,6 +3289,15 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                     return match x {
                         option::Option[f64]::Some(a) => { let _c: m_radio::Radio = c.set_font_size(a); insp::Outcome::Ok },
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "named_size" {
+                    return match spelling_of(v) {
+                        option::Option[text::Text]::Some(t) => match ev_NamedSize(t.view()) {
+                            option::Option[vocab::NamedSize]::Some(e) => { let _c: m_radio::Radio = c.set_named_size(e); insp::Outcome::Ok },
+                            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+                        },
+                        option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
                     };
                 }
                 if prop == "group" {
@@ -3852,6 +3973,15 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                         option::Option[f64]::None => insp::Outcome::TypeMismatch,
                     };
                 }
+                if prop == "named_size" {
+                    return match spelling_of(v) {
+                        option::Option[text::Text]::Some(t) => match ev_NamedSize(t.view()) {
+                            option::Option[vocab::NamedSize]::Some(e) => { let _c: m_span::Span = c.set_named_size(e); insp::Outcome::Ok },
+                            option::Option[vocab::NamedSize]::None => insp::Outcome::TypeMismatch,
+                        },
+                        option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
                 if prop == "line_height" {
                     let x: option::Option[f64] = match v {
                         insp::Value::Num(x) => option::Option[f64]::Some(x),
@@ -4070,6 +4200,10 @@ fn every_label_property_reads_and_writes_back() {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_size", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
+    match get(p, "named_size") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "named_size", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
     match get(p, "text_align") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "text_align", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
@@ -4172,6 +4306,10 @@ fn every_button_property_reads_and_writes_back() {
     }
     match get(p, "font_size") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_size", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
+    match get(p, "named_size") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "named_size", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
     match get(p, "image") {
@@ -4310,6 +4448,10 @@ fn every_text_field_property_reads_and_writes_back() {
     }
     match get(p, "font_size") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_size", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
+    match get(p, "named_size") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "named_size", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
     match get(p, "is_read_only") {
@@ -4464,6 +4606,10 @@ fn every_text_area_property_reads_and_writes_back() {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_size", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
+    match get(p, "named_size") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "named_size", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
     match get(p, "is_read_only") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "is_read_only", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
@@ -4614,6 +4760,10 @@ fn every_search_field_property_reads_and_writes_back() {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_size", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
+    match get(p, "named_size") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "named_size", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
     match get(p, "is_read_only") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "is_read_only", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
@@ -4738,6 +4888,10 @@ fn every_popup_property_reads_and_writes_back() {
     }
     match get(p, "font_size") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_size", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
+    match get(p, "named_size") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "named_size", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
     match get(p, "text_align") {
@@ -4922,6 +5076,10 @@ fn every_date_picker_property_reads_and_writes_back() {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_size", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
+    match get(p, "named_size") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "named_size", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
     match get(p, "format") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "format", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
@@ -4994,6 +5152,10 @@ fn every_time_picker_property_reads_and_writes_back() {
     }
     match get(p, "font_size") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_size", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
+    match get(p, "named_size") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "named_size", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
     match get(p, "format") {
@@ -5436,6 +5598,10 @@ fn every_radio_property_reads_and_writes_back() {
     }
     match get(p, "font_size") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_size", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
+    match get(p, "named_size") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "named_size", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
     match get(p, "group") {
@@ -5941,6 +6107,10 @@ fn every_span_property_reads_and_writes_back() {
     }
     match get(p, "font_size") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "font_size", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
+    match get(p, "named_size") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "named_size", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
     match get(p, "line_height") {

@@ -89,7 +89,7 @@ fn apply(r: *record::View) {
         let p: *props::SpanProps=raw as *props::SpanProps;let label=native::must::[ui::ITextBlock](ui::ITextBlock::query(value));
         let defaults: ui::ITextBlockStatics=native::must::[ui::ITextBlockStatics](ui::TextBlock::i_text_block_statics_factory());
         native::check(label.set_text(typography::transformed((*p).text.view(),(*p).text_transform).view()));
-        if (*p).font_size>0.0f64 { native::check(label.set_font_size((*p).font_size)); } else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
+        if typography::sized((*p).font_size,(*p).named_size)>0.0f64 { native::check(label.set_font_size(typography::sized((*p).font_size,(*p).named_size))); } else {typography::clear(value,native::must::[rt::Object](defaults.font_size_property()));}
         if (*p).text_color.is_set() {native::check(label.set_foreground(style::brush((*p).text_color)));} else {typography::clear(value,native::must::[rt::Object](defaults.foreground_property()));}
         native::check(label.set_character_spacing(typography::spacing((*p).character_spacing,native::must::[f64](label.font_size()))));
         native::check(label.set_is_text_scale_factor_enabled((*p).font_scales));

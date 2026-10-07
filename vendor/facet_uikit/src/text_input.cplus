@@ -444,7 +444,7 @@ fn apply_field_band(v: *u8, iv: *props::InputViewProps, dirty: u64, b: InputBits
         if c.is_set() { f.set_text_color(paint::ui_color(c)); }
     }
     if (dirty & b.font) != (0 as u64) {
-        match paint::ui_font({ (*iv).font_size }, { (*iv).font_weight },
+        match paint::ui_font({ (*iv).font_size }, { (*iv).named_size }, { (*iv).font_weight },
                              { (*iv).font_family.view() }, { (*iv).is_italic },
                              { (*iv).font_scales }) {
             option::Option[ui::Font]::Some(font) => {
@@ -557,7 +557,7 @@ fn apply_text_view_band(v: *u8, iv: *props::InputViewProps, dirty: u64, b: Input
         if c.is_set() { t.set_text_color(paint::ui_color(c)); }
     }
     if (dirty & b.font) != (0 as u64) {
-        match paint::ui_font({ (*iv).font_size }, { (*iv).font_weight },
+        match paint::ui_font({ (*iv).font_size }, { (*iv).named_size }, { (*iv).font_weight },
                              { (*iv).font_family.view() }, { (*iv).is_italic },
                              { (*iv).font_scales }) {
             option::Option[ui::Font]::Some(font) => {
@@ -680,7 +680,7 @@ fn base_attributes(iv: *props::InputViewProps) -> *u8 {
                              number_f64({ (*iv).character_spacing }),
                              bridge::nsstring("NSKern")) };
     }
-    match paint::ui_font({ (*iv).font_size }, { (*iv).font_weight },
+    match paint::ui_font({ (*iv).font_size }, { (*iv).named_size }, { (*iv).font_weight },
                          { (*iv).font_family.view() }, { (*iv).is_italic },
                          { (*iv).font_scales }) {
         option::Option[ui::Font]::Some(f) => {
@@ -717,7 +717,7 @@ fn run_attributes(r: *vocab::StyleRun, iv: *props::InputViewProps) -> *u8 {
         _ => { }
     }
     if plain == false || italic {
-        match paint::ui_font({ (*iv).font_size }, w, { (*iv).font_family.view() },
+        match paint::ui_font({ (*iv).font_size }, { (*iv).named_size }, w, { (*iv).font_family.view() },
                              italic, { (*iv).font_scales }) {
             option::Option[ui::Font]::Some(f) => {
                 { rt::msg_void_id_id(d, rt::sel(#str_ptr("setObject:forKey:\0")),

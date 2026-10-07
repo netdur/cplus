@@ -154,6 +154,7 @@ ENUMS = {
     "IndicatorShape": "DotShape",
     "KeyboardAcceleratorModifiers": "KeyModifiers",
     "ToolbarItemOrder": "ToolbarPlacement",
+    "NamedSize": "NamedSize",
 }
 
 # ---- types that carry the ledger's model, wherever they appear ---------------------
@@ -1086,6 +1087,18 @@ def rows():
                                 "ADOPT", "is_italic",
                                 "bool — facet-origin: the slant axis the ledger folded into "
                                 "FontAttributes, split out so weight and slant compose"))
+                # S14: the ledger's FontSize takes a number OR a NamedSize — its
+                # FontSizeConverter reads "Title" as readily as "17", and the
+                # platform's IFontNamedSizeService answers what the name means.
+                # facet keeps the two as two rows, because a number and a role
+                # are different promises: the number is fixed, the role is the
+                # platform's own text style and follows its accessibility ramp.
+                # An explicit font_size > 0 still wins.
+                if member == "FontSize" and r[0] == "ADOPT":
+                    out.append((ty, "FontSize (named)", band, "NamedSize",
+                                "ADOPT", "named_size",
+                                "NamedSize — the ledger's NamedSize, which FontSize accepts by "
+                                "name; the backend resolves it to the platform's text style"))
     return out, undecided
 
 

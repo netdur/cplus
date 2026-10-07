@@ -39,6 +39,7 @@ import "facet/list" as flist;
 import "facet/elements" as ui;
 import "facet/icons" as icons;
 import "facet/icon_button" as icon_button;
+import "facet/label" as label;
 import "objc/runtime" as rt;
 import "uikit/uikit" as uik;
 import "./paint" as paint;
@@ -180,6 +181,77 @@ fn a_glyph_above_the_bmp_draws_and_an_unmapped_codepoint_does_not() -> bool {
         option::Option[uik::Image]::None => { }
     }
     return ok;
+}
+
+// ---- S14: a named size is a UIFont text style ---------------------------------
+
+fn font_point_size_of(v: *u8) -> f64 {
+    let f: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("font\0"))) };
+    if f.is_null() { return 0.0f64; }
+    return { rt::msg_f64(f, rt::sel(#str_ptr("pointSize\0"))) };
+}
+
+fn named_label_point_size(named: vocab::NamedSize, size: f64, scales: bool) -> f64 {
+    var n: core::Node = ui::label("Hi", font_size: size, named_size: named,
+                                  font_scales: scales);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    if v.is_null() { return 0.0f64; }
+    let pt: f64 = font_point_size_of(v);
+    views::view_release(v);
+    return pt;
+}
+
+// A style string UIKit does not know is not an error, so every name is checked
+// against Apple's own table: at the default content size the preferred font IS
+// the base size. A wrong string answers some other size.
+fn every_named_size_is_a_text_style_uikit_knows() -> bool {
+    let names: [vocab::NamedSize; 9] = [
+        vocab::NamedSize::Micro, vocab::NamedSize::Small, vocab::NamedSize::Medium,
+        vocab::NamedSize::Large, vocab::NamedSize::Body, vocab::NamedSize::Header,
+        vocab::NamedSize::Title, vocab::NamedSize::Subtitle, vocab::NamedSize::Caption,
+    ];
+    var i: usize = 0 as usize;
+    while i < (9 as usize) {
+        let want: f64 = paint::text_style_base_size(names[i]);
+        let got: f64 = uik::Font::preferred_font_for_text_style(
+            paint::text_style_name(names[i])).point_size();
+        if got != want {
+            io::eprintln(text::from_str("  style ${i}: preferred ${got}pt, table ${want}pt"));
+            return false;
+        }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+fn a_named_size_is_its_text_style_and_a_stated_size_still_wins() -> bool {
+    // Scaling (the default): Dynamic Type's own font for the style.
+    let scaled: f64 = named_label_point_size(vocab::NamedSize::Title, 0.0f64, true);
+    let preferred: f64 = uik::Font::preferred_font_for_text_style(
+        paint::text_style_name(vocab::NamedSize::Title)).point_size();
+    if scaled != preferred { return false; }
+    // Pinned: the style's base size.
+    if named_label_point_size(vocab::NamedSize::Title, 0.0f64, false) != 28.0f64 { return false; }
+    // A stated size wins over the name.
+    if named_label_point_size(vocab::NamedSize::Title, 30.0f64, false) != 30.0f64 { return false; }
+    // And the cursor's write reaches the view through P_NAMED_SIZE.
+    var n: core::Node = ui::label("Hi", key: "st:named", font_scales: false);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v.is_null() { return false; }
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match label::from(p) {
+        option::Option[label::Label]::Some(c) => {
+            let _c: label::Label = c.set_named_size(vocab::NamedSize::Header);
+        }
+        option::Option[label::Label]::None => { return false; }
+    }
+    views::apply(0 as *u8, p);
+    let after: f64 = font_point_size_of(v);
+    core::set_view(p, 0 as *u8, views::view_release);
+    views::view_release(v);
+    return after == 34.0f64;
 }
 
 fn an_icon_buttons_symbol_takes_the_slot_and_gives_it_back() -> bool {
@@ -3911,6 +3983,10 @@ fn run_all() -> i32 {
 
     check("the icon font registers without the app shipping it",
           the_icon_font_registers_without_the_app_shipping_it());
+    check("every named size is a text style UIKit knows",
+          every_named_size_is_a_text_style_uikit_knows());
+    check("a named size is its text style and a stated size still wins",
+          a_named_size_is_its_text_style_and_a_stated_size_still_wins());
     check("a button's symbol is a template image that draws ink",
           a_buttons_symbol_is_a_template_image_that_draws_ink());
     check("a button's symbol is drawn upright", a_buttons_symbol_is_drawn_upright());

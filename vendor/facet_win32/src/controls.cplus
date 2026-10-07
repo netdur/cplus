@@ -529,7 +529,7 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // The image slot holds the bundled glyph when there is one, and the image
     // source otherwise. The glyph is sized by the button's font and coloured
     // by its text colour, so either changing re-draws it.
-    let glyph_bits: u64 = button::P_SYMBOL | button::P_TEXT_COLOR | button::P_FONT_SIZE
+    let glyph_bits: u64 = button::P_SYMBOL | button::P_TEXT_COLOR | button::P_FONT_SIZE | button::P_NAMED_SIZE
         | button::P_FONT_WEIGHT | button::P_FONT_FAMILY | button::P_IS_ITALIC
         | button::P_FONT_SCALES;
     let cp: u32 = { (*p).symbol };

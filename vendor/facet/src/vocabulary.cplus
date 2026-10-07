@@ -142,6 +142,20 @@ enum LineJoin {
     Round,
 }
 
+// NamedSize (authored: no manifest source)
+enum NamedSize {
+    Default,
+    Micro,
+    Small,
+    Medium,
+    Large,
+    Body,
+    Header,
+    Title,
+    Subtitle,
+    Caption,
+}
+
 // ReturnType
 enum ReturnKey {
     Default,
@@ -485,6 +499,8 @@ impl Shape {
 struct TextSpan {
     text: text::Text,
     font_size: f64,
+    // A text role, as on the controls; an explicit font_size wins.
+    named_size: NamedSize,
     font_family: text::Text,
     font_weight: FontWeight,
     is_italic: bool,
@@ -498,6 +514,7 @@ struct TextSpan {
 impl TextSpan {
     fn of(text: str,
           font_size: f64 = 0.0f64,
+          named_size: NamedSize = NamedSize::Default,
           font_family: str = "",
           font_weight: FontWeight = FontWeight::Default,
           italic: bool = false,
@@ -506,7 +523,7 @@ impl TextSpan {
           decoration: TextDecoration = TextDecoration::None,
           link: str = "") -> TextSpan {
         return TextSpan {
-            text: text::from_str(text), font_size: font_size,
+            text: text::from_str(text), font_size: font_size, named_size: named_size,
             font_family: text::from_str(font_family), font_weight: font_weight,
             is_italic: italic,
             color: color, background_color: background_color,
@@ -1624,6 +1641,7 @@ impl Canvas {
                 var e0: status::Status = copy.add(TextSpan {
                     text: text::from_str({ (*r).view() }),
                     font_size: { (*r).font_size },
+                    named_size: { (*r).named_size },
                     font_family: text::from_str({ (*r).font_family.view() }),
                     font_weight: { (*r).font_weight },
                     is_italic: { (*r).is_italic },

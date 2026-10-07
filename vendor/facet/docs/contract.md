@@ -5,7 +5,7 @@ absent here does not exist: calling it is a compile error, never a
 silent no-op. What a backend cannot implement is recorded in that
 backend's own manifest, not here.
 
-422 declared verbs over 38 controls, plus the
+432 declared verbs over 38 controls, plus the
 shared band every element carries.
 
 
@@ -44,6 +44,7 @@ shared band every element carries.
 | `set_font_scales` / `font_scales()` | bool | Button.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | Button.FontFamily |
 | `set_font_size` / `font_size()` | f64 | Button.FontSize |
+| `set_named_size` / `named_size()` | NamedSize | Button.FontSize (named) |
 | `set_image` / `image()` | str | Button.ImageSource |
 | `set_line_break` / `line_break()` | LineBreak | Button.LineBreakMode |
 | `set_title` / `title()` | str | Button.Text |
@@ -169,6 +170,7 @@ shared band every element carries.
 | `set_font_scales` / `font_scales()` | bool | DatePicker.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | DatePicker.FontFamily |
 | `set_font_size` / `font_size()` | f64 | DatePicker.FontSize |
+| `set_named_size` / `named_size()` | NamedSize | DatePicker.FontSize (named) |
 | `set_format` / `format()` | str | DatePicker.Format |
 | `set_open` / `is_open()` | bool | DatePicker.IsOpen |
 | `set_maximum_date` / `maximum_date()` | Date | DatePicker.MaximumDate |
@@ -230,6 +232,7 @@ shared band every element carries.
 | `set_font_scales` / `font_scales()` | bool | Label.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | Label.FontFamily |
 | `set_font_size` / `font_size()` | f64 | Label.FontSize |
+| `set_named_size` / `named_size()` | NamedSize | Label.FontSize (named) |
 | `set_formatted_text` / `formatted_text_count()` / `formatted_text_at(at:)` | Spans | Label.FormattedText |
 | `set_text_align` / `text_align()` | TextAlign | Label.HorizontalTextAlignment |
 | `set_line_break` / `line_break()` | LineBreak | Label.LineBreakMode |
@@ -321,6 +324,7 @@ shared band every element carries.
 | `set_font_scales` / `font_scales()` | bool | Picker.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | Picker.FontFamily |
 | `set_font_size` / `font_size()` | f64 | Picker.FontSize |
+| `set_named_size` / `named_size()` | NamedSize | Picker.FontSize (named) |
 | `set_text_align` / `text_align()` | TextAlign | Picker.HorizontalTextAlignment |
 | `set_open` / `is_open()` | bool | Picker.IsOpen |
 | `set_selected_index` / `selected_index()` | i64 | Picker.SelectedIndex |
@@ -355,6 +359,7 @@ shared band every element carries.
 | `set_font_scales` / `font_scales()` | bool | RadioButton.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | RadioButton.FontFamily |
 | `set_font_size` / `font_size()` | f64 | RadioButton.FontSize |
+| `set_named_size` / `named_size()` | NamedSize | RadioButton.FontSize (named) |
 | `set_group` / `group()` | str | RadioButton.GroupName |
 | `set_on` / `on()` | bool | RadioButton.IsChecked |
 | `set_text_color` / `text_color()` | Color | RadioButton.TextColor |
@@ -403,6 +408,7 @@ shared band every element carries.
 | `set_font_scales` / `font_scales()` | bool | InputView.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | InputView.FontFamily |
 | `set_font_size` / `font_size()` | f64 | InputView.FontSize |
+| `set_named_size` / `named_size()` | NamedSize | InputView.FontSize (named) |
 | `set_read_only` / `is_read_only()` | bool | InputView.IsReadOnly |
 | `set_checks_spelling` / `checks_spelling()` | bool | InputView.IsSpellCheckEnabled |
 | `set_predicts_text` / `predicts_text()` | bool | InputView.IsTextPredictionEnabled |
@@ -442,6 +448,7 @@ shared band every element carries.
 | `set_font_scales` / `font_scales()` | bool | Span.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | Span.FontFamily |
 | `set_font_size` / `font_size()` | f64 | Span.FontSize |
+| `set_named_size` / `named_size()` | NamedSize | Span.FontSize (named) |
 | `set_line_height` / `line_height()` | f64 | Span.LineHeight |
 | `set_text` / `text()` | str | Span.Text |
 | `set_text_color` / `text_color()` | Color | Span.TextColor |
@@ -533,6 +540,7 @@ shared band every element carries.
 | `set_font_scales` / `font_scales()` | bool | InputView.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | InputView.FontFamily |
 | `set_font_size` / `font_size()` | f64 | InputView.FontSize |
+| `set_named_size` / `named_size()` | NamedSize | InputView.FontSize (named) |
 | `set_read_only` / `is_read_only()` | bool | InputView.IsReadOnly |
 | `set_checks_spelling` / `checks_spelling()` | bool | InputView.IsSpellCheckEnabled |
 | `set_predicts_text` / `predicts_text()` | bool | InputView.IsTextPredictionEnabled |
@@ -563,6 +571,7 @@ shared band every element carries.
 | `set_font_scales` / `font_scales()` | bool | InputView.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | InputView.FontFamily |
 | `set_font_size` / `font_size()` | f64 | InputView.FontSize |
+| `set_named_size` / `named_size()` | NamedSize | InputView.FontSize (named) |
 | `set_read_only` / `is_read_only()` | bool | InputView.IsReadOnly |
 | `set_checks_spelling` / `checks_spelling()` | bool | InputView.IsSpellCheckEnabled |
 | `set_predicts_text` / `predicts_text()` | bool | InputView.IsTextPredictionEnabled |
@@ -586,6 +595,7 @@ shared band every element carries.
 | `set_font_scales` / `font_scales()` | bool | TimePicker.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | TimePicker.FontFamily |
 | `set_font_size` / `font_size()` | f64 | TimePicker.FontSize |
+| `set_named_size` / `named_size()` | NamedSize | TimePicker.FontSize (named) |
 | `set_format` / `format()` | str | TimePicker.Format |
 | `set_open` / `is_open()` | bool | TimePicker.IsOpen |
 | `set_text_color` / `text_color()` | Color | TimePicker.TextColor |

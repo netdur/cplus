@@ -214,7 +214,7 @@ fn apply(r: *record::View) {
     let control: ui::IControl=native::must::[ui::IControl](ui::IControl::query((*r).object));
     native::check(control.set_is_enabled((*d).common.is_enabled && (!(*r).editor_secure || !(*p).is_read_only)));
     let defaults: ui::IControlStatics=native::must::[ui::IControlStatics](ui::Control::i_control_statics_factory());
-    if (*p).font_size>0.0f64 {native::check(control.set_font_size((*p).font_size));} else {typography::clear((*r).object,native::must::[rt::Object](defaults.font_size_property()));}
+    if typography::sized((*p).font_size,(*p).named_size)>0.0f64 {native::check(control.set_font_size(typography::sized((*p).font_size,(*p).named_size)));} else {typography::clear((*r).object,native::must::[rt::Object](defaults.font_size_property()));}
     if (*p).text_color.is_set() {native::check(control.set_foreground(style::brush((*p).text_color)));} else {typography::clear((*r).object,native::must::[rt::Object](defaults.foreground_property()));}
     native::check(control.set_font_weight(style::weight((*p).font_weight)));
     native::check(control.set_font_style(if (*p).is_italic {ui::font_style_italic} else {ui::font_style_normal}));

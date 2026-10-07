@@ -106,25 +106,25 @@ fn spec_of(n: *core::Node) -> FontSpec {
         let q: *props::LabelProps = p as *props::LabelProps;
         // A label is the one kind that carries a DECORATION, and it rides the
         // font rather than the control — see `FontSpec`.
-        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+        return stated_spec(sized({ (*q).font_size }, { (*q).named_size }), { (*q).font_weight },
                            { (*q).is_italic }, { (*q).font_family }.clone(),
                            { (*q).text_decoration }, { (*q).font_scales });
     }
     if kind == props::K_BUTTON {
         let q: *props::ButtonProps = p as *props::ButtonProps;
-        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+        return stated_spec(sized({ (*q).font_size }, { (*q).named_size }), { (*q).font_weight },
                            { (*q).is_italic }, { (*q).font_family }.clone(),
                            vocab::TextDecoration::None, { (*q).font_scales });
     }
     if kind == props::K_RADIO {
         let q: *props::RadioProps = p as *props::RadioProps;
-        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+        return stated_spec(sized({ (*q).font_size }, { (*q).named_size }), { (*q).font_weight },
                            { (*q).is_italic }, { (*q).font_family }.clone(),
                            vocab::TextDecoration::None, { (*q).font_scales });
     }
     if kind == props::K_POPUP {
         let q: *props::PopupProps = p as *props::PopupProps;
-        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+        return stated_spec(sized({ (*q).font_size }, { (*q).named_size }), { (*q).font_weight },
                            { (*q).is_italic }, { (*q).font_family }.clone(),
                            vocab::TextDecoration::None, { (*q).font_scales });
     }
@@ -134,13 +134,13 @@ fn spec_of(n: *core::Node) -> FontSpec {
     // after `spec_of` was written.
     if kind == props::K_DATE_PICKER {
         let q: *props::DatePickerProps = p as *props::DatePickerProps;
-        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+        return stated_spec(sized({ (*q).font_size }, { (*q).named_size }), { (*q).font_weight },
                            { (*q).is_italic }, { (*q).font_family }.clone(),
                            vocab::TextDecoration::None, { (*q).font_scales });
     }
     if kind == props::K_TIME_PICKER {
         let q: *props::TimePickerProps = p as *props::TimePickerProps;
-        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+        return stated_spec(sized({ (*q).font_size }, { (*q).named_size }), { (*q).font_weight },
                            { (*q).is_italic }, { (*q).font_family }.clone(),
                            vocab::TextDecoration::None, { (*q).font_scales });
     }
@@ -184,7 +184,7 @@ fn spec_of(n: *core::Node) -> FontSpec {
         // UNDERLINE IS THE POINT of the link posture, which is why this kind
         // declares a decoration at all — so it rides the font here exactly as a
         // label's does.
-        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+        return stated_spec(sized({ (*q).font_size }, { (*q).named_size }), { (*q).font_weight },
                            { (*q).is_italic }, { (*q).font_family }.clone(),
                            { (*q).text_decoration }, { (*q).font_scales });
     }
@@ -233,7 +233,7 @@ fn is_private_use_glyph(s: str) -> bool {
 // all carry their typography on the embedded `InputViewProps`, `font_scales`
 // included, so honouring it here honours it for all three.
 fn input_spec(iv: *props::InputViewProps) -> FontSpec {
-    return stated_spec({ (*iv).font_size }, { (*iv).font_weight },
+    return stated_spec(sized({ (*iv).font_size }, { (*iv).named_size }), { (*iv).font_weight },
                        { (*iv).is_italic }, { (*iv).font_family }.clone(),
                        vocab::TextDecoration::None, { (*iv).font_scales });
 }
@@ -299,6 +299,34 @@ fn win_weight(w: vocab::FontWeight) -> i32 {
 // the same inline-array problem `tagLOGFONTA` does — so this is stated.
 // 9 point is the Segoe UI default every stock Windows theme uses.
 fn default_point_size() -> f64 { return 9.0f64; }
+
+// ---- a named size is Fluent's TYPE RAMP ----------------------------------------
+// MAUI resolves `NamedSize` per platform (IFontNamedSizeService), and Windows'
+// own answer is the Fluent ramp WinUI's TextBlock styles use — Caption 12,
+// Body 14, BodyLarge 18, Subtitle 20, Title 28, TitleLarge 40 epx — stated
+// here in POINTS (× 72/96), the unit `height_for` takes. The same table as
+// facet_winui's, so one name is one size on both Windows backends. A role
+// scales with the text-size setting like any other size; an explicit
+// `font_size` wins over it.
+fn named_points(n: vocab::NamedSize) -> f64 {
+    return match n {
+        vocab::NamedSize::Default => 0.0f64,
+        vocab::NamedSize::Micro => 7.5f64,
+        vocab::NamedSize::Caption => 9.0f64,
+        vocab::NamedSize::Small => 9.0f64,
+        vocab::NamedSize::Medium => 10.5f64,
+        vocab::NamedSize::Body => 10.5f64,
+        vocab::NamedSize::Subtitle => 13.5f64,
+        vocab::NamedSize::Large => 15.0f64,
+        vocab::NamedSize::Title => 21.0f64,
+        vocab::NamedSize::Header => 30.0f64,
+    };
+}
+
+fn sized(size: f64, named: vocab::NamedSize) -> f64 {
+    if size > 0.0f64 { return size; }
+    return named_points(named);
+}
 
 // ---- font_scales: the accessibility text size ---------------------------------
 //
@@ -516,39 +544,39 @@ fn default_face() -> *u8 { return { #str_ptr("Segoe UI\0") }; }
 // checkbox has no font props to read.
 fn font_bits(kind: u32) -> u64 {
     if kind == props::K_LABEL {
-        return label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
+        return (label::P_FONT_SIZE | label::P_NAMED_SIZE) | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
              | label::P_IS_ITALIC | label::P_FONT_SCALES
              | label::P_TEXT_DECORATION;
     }
     if kind == props::K_BUTTON {
-        return button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY
+        return (button::P_FONT_SIZE | button::P_NAMED_SIZE) | button::P_FONT_WEIGHT | button::P_FONT_FAMILY
              | button::P_IS_ITALIC | button::P_FONT_SCALES;
     }
     if kind == props::K_TEXT_FIELD {
-        return text_field::P_FONT_SIZE | text_field::P_FONT_WEIGHT
+        return (text_field::P_FONT_SIZE | text_field::P_NAMED_SIZE) | text_field::P_FONT_WEIGHT
              | text_field::P_FONT_FAMILY | text_field::P_IS_ITALIC
              | text_field::P_FONT_SCALES;
     }
     if kind == props::K_TEXT_AREA {
-        return text_area::P_FONT_SIZE | text_area::P_FONT_WEIGHT
+        return (text_area::P_FONT_SIZE | text_area::P_NAMED_SIZE) | text_area::P_FONT_WEIGHT
              | text_area::P_FONT_FAMILY | text_area::P_IS_ITALIC
              | text_area::P_FONT_SCALES;
     }
     if kind == props::K_SEARCH_FIELD {
-        return search_field::P_FONT_SIZE | search_field::P_FONT_WEIGHT
+        return (search_field::P_FONT_SIZE | search_field::P_NAMED_SIZE) | search_field::P_FONT_WEIGHT
              | search_field::P_FONT_FAMILY | search_field::P_IS_ITALIC
              | search_field::P_FONT_SCALES;
     }
     if kind == props::K_POPUP {
-        return popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
+        return (popup::P_FONT_SIZE | popup::P_NAMED_SIZE) | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
              | popup::P_IS_ITALIC | popup::P_FONT_SCALES;
     }
     if kind == props::K_RADIO {
-        return radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
+        return (radio::P_FONT_SIZE | radio::P_NAMED_SIZE) | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
              | radio::P_IS_ITALIC | radio::P_FONT_SCALES;
     }
     if kind == text_button::K_TEXT_BUTTON {
-        return text_button::P_FONT_SIZE | text_button::P_FONT_WEIGHT
+        return text_button::P_FONT_SIZE | text_button::P_NAMED_SIZE | text_button::P_FONT_WEIGHT
              | text_button::P_FONT_FAMILY | text_button::P_IS_ITALIC
              | text_button::P_FONT_SCALES | text_button::P_TEXT_DECORATION;
     }
@@ -560,12 +588,12 @@ fn font_bits(kind: u32) -> u64 {
     // of source is a change of font.
     if kind == props::K_ICON_BUTTON { return icon_button::P_SOURCE | icon_button::P_SYMBOL; }
     if kind == props::K_DATE_PICKER {
-        return date_picker::P_FONT_SIZE | date_picker::P_FONT_WEIGHT
+        return (date_picker::P_FONT_SIZE | date_picker::P_NAMED_SIZE) | date_picker::P_FONT_WEIGHT
              | date_picker::P_FONT_FAMILY | date_picker::P_IS_ITALIC
              | date_picker::P_FONT_SCALES;
     }
     if kind == props::K_TIME_PICKER {
-        return time_picker::P_FONT_SIZE | time_picker::P_FONT_WEIGHT
+        return (time_picker::P_FONT_SIZE | time_picker::P_NAMED_SIZE) | time_picker::P_FONT_WEIGHT
              | time_picker::P_FONT_FAMILY | time_picker::P_IS_ITALIC
              | time_picker::P_FONT_SCALES;
     }

@@ -327,6 +327,7 @@ struct InputViewProps {
     font_scales: bool,    // InputView.FontAutoScalingEnabled
     font_family: text::Text,    // InputView.FontFamily
     font_size: f64,    // InputView.FontSize
+    named_size: vocab::NamedSize,    // InputView.FontSize (named)
     is_read_only: bool,    // InputView.IsReadOnly
     checks_spelling: bool,    // InputView.IsSpellCheckEnabled
     predicts_text: bool,    // InputView.IsTextPredictionEnabled
@@ -352,6 +353,7 @@ impl InputViewProps {
             font_scales: true,
             font_family: text::new(),
             font_size: 0.0f64,
+            named_size: vocab::NamedSize::Default,
             is_read_only: false,
             checks_spelling: true,
             predicts_text: true,
@@ -572,6 +574,7 @@ struct ButtonProps {
     font_scales: bool,    // Button.FontAutoScalingEnabled
     font_family: text::Text,    // Button.FontFamily
     font_size: f64,    // Button.FontSize
+    named_size: vocab::NamedSize,    // Button.FontSize (named)
     image: text::Text,    // Button.ImageSource
     line_break: vocab::LineBreak,    // Button.LineBreakMode
     title: text::Text,    // Button.Text
@@ -603,6 +606,7 @@ impl ButtonProps {
             font_scales: true,
             font_family: text::new(),
             font_size: 0.0f64,
+            named_size: vocab::NamedSize::Default,
             image: text::new(),
             line_break: vocab::LineBreak::TailTruncation,
             title: text::new(),
@@ -799,6 +803,7 @@ struct DatePickerProps {
     font_scales: bool,    // DatePicker.FontAutoScalingEnabled
     font_family: text::Text,    // DatePicker.FontFamily
     font_size: f64,    // DatePicker.FontSize
+    named_size: vocab::NamedSize,    // DatePicker.FontSize (named)
     format: text::Text,    // DatePicker.Format
     is_open: bool,    // DatePicker.IsOpen
     maximum_date: vocab::Date,    // DatePicker.MaximumDate
@@ -822,6 +827,7 @@ impl DatePickerProps {
             font_scales: true,
             font_family: text::new(),
             font_size: 0.0f64,
+            named_size: vocab::NamedSize::Default,
             format: text::new(),
             is_open: false,
             maximum_date: vocab::Date::zero(),
@@ -1142,6 +1148,7 @@ struct LabelProps {
     font_scales: bool,    // Label.FontAutoScalingEnabled
     font_family: text::Text,    // Label.FontFamily
     font_size: f64,    // Label.FontSize
+    named_size: vocab::NamedSize,    // Label.FontSize (named)
     formatted_text: vocab::Spans,    // Label.FormattedText
     text_align: vocab::TextAlign,    // Label.HorizontalTextAlignment
     line_break: vocab::LineBreak,    // Label.LineBreakMode
@@ -1165,6 +1172,7 @@ impl LabelProps {
             font_scales: true,
             font_family: text::new(),
             font_size: 0.0f64,
+            named_size: vocab::NamedSize::Default,
             formatted_text: vocab::Spans::new(),
             text_align: vocab::TextAlign::Start,
             line_break: vocab::LineBreak::TailTruncation,
@@ -1406,6 +1414,7 @@ struct PopupProps {
     font_scales: bool,    // Picker.FontAutoScalingEnabled
     font_family: text::Text,    // Picker.FontFamily
     font_size: f64,    // Picker.FontSize
+    named_size: vocab::NamedSize,    // Picker.FontSize (named)
     text_align: vocab::TextAlign,    // Picker.HorizontalTextAlignment
     is_open: bool,    // Picker.IsOpen
     selected_index: i64,    // Picker.SelectedIndex
@@ -1434,6 +1443,7 @@ impl PopupProps {
             font_scales: true,
             font_family: text::new(),
             font_size: 0.0f64,
+            named_size: vocab::NamedSize::Default,
             text_align: vocab::TextAlign::Start,
             is_open: false,
             selected_index: 0 as i64,
@@ -1504,6 +1514,7 @@ struct RadioProps {
     font_scales: bool,    // RadioButton.FontAutoScalingEnabled
     font_family: text::Text,    // RadioButton.FontFamily
     font_size: f64,    // RadioButton.FontSize
+    named_size: vocab::NamedSize,    // RadioButton.FontSize (named)
     group: text::Text,    // RadioButton.GroupName
     on: bool,    // RadioButton.IsChecked
     text_color: vocab::Color,    // RadioButton.TextColor
@@ -1525,6 +1536,7 @@ impl RadioProps {
             font_scales: true,
             font_family: text::new(),
             font_size: 0.0f64,
+            named_size: vocab::NamedSize::Default,
             group: text::new(),
             on: false,
             text_color: vocab::Color::clear(),
@@ -1702,6 +1714,7 @@ struct SpanProps {
     font_scales: bool,    // Span.FontAutoScalingEnabled
     font_family: text::Text,    // Span.FontFamily
     font_size: f64,    // Span.FontSize
+    named_size: vocab::NamedSize,    // Span.FontSize (named)
     line_height: f64,    // Span.LineHeight
     text: text::Text,    // Span.Text
     text_color: vocab::Color,    // Span.TextColor
@@ -1718,6 +1731,7 @@ impl SpanProps {
             font_scales: true,
             font_family: text::new(),
             font_size: 0.0f64,
+            named_size: vocab::NamedSize::Default,
             line_height: 0.0f64,
             text: text::new(),
             text_color: vocab::Color::clear(),
@@ -1940,6 +1954,7 @@ struct TimePickerProps {
     font_scales: bool,    // TimePicker.FontAutoScalingEnabled
     font_family: text::Text,    // TimePicker.FontFamily
     font_size: f64,    // TimePicker.FontSize
+    named_size: vocab::NamedSize,    // TimePicker.FontSize (named)
     format: text::Text,    // TimePicker.Format
     is_open: bool,    // TimePicker.IsOpen
     text_color: vocab::Color,    // TimePicker.TextColor
@@ -1961,6 +1976,7 @@ impl TimePickerProps {
             font_scales: true,
             font_family: text::new(),
             font_size: 0.0f64,
+            named_size: vocab::NamedSize::Default,
             format: text::new(),
             is_open: false,
             text_color: vocab::Color::clear(),
