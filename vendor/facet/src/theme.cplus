@@ -52,6 +52,14 @@ fn set_theme(take t: Theme) {
     if f.is_not_null() { f(); }
 }
 
+// Whether a backend may resolve platform tokens from a SYSTEM-DERIVED palette
+// (Material You's wallpaper ramps on Android 12+). False when the app's theme
+// says its palette is fixed. A backend with no such palette never asks.
+fn uses_system_palette() -> bool {
+    let s: *app::Application = app::current();
+    return !{ (*s).theme.fixed_palette };
+}
+
 fn theme() -> Theme {
     let s: *app::Application = app::current();
     return { (*s).theme };
@@ -366,6 +374,18 @@ fn theme_defaults_chain_to_platform_tokens() {
     // Non-role tokens answer none from both.
     assert theme_slot(1 as u32).is_set() == false;
     assert theme_fallback(1 as u32).is_set() == false;
+}
+
+#[test]
+fn the_system_palette_is_used_unless_the_theme_fixes_it() {
+    // Set nothing: the OS decides, which on Android 12+ is the wallpaper.
+    set_theme(Theme::new());
+    assert uses_system_palette();
+    // A brand to keep.
+    set_theme(Theme::new(primary: Color::rgba(1.0f64, 0.8f64, 0.0f64, 1.0f64), fixed_palette: true));
+    assert uses_system_palette() == false;
+    set_theme(Theme::new());
+    assert uses_system_palette();
 }
 
 #[test]

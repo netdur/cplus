@@ -62,6 +62,14 @@ struct Theme {
     track: Color,
     chip: Color,
     recessed: Color,
+    // NOT A COLOUR: whether the app's palette is FIXED. Unset (false), a role
+    // the app left alone falls through to the platform — and on Android 12+
+    // the platform's answer is the palette the system derives from the
+    // wallpaper (Material You). An app with a brand to keep says `true`, and
+    // every platform token resolves to the backend's fixed values instead.
+    // False is the zero value on purpose: the default Application is
+    // zero-initialised, and "set nothing" must mean "the OS".
+    fixed_palette: bool,
 }
 
 impl Theme {
@@ -84,6 +92,7 @@ impl Theme {
         track: Color = Color::none(),
         chip: Color = Color::none(),
         recessed: Color = Color::none(),
+        fixed_palette: bool = false,
     ) -> Theme {
         return Theme {
             primary: primary,
@@ -104,6 +113,7 @@ impl Theme {
             track: track,
             chip: chip,
             recessed: recessed,
+            fixed_palette: fixed_palette,
         };
     }
 }

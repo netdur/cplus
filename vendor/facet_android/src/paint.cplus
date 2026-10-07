@@ -13,6 +13,7 @@ import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./dex" as dex;
 import "facet/theme" as theme;
+import "./palette" as palette;
 
 // Every bit set. `create` configures a view WHOLE by calling the same body with
 // this, so a control cannot be correct on mount and wrong on its first update.
@@ -60,7 +61,19 @@ fn argb_resolved(c: vocab::Color, depth: i32) -> i32 {
 
     if cc.is_theme_role() {
         var slot: vocab::Color = theme::theme_slot({ cc.token });
-        if !slot.is_set() { slot = theme::theme_fallback({ cc.token }); }
+        if !slot.is_set() {
+            // An unset role the SYSTEM palette answers (Material You) — before
+            // the fallback, which would map it onto a platform token that gets
+            // it wrong. palette.cplus says which and why.
+            match palette::role_argb({ cc.token }, e::is_dark_cached()) {
+                option::Option[i32]::Some(v) => {
+                    if mark_alpha >= 0.0f64 { return with_alpha(v, mark_alpha); }
+                    return v;
+                }
+                option::Option[i32]::None => { }
+            }
+            slot = theme::theme_fallback({ cc.token });
+        }
         cc = slot;
     }
 
@@ -101,7 +114,10 @@ fn argb_resolved(c: vocab::Color, depth: i32) -> i32 {
     // theme rather than constants, and reading them means a Resources round
     // trip per colour per paint; these are the Material palette's own values,
     // which is what those resources resolve to on a stock theme. §1.
-    var out: i32 = platform_argb(t);
+    var out: i32 = match palette::platform_argb(t, e::is_dark_cached()) {
+        option::Option[i32]::Some(v) => v,
+        option::Option[i32]::None => platform_argb(t),
+    };
     if mark_alpha >= 0.0f64 { out = with_alpha(out, mark_alpha); }
     return out;
 }

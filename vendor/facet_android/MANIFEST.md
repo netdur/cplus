@@ -826,7 +826,7 @@ literal colours looked perfect. Four kinds resolve first:
 | 100..117 | a theme ROLE | the application's palette, then facet's fallback |
 | 200..217 | a derived INK | the contrast of the role it reads against |
 | 254 | an adaptive PAIR | the side for this appearance |
-| 1..24 | a PLATFORM colour | a table, light and dark |
+| 1..24 | a PLATFORM colour | the system palette on API 31+, else a table, light and dark |
 
 Two reductions, both deliberate:
 
@@ -836,11 +836,29 @@ luma decides — light base, dark ink. Resolving it to the base instead paints
 text the colour of the thing behind it, which is a whole screen of invisible
 words with every individual value correct.
 
-**Platform tokens are a table, not a Resources read.** Android's system colours
-are attributes on a theme, and reading them means a round trip per colour per
-paint; the table holds what those attributes resolve to on a stock theme, in
-both appearances. An UNKNOWN token paints the label colour rather than nothing:
-visible and obviously wrong beats invisible and silent.
+**Platform tokens are a table, not a Resources read** — except the palette.
+Android's system colours are attributes on a theme, and reading them means a
+round trip per colour per paint; the table holds what those attributes resolve
+to on a stock theme, in both appearances. An UNKNOWN token paints the label
+colour rather than nothing: visible and obviously wrong beats invisible and
+silent.
+
+**On API 31+ the platform tokens are MATERIAL YOU** (`palette.cplus`). The
+system's five wallpaper-derived ramps (`system_accent1_0` ..
+`system_neutral2_1000`) are read ONCE per Activity, by name through
+`Resources.getIdentifier` — no AAR — at the same point the appearance is read,
+because a wallpaper or appearance change recreates the Activity. Material 3's
+tone mapping then answers: `accent`/`link` = primary (accent1 600 light / 200
+dark), `window_background` = surface (neutral1 10 / 900), `control_background`
+= surface-container (neutral1 50 / 800), `text` = on-surface, `separator` =
+outline-variant, `selected_content_background` = secondary-container (accent2),
+and so on. The system hues (red, green, …) stay fixed by meaning, and the
+translucent fills stay translucent. Three UNSET roles are answered too, because
+their platform fallback would be wrong under a dynamic palette: `on_primary`
+(white is unreadable on a dark-appearance primary, which is a light tone),
+`secondary` (accent2 rather than a neutral fill) and `on_secondary`. A role the
+app's theme sets always wins, and `Theme::new(fixed_palette: true)` turns the
+palette off for an app with a brand to keep.
 
 ### A background, a radius and a border are ONE drawable
 

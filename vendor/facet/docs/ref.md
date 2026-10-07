@@ -620,6 +620,13 @@ current appearance.
 `set_theme(t)` repaints live. `is_dark()` reads the current appearance, and
 `on_appearance_change(cb, ctx:)` observes it.
 
+**"Set nothing" means the OS — and on Android 12+ the OS answer is the palette
+the system derives from the wallpaper (Material You).** facet_android resolves
+the platform tokens, and the unset roles whose fallback would be wrong, from the
+system's tonal ramps. A role the theme sets always wins. An app with a brand to
+keep says `Theme::new(primary: brand, fixed_palette: true)`, and the backend's
+fixed values answer instead; `uses_system_palette()` is what a backend asks.
+
 ## facet/bands
 
 The app's size-band vocabulary. A **band** is a named box constraint; a node
