@@ -3011,3 +3011,23 @@ fn clicking_a_tab_selects_it_and_the_app_hears_it() {
     assert TAB_HEARD == (0 as i64);
     app::reset_default_for_tests();
 }
+
+#[test]
+fn a_tab_parts_id_is_the_panes_key_and_its_name_is_the_title() {
+    // S15: the id is an identity, the same in every locale; the name is copy.
+    let win = fixture_window(300.0, 200.0);
+    var root: core::Node = tabs_fixture(win.raw());
+    match core::child_of(#addr_of(root), 1 as usize) {
+        option::Option[*core::Node]::Some(c) => { core::set_tab_title(c, "Revenus"); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open_app();
+    let sp: *u8 = #addr_of(s) as *u8;
+    let nodes: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    match mcp_named(nodes, "nav:tab:Income") {
+        option::Option[*mcpb::UiNode]::Some(n) => { assert { (*n).name.view() } == "Revenus"; }
+        option::Option[*mcpb::UiNode]::None => { assert false; }
+    }
+    app::reset_default_for_tests();
+}

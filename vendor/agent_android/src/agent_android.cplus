@@ -194,11 +194,13 @@ fn register_tab_parts(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
     while i < core::child_count_of(n) {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
-                var title: text::Text = text::from_str({ (*c).key() });
-                if title.is_empty() { title = "${i}"; }
-                let id: text::Text = "${base}:tab:${title}";
+                // The ID is the pane's KEY — an identity, the same in every
+                // locale — and the NAME is what the tab says (S15).
+                var ident: text::Text = text::from_str({ (*c).key() });
+                if ident.is_empty() { ident = "${i}"; }
+                let id: text::Text = "${base}:tab:${ident}";
                 let at: usize = register(reg, nodes, me, { id.view() }, identity::Role::Button, c);
-                reg.set_name(at, { title.view() });
+                reg.set_name(at, core::tab_label(c));
                 if (i as i64) == showing { reg.set_description(at, "selected"); }
             }
             option::Option[*core::Node]::None => { }

@@ -5,7 +5,7 @@ absent here does not exist: calling it is a compile error, never a
 silent no-op. What a backend cannot implement is recorded in that
 backend's own manifest, not here.
 
-421 declared verbs over 38 controls, plus the
+422 declared verbs over 38 controls, plus the
 shared band every element carries.
 
 
@@ -516,6 +516,7 @@ shared band every element carries.
 | `set_bar_placement` / `bar_placement()` | BarPlacement | AndroidSpecific.TabbedPage.ToolbarPlacement |
 | `set_tab_symbol(at:)` / `tab_symbol(at:)` | u32 (`facet/icons`), on the pane | Page.IconImageSource |
 | `pick_tab(at:)` | what a tap does: select + on_tab_changed | **facet's own** |
+| `set_tab_title(at:)` / `tab_label(at:)` | str, on the pane; key when unset | Page.Title |
 
 ## text_area — the ledger Editor
 

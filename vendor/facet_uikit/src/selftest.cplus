@@ -1088,7 +1088,9 @@ fn tabs_probe(placement: vocab::BarPlacement) -> core::Node {
     var dash: core::Node = ui::column(core::Builder::new(), key: "Dashboard");
     dash.set_tab_symbol(icons::home);
     let _a: status::Status = n.add_child(dash);
-    let _b: status::Status = n.add_child(ui::column(core::Builder::new(), key: "Income"));
+    var income: core::Node = ui::column(core::Builder::new(), key: "Income");
+    income.set_tab_title("Revenus");
+    let _b: status::Status = n.add_child(income);
     let _c: status::Status = n.add_child(ui::column(core::Builder::new(), key: "Goals"));
     return n;
 }
@@ -1122,7 +1124,8 @@ fn tabs_is_a_tab_bar_with_one_item_per_pane_and_shows_one() -> bool {
         ok_items = { rt::msg_u64(items, rt::sel(#str_ptr("count\0"))) } == (3 as u64);
         let second: *u8 = { rt::msg_id_i64(items, rt::sel(#str_ptr("objectAtIndex:\0")), 1 as i64) };
         let t: *u8 = { rt::msg_id(second, rt::sel(#str_ptr("title\0"))) };
-        ok_title = bridge::to_text(t).view() == "Income";
+        // The pane's TITLE, not its key (S15).
+        ok_title = bridge::to_text(t).view() == "Revenus";
         // The pane's icon reaches its item; a pane without one has none.
         let first: *u8 = { rt::msg_id_i64(items, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as i64) };
         let img0: *u8 = { rt::msg_id(first, rt::sel(#str_ptr("image\0"))) };

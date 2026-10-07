@@ -99,10 +99,10 @@ fn apply(r: *record::View) {
 // font, in a horizontal panel, so the header's Foreground tints both.
 fn header(node: *core::Node) -> rt::Object {
     let sym: u32=core::tab_symbol(node);
-    if sym==0u32 {return colors::key((*node).key());}
+    if sym==0u32 {return colors::key(core::tab_label(node));}
     let panel=native::must::[ui::StackPanel](ui::StackPanel::new());let stack=native::must::[ui::IStackPanel](ui::IStackPanel::query(panel.object()));native::check(stack.set_orientation(ui::orientation_horizontal));native::check(stack.set_spacing(8.0f64));
     let icon=native::must::[ui::FontIcon](ui::FontIcon::new());let font=native::must::[ui::IFontIcon](ui::IFontIcon::query(icon.object()));native::check(font.set_glyph(typography::glyph(sym).view()));native::check(font.set_font_family(typography::font("ms-appx:///MaterialSymbolsOutlined.ttf#Material Symbols Outlined")));native::check(font.set_font_size(16.0f64));
-    let label=native::must::[ui::TextBlock](ui::TextBlock::new());let text=native::must::[ui::ITextBlock](ui::ITextBlock::query(label.object()));native::check(text.set_text((*node).key()));
+    let label=native::must::[ui::TextBlock](ui::TextBlock::new());let text=native::must::[ui::ITextBlock](ui::ITextBlock::query(label.object()));native::check(text.set_text(core::tab_label(node)));
     let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](native::must::[ui::IPanel](ui::IPanel::query(panel.object())).children())));native::check(children.append(icon.object()));native::check(children.append(label.object()));
     return panel.object();
 }

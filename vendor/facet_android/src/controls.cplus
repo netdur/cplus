@@ -5369,7 +5369,7 @@ fn rebuild_tab_strip(v: *u8, n: *core::Node, p: *props::TabsProps) {
                 var btv: w::TextView = bt.as_text_view();
                 var key: [u8; 128] = #zero::[[u8; 128]]();
                 let kbase: *u8 = { #addr_of(key[0]) };
-                if paint::cstr({ (*c).key() }, kbase, 128 as usize) { btv.set_text_str(kbase); }
+                if paint::cstr(core::tab_label(c), kbase, 128 as usize) { btv.set_text_str(kbase); }
                 btv.set_all_caps(false);
                 // THE SELECTED TAB AND THE OTHERS ARE TWO COLOURS, and
                 // `bar_text_color` is the fallback for whichever is unset — a

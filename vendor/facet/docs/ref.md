@@ -382,7 +382,10 @@ with `set_item`. Borrowed: facet never frees it.
 ## facet/tabs
 
 `tabs` is MAUI's TabbedPage: a bar plus the panes that are its children, one
-showing at a time. A pane's title is its key. `selected_index` says which pane
+showing at a time. A pane's tab TITLE is `.set_tab_title(…)` — MAUI's
+`Page.Title`, copy a person reads, in their language — and its key when it has
+none. Keep the key a stable identifier: `find()`, the agent's tab ids and tests
+all match it, in every locale. `selected_index` says which pane
 shows and `on_tab_changed` reports the user picking another; the five `bar_*` /
 `*_tab_color` props colour the bar.
 
@@ -397,9 +400,11 @@ the tabs' box unless it states a grow of its own.
 
 ```cplus
 tabs(key: "nav", on_tab_changed: this.on_tab, bar_placement: vocab::BarPlacement::Bottom) {
-    column(key: "Dashboard") { … }
+    column(key: "dashboard") { … }
+        .set_tab_title(strings::dashboard())     // "Tableau de bord" in French
         .set_tab_symbol(icons::home)
-    column(key: "Income") { … }
+    slot(name: "income", route: "income") { }   // a slot can be the pane itself
+        .set_tab_title(strings::income())
         .set_tab_symbol(icons::payments)
 }
 ```
@@ -410,7 +415,8 @@ the showing one described as `selected`, and a `click` does what a tap does —
 (`set_selected_index` is the quiet write and fires nothing). `inspect` reads and
 `set` writes `selected_index` and `bar_placement` like any control property.
 
-Once mounted, change an icon through the cursor —
+Once mounted, change a title or an icon through the cursor —
+`set_tab_title(at:, title:)` / `set_tab_symbol(at:, symbol:)` —
 `tabs::find("nav").set_tab_symbol(at: 1, symbol: icons::savings)` — because a
 pane cannot reach its tabs to say it changed.
 

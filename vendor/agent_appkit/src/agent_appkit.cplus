@@ -1187,17 +1187,24 @@ fn add_part(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
 fn add_tab_part(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
                 owner: *u8, parent: usize, base: str, n: *core::Node, at: usize,
                 selected: bool) {
-    var title: text::Text = text::new();
+    // The ID is the pane's KEY — an identity, the same in every locale — and
+    // the NAME is what the tab says (S15).
+    var ident: text::Text = text::new();
+    var label: text::Text = text::new();
     match core::child_of(n, at) {
-        option::Option[*core::Node]::Some(c) => { title = text::from_str({ (*c).key() }); }
+        option::Option[*core::Node]::Some(c) => {
+            ident = text::from_str({ (*c).key() });
+            label = text::from_str(core::tab_label(c));
+        }
         option::Option[*core::Node]::None => { }
     }
-    if title.is_empty() { title = "${at}"; }
-    let id: text::Text = "${base}:tab:${title}";
+    if ident.is_empty() { ident = "${at}"; }
+    if label.is_empty() { label = ident.clone(); }
+    let id: text::Text = "${base}:tab:${ident}";
     let child: usize = reg.add_child(parent, option::Option[str]::Some({ id.view() }),
                                      identity::Role::Button);
     reg.set_enabled(child, live_enabled(owner));
-    reg.set_name(child, { title.view() });
+    reg.set_name(child, { label.view() });
     if selected { reg.set_description(child, "selected"); }
     let _r: *u8 = rt::retain(owner);
     views.append(ViewRef { p: owner, part: PART_TAB_BASE + (at as u32), node: n });

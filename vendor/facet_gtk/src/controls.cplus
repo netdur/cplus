@@ -3503,7 +3503,7 @@ fn rebuild_tab_strip(v: *u8, n: *core::Node, count: usize) {
             option::Option[*core::Node]::Some(pane) => {
                 // The tab's TITLE is the pane's KEY. facet's `tabs` declares no
                 // title of its own, and a key is the one name every node has.
-                let b: gtk::Button = gtk::Button::new_with_label({ (*pane).key() });
+                let b: gtk::Button = gtk::Button::new_with_label(core::tab_label(pane));
                 b.upcast().add_css_class("flat");
                 // A TAB AN AGENT CAN PRESS (reports/spendwise/S12). A widget's
                 // name is its agent id here — what `set_identity` writes for a
@@ -3525,7 +3525,7 @@ fn rebuild_tab_strip(v: *u8, n: *core::Node, count: usize) {
                     let glyph: gtk::Label = gtk::Label::new("");
                     show_glyph(glyph, sym, button_glyph_size());
                     bx.append(glyph.upcast());
-                    bx.append(gtk::Label::new({ (*pane).key() }).upcast());
+                    bx.append(gtk::Label::new(core::tab_label(pane)).upcast());
                     b.set_child(bx.upcast());
                 }
                 input::arm_tab(b.raw(), n, i);

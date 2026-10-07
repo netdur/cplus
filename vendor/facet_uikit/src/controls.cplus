@@ -2844,7 +2844,7 @@ fn rebuild_tab_items(v: *u8, n: *core::Node, p: *props::TabsProps) {
     while i < count {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
-                var title: text::Text = text::from_str({ (*c).key() });
+                var title: text::Text = text::from_str(core::tab_label(c));
                 if title.count() == (0 as usize) { title = "${i +% (1 as usize)}"; }
                 // The pane's icon (MAUI's Page.IconImageSource): the bundled
                 // glyph at the system tab bar's 25pt, a TEMPLATE so the bar

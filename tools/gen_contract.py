@@ -3472,6 +3472,21 @@ def emit_control(row_type, merged):
         o.append("        let h: fn(*u8, *u8) = { (*p).on_tab_changed };\n")
         o.append("        if h != props::no_handler { h(core::view_of(this._p), { (*p).on_tab_changed_ctx }); }\n")
         o.append("        return this;\n    }\n")
+        o.append("\n    // A TAB'S TITLE lives on its pane too (MAUI's Page.Title); empty means\n")
+        o.append("    // the pane's key. The live door, as set_tab_symbol is.\n")
+        o.append(f"    fn set_tab_title(this, at: usize, title: str) -> {cur} {{\n")
+        o.append("        match core::child_of(this._p, at) {\n")
+        o.append("            option::Option[*core::Node]::Some(c) => { core::set_tab_title(c, title); }\n")
+        o.append("            option::Option[*core::Node]::None => { return this; }\n")
+        o.append("        }\n")
+        o.append("        core::touch(this._p, P_TAB_ITEMS);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // What the tab at `at` says: its title, or the pane's key.\n")
+        o.append("    fn tab_label(this, at: usize) -> str {\n")
+        o.append("        return match core::child_of(this._p, at) {\n")
+        o.append("            option::Option[*core::Node]::Some(c) => core::tab_label(c),\n")
+        o.append('            option::Option[*core::Node]::None => "",\n')
+        o.append("        };\n    }\n")
         o.append("\n    fn tab_symbol(this, at: usize) -> u32 {\n")
         o.append("        return match core::child_of(this._p, at) {\n")
         o.append("            option::Option[*core::Node]::Some(c) => core::tab_symbol(c),\n")
@@ -4547,7 +4562,9 @@ def emit_manifest(rows_by_control):
             o.append("| `set_tab_symbol(at:)` / `tab_symbol(at:)` | u32 (`facet/icons`), on the pane "
                      "| Page.IconImageSource |\n")
             o.append("| `pick_tab(at:)` | what a tap does: select + on_tab_changed | **facet's own** |\n")
-            total += 5
+            o.append("| `set_tab_title(at:)` / `tab_label(at:)` | str, on the pane; key when unset "
+                     "| Page.Title |\n")
+            total += 6
         if mod in ROW_SOURCE:
             o.append("| `set_count` / `count()` | usize | **facet's own** |\n")
             o.append("| `set_row(_:ctx:)` / `build_row(at:)` | fn(usize, *u8) -> Node "

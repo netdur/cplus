@@ -224,6 +224,25 @@ impl Tabs {
         return this;
     }
 
+    // A TAB'S TITLE lives on its pane too (MAUI's Page.Title); empty means
+    // the pane's key. The live door, as set_tab_symbol is.
+    fn set_tab_title(this, at: usize, title: str) -> Tabs {
+        match core::child_of(this._p, at) {
+            option::Option[*core::Node]::Some(c) => { core::set_tab_title(c, title); }
+            option::Option[*core::Node]::None => { return this; }
+        }
+        core::touch(this._p, P_TAB_ITEMS);
+        return this;
+    }
+
+    // What the tab at `at` says: its title, or the pane's key.
+    fn tab_label(this, at: usize) -> str {
+        return match core::child_of(this._p, at) {
+            option::Option[*core::Node]::Some(c) => core::tab_label(c),
+            option::Option[*core::Node]::None => "",
+        };
+    }
+
     fn tab_symbol(this, at: usize) -> u32 {
         return match core::child_of(this._p, at) {
             option::Option[*core::Node]::Some(c) => core::tab_symbol(c),

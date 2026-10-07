@@ -3755,7 +3755,7 @@ fn rebuild_tabs(v: *u8, n: *core::Node) {
                 let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
                 b.set_button_type(ak::ButtonType::MomentaryChange);
                 b.set_bordered(false);
-                b.set_title({ (*c).key() });
+                b.set_title(core::tab_label(c));
                 // The pane's icon (MAUI's Page.IconImageSource), leading the
                 // title — the bundled glyph at the strip's text size, a
                 // template so the strip's colours tint it.

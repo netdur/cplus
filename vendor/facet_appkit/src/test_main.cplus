@@ -1815,6 +1815,29 @@ fn the_showing_tab_pane_fills_the_box_beside_the_strip() {
 }
 
 #[test]
+fn a_tab_button_shows_its_panes_title_not_its_key() {
+    backend::install();
+    var t: core::Node = tabs::tabs(key: "tabs:t");
+    var titled: core::Node = core::column(core::Builder::new(), key: "dashboard");
+    titled.set_tab_title("Tableau de bord");
+    t.add_child(titled);
+    t.add_child(core::column(core::Builder::new(), key: "goals"));
+    let p: *core::Node = #addr_of(t);
+    let host: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, host, views::view_release);
+    controls::rebuild_tabs(host, p);
+    let buttons: vec::Vec[ak::View] = ak::View::from_raw(controls::tab_strip_of(host)).subviews();
+    match buttons.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(b) => { assert ak::Button::from_raw({ (*b).raw() }).title().view() == "Tableau de bord"; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    match buttons.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(b) => { assert ak::Button::from_raw({ (*b).raw() }).title().view() == "goals"; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+}
+
+#[test]
 fn a_panes_tab_symbol_is_its_tab_buttons_image() {
     // MAUI's Page.IconImageSource: the icon lives on the pane.
     backend::install();

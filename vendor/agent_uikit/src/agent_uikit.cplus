@@ -673,17 +673,24 @@ fn add_tab_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
     }
     var i: usize = 0 as usize;
     while i < core::child_count_of(n) {
-        var title: text::Text = text::new();
+        // The ID is the pane's KEY — an identity, the same in every locale —
+        // and the NAME is what the tab says (S15).
+        var ident: text::Text = text::new();
+        var label: text::Text = text::new();
         match core::child_of(n, i) {
-            option::Option[*core::Node]::Some(c) => { title = text::from_str({ (*c).key() }); }
+            option::Option[*core::Node]::Some(c) => {
+                ident = text::from_str({ (*c).key() });
+                label = text::from_str(core::tab_label(c));
+            }
             option::Option[*core::Node]::None => { }
         }
-        if title.is_empty() { title = "${i}"; }
-        let id: text::Text = "${base}:tab:${title}";
+        if ident.is_empty() { ident = "${i}"; }
+        if label.is_empty() { label = ident.clone(); }
+        let id: text::Text = "${base}:tab:${ident}";
         let child: usize = reg.add_child(parent, option::Option[str]::Some({ id.view() }),
                                          identity::Role::Button);
         reg.set_enabled(child, live_enabled(view));
-        reg.set_name(child, { title.view() });
+        reg.set_name(child, { label.view() });
         if (i as i64) == showing { reg.set_description(child, "selected"); }
         let _r: *u8 = rt::retain(view);
         views.append(ViewRef { p: view, tab: i as i64, node: n });

@@ -225,8 +225,9 @@ container is layout only; `box` is the element that draws.
 
 **Which elements take a block.** The containers — `container`, `column`,
 `hstack` (`row`), `vstack`, `zstack`, `card`, `screen` — and `slot`, which always
-needs one (its base content, `{ }` when empty). `tabs` takes its panes as a block (each pane's key is its tab title,
-`.set_tab_symbol(icons::x)` its icon). `scroll` takes one optionally:
+needs one (its base content, `{ }` when empty). `tabs` takes its panes as a block (`.set_tab_title("…")` is a pane's tab
+title — the key when unset, so keep keys stable and put copy in the title —
+and `.set_tab_symbol(icons::x)` its icon). `scroll` takes one optionally:
 `scroll(key: "s", axis: vocab::ScrollAxis::Vertical) { column { … } }` makes the
 block its content, exactly as the cursor's `set_content` would. Every other
 element is a leaf, and giving one a block is **E1010**.
