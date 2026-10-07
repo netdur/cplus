@@ -2,16 +2,23 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/screen" as screen;
+import "facet/nav" as nav;
 import "facet/icons" as icons;
 import "facet/vocabulary" as vocab;
 
 import "./mini_player" as mini_player;
 
-struct Shell { }
+struct Shell {
+    context: nav::Context,
+}
 
 impl Shell {
     fn boxed() -> screen::ScreenBox {
-        return screen::screen_box::[Shell](Shell { });
+        return screen::screen_box::[Shell](Shell { context: nav::Context::none() });
+    }
+
+    fn on_player_click(ref this, sender: *u8) -> bool {
+        return this.context.navigator().present("now_playing", style: vocab::ModalStyle::PageSheet);
     }
 }
 
@@ -40,7 +47,7 @@ impl Shell: component::Component {
             }
                 .grow(1.0)
                 .basis(0.0)
-            mini_player::mini_player()
+            mini_player::mini_player(this.on_player_click)
             }
                 .grow(1.0)
         };
@@ -48,4 +55,6 @@ impl Shell: component::Component {
 }
 
 impl Shell: component::Lifecycle { }
-impl Shell: screen::Screen { }
+impl Shell: screen::Screen {
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+}

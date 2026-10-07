@@ -1142,6 +1142,19 @@ fn open(window: *u8) -> Surface {
 // ONE WALK PER NATIVE WINDOW. iOS is the platform where this matters: a pushed
 // screen and a presented sheet are separate roots inside the SAME UIWindow, so
 // the handles repeat and `walk_window` already takes all of a handle's roots.
+// A window's native object, as a VIEW. Usually a UIWindow; a screen the
+// navigator PRESENTS (a sheet) is registered with its presented controller,
+// which is not a view and answers none of a view's messages — sending it
+// `layoutIfNeeded` raised and killed the app the first time an agent refreshed
+// with a sheet up (glass_music_ios, 2026-10-07). It stands for its own view.
+fn native_view(w: *u8) -> *u8 {
+    if is_null(w) { return w; }
+    if is_kind(w, #str_ptr("UIViewController\0")) {
+        return { rt::msg_id(w, rt::sel(#str_ptr("view\0"))) };
+    }
+    return w;
+}
+
 fn open_app() -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
@@ -1153,6 +1166,7 @@ fn open_app() -> Surface {
     while i < n {
         let root: *core::Node = app::window_root(i);
         if !is_null(root as *u8) {
+            // The RAW native: `walk_window` finds a window's facet roots by it.
             let win: *u8 = app::window_native(root);
             if !is_null(win) && !first_seen(seen, win) {
                 if is_null(first_win) { first_win = win; }
@@ -1726,7 +1740,7 @@ fn refresh_in_place(p: *u8) {
         while i < n {
             let root: *core::Node = app::window_root(i);
             if !is_null(root as *u8) {
-                let w: *u8 = app::window_native(root);
+                let w: *u8 = native_view(app::window_native(root));
                 if !is_null(w) { rt::msg_void(w, rt::sel(#str_ptr("layoutIfNeeded\0"))); }
             }
             i = i +% (1 as usize);

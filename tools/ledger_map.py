@@ -156,6 +156,7 @@ ENUMS = {
     "ToolbarItemOrder": "ToolbarPlacement",
     "NamedSize": "NamedSize",
     "BlurEffectStyle": "BlurEffect",
+    "UIModalPresentationStyle": "ModalStyle",
 }
 
 # ---- types that carry the ledger's model, wherever they appear ---------------------

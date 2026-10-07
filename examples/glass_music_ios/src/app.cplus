@@ -10,6 +10,7 @@ import "./screens/radio" as radio;
 import "./screens/library" as library;
 import "./screens/search" as search;
 import "./screens/album" as album;
+import "./screens/now_playing" as now_playing;
 
 fn run() -> i32 {
     agent::enable();
@@ -23,6 +24,7 @@ fn run() -> i32 {
     music.route("library", library::Library::boxed);
     music.route("search", search::Search::boxed);
     music.route("album", album::AlbumPage::boxed);
+    music.route("now_playing", now_playing::NowPlaying::boxed);
 
     app.agent_mcp();
     if app.run("music") == status::Status::Ok { return 0; }

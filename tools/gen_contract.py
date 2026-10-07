@@ -353,6 +353,11 @@ HAND_ENUMS = {
     # (None 0 .. Dark 3) — by hand only so `None` stays the zero; the manifest
     # harvest sorts. What is behind a node shows through it, blurred.
     "BlurEffect": ["None", "ExtraLight", "Light", "Dark"],
+    # MAUI's iOSSpecific.UIModalPresentationStyle — how a screen PRESENTED over
+    # the window (navigator `present`) is shown. Ledger order and values,
+    # FullScreen 0 .. Popover 5; the navigator's own default is Automatic.
+    "ModalStyle": ["FullScreen", "FormSheet", "Automatic", "OverFullScreen",
+                   "PageSheet", "Popover"],
     # WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT. Not in either manifest —
     # the ledger predates agents — and authored here because the agent surface
     # (agent_core::identity) is the authority for what the values MEAN.
@@ -395,7 +400,7 @@ def read_enums():
     out = {}
     # Enums whose facet shape deliberately DIVERGES from the ledger members —
     # the hand list is the contract, the manifest is only provenance.
-    hand_wins = {"FontWeight", "ToolbarPlacement", "NamedSize", "BlurEffect"}
+    hand_wins = {"FontWeight", "ToolbarPlacement", "NamedSize", "BlurEffect", "ModalStyle"}
     for row_type, facet in ledger_map.ENUMS.items():
         # The map is keyed by the BARE type name; the manifest spells whatever
         # namespace declared it, so match the tail rather than the whole path.

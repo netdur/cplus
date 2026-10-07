@@ -3,10 +3,11 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/vocabulary" as vocab;
 import "facet/icons" as icons;
+import "facet/gestures" as gestures;
 
 import "./helpers" as helpers;
 
-fn mini_player() -> core::Node {
+fn mini_player(on_open: gestures::Handler, on_open_ctx: *u8 = 0 as *u8) -> core::Node {
     return @ui {
         hstack(key: "player") {
             helpers::artwork(helpers::pink(), helpers::rose(), 40.0)
@@ -22,6 +23,7 @@ fn mini_player() -> core::Node {
             button("", key: "player:next", symbol: icons::skip_next, bordered: false)
                 .width(44.0)
         }
+            .gesture(on_click: on_open, on_click_ctx: on_open_ctx)
             .set_blur_effect(vocab::BlurEffect::Light)
             .set_background_color(if #platform() == "android" { vocab::Color::raised() }
                                   else { vocab::Color::clear() })

@@ -9,6 +9,7 @@ import "stdlib/status" as status;
 import "stdlib/box" as box;
 import "flex_layout/flex_layout" as flex;
 import "./application" as app;
+import "./vocabulary" as vocab;
 
 type Params = map::StringMap[text::Text];
 fn params_new() -> Params { return map::new::[text::Text](); }
@@ -66,6 +67,10 @@ struct Session {
     entries: vec::Vec[Entry],
     history: vec::Vec[u64],
     future: vec::Vec[u64],
+    // Screens PRESENTED over the window (`present`), newest last. Not part of
+    // the Back history: a presented screen is an interruption that is
+    // dismissed, as MAUI's modal stack is apart from its navigation stack.
+    modals: vec::Vec[u64],
     pending: Params,
     next_entry: u64,
     revision: u64,
@@ -172,6 +177,8 @@ fn route_factory(s: *Session, name: str) -> *u8 {
 struct Host {
     push: fn(Navigator, str, str, str, u32) -> bool,
     back: fn(Navigator, bool) -> bool,
+    present: fn(Navigator, str, str, vocab::ModalStyle) -> bool,
+    dismiss: fn(Navigator, bool) -> bool,
 }
 static HOST: Host = #zero::[Host]();
 fn install(h: Host) { HOST = h; }
@@ -228,7 +235,38 @@ impl Navigator {
         (*s).pending = p;
         return f(this, route, key, into, mode);
     }
+    // PRESENT A SCREEN OVER THE WINDOW — MAUI's PushModalAsync, shown as its
+    // ModalPresentationStyle says (spendwise S20 item 6). On iOS a sheet the
+    // user can pull down (Automatic / PageSheet / FormSheet) or a full-screen
+    // cover; on macOS a sheet attached to the window. It is NOT a push: it
+    // adds no Back entry, a whole-window push is refused while it is up, and
+    // `dismiss` (or `pop`) takes it away. False where the platform has no
+    // presenter, or for an unknown route.
+    fn present(this, route: str, arg: str = "", take params: Params = params_new(),
+               key: str = "", style: vocab::ModalStyle = vocab::ModalStyle::Automatic) -> bool {
+        let s = session(this.owner, this.id);
+        let f = HOST.present;
+        if s.is_null() || f.is_null() || route == "" { return false; }
+        if !(*s).ready || (*s).busy { return false; }
+        var p: Params = params;
+        if arg != "" { let _a = p.insert(text::from_str("@arg"), text::from_str(arg)); }
+        (*s).pending = p;
+        return f(this, route, key, style);
+    }
+    // Take the newest presented screen away. False when nothing is presented.
+    fn dismiss(this) -> bool {
+        let f = HOST.dismiss;
+        if f.is_null() { return false; }
+        return f(this, false);
+    }
+    fn is_presenting(this) -> bool {
+        let s = session(this.owner, this.id);
+        return s.is_not_null() && (*s).modals.count() > (0 as usize);
+    }
+    // Back means the topmost thing: a presented screen is dismissed before any
+    // pushed one is popped, as a system Back does.
     fn pop(this) -> bool {
+        if this.is_presenting() { return this.dismiss(); }
         let f = HOST.back;
         if f.is_null() { return false; }
         return f(this, false);

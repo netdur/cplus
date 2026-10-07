@@ -28,6 +28,7 @@ import "./geometry" as geometry;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "appkit/appkit" as ak;
+import "facet/navigation" as navigation;
 
 // A blocking modal alert. Returns the 0-based index of the clicked button
 // (0 = `primary`, 1 = `secondary`) — AppKit numbers its responses from 1000,
@@ -633,6 +634,116 @@ fn present_sheet(take tree: core::Node, height: f64,
     // window opens through the runtime; a sheet is built here, so it says so
     // itself. `dismiss` hands the parent back.
     app::agent_attach(w);
+    return;
+}
+
+// ---- a screen the navigator PRESENTS (spendwise S20 item 6) ---------------------
+// `Navigator::present` — MAUI's PushModalAsync — is a SHEET on the Mac: a window
+// attached to the one it interrupts, the same shape `present_sheet` gives an
+// alert, holding the presented screen's own root. Sized from the window it
+// covers by the style: a form sheet is a form's size, a page sheet most of the
+// window, the full-screen styles all of it. The navigator owns the stack; a
+// screen dismisses itself through it (a Done or Close button), as on iOS.
+struct ScreenSheet {
+    opaque sheet: *u8,
+    opaque parent: *u8,
+    opaque root: *core::Node,
+}
+static SCREEN_SHEETS: vec::Vec[ScreenSheet] = #zero::[vec::Vec[ScreenSheet]]();
+
+fn screen_sheet_size(parent: *u8, style: vocab::ModalStyle) -> rt::Rect {
+    var pw: f64 = 800.0f64;
+    var ph: f64 = 600.0f64;
+    if parent.is_not_null() {
+        let cv: *u8 = { rt::msg_id(parent, rt::sel(#str_ptr("contentView\0"))) };
+        if cv.is_not_null() {
+            let f: rt::Rect = { rt::msg_rect(cv, rt::sel(#str_ptr("frame\0"))) };
+            pw = f.w;
+            ph = f.h;
+        }
+    }
+    return match style {
+        vocab::ModalStyle::FullScreen => rt::Rect { x: 0.0, y: 0.0, w: pw, h: ph },
+        vocab::ModalStyle::OverFullScreen => rt::Rect { x: 0.0, y: 0.0, w: pw, h: ph },
+        vocab::ModalStyle::FormSheet => rt::Rect { x: 0.0, y: 0.0, w: 540.0, h: 620.0 },
+        _ => rt::Rect { x: 0.0, y: 0.0, w: clamp_to(pw - 80.0, 720.0), h: clamp_to(ph - 60.0, 760.0) },
+    };
+}
+
+fn clamp_to(v: f64, most: f64) -> f64 {
+    if v > most { return most; }
+    if v < 320.0 { return 320.0; }
+    return v;
+}
+
+fn present_screen_sheet(p: navigation::ModalPresentation, title: str) -> bool {
+    // ON THE TOPMOST SHEET when one is up: a window takes one sheet at a time
+    // and queues a second one, hidden, behind the first — so a screen presented
+    // from a presented screen attaches to it, as iOS presents on the top
+    // controller.
+    var parent: *u8 = app::window_native(p.window_root);
+    let open: usize = SCREEN_SHEETS.count();
+    if open > (0 as usize) {
+        match SCREEN_SHEETS.at_ptr(open -% (1 as usize)) {
+            option::Option[*ScreenSheet]::Some(e) => { parent = { (*e).sheet }; }
+            option::Option[*ScreenSheet]::None => { }
+        }
+    }
+    let size: rt::Rect = screen_sheet_size(parent, p.style);
+    let alloc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("alloc\0"))) };
+    let w: *u8 = { msg_id_rect_u64_u64_i8(alloc,
+        rt::sel(#str_ptr("initWithContentRect:styleMask:backing:defer:\0")),
+        size, 1 as u64, 2 as u64, 0 as i8) };
+    if w.is_null() { return false; }
+    // Ours to close: the sheet is torn down by `dismiss_screen_sheet`.
+    { rt::msg_void_i8(w, rt::sel(#str_ptr("setReleasedWhenClosed:\0")), 0 as i8) };
+    let content: ak::View = akx::new_flipped_view(size);
+    { rt::msg_void_id(w, rt::sel(#str_ptr("setContentView:\0")), content.raw()) };
+    let _m: bool = mount::mount(p.root);
+    app::set_window_native(p.root, w);
+    let rv: *u8 = core::view_of(p.root);
+    if rv.is_not_null() {
+        content.add_subview(ak::View::from_raw(rv));
+        { rt::msg_void_rect(rv, rt::sel(#str_ptr("setFrame:\0")), size) };
+    }
+    { (*p.root).calculate_layout(width: size.w, height: size.h) };
+    geometry::reposition(p.root);
+    if parent.is_not_null() {
+        { rt::msg_void_id_id(parent, rt::sel(#str_ptr("beginSheet:completionHandler:\0")),
+                             w, 0 as *u8) };
+    } else {
+        { rt::msg_void_id(w, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), 0 as *u8) };
+    }
+    let _s: status::Status = SCREEN_SHEETS.append(ScreenSheet { sheet: w, parent: parent, root: p.root });
+    app::agent_attach(w);
+    return true;
+}
+
+fn dismiss_screen_sheet(root: *core::Node, user: bool) {
+    var i: usize = SCREEN_SHEETS.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        let hit: bool = match SCREEN_SHEETS.at_ptr(i) {
+            option::Option[*ScreenSheet]::Some(e) => ({ (*e).root } == root),
+            option::Option[*ScreenSheet]::None => false,
+        };
+        if hit {
+            match SCREEN_SHEETS.remove(at: i) {
+                option::Option[ScreenSheet]::Some(e) => {
+                    if e.parent.is_not_null() {
+                        { rt::msg_void_id(e.parent, rt::sel(#str_ptr("endSheet:\0")), e.sheet) };
+                    }
+                    { rt::msg_void(e.sheet, rt::sel(#str_ptr("orderOut:\0"))) };
+                    app::agent_attach(e.parent);
+                    mount::unmount(root);
+                    app::close_window(root);
+                    { rt::msg_void(e.sheet, rt::sel(#str_ptr("release\0"))) };
+                }
+                option::Option[ScreenSheet]::None => { }
+            }
+            return;
+        }
+    }
     return;
 }
 

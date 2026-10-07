@@ -12,8 +12,12 @@ import "./mount" as mount;
 import "./screen" as screen;
 import "./component" as component;
 import "./services" as services;
+import "./vocabulary" as vocab;
 
-fn install() { model::install(model::Host { push: navigate, back: travel }); }
+fn install() {
+    model::install(model::Host { push: navigate, back: travel,
+                                 present: present_modal, dismiss: dismiss_modal });
+}
 
 // ---- presenting a whole-window change natively ---------------------------------
 // The navigator keeps every screen of a window in ONE tree and shows one of
@@ -49,6 +53,112 @@ fn present(s: *model::Session, shown: u64, left: u64, kind: u32) {
     f(Presentation { navigator: navigator(s), window_root: (*s).root, shown: (*e).root,
                      left: left_root, kind: kind }, title);
 }
+// ---- a screen presented OVER the window ------------------------------------------
+// `Navigator::present` (spendwise S20 item 6, MAUI's PushModalAsync). The
+// presented screen is not in the window's tree: a sheet is laid out at the
+// SHEET's size, not the window's, so it gets a root of its own, which the
+// backend mounts where the platform puts such a thing — a presented controller
+// on iOS, a sheet window on macOS — and registers as a window of the app, so
+// `find` and the agent surface reach it. The navigator keeps its entry, its
+// lifecycle and its place in the modal stack; the backend owns where it shows.
+//
+// No presenter installed means the platform has none yet, and `present`
+// answers false rather than pretending.
+struct ModalPresentation {
+    navigator: model::Navigator,
+    opaque window_root: *core::Node,
+    // The presented screen's own root (owned by the navigator) and its wrapper.
+    opaque root: *core::Node,
+    opaque shown: *core::Node,
+    style: vocab::ModalStyle,
+}
+static MODAL_FN: fn(ModalPresentation, str) -> bool = #zero::[fn(ModalPresentation, str) -> bool]();
+// `user`: the person already took it away (a pull-down) and only the
+// unmounting is owed; otherwise the backend dismisses it too.
+static UNMODAL_FN: fn(*core::Node, bool) = #zero::[fn(*core::Node, bool)]();
+fn set_modal_fns(present: fn(ModalPresentation, str) -> bool, dismiss: fn(*core::Node, bool)) {
+    MODAL_FN = present;
+    UNMODAL_FN = dismiss;
+    return;
+}
+static MODAL_DISMISSED_BY_USER: bool = false;
+
+fn present_modal(n: model::Navigator, route: str, key: str, style: vocab::ModalStyle) -> bool {
+    let s = model::session(n.owner, n.id);
+    if s.is_null() || (*s).busy || !(*s).ready { return false; }
+    let f: fn(ModalPresentation, str) -> bool = MODAL_FN;
+    if f.is_null() { (*s).pending = model::params_new(); return false; }
+    let factory = model::route_factory(s, route);
+    if factory.is_null() { (*s).pending = model::params_new(); return false; }
+    (*s).busy = true;
+    let mark = (*s).next_entry;
+    var args = model::copy_params((*s).pending);
+    (*s).pending = model::params_new();
+    let id = create_entry(s, factory, route, key, "", 0 as u64, false, args);
+    if id == (0 as u64) { (*s).busy = false; return false; }
+    var b = core::Builder::new();
+    b.add(build_entry(s, id));
+    var tree = core::column(b, key: "@nav:modal");
+    tree.set_grow(1.0f64);
+    tree.set_shrink(1.0f64);
+    let rp: *core::Node = match box::new::[core::Node](tree) {
+        option::Option[box::Box[core::Node]]::Some(bx) => bx.into_raw() as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if rp.is_null() { discard_since(s, mark); (*s).busy = false; return false; }
+    let e = model::entry(s, id);
+    match core::child_of(rp, 0 as usize) {
+        option::Option[*core::Node]::Some(w) => { (*e).root = w; }
+        option::Option[*core::Node]::None => { }
+    }
+    (*e).host = rp;
+    let title = (*((*e).screen as *screen::ScreenBox)).title();
+    let shown_ok: bool = f(ModalPresentation { navigator: n, window_root: (*s).root, root: rp,
+                                               shown: (*e).root, style: style }, title);
+    if !shown_ok || (*s).modals.append(id) != status::Status::Ok {
+        if shown_ok { let g: fn(*core::Node, bool) = UNMODAL_FN; if g.is_not_null() { g(rp, false); } }
+        (*e).root = 0 as *core::Node;
+        discard_since(s, mark);
+        let _t = box::from_raw::[core::Node](rp as *u8);
+        (*s).busy = false;
+        return false;
+    }
+    attach_entries(s);
+    notify(s);
+    (*s).busy = false;
+    return true;
+}
+
+fn dismiss_modal(n: model::Navigator, forced: bool) -> bool {
+    let s = model::session(n.owner, n.id);
+    if s.is_null() || (*s).busy { return false; }
+    let id = last((*s).modals);
+    let e = model::entry(s, id);
+    if e.is_null() { return false; }
+    (*s).busy = true;
+    let rp = (*e).host;
+    let _gone = (*s).modals.remove(at: (*s).modals.count() -% (1 as usize));
+    let g: fn(*core::Node, bool) = UNMODAL_FN;
+    if g.is_not_null() { g(rp, MODAL_DISMISSED_BY_USER); }
+    // `discard` finds the tree in no host of the window and leaves it; the
+    // navigator owns the presented root and frees it once the backend is done.
+    discard(s, id);
+    services::free_when_settled(free_modal_root, rp as *u8);
+    if !forced { notify(s); }
+    (*s).busy = false;
+    return true;
+}
+fn free_modal_root(p: *u8) { let _t = box::from_raw::[core::Node](p); }
+
+// THE PERSON TOOK IT AWAY — a sheet pulled down. The backend has nothing left
+// to dismiss, only to unmount, and the navigator learns its stack is shorter.
+fn dismissed_by_user(n: model::Navigator) -> bool {
+    MODAL_DISMISSED_BY_USER = true;
+    let done: bool = dismiss_modal(n, false);
+    MODAL_DISMISSED_BY_USER = false;
+    return done;
+}
+
 fn navigator(s: *model::Session) -> model::Navigator {
     return model::Navigator { owner: (*s).owner, id: (*s).id };
 }
@@ -108,6 +218,7 @@ fn prepare(owner: *app::Application, definition: u64, key: str,
         name: text::from_str((*d).name.view()), key: text::from_str(key),
         root: 0 as *core::Node, entries: vec::new::[model::Entry](),
         history: vec::new::[u64](), future: vec::new::[u64](),
+        modals: vec::new::[u64](),
         pending: model::params_new(), next_entry: 0 as u64,
         revision: 0 as u64, busy: true, ready: false, closing: false,
         should_close: 0 as fn(*u8) -> bool, should_close_ctx: 0 as *u8 };
@@ -340,6 +451,9 @@ fn last(v: vec::Vec[u64]) -> u64 {
 fn navigate(n: model::Navigator, route: str, key: str, into: str, mode: u32) -> bool {
     let s = model::session(n.owner, n.id);
     if s.is_null() || (*s).busy || !(*s).ready { return false; }
+    // A whole-window change goes UNDER a presented screen, where nobody can
+    // see it. Refused, as MAUI refuses a push from beneath a modal page.
+    if into == "" && (*s).modals.count() > (0 as usize) { return false; }
     let h = target(s, into);
     let factory = model::route_factory(s, route);
     if h.is_null() || factory.is_null() { return false; }
@@ -572,6 +686,10 @@ fn discard(s: *model::Session, id: u64) {
 fn dispose(n: model::Navigator) {
     let s = model::session(n.owner, n.id);
     if s.is_null() { return; }
+    // A window closed with a sheet up takes the sheet with it.
+    while (*s).modals.count() > (0 as usize) {
+        if !dismiss_modal(n, true) { break; }
+    }
     (*s).busy = true;
     discard_since(s, 0 as u64);
     (*s).closing = true;
@@ -881,5 +999,120 @@ fn window_shell_receives_initial_and_committed_navigation_state() {
     assert n.forward();
     assert (*shell).changes == (4 as usize);
     test_close(n);
+    app::release_current();
+}
+
+// ---- a screen presented over the window (spendwise S20 item 6) -----------------
+// A stand-in presenter: it mounts the presented root as a window of the app the
+// way a backend does, and records what it was asked.
+static MODALS_SHOWN: i32 = 0;
+static MODALS_GONE: i32 = 0;
+static MODAL_GONE_BY_USER: bool = false;
+static MODAL_STYLE_SEEN: i32 = -1;
+fn fake_present(p: ModalPresentation, title: str) -> bool {
+    MODALS_SHOWN = MODALS_SHOWN + 1;
+    MODAL_STYLE_SEEN = match p.style {
+        vocab::ModalStyle::FullScreen => 0, vocab::ModalStyle::FormSheet => 1,
+        vocab::ModalStyle::Automatic => 2, vocab::ModalStyle::OverFullScreen => 3,
+        vocab::ModalStyle::PageSheet => 4, vocab::ModalStyle::Popover => 5,
+    };
+    let _o = app::open_window(p.root);
+    // No renderer is installed in this suite, so `mount` answers false here as
+    // it does for `test_open`'s window; the stand-in is a presenter that worked.
+    let _m = mount::mount(p.root);
+    return true;
+}
+fn fake_dismiss(root: *core::Node, user: bool) {
+    MODALS_GONE = MODALS_GONE + 1;
+    MODAL_GONE_BY_USER = user;
+    mount::unmount(root);
+    app::close_window(root);
+    return;
+}
+fn arm_fake_presenter() {
+    MODALS_SHOWN = 0; MODALS_GONE = 0; MODAL_GONE_BY_USER = false; MODAL_STYLE_SEEN = -1;
+    set_modal_fns(fake_present, fake_dismiss);
+}
+
+#[test]
+fn a_presented_screen_is_shown_over_the_window_and_is_not_a_back_entry() {
+    let owner = app::new_instance("modal test");
+    app::make_current(owner);
+    arm_fake_presenter();
+    TEST_MOUNTS = 0;
+    TEST_DROPS = 0;
+    let n = test_open(owner, "one");
+    let mounts_before = TEST_MOUNTS;
+    assert n.present("page", arg: "receipt", style: vocab::ModalStyle::PageSheet);
+    assert MODALS_SHOWN == 1;
+    assert MODAL_STYLE_SEEN == 4;
+    assert n.is_presenting();
+    // Not a push: no Back entry, and the screen under it is still the one shown.
+    assert n.depth() == (0 as usize);
+    assert !n.can_pop();
+    // The presented screen has its context and heard its mount.
+    assert TEST_MOUNTS == mounts_before + 1;
+    let s = model::session(owner, n.id);
+    let ctx = (*test_screen(n, last((*s).modals))).context;
+    assert ctx.arg() == "receipt";
+    // NEGATIVE: a whole-window push would land under it, unseen — refused.
+    assert !n.push("page");
+    assert n.depth() == (0 as usize);
+    // Dismissed by the app: the backend takes it away and the screen goes.
+    let drops_before = TEST_DROPS;
+    assert n.dismiss();
+    assert MODALS_GONE == 1;
+    assert !MODAL_GONE_BY_USER;
+    assert !n.is_presenting();
+    let _r = services::reclaim_settled();
+    assert TEST_DROPS == drops_before + 1;
+    // NEGATIVE: nothing left to dismiss.
+    assert !n.dismiss();
+    assert n.push("page");
+    test_close(n);
+    set_modal_fns(#zero::[fn(ModalPresentation, str) -> bool](), #zero::[fn(*core::Node, bool)]());
+    app::release_current();
+}
+
+#[test]
+fn back_dismisses_a_presented_screen_before_it_pops() {
+    let owner = app::new_instance("modal back test");
+    app::make_current(owner);
+    arm_fake_presenter();
+    let n = test_open(owner, "one");
+    assert n.push("page", into: "details");
+    assert n.present("page");
+    assert n.pop();
+    // The sheet went; the pushed screen beneath it did not.
+    assert !n.is_presenting();
+    assert n.depth() == (1 as usize);
+    // A sheet the PERSON pulled down: only the unmounting is owed.
+    assert n.present("page");
+    assert dismissed_by_user(n);
+    assert MODAL_GONE_BY_USER;
+    assert !n.is_presenting();
+    // A window closed with a sheet up takes the sheet with it.
+    assert n.present("page");
+    let gone_before = MODALS_GONE;
+    test_close(n);
+    assert MODALS_GONE == gone_before + 1;
+    set_modal_fns(#zero::[fn(ModalPresentation, str) -> bool](), #zero::[fn(*core::Node, bool)]());
+    app::release_current();
+}
+
+#[test]
+fn with_no_presenter_present_answers_false() {
+    let owner = app::new_instance("modal none test");
+    app::make_current(owner);
+    set_modal_fns(#zero::[fn(ModalPresentation, str) -> bool](), #zero::[fn(*core::Node, bool)]());
+    let n = test_open(owner, "one");
+    assert !n.present("page");
+    assert !n.is_presenting();
+    // NEGATIVE: an unknown route, presenter or not.
+    arm_fake_presenter();
+    assert !n.present("nowhere");
+    assert MODALS_SHOWN == 0;
+    test_close(n);
+    set_modal_fns(#zero::[fn(ModalPresentation, str) -> bool](), #zero::[fn(*core::Node, bool)]());
     app::release_current();
 }

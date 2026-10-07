@@ -56,6 +56,7 @@ import "./notify" as notify;
 import "./app_events_uikit" as app_events_uikit;
 import "./window" as window;
 import "./device" as device;
+import "./scheduler" as scheduler;
 import "./keyboard" as keyboard;
 import "./scrolling" as scrolling;
 import "./zoom" as zoom;
@@ -1624,6 +1625,28 @@ fn a_gradient_box_keeps_its_corner_radius() -> bool {
     views::view_release(v);
     if r != 14.0f64 { io::eprintln(text::from_str("  gradient radius ${r}")); }
     return r == 14.0f64;
+}
+
+// spendwise S20 item 6: a PRESENTED screen is a window of the app whose native
+// object is its controller. Everything that messages a window's native object
+// as a view must take the controller's view — the agent's refresh sent
+// `layoutIfNeeded` to the controller itself and the app aborted the first time
+// an agent read the surface with a sheet up (glass_music_ios, 2026-10-07).
+fn a_presented_controller_stands_for_its_view() -> bool {
+    let vc: *u8 = rt::alloc_init(#str_ptr("UIViewController\0"));
+    if vc == (0 as *u8) { return false; }
+    let view: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    let agent_ok: bool = agent::native_view(vc) == view;
+    let layout_ok: bool = scheduler::content_view_of(vc) == view;
+    // A window is still its own answer to the first, and its root controller's
+    // view to the second.
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    let win_ok: bool = agent::native_view(win) == win;
+    { rt::release(win) };
+    { rt::release(vc) };
+    let ok: bool = agent_ok && layout_ok && win_ok;
+    if !ok { io::eprintln(text::from_str("  agent ${agent_ok} layout ${layout_ok} window ${win_ok}")); }
+    return ok;
 }
 
 // spendwise S20 item 5: MAUI's BlurEffect on any node. A UIVisualEffectView at
@@ -4554,6 +4577,8 @@ fn run_all() -> i32 {
           a_date_pickers_date_is_read_and_picked_by_an_agent());
     check("an open alert is read and answered by an agent",
           an_open_alert_is_read_and_answered_by_an_agent());
+    check("a presented controller stands for its view",
+          a_presented_controller_stands_for_its_view());
     check("a blurred node carries a material behind its content",
           a_blurred_node_carries_a_material_behind_its_content());
     check("a gradient box keeps its corner radius",

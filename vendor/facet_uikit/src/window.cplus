@@ -201,6 +201,7 @@ fn attach_root(win: *u8, root: *core::Node) {
     let mounted: bool = mount::mount(root);
     app::set_window_native(root, win);
     navigation::set_present_fn(on_present);
+    navigation::set_modal_fns(present_modal_native, dismiss_modal_native);
     scheduler::set_insets_fn(insets_with_bar);
     scheduler::set_placed_fn(place_hosts);
     // The toolbar, read from the TREE — the same shape facet_appkit uses, and it
@@ -951,10 +952,117 @@ fn present_screen(root: *core::Node, title: str, box_: *u8) -> bool {
     return true;
 }
 
+// ---- a screen the navigator PRESENTS (spendwise S20 item 6) ---------------------
+// `Navigator::present`, MAUI's PushModalAsync with its ModalPresentationStyle.
+// The navigator hands over the presented screen's own root; it is mounted as a
+// window of the app whose native object is the presented CONTROLLER, so the
+// layout pass sizes it to the controller's view — the sheet, not the screen —
+// and `find` and the agent surface reach it like any window. A pull-down is
+// told back to the navigator, which owns the stack.
+struct Modal {
+    opaque vc: *u8,             // +1, ours
+    opaque root: *core::Node,   // the navigator's
+    navigator: nav_model::Navigator,
+}
+static MODALS: vec::Vec[Modal] = #zero::[vec::Vec[Modal]]();
+
+// facet's ModalStyle (the ledger's order) to UIModalPresentationStyle.
+fn modal_style_raw(s: vocab::ModalStyle) -> i64 {
+    return match s {
+        vocab::ModalStyle::FullScreen => 0 as i64,
+        vocab::ModalStyle::PageSheet => 1 as i64,
+        vocab::ModalStyle::FormSheet => 2 as i64,
+        vocab::ModalStyle::OverFullScreen => 5 as i64,
+        vocab::ModalStyle::Popover => 7 as i64,
+        vocab::ModalStyle::Automatic => -2 as i64,
+    };
+}
+
+fn present_modal_native(p: navigation::ModalPresentation, title: str) -> bool {
+    let host_vc: *u8 = top_controller();
+    if host_vc == (0 as *u8) { return false; }
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return false; }
+    if title != "" { { rt::msg_void_id(vc, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title)) }; }
+    dress_screen(vc);
+    { rt::msg_void_i64(vc, rt::sel(#str_ptr("setModalPresentationStyle:\0")), modal_style_raw(p.style)) };
+    // A popover points at something, and UIKit raises when it is told nothing.
+    // The presenter's view, centred: on a phone it adapts to a sheet anyway.
+    if modal_style_raw(p.style) == (7 as i64) {
+        let pop: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("popoverPresentationController\0"))) };
+        let hv: *u8 = { rt::msg_id(host_vc, rt::sel(#str_ptr("view\0"))) };
+        if pop != (0 as *u8) && hv != (0 as *u8) {
+            let b: rt::Rect = { rt::msg_rect(hv, rt::sel(#str_ptr("bounds\0"))) };
+            { rt::msg_void_id(pop, rt::sel(#str_ptr("setSourceView:\0")), hv) };
+            { rt::msg_void_rect(pop, rt::sel(#str_ptr("setSourceRect:\0")),
+                                rt::Rect { x: b.w / 2.0, y: b.h / 2.0, w: 1.0, h: 1.0 }) };
+        }
+    }
+    let _m: bool = mount::mount(p.root);
+    app::set_window_native(p.root, vc);
+    let view: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    if view != (0 as *u8) { add_root_views(ui::View::from_raw(view), p.root); }
+    let pc: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("presentationController\0"))) };
+    if pc != (0 as *u8) {
+        { rt::msg_void_id(pc, rt::sel(#str_ptr("setDelegate:\0")), nav_delegate_object()) };
+    }
+    { msg_void_id_i8_id2(host_vc, rt::sel(#str_ptr("presentViewController:animated:completion:\0")),
+                         vc, 1 as i8, 0 as *u8) };
+    let _s: status::Status = MODALS.append(Modal { vc: vc, root: p.root, navigator: p.navigator });
+    scheduler::schedule(0 as *u8);
+    agent_follow(WINDOW);
+    return true;
+}
+
+fn dismiss_modal_native(root: *core::Node, user: bool) {
+    var i: usize = MODALS.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        let hit: bool = match MODALS.at_ptr(i) {
+            option::Option[*Modal]::Some(e) => ({ (*e).root } == root),
+            option::Option[*Modal]::None => false,
+        };
+        if hit {
+            match MODALS.remove(at: i) {
+                option::Option[Modal]::Some(e) => {
+                    if !user {
+                        { rt::msg_void_i8_id(e.vc, rt::sel(#str_ptr("dismissViewControllerAnimated:completion:\0")),
+                                         1 as i8, 0 as *u8) };
+                    }
+                    mount::unmount(root);
+                    app::close_window(root);
+                    rt::release(e.vc);
+                }
+                option::Option[Modal]::None => { }
+            }
+            agent_follow(WINDOW);
+            return;
+        }
+    }
+    return;
+}
+
 // -[UIAdaptivePresentationControllerDelegate presentationControllerDidDismiss:]
 fn imp_did_dismiss(self_obj: *u8, cmd: *u8, pc: *u8) {
     if pc == (0 as *u8) { return; }
     let vc: *u8 = { rt::msg_id(pc, rt::sel(#str_ptr("presentedViewController\0"))) };
+    // A presented screen the PERSON pulled down: the navigator owns its stack.
+    var mi: usize = MODALS.count();
+    while mi > (0 as usize) {
+        mi = mi -% (1 as usize);
+        var nav: nav_model::Navigator = nav_model::Navigator::none();
+        var found: bool = false;
+        match MODALS.at_ptr(mi) {
+            option::Option[*Modal]::Some(e) => {
+                if { (*e).vc } == vc { nav = { (*e).navigator }; found = true; }
+            }
+            option::Option[*Modal]::None => { }
+        }
+        if found {
+            let _d: bool = navigation::dismissed_by_user(nav);
+            return;
+        }
+    }
     var i: usize = SHEETS.count();
     while i > (0 as usize) {
         i = i -% (1 as usize);
@@ -2748,8 +2856,29 @@ fn window_frame() -> vocab::Rect {
 
 // The screen's bounds. True on a phone; on a windowed iPad it is the window's
 // own bounds, which `scene_of_window` already knows how to reach.
-fn wh_frame(root: *core::Node) -> vocab::Rect {
+// A root's native object as a VIEW. A presented screen's is its controller
+// (`present_modal_native`), which answers none of a view's messages; it
+// stands for its own view, and a scene is asked of the window that view is in.
+fn root_view(root: *core::Node) -> *u8 {
     let w: *u8 = app::window_native(root);
+    if w.is_null() { return w; }
+    if { rt::msg_i8_id(w, rt::sel(#str_ptr("isKindOfClass:\0")),
+                       rt::get_class(#str_ptr("UIViewController\0"))) } != (0 as i8) {
+        return { rt::msg_id(w, rt::sel(#str_ptr("view\0"))) };
+    }
+    return w;
+}
+
+fn root_window(root: *core::Node) -> *u8 {
+    let v: *u8 = root_view(root);
+    if v.is_null() { return v; }
+    if { rt::msg_i8_id(v, rt::sel(#str_ptr("isKindOfClass:\0")),
+                       rt::get_class(#str_ptr("UIWindow\0"))) } != (0 as i8) { return v; }
+    return { rt::msg_id(v, rt::sel(#str_ptr("window\0"))) };
+}
+
+fn wh_frame(root: *core::Node) -> vocab::Rect {
+    let w: *u8 = root_view(root);
     if w.is_null() { return window_frame(); }
     let b: rt::Rect = ui::View::from_raw(w).bounds();
     return vocab::Rect { x: b.x, y: b.y, width: b.w, height: b.h };
@@ -2772,7 +2901,7 @@ fn wh_density(root: *core::Node) -> f64 { return geometry::screen_scale(); }
 // halves already go through `apply_scene_chrome`; these are the live reads and
 // writes for a window an app is holding a cursor to.
 fn wh_title(root: *core::Node) -> text::Text {
-    let w: *u8 = app::window_native(root);
+    let w: *u8 = root_window(root);
     if w.is_null() { return text::new(); }
     let scene: *u8 = device::scene_of_window(w);
     if scene == (0 as *u8) { return text::new(); }
@@ -2782,7 +2911,7 @@ fn wh_title(root: *core::Node) -> text::Text {
 }
 
 fn wh_set_title(root: *core::Node, t: str) {
-    let w: *u8 = app::window_native(root);
+    let w: *u8 = root_window(root);
     if w.is_null() { return; }
     let scene: *u8 = device::scene_of_window(w);
     if scene == (0 as *u8) { return; }

@@ -185,7 +185,10 @@ fn layout_window(root: *core::Node, force: bool = false) {
     let f: rt::Rect = cv.bounds();
     var ins: ui::EdgeInsets = safe_insets(cv, root);
     let adjust: fn(*u8, ui::EdgeInsets) -> ui::EdgeInsets = INSETS_FN;
-    if adjust.is_not_null() && core::honours_safe_area(root) { ins = adjust(win, ins); }
+    // The bars are a WINDOW's; a presented screen's sheet has none of them.
+    let is_window: bool = { rt::msg_i8_id(win, rt::sel(#str_ptr("isKindOfClass:\0")),
+                                          rt::get_class(#str_ptr("UIWindow\0"))) } != (0 as i8);
+    if adjust.is_not_null() && is_window && core::honours_safe_area(root) { ins = adjust(win, ins); }
     let w: f64 = f.w - ins.left - ins.right;
     let h: f64 = f.h - ins.top - ins.bottom;
     geometry::relayout_root(root, w, h, geometry::scale_of_view(content), force);
@@ -238,6 +241,12 @@ fn set_insets_fn(f: fn(*u8, ui::EdgeInsets) -> ui::EdgeInsets) { INSETS_FN = f; 
 fn set_placed_fn(f: fn(*core::Node, rt::Rect)) { PLACED_FN = f; return; }
 
 fn content_view_of(win: *u8) -> *u8 {
+    // A PRESENTED SCREEN's native object is its controller (window.cplus,
+    // `present_modal_native`): its content view is the controller's own.
+    if { rt::msg_i8_id(win, rt::sel(#str_ptr("isKindOfClass:\0")),
+                       rt::get_class(#str_ptr("UIViewController\0"))) } != (0 as i8) {
+        return { rt::msg_id(win, rt::sel(#str_ptr("view\0"))) };
+    }
     let vc: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("rootViewController\0"))) };
     if vc == (0 as *u8) { return 0 as *u8; }
     return { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };

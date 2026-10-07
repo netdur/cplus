@@ -77,6 +77,9 @@ import "appkit/appkit_ext" as akx;
 import "./input" as input;
 import "./web" as webmod;
 import "./dialogs" as dialogs;
+import "facet/navigation" as navigation;
+import "stdlib/box" as box;
+import "facet/nav_model" as nav_model;
 import "./clipboard" as clipboard;
 import "./recycler" as recycler;import "facet/web" as web_ui;
 import "facet/hybrid_web" as hybrid_ui;
@@ -19707,4 +19710,51 @@ fn a_bare_column_asking_for_a_material_gets_a_view() {
     assert !views::wants_view(#addr_of(c));
     c.set_blur_effect(vocab::BlurEffect::Dark);
     assert views::wants_view(#addr_of(c));
+}
+
+
+// ---- a screen the navigator presents is a sheet (reports/spendwise/S20 item 6) --
+
+fn sheet_root(key: str) -> *core::Node {
+    var n: core::Node = core::column(core::Builder::new(), key: key);
+    return match box::new::[core::Node](n) {
+        option::Option[box::Box[core::Node]]::Some(b) => b.into_raw() as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+}
+
+#[test]
+fn a_presented_screen_is_a_sheet_and_a_second_attaches_to_the_first() {
+    backend::install();
+    app::reset_default_for_tests();
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "host", width: 800.0f64, height: 600.0f64));
+    var host: core::Node = core::column(core::Builder::new(), key: "host");
+    app::open_window(#addr_of(host));
+    app::set_window_native(#addr_of(host), w.raw());
+    let first: *core::Node = sheet_root("sheet:one");
+    assert dialogs::present_screen_sheet(navigation::ModalPresentation {
+        navigator: nav_model::Navigator::none(), window_root: #addr_of(host),
+        root: first, shown: first, style: vocab::ModalStyle::FormSheet }, "One");
+    let s1: *u8 = app::window_native(first);
+    assert s1.is_not_null();
+    assert { rt::msg_id(w.raw(), rt::sel(#str_ptr("attachedSheet\0"))) } == s1;
+    // A form sheet is a form's size, not the window's.
+    let f1: rt::Rect = { rt::msg_rect({ rt::msg_id(s1, rt::sel(#str_ptr("contentView\0"))) },
+                                      rt::sel(#str_ptr("frame\0"))) };
+    assert f1.w == 540.0f64;
+    // Presented FROM the sheet: on the sheet, not queued behind it.
+    let second: *core::Node = sheet_root("sheet:two");
+    assert dialogs::present_screen_sheet(navigation::ModalPresentation {
+        navigator: nav_model::Navigator::none(), window_root: #addr_of(host),
+        root: second, shown: second, style: vocab::ModalStyle::PageSheet }, "Two");
+    let s2: *u8 = app::window_native(second);
+    assert { rt::msg_id(s1, rt::sel(#str_ptr("attachedSheet\0"))) } == s2;
+    // Dismissed newest first, and the window is left with no sheet.
+    dialogs::dismiss_screen_sheet(second, false);
+    dialogs::dismiss_screen_sheet(first, false);
+    assert { rt::msg_id(w.raw(), rt::sel(#str_ptr("attachedSheet\0"))) }.is_null();
+    let _a = box::from_raw::[core::Node](first as *u8);
+    let _b = box::from_raw::[core::Node](second as *u8);
+    app::reset_default_for_tests();
 }

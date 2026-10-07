@@ -150,6 +150,16 @@ enum LineJoin {
     Round,
 }
 
+// UIModalPresentationStyle (authored: no manifest source)
+enum ModalStyle {
+    FullScreen,
+    FormSheet,
+    Automatic,
+    OverFullScreen,
+    PageSheet,
+    Popover,
+}
+
 // NamedSize (authored: no manifest source)
 enum NamedSize {
     Default,

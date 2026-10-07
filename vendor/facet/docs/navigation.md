@@ -133,10 +133,38 @@ Obtain a navigator from a window's `nav()` or a screen's
 | `depth()` | Number of Back entries, excluding base content |
 | `current(into: "")` | `Option[nav::Context]` for the active screen in the target |
 | `state()` | Current `nav::State` snapshot |
+| `present(route, arg: "", params:, key: "", style: ModalStyle::Automatic)` | `bool`; show a screen over the window (below) |
+| `dismiss()` | `bool`; take the newest presented screen away |
+| `is_presenting()` | `bool`; whether a presented screen is up |
 
 An omitted `into:` targets the entire content area. The native window remains
 the same instance. A navigation `key:` identifies a screen entry for inspection;
 it is separate from the window's instance key and does not deduplicate pushes.
+
+### Presenting a screen
+
+`present` is MAUI's `PushModalAsync`: a screen shown OVER the window rather than
+in it, styled by `vocab::ModalStyle` (MAUI's `ModalPresentationStyle`:
+`Automatic`, `PageSheet`, `FormSheet`, `FullScreen`, `OverFullScreen`,
+`Popover`). On iOS it is a presented controller: a sheet the person can pull
+down, or a full-screen cover. On macOS it is a sheet attached to the window,
+sized by the style (a form sheet is form-sized, a page sheet most of the
+window). The screen is laid out at the sheet's size, not the window's.
+
+```cplus
+fn on_player_click(ref this, sender: *u8) -> bool {
+    return this.context.navigator().present("now_playing", style: vocab::ModalStyle::PageSheet);
+}
+```
+
+A presented screen is not a push. It adds no Back entry, a whole-window `push`
+or `replace` is refused while it is up (it would land underneath, unseen), and
+`dismiss()` takes it away; `pop()` dismisses it first when one is up, as a
+system Back does. Presenting from a presented screen stacks: the new one goes
+on top of it. A person pulling an iOS sheet down is reported back, and the
+navigator's stack follows. Closing the window takes any presented screens with
+it. Android, Windows and GTK have no presenter yet, and `present` answers
+`false` there.
 
 Unknown routes, missing or ambiguous slots, stale handles, and commands during
 an unfinished transition return `false`. A pending native window has a handle,

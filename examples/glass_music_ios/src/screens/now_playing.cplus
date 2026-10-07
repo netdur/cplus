@@ -1,0 +1,64 @@
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/nav" as nav;
+import "facet/vocabulary" as vocab;
+import "facet/icons" as icons;
+
+import "../helpers" as helpers;
+
+struct NowPlaying {
+    context: nav::Context,
+}
+
+impl NowPlaying {
+    fn boxed() -> screen::ScreenBox {
+        return screen::screen_box::[NowPlaying](NowPlaying { context: nav::Context::none() });
+    }
+
+    fn on_close_click(ref this, sender: *u8) {
+        let _dismissed: bool = this.context.navigator().dismiss();
+    }
+}
+
+impl NowPlaying: component::Component {
+    fn build(ref this) -> core::Node {
+        let art: core::Node = helpers::artwork(helpers::pink(), helpers::rose(), 300.0);
+        return @ui {
+            column(key: "playing:page") {
+                button("", key: "playing:close", symbol: icons::keyboard_arrow_down,
+                       bordered: false, on_click: this.on_close_click)
+                art
+                column {
+                    label("Cloud 9", named_size: vocab::NamedSize::Title,
+                          font_weight: vocab::FontWeight::Bold)
+                    label("Megan Moroney", named_size: vocab::NamedSize::Large,
+                          text_color: helpers::red())
+                }
+                    .gap(4.0)
+                    .align(flex::Align::Center)
+                progress(0.35)
+                    .width_percent(80.0)
+                hstack {
+                    button("", key: "playing:previous", symbol: icons::skip_previous, bordered: false)
+                    button("", key: "playing:play", symbol: icons::play_arrow, bordered: false)
+                    button("", key: "playing:next", symbol: icons::skip_next, bordered: false)
+                }
+                    .gap(40.0)
+            }
+                .grow(1.0)
+                .gap(28.0)
+                .align(flex::Align::Center)
+                .padding_edge(flex::Edge::Horizontal, 24.0)
+                .padding_edge(flex::Edge::Vertical, 16.0)
+        };
+    }
+}
+
+impl NowPlaying: component::Lifecycle { }
+
+impl NowPlaying: screen::Screen {
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+}

@@ -42,6 +42,8 @@ import "./recycler" as recycler;
 import "./geometry" as geometry;
 import "./window" as window;
 import "./app_events_appkit" as app_events_appkit;
+import "./dialogs" as dialogs;
+import "facet/navigation" as navigation;
 
 type Node = flex::Node;
 
@@ -82,6 +84,8 @@ fn install() {
     scheduler::set_debug_dump_fn(recycler::debug_dump);
     component::install_sender_readers(input::sender_readers());
     theme::set_is_dark_fn(window::is_dark);
+    // A screen the navigator PRESENTS is a sheet on the Mac (spendwise S20 item 6).
+    navigation::set_modal_fns(dialogs::present_screen_sheet, dialogs::dismiss_screen_sheet);
     // The window cursor's platform half. Without this `window::find(k).frame()`
     // answers the neutral zero on a Mac — the seam exists and nothing fills it.
     app_window::install_host(window::window_host());
