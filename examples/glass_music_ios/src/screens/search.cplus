@@ -1,0 +1,33 @@
+import "facet/facet" as core;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/nav" as nav;
+import "stdlib/vec" as vec;
+
+import "../helpers" as helpers;
+
+struct Search {
+    context: nav::Context,
+}
+
+impl Search {
+    fn boxed() -> screen::ScreenBox {
+        return screen::screen_box::[Search](Search { context: nav::Context::none() });
+    }
+}
+
+impl Search: component::Component {
+    fn build(ref this) -> core::Node {
+        return helpers::placeholder_page("Search");
+    }
+}
+
+impl Search: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { }
+    fn on_detach(ref this, why: component::Detach) { }
+}
+
+impl Search: screen::Screen {
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}

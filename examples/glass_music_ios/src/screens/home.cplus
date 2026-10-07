@@ -1,0 +1,33 @@
+import "facet/facet" as core;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/nav" as nav;
+import "stdlib/vec" as vec;
+
+import "../helpers" as helpers;
+
+struct Home {
+    context: nav::Context,
+}
+
+impl Home {
+    fn boxed() -> screen::ScreenBox {
+        return screen::screen_box::[Home](Home { context: nav::Context::none() });
+    }
+}
+
+impl Home: component::Component {
+    fn build(ref this) -> core::Node {
+        return helpers::placeholder_page("Home");
+    }
+}
+
+impl Home: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { }
+    fn on_detach(ref this, why: component::Detach) { }
+}
+
+impl Home: screen::Screen {
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}

@@ -1,0 +1,85 @@
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/vocabulary" as vocab;
+import "facet/icons" as icons;
+import "facet/gestures" as gestures;
+
+fn pink() -> vocab::Color { return vocab::Color::rgba(0.98f64, 0.45f64, 0.62f64, 1.0f64); }
+fn rose() -> vocab::Color { return vocab::Color::rgba(0.85f64, 0.20f64, 0.40f64, 1.0f64); }
+fn sky() -> vocab::Color { return vocab::Color::rgba(0.40f64, 0.62f64, 0.85f64, 1.0f64); }
+fn ink() -> vocab::Color { return vocab::Color::rgba(0.12f64, 0.14f64, 0.20f64, 1.0f64); }
+fn crimson() -> vocab::Color { return vocab::Color::rgba(0.62f64, 0.08f64, 0.10f64, 1.0f64); }
+fn amber() -> vocab::Color { return vocab::Color::rgba(0.98f64, 0.70f64, 0.20f64, 1.0f64); }
+fn violet() -> vocab::Color { return vocab::Color::rgba(0.45f64, 0.30f64, 0.85f64, 1.0f64); }
+fn teal() -> vocab::Color { return vocab::Color::rgba(0.10f64, 0.65f64, 0.60f64, 1.0f64); }
+fn red() -> vocab::Color { return vocab::Color::rgba(0.98f64, 0.18f64, 0.24f64, 1.0f64); }
+
+fn cover(from: vocab::Color, to: vocab::Color) -> vocab::Brush {
+    return vocab::Brush { start: from, end: to, angle: 135.0f64, is_gradient: true };
+}
+
+fn artwork(from: vocab::Color, to: vocab::Color, size: f64) -> core::Node {
+    return @ui {
+        box(vocab::Color::clear(), corner_radius: vocab::Corners::all(10.0))
+            .set_background(cover(from, to))
+            .width(size)
+            .height(size)
+    };
+}
+
+fn page_title(title: str) -> core::Node {
+    return @ui {
+        hstack {
+            label(title, named_size: vocab::NamedSize::Header,
+                  font_weight: vocab::FontWeight::Bold)
+        }
+            .padding_edge(flex::Edge::Horizontal, 20.0)
+    };
+}
+
+fn placeholder_page(title: str) -> core::Node {
+    let heading: core::Node = page_title(title);
+    return @ui {
+        column {
+            heading
+            spacer().grow(1.0)
+        }
+            .padding_edge(flex::Edge::Vertical, 12.0)
+    };
+}
+
+fn album_card(key: str, title: str, artist: str, from: vocab::Color, to: vocab::Color,
+              on_open: gestures::Handler, on_open_ctx: *u8 = 0 as *u8) -> core::Node {
+    let art: core::Node = artwork(from, to, 260.0);
+    return @ui {
+        column(key: key) {
+            art
+            label(title, named_size: vocab::NamedSize::Body)
+            label(artist, named_size: vocab::NamedSize::Body,
+                  text_color: vocab::Color::text_secondary())
+        }
+            .gap(4.0)
+            .gesture(on_click: on_open, on_click_ctx: on_open_ctx)
+    };
+}
+
+fn shelf(key: str, heading: str, take cards: core::Builder) -> core::Node {
+    let row: core::Node = ui::hstack(cards)
+        .gap(14.0)
+        .padding_edge(flex::Edge::Horizontal, 20.0);
+    return @ui {
+        column(key: key) {
+            hstack {
+                label(heading, named_size: vocab::NamedSize::Title,
+                      font_weight: vocab::FontWeight::Bold)
+                symbol(icons::chevron_right, size: 28.0,
+                       color: vocab::Color::text_secondary())
+            }
+                .gap(4.0)
+                .padding_edge(flex::Edge::Horizontal, 20.0)
+            scroll(axis: vocab::ScrollAxis::Horizontal) { row }
+        }
+            .gap(10.0)
+    };
+}

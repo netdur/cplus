@@ -1,19 +1,5 @@
-// glass_music_ios — the entry point the iOS app shell calls.
-//
-// `export extern fn` gives the symbol a stable, unmangled C name and puts
-// it in the generated header. A `fn main` would not do: this target
-// produces a STATICLIB, and a library has no entry the system knows to
-// call. It does not return — `UIApplicationMain` owns the process from
-// here — so the value below is unreachable in a running app.
-
 import "./app" as app;
 
 export extern fn glass_music_ios_main() -> i32 {
-    // The agent surface is armed in src/app.cplus, the one file every
-    // platform builds — there is nothing platform-shaped about it. On
-    // this platform it listens on a loopback PORT rather than a socket
-    // path, because a Unix socket sits inside the app sandbox where the
-    // launcher cannot reach it; the port is derived from the pid, which
-    // `simctl launch` and `devicectl` both report.
     return app::run();
 }

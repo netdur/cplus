@@ -1,0 +1,68 @@
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+
+import "./helpers" as helpers;
+
+struct Album {
+    key: str,
+    title: str,
+    artist: str,
+    from: vocab::Color,
+    to: vocab::Color,
+}
+
+fn album(key: str, title: str, artist: str, from: vocab::Color, to: vocab::Color) -> Album {
+    return Album { key: key, title: title, artist: artist, from: from, to: to };
+}
+
+fn new_releases() -> vec::Vec[Album] {
+    var v: vec::Vec[Album] = vec::new::[Album]();
+    let _a: status::Status = v.append(album("cloud-9", "Cloud 9", "Megan Moroney", helpers::pink(), helpers::rose()));
+    let _b: status::Status = v.append(album("fidelity", "Fidelity", "Yaya Bey", helpers::sky(), helpers::ink()));
+    let _c: status::Status = v.append(album("desire", "Desire", "Kehlani", helpers::crimson(), helpers::rose()));
+    return v;
+}
+
+fn top_picks() -> vec::Vec[Album] {
+    var v: vec::Vec[Album] = vec::new::[Album]();
+    let _a: status::Status = v.append(album("golden-hour", "Golden Hour", "Kacey Musgraves", helpers::amber(), helpers::rose()));
+    let _b: status::Status = v.append(album("night-drive", "Night Drive", "Chromatics", helpers::violet(), helpers::ink()));
+    let _c: status::Status = v.append(album("tidal", "Tidal", "Fiona Apple", helpers::teal(), helpers::sky()));
+    return v;
+}
+
+fn todays_hits() -> vec::Vec[Album] {
+    var v: vec::Vec[Album] = vec::new::[Album]();
+    let _a: status::Status = v.append(album("with-me", "With Me", "John Summit & Julia Wolf", helpers::sky(), helpers::pink()));
+    let _b: status::Status = v.append(album("red-room", "Red Room", "Rina Sawayama", helpers::red(), helpers::crimson()));
+    let _c: status::Status = v.append(album("lavender", "Lavender", "Clairo", helpers::violet(), helpers::pink()));
+    return v;
+}
+
+fn find_in(albums: vec::Vec[Album], key: str) -> option::Option[Album] {
+    var i: usize = 0 as usize;
+    while i < albums.count() {
+        match albums.at_ptr(i) {
+            option::Option[*Album]::Some(a) => {
+                if { (*a).key } == key { return option::Option[Album]::Some({ *a }); }
+            }
+            option::Option[*Album]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[Album]::None;
+}
+
+fn find(key: str) -> option::Option[Album] {
+    match find_in(new_releases(), key) {
+        option::Option[Album]::Some(a) => { return option::Option[Album]::Some(a); }
+        option::Option[Album]::None => { }
+    }
+    match find_in(top_picks(), key) {
+        option::Option[Album]::Some(a) => { return option::Option[Album]::Some(a); }
+        option::Option[Album]::None => { }
+    }
+    return find_in(todays_hits(), key);
+}

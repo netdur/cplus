@@ -1,0 +1,54 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/nav" as nav;
+import "facet/icons" as icons;
+import "stdlib/vec" as vec;
+
+import "./helpers" as helpers;
+
+struct Shell {
+    context: nav::Context,
+}
+
+impl Shell {
+    fn boxed() -> screen::ScreenBox {
+        return screen::screen_box::[Shell](Shell { context: nav::Context::none() });
+    }
+}
+
+impl Shell: component::Component {
+    fn build(ref this) -> core::Node {
+        return @ui {
+            tabs(key: "tabs", selected_index: 1, selected_tab_color: helpers::red()) {
+                slot(name: "home", route: "home") { }
+                    .set_tab_title("Home")
+                    .set_tab_symbol(icons::home)
+                slot(name: "new", route: "new") { }
+                    .set_tab_title("New")
+                    .set_tab_symbol(icons::grid_view)
+                slot(name: "radio", route: "radio") { }
+                    .set_tab_title("Radio")
+                    .set_tab_symbol(icons::podcasts)
+                slot(name: "library", route: "library") { }
+                    .set_tab_title("Library")
+                    .set_tab_symbol(icons::library_music)
+                slot(name: "search", route: "search") { }
+                    .set_tab_title("Search")
+                    .set_tab_symbol(icons::search)
+            }
+                .grow(1.0)
+        };
+    }
+}
+
+impl Shell: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { }
+    fn on_detach(ref this, why: component::Detach) { }
+}
+
+impl Shell: screen::Screen {
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
