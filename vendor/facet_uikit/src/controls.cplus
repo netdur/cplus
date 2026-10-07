@@ -2681,10 +2681,49 @@ fn content_v_align_of(a: vocab::TextAlign) -> i64 {
 // home indicator and its items sit above it. facet lays the root out inside
 // the safe area, so a bar at the bottom of the safe box would stop short of the
 // edge with bare window below it. When the bar's bottom IS the safe box's
-// bottom, its frame is extended by the inset — and UIKit, seeing the bar now
-// overlap the unsafe region, keeps the items above it by itself.
+// bottom, its frame is extended by the inset.
+//
+// UIKIT DOES NOT LIFT THE ITEMS BY ITSELF HERE, and the first version assumed
+// it would. A view's safe area is inherited from its superview, and facet's
+// root is already inside the safe box — so the extended bar inherited ZERO and
+// drew its labels under the home indicator (measured on an iPhone 16 Pro
+// simulator, 2026-10-07). So the bar is a one-method subclass whose
+// `safeAreaInsets` answers the extension: UIKit lays the items out above it
+// exactly as it does for a controller's bar.
 
 fn tab_bar_key() -> *u8 { return 29075 as *u8; }
+fn tab_extra_key() -> *u8 { return 29078 as *u8; }
+
+// The extension, in thousandths of a point, rides on the bar itself.
+fn tab_bar_safe_area_imp(self_obj: *u8, cmd: *u8) -> ui::EdgeInsets {
+    let milli: usize = { synth::get_associated(self_obj, tab_extra_key()) as usize };
+    return ui::EdgeInsets { top: 0.0f64, left: 0.0f64,
+                            bottom: { milli as f64 } / 1000.0f64, right: 0.0f64 };
+}
+
+#[link_name = "class_addMethod"]
+extern fn add_method_insets(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> ui::EdgeInsets, types: *u8) -> i8;
+
+fn tab_bar_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitTabBar\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("UITabBar\0")),
+                                              #str_ptr("FacetUIKitTabBar\0"), 0 as usize);
+    let _m: i8 = add_method_insets(cls, rt::sel(#str_ptr("safeAreaInsets\0")),
+                                   tab_bar_safe_area_imp, #str_ptr("{UIEdgeInsets=dddd}@:\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+fn set_tab_bar_extension(bar: *u8, extra: f64) {
+    let milli: usize = { (extra * 1000.0f64) as usize };
+    let had: usize = { synth::get_associated(bar, tab_extra_key()) as usize };
+    if had == milli { return; }
+    synth::set_associated(bar, tab_extra_key(), milli as *u8);
+    { rt::msg_void(bar, rt::sel(#str_ptr("safeAreaInsetsDidChange\0"))) };
+    { rt::msg_void(bar, rt::sel(#str_ptr("setNeedsLayout\0"))) };
+    return;
+}
 fn tab_node_key() -> *u8 { return 29076 as *u8; }
 fn tab_count_key() -> *u8 { return 29077 as *u8; }
 
@@ -2709,11 +2748,20 @@ fn tab_bar_of(v: *u8) -> *u8 {
 }
 
 // What the bar takes from the node's box, before any safe-area extension.
+// MEASURED ONCE, at creation: `sizeThatFits:` adds the bar's own bottom safe
+// area, and once the bar answers its extension (above) a fresh measure would
+// count the inset twice — once in the height, once in the extension.
+fn tab_height_key() -> *u8 { return 29079 as *u8; }
+
 fn tab_bar_height(bar: *u8) -> f64 {
+    let cached: usize = { synth::get_associated(bar, tab_height_key()) as usize };
+    if cached != (0 as usize) { return { cached as f64 } / 1000.0f64; }
     let s: rt::Size = { msg_size_size_tabs(bar, rt::sel(#str_ptr("sizeThatFits:\0")),
                                            rt::Size { w: 320.0f64, h: 0.0f64 }) };
-    if s.h > 0.0f64 { return s.h; }
-    return 49.0f64;
+    var h: f64 = 49.0f64;
+    if s.h > 0.0f64 { h = s.h; }
+    synth::set_associated(bar, tab_height_key(), { (h * 1000.0f64) as usize } as *u8);
+    return h;
 }
 
 #[link_name = "objc_msgSend"]
@@ -2731,12 +2779,13 @@ fn create_tabs(n: *core::Node) -> *u8 {
     let host: ui::View = ui::View::new_with_frame(zero_rect());
     let v: *u8 = rt::retain(host.raw());
     let bar: ui::TabBar = ui::TabBar::from_raw(
-        { rt::msg_id_rect(rt::msg_id(rt::get_class(#str_ptr("UITabBar\0")), rt::sel(#str_ptr("alloc\0"))),
+        { rt::msg_id_rect(rt::msg_id(tab_bar_class(), rt::sel(#str_ptr("alloc\0"))),
                           rt::sel(#str_ptr("initWithFrame:\0")), zero_rect()) });
     bar.set_delegate(tab_delegate());
     host.add_subview(bar.as_view());
     synth::set_associated(v, tab_bar_key(), bar.raw());
     synth::set_associated(bar.raw(), tab_node_key(), n as *u8);
+    let _h: f64 = tab_bar_height(bar.raw());   // measured before any extension
     // The host's retain keeps it; this releases the +1 of alloc.
     { rt::release(bar.raw()) };
     return v;
@@ -2873,9 +2922,12 @@ fn place_tab_bar(v: *u8, n: *core::Node) {
     let b: rt::Rect = host.bounds();
     let h: f64 = tab_bar_height(raw);
     var r: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: b.w, h: h };
+    var extra: f64 = 0.0f64;
     if tabs_at_bottom(p) {
-        r = rt::Rect { x: 0.0f64, y: b.h - h, w: b.w, h: h + below_safe_edge(v, b) };
+        extra = below_safe_edge(v, b);
+        r = rt::Rect { x: 0.0f64, y: b.h - h, w: b.w, h: h + extra };
     }
+    set_tab_bar_extension(raw, extra);
     ui::View::from_raw(raw).set_frame(r);
     return;
 }

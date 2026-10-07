@@ -1168,6 +1168,27 @@ fn a_tab_bar_sits_in_the_padding_of_the_edge_it_is_placed_on() -> bool {
     return ok_bottom && ok_top;
 }
 
+// The labels sat UNDER the home indicator on a real screen (iPhone 16 Pro
+// simulator, 2026-10-07): the bar's superview is inside the safe box, so the
+// extended bar inherited a zero safe area. Its subclass answers the extension,
+// and its measured height must not grow with it.
+fn an_extended_tab_bar_answers_its_extension_as_safe_area() -> bool {
+    var n: core::Node = tabs_probe(vocab::BarPlacement::Default);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    let bar: *u8 = controls::tab_bar_of(v);
+    let h0: f64 = controls::tab_bar_height(bar);
+    controls::set_tab_bar_extension(bar, 34.0f64);
+    let ins: uik::EdgeInsets = uik::View::from_raw(bar).safe_area_insets();
+    let ok_inset: bool = ins.bottom == 34.0f64 && ins.top == 0.0f64;
+    let ok_height: bool = controls::tab_bar_height(bar) == h0;
+    controls::set_tab_bar_extension(bar, 0.0f64);
+    let ok_back: bool = uik::View::from_raw(bar).safe_area_insets().bottom == 0.0f64;
+    views::view_release(v);
+    return ok_inset && ok_height && ok_back;
+}
+
 // ---- the keyboard ---------------------------------------------------------------
 // A software keyboard covers the bottom of the screen and UIKit moves nothing out
 // from under it, so a tapped field stays hidden behind it. The flip itself needs
@@ -4059,6 +4080,8 @@ fn run_all() -> i32 {
           picking_a_tab_writes_the_index_swaps_the_pane_and_calls_back());
     check("a tab bar sits in the padding of the edge it is placed on",
           a_tab_bar_sits_in_the_padding_of_the_edge_it_is_placed_on());
+    check("an extended tab bar answers its extension as safe area",
+          an_extended_tab_bar_answers_its_extension_as_safe_area());
 
     let ran: i32 = RAN;
     let failed: i32 = FAILED;
