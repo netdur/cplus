@@ -1,18 +1,14 @@
 import "facet/facet" as core;
 import "facet/component" as component;
 import "facet/screen" as screen;
-import "facet/nav" as nav;
-import "stdlib/vec" as vec;
 
 import "../helpers" as helpers;
 
-struct Library {
-    context: nav::Context,
-}
+struct Library { }
 
 impl Library {
     fn boxed() -> screen::ScreenBox {
-        return screen::screen_box::[Library](Library { context: nav::Context::none() });
+        return screen::screen_box::[Library](Library { });
     }
 }
 
@@ -22,12 +18,5 @@ impl Library: component::Component {
     }
 }
 
-impl Library: component::Lifecycle {
-    fn on_attach(ref this, why: component::Attach) { }
-    fn on_detach(ref this, why: component::Detach) { }
-}
-
-impl Library: screen::Screen {
-    fn on_context(ref this, context: nav::Context) { this.context = context; }
-    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
-}
+impl Library: component::Lifecycle { }
+impl Library: screen::Screen { }

@@ -6,9 +6,7 @@ import "facet/screen" as screen;
 import "facet/nav" as nav;
 import "facet/vocabulary" as vocab;
 import "facet/icons" as icons;
-import "facet/gestures" as gestures;
 import "stdlib/option" as option;
-import "stdlib/vec" as vec;
 
 import "../helpers" as helpers;
 import "../catalog" as catalog;
@@ -22,15 +20,14 @@ impl AlbumPage {
         return screen::screen_box::[AlbumPage](AlbumPage { context: nav::Context::none() });
     }
 
-    fn on_back_click(ref this, sender: *u8) -> bool {
+    fn on_back_click(ref this, sender: *u8) {
         let _popped: bool = this.context.navigator().pop();
-        return true;
     }
 }
 
 impl AlbumPage: component::Component {
     fn build(ref this) -> core::Node {
-        var album: catalog::Album = catalog::album("", "Unknown album", "",
+        var album: catalog::Album = catalog::album("", "Unknown album", "", "",
                                                    helpers::ink(), helpers::ink());
         match catalog::find(this.context.arg()) {
             option::Option[catalog::Album]::Some(a) => { album = a; }
@@ -40,12 +37,11 @@ impl AlbumPage: component::Component {
         return @ui {
             scroll(key: "album:page", axis: vocab::ScrollAxis::Vertical) {
                 column {
-                    hstack(key: "album:back") {
-                        symbol(icons::chevron_left, size: 28.0, color: helpers::red())
-                        label("Back", named_size: vocab::NamedSize::Body,
-                              text_color: helpers::red())
+                    hstack {
+                        button("Back", key: "album:back", symbol: icons::chevron_left,
+                               bordered: false, text_color: helpers::red(),
+                               on_click: this.on_back_click)
                     }
-                        .gesture(on_click: this.on_back_click)
                     column {
                         art
                         label(album.title, named_size: vocab::NamedSize::Title,
@@ -64,12 +60,8 @@ impl AlbumPage: component::Component {
     }
 }
 
-impl AlbumPage: component::Lifecycle {
-    fn on_attach(ref this, why: component::Attach) { }
-    fn on_detach(ref this, why: component::Detach) { }
-}
+impl AlbumPage: component::Lifecycle { }
 
 impl AlbumPage: screen::Screen {
     fn on_context(ref this, context: nav::Context) { this.context = context; }
-    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
 }

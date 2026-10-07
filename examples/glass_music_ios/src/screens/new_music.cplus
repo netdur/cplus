@@ -5,9 +5,7 @@ import "facet/component" as component;
 import "facet/screen" as screen;
 import "facet/nav" as nav;
 import "facet/vocabulary" as vocab;
-import "stdlib/option" as option;
 import "stdlib/text" as text;
-import "stdlib/vec" as vec;
 
 import "../helpers" as helpers;
 import "../catalog" as catalog;
@@ -27,33 +25,26 @@ impl NewMusic {
         return true;
     }
 
-    fn cards(ref this, albums: vec::Vec[catalog::Album]) -> core::Builder {
-        var b: core::Builder = core::Builder::new();
-        var i: usize = 0 as usize;
-        while i < albums.count() {
-            match albums.at_ptr(i) {
-                option::Option[*catalog::Album]::Some(a) => {
-                    b.add(helpers::album_card({ (*a).key }, { (*a).title }, { (*a).artist },
-                                              { (*a).from }, { (*a).to },
+    fn shelf(ref this, heading: str) -> core::Node {
+        var cards: core::Builder = core::Builder::new();
+        let all: [catalog::Album; 9] = catalog::albums();
+        for i in 0..9 {
+            let a: catalog::Album = all[i as usize];
+            if a.shelf == heading {
+                cards.add(helpers::album_card(a.key, a.title, a.artist, a.from, a.to,
                                               on_open: this.on_album_click));
-                }
-                option::Option[*catalog::Album]::None => { }
             }
-            i = i +% (1 as usize);
         }
-        return b;
+        return helpers::shelf(heading, cards);
     }
 }
 
 impl NewMusic: component::Component {
     fn build(ref this) -> core::Node {
         let title: core::Node = helpers::page_title("New");
-        let releases: core::Node = helpers::shelf("releases", "New Releases",
-                                                  this.cards(catalog::new_releases()));
-        let picks: core::Node = helpers::shelf("picks", "Top Picks",
-                                               this.cards(catalog::top_picks()));
-        let hits: core::Node = helpers::shelf("hits", "Today's Hits",
-                                              this.cards(catalog::todays_hits()));
+        let releases: core::Node = this.shelf(catalog::NEW_RELEASES);
+        let picks: core::Node = this.shelf(catalog::TOP_PICKS);
+        let hits: core::Node = this.shelf(catalog::TODAYS_HITS);
         return @ui {
             scroll(key: "new:page", axis: vocab::ScrollAxis::Vertical) {
                 column {
@@ -69,12 +60,8 @@ impl NewMusic: component::Component {
     }
 }
 
-impl NewMusic: component::Lifecycle {
-    fn on_attach(ref this, why: component::Attach) { }
-    fn on_detach(ref this, why: component::Detach) { }
-}
+impl NewMusic: component::Lifecycle { }
 
 impl NewMusic: screen::Screen {
     fn on_context(ref this, context: nav::Context) { this.context = context; }
-    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
 }

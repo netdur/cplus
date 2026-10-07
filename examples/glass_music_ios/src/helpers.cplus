@@ -64,12 +64,12 @@ fn album_card(key: str, title: str, artist: str, from: vocab::Color, to: vocab::
     };
 }
 
-fn shelf(key: str, heading: str, take cards: core::Builder) -> core::Node {
+fn shelf(heading: str, take cards: core::Builder) -> core::Node {
     let row: core::Node = ui::hstack(cards)
         .gap(14.0)
         .padding_edge(flex::Edge::Horizontal, 20.0);
     return @ui {
-        column(key: key) {
+        column {
             hstack {
                 label(heading, named_size: vocab::NamedSize::Title,
                       font_weight: vocab::FontWeight::Bold)

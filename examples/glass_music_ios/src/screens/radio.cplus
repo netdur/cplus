@@ -1,18 +1,14 @@
 import "facet/facet" as core;
 import "facet/component" as component;
 import "facet/screen" as screen;
-import "facet/nav" as nav;
-import "stdlib/vec" as vec;
 
 import "../helpers" as helpers;
 
-struct Radio {
-    context: nav::Context,
-}
+struct Radio { }
 
 impl Radio {
     fn boxed() -> screen::ScreenBox {
-        return screen::screen_box::[Radio](Radio { context: nav::Context::none() });
+        return screen::screen_box::[Radio](Radio { });
     }
 }
 
@@ -22,12 +18,5 @@ impl Radio: component::Component {
     }
 }
 
-impl Radio: component::Lifecycle {
-    fn on_attach(ref this, why: component::Attach) { }
-    fn on_detach(ref this, why: component::Detach) { }
-}
-
-impl Radio: screen::Screen {
-    fn on_context(ref this, context: nav::Context) { this.context = context; }
-    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
-}
+impl Radio: component::Lifecycle { }
+impl Radio: screen::Screen { }
