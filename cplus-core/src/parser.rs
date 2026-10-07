@@ -2308,6 +2308,15 @@ impl Parser {
     /// block-as-value code in this tree looks like. The rule mirrors the line
     /// sensitivity the builder DSL already depends on (`stop_line_dot`); the
     /// lexer stamps `nl_before` on every token for exactly this purpose.
+    ///
+    /// EXCEPT `(` AND `[`, which end the statement on the same line too. The
+    /// newline half of this rule closed the 2026-07-21 report, and the same
+    /// statement written on one line — `if c { … } (*r).x = v;`, which a
+    /// compressed backend file writes — still parsed as CALLING the block and
+    /// failed as E0313 on the assignment. Nobody calls or indexes a
+    /// statement-position block's value without parenthesising it, and Rust
+    /// reads both as a new statement; the value-producing continuations
+    /// (`as`, binary operators, `.`) keep their meaning.
     fn parse_stmt_expr(&mut self) -> Result<Expr, ParseError> {
         if !matches!(
             self.peek_kind(),
@@ -2320,6 +2329,10 @@ impl Parser {
         let block_like = self.parse_primary()?;
         // End of line, or the statement/block already ends here: done.
         if self.peek().nl_before || self.at(&TokenKind::Semi) || self.at(&TokenKind::RBrace) {
+            return Ok(block_like);
+        }
+        // A same-line `(` or `[` begins the next statement (see above).
+        if self.at(&TokenKind::LParen) || self.at(&TokenKind::LBracket) {
             return Ok(block_like);
         }
         // Same line with something after it: re-parse from the top as one
@@ -7471,6 +7484,32 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
                 );
             }
         }
+    }
+
+    /// The same statements on ONE line. `if c { } (*r).a = true;` is what a
+    /// compressed file writes, and it parsed as calling the `if` (E0313 on
+    /// the assignment) after the newline case had been fixed.
+    #[test]
+    fn a_same_line_paren_or_bracket_after_a_block_starts_a_statement() {
+        for (label, next) in [("paren", "(x);"), ("bracket", "[1, 2];")] {
+            for opener in ["if x == x { }", "{ }", "if x == x { } else { }"] {
+                let src = format!("fn f() {{ var x = 1; {opener} {next} }}");
+                let p = parse_src(&src)
+                    .unwrap_or_else(|e| panic!("[{label} after {opener}] {e:?}\n{src}"));
+                let StmtKind::Expr(e) = last_fn_stmt_n(&p, 1) else {
+                    panic!("[{label} after {opener}] expected an expression statement");
+                };
+                assert!(
+                    is_block_like(&e.kind),
+                    "[{label} after {opener}] the block absorbed the next statement: {:?}",
+                    e.kind
+                );
+            }
+        }
+        // NEGATIVE: a value continuation on the same line is still one expression.
+        let p = parse_src("fn f() -> i64 { var x = 1; x = if x == x { 1 } else { 2 } + 1; return x; }")
+            .unwrap();
+        let _ = p;
     }
 
     /// The other half of the rule: a continuation on the SAME line still parses
