@@ -360,8 +360,15 @@ fn apply_container(v: *u8, n: *core::Node, dirty: u64) { return; }
 // after building a drawable throws the drawable away. So either bit rebuilds
 // the background whole.
 fn apply_box(v: *u8, n: *core::Node, dirty: u64) {
-    if (dirty & (box_view::P_COLOR | box_view::P_CORNER_RADIUS)) == (0 as u64)
-       && dirty != paint::all_bits() { return; }
+    // THE BACKGROUND BITS TOO. `paint::configure` runs first and paints the
+    // node's gradient SQUARE; this is what re-draws it at the box's radius. A
+    // box mounted after launch — a pushed screen's artwork, a presented sheet's
+    // — arrives with only C_BACKGROUND raised, and so did a rounded box whose
+    // gradient changed at runtime: this returned early and the square paint
+    // stayed (glass_music_ios's album page and Now Playing sheet, 2026-10-07).
+    let mine: u64 = box_view::P_COLOR | box_view::P_CORNER_RADIUS
+                  | props::C_BACKGROUND | props::C_BACKGROUND_COLOR;
+    if (dirty & mine) == (0 as u64) && dirty != paint::all_bits() { return; }
     let p: *props::BoxProps = props_of(n, props::K_BOX) as *props::BoxProps;
     if p == (0 as *props::BoxProps) { return; }
     let env: rt::Env = e::env();
