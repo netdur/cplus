@@ -4,8 +4,6 @@ import "facet/component" as component;
 import "facet/screen" as screen;
 import "facet/icons" as icons;
 
-import "./helpers" as helpers;
-
 struct Shell { }
 
 impl Shell {
@@ -17,7 +15,7 @@ impl Shell {
 impl Shell: component::Component {
     fn build(ref this) -> core::Node {
         return @ui {
-            tabs(key: "tabs", selected_index: 1, selected_tab_color: helpers::red()) {
+            tabs(key: "tabs", selected_index: 1) {
                 slot(name: "home", route: "home") { }
                     .set_tab_title("Home")
                     .set_tab_symbol(icons::home)
