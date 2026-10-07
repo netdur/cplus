@@ -393,6 +393,10 @@ shows and `on_tab_changed` reports the user picking another; the five `bar_*` /
 `Default` is the platform's convention — the BOTTOM on iOS (a `UITabBar`, Liquid
 Glass on iOS 26), the TOP elsewhere — and `Top` / `Bottom` override it. A bottom
 bar on a phone reaches the screen edge under the home indicator.
+On iOS 26 a `scroll` pane runs UNDER the floating glass bar, to the screen
+edge, with its content inset to clear the bar, as in the system's own apps.
+Make the pane itself the `scroll` to get that. Any other pane stops above the
+bar.
 
 The panes are written INSIDE the block, each carrying its own icon —
 MAUI's `Page.IconImageSource` — as a leading-dot line. The showing pane fills

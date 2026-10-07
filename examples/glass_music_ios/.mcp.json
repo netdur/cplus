@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cplus": {
+      "command": "/Users/adel/Workspace/C+/examples/../target/release/cpc",
+      "args": ["mcp"]
+    }
+  }
+}

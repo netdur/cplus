@@ -1,0 +1,176 @@
+// glass_music_ios — a music app's "New" tab, to see Liquid Glass on iOS 26.
+//
+// The bottom bar is facet's `tabs`, which on iOS is the system's UITabBar —
+// and on iOS 26 that bar IS Liquid Glass: it floats, and the page scrolls
+// under it. The "New" pane is a `scroll`, so it runs under the bar and its
+// content is inset to clear it; the glass is the album art seen through.
+//
+// Build and run on a booted simulator:   ./run_sim.sh <udid>
+
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/vocabulary" as vocab;
+import "facet/icons" as icons;
+import "facet_runtime/runtime" as runtime;
+import "facet_agent/agent" as agent;
+
+import "stdlib/status" as status;
+import "stdlib/vec" as vec;
+
+// An album cover: a gradient square. Real art would be an `image`; a
+// gradient is enough to see the glass bend colour.
+fn cover(from: vocab::Color, to: vocab::Color) -> vocab::Brush {
+    return vocab::Brush { start: from, end: to, angle: 135.0f64, is_gradient: true };
+}
+
+fn pink() -> vocab::Color { return vocab::Color::rgba(0.98f64, 0.45f64, 0.62f64, 1.0f64); }
+fn rose() -> vocab::Color { return vocab::Color::rgba(0.85f64, 0.20f64, 0.40f64, 1.0f64); }
+fn sky() -> vocab::Color { return vocab::Color::rgba(0.40f64, 0.62f64, 0.85f64, 1.0f64); }
+fn ink() -> vocab::Color { return vocab::Color::rgba(0.12f64, 0.14f64, 0.20f64, 1.0f64); }
+fn crimson() -> vocab::Color { return vocab::Color::rgba(0.62f64, 0.08f64, 0.10f64, 1.0f64); }
+fn amber() -> vocab::Color { return vocab::Color::rgba(0.98f64, 0.70f64, 0.20f64, 1.0f64); }
+fn violet() -> vocab::Color { return vocab::Color::rgba(0.45f64, 0.30f64, 0.85f64, 1.0f64); }
+fn teal() -> vocab::Color { return vocab::Color::rgba(0.10f64, 0.65f64, 0.60f64, 1.0f64); }
+fn red() -> vocab::Color { return vocab::Color::rgba(0.98f64, 0.18f64, 0.24f64, 1.0f64); }
+
+// One album: the cover, then its title and artist in the platform's own
+// text styles — `named_size` is the role, not a point size.
+fn album(key: str, title: str, artist: str, art: vocab::Brush) -> core::Node {
+    return @ui {
+        column(key: key) {
+            box(vocab::Color::clear(), corner_radius: vocab::Corners::all(10.0))
+                .set_background(art)
+                .width(260.0)
+                .height(260.0)
+            label(title, named_size: vocab::NamedSize::Body)
+            label(artist, named_size: vocab::NamedSize::Body,
+                  text_color: vocab::Color::text_secondary())
+        }
+            .gap(4.0)
+    };
+}
+
+// A section: a heading with a chevron, then a row of albums that scrolls
+// sideways.
+fn shelf(key: str, heading: str, take a: core::Node, take b: core::Node, take c: core::Node) -> core::Node {
+    return @ui {
+        column(key: key) {
+            hstack {
+                label(heading, named_size: vocab::NamedSize::Title,
+                      font_weight: vocab::FontWeight::Bold)
+                symbol(icons::chevron_right, size: 28.0,
+                       color: vocab::Color::text_secondary())
+            }
+                .gap(4.0)
+                .padding_edge(flex::Edge::Horizontal, 20.0)
+            scroll(axis: vocab::ScrollAxis::Horizontal) {
+                hstack { a b c }
+                    .gap(14.0)
+                    .padding_edge(flex::Edge::Horizontal, 20.0)
+            }
+        }
+            .gap(10.0)
+    };
+}
+
+struct Music {
+    tab: i64,
+}
+
+impl Music {
+    fn new() -> Music { return Music { tab: 1 }; }
+}
+
+impl Music: component::Component {
+    fn build(ref this) -> core::Node {
+        let releases: core::Node = shelf("releases", "New Releases",
+            album("a1", "Cloud 9", "Megan Moroney", cover(pink(), rose())),
+            album("a2", "Fidelity", "Yaya Bey", cover(sky(), ink())),
+            album("a3", "Desire", "Kehlani", cover(crimson(), rose())));
+        let picks: core::Node = shelf("picks", "Top Picks",
+            album("b1", "Golden Hour", "Kacey Musgraves", cover(amber(), rose())),
+            album("b2", "Night Drive", "Chromatics", cover(violet(), ink())),
+            album("b3", "Tidal", "Fiona Apple", cover(teal(), sky())));
+        let hits: core::Node = shelf("hits", "Today's Hits",
+            album("c1", "With Me", "John Summit & Julia Wolf", cover(sky(), pink())),
+            album("c2", "Red Room", "Rina Sawayama", cover(red(), crimson())),
+            album("c3", "Lavender", "Clairo", cover(violet(), pink())));
+        return @ui {
+            tabs(key: "nav", selected_index: 1, selected_tab_color: red()) {
+                column(key: "home") {
+                    label("Home", named_size: vocab::NamedSize::Header,
+                          font_weight: vocab::FontWeight::Bold)
+                }
+                    .padding(20.0)
+                    .set_tab_title("Home")
+                    .set_tab_symbol(icons::home)
+                scroll(key: "new", axis: vocab::ScrollAxis::Vertical) {
+                    column {
+                        hstack {
+                            label("New", named_size: vocab::NamedSize::Header,
+                                  font_weight: vocab::FontWeight::Bold)
+                        }
+                            .padding_edge(flex::Edge::Horizontal, 20.0)
+                        releases
+                        picks
+                        hits
+                    }
+                        .gap(28.0)
+                        .padding_edge(flex::Edge::Vertical, 12.0)
+                }
+                    .set_tab_title("New")
+                    .set_tab_symbol(icons::grid_view)
+                column(key: "radio") {
+                    label("Radio", named_size: vocab::NamedSize::Header,
+                          font_weight: vocab::FontWeight::Bold)
+                }
+                    .padding(20.0)
+                    .set_tab_title("Radio")
+                    .set_tab_symbol(icons::podcasts)
+                column(key: "library") {
+                    label("Library", named_size: vocab::NamedSize::Header,
+                          font_weight: vocab::FontWeight::Bold)
+                }
+                    .padding(20.0)
+                    .set_tab_title("Library")
+                    .set_tab_symbol(icons::library_music)
+                column(key: "search") {
+                    label("Search", named_size: vocab::NamedSize::Header,
+                          font_weight: vocab::FontWeight::Bold)
+                }
+                    .padding(20.0)
+                    .set_tab_title("Search")
+                    .set_tab_symbol(icons::search)
+            }
+                .grow(1.0)
+        };
+    }
+}
+
+impl Music: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { }
+    fn on_detach(ref this, why: component::Detach) { }
+}
+
+impl Music: screen::Screen {
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
+
+fn music_boxed() -> screen::ScreenBox {
+    return screen::screen_box::[Music](Music::new());
+}
+
+fn run() -> i32 {
+    // Driveable by an agent: `describe_ui` lists each tab as a Button.
+    agent::enable();
+    let app: runtime::App = runtime::App::new("glass_music_ios");
+    app.window("music", music_boxed, chrome: screen::Chrome::new(title: "Music"));
+    app.agent_mcp();
+    match app.run("music") {
+        status::Status::Ok => { return 0; }
+        _other => { return 1; }
+    }
+}

@@ -900,6 +900,17 @@ lens (reports/spendwise/S13). The items are handed over again once the bar has
 its width, and whenever that width changes: set while it was 0 wide, the iOS 26
 bar kept a title width of nothing ("Da…").
 
+**On Liquid Glass the page runs under the bar.** That is what the glass is
+for: a `UITabBarController` runs its scrolling child under the floating bar and
+insets the content, and the glass is that content seen through it. So when the
+shown pane is a `scroll`, the tabs drop the bar's padding, the pane takes the
+whole box and on to the screen edge below the home indicator, and its bottom
+content inset grows by the bar's height and that gap. The inset is ADDED and
+taken back by the same amount, never written absolutely, so the keyboard's own
+inset composes with it. Any other pane keeps the bar's room, because a column
+cannot scroll its last row out from behind the bar. The bar is brought in front
+of the panes on every layout pass. Below iOS 26 nothing changes.
+
 This was a `UISegmentedControl` until 2026-10-07, and it never inserted a
 segment or hid a pane — the section above described a design the code did not
 carry out (reports/spendwise/S11).

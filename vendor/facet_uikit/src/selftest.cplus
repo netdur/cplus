@@ -1351,6 +1351,74 @@ fn a_glass_tab_bar_floats_unextended_and_resets_its_items_at_its_width() -> bool
     return reset && floats;
 }
 
+// On Liquid Glass the page runs UNDER the floating bar: a scroll pane takes the
+// whole box with its content inset to clear the bar, any other pane keeps the
+// bar's room, and the bar stays in front of whichever pane is under it.
+fn tab_pad_bottom(p: *core::Node) -> f64 {
+    let l: flex::StyleLength = { (*p).style.padding_bottom };
+    return l.value;
+}
+
+fn a_scroll_pane_runs_under_a_glass_tab_bar() -> bool {
+    var b: core::Builder = core::Builder::new();
+    var sb: core::Builder = core::Builder::new();
+    sb.add(ui::label("row"));
+    b.add(ui::scroll(sb, key: "st:under:page", axis: vocab::ScrollAxis::Vertical));
+    b.add(ui::column(core::Builder::new(), key: "st:under:col"));
+    var n: core::Node = ui::tabs(b, key: "st:under");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    uik::View::from_raw(v).set_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: 402.0f64, h: 700.0f64 });
+    var page: *core::Node = 0 as *core::Node;
+    match core::child_of(p, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => { page = c; }
+        option::Option[*core::Node]::None => { return false; }
+    }
+    let sv: *u8 = views::create(0 as *u8, page);
+    if sv == (0 as *u8) { return false; }
+    core::set_view(page, sv, views::view_release);
+    uik::View::from_raw(v).add_subview(uik::View::from_raw(sv));
+    let bar: *u8 = controls::tab_bar_of(v);
+    let h: f64 = controls::tab_bar_height(bar);
+    controls::place_tab_bar(v, p);
+    controls::run_pane_under_bar(v, p);
+    let s: uik::ScrollView = uik::ScrollView::from_raw(sv);
+    if !controls::glass_available() {
+        // The classic bar: beside the panes, nothing inset.
+        let ok: bool = tab_pad_bottom(p) == h && s.content_inset().bottom == 0.0f64;
+        core::set_view(page, 0 as *u8, views::view_release);
+        core::set_view(p, 0 as *u8, views::view_release);
+        views::view_release(sv);
+        views::view_release(v);
+        return ok;
+    }
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    let front: bool = { rt::msg_id(subs, rt::sel(#str_ptr("lastObject\0"))) } == bar;
+    let under: bool = tab_pad_bottom(p) == 0.0f64 && s.content_inset().bottom == h;
+    // ADDITIVE: something else's inset (the keyboard's) survives the bar's.
+    s.set_content_inset(uik::EdgeInsets { top: 0.0f64, left: 0.0f64,
+                                          bottom: h + 100.0f64, right: 0.0f64 });
+    // Select the column: it keeps the bar's room and the page gives the
+    // bar's inset back, leaving the other 100.
+    match tabs::find("st:under", within: p) {
+        option::Option[tabs::Tabs]::Some(t) => { let _t: tabs::Tabs = t.set_selected_index(1 as i64); }
+        option::Option[tabs::Tabs]::None => { return false; }
+    }
+    views::apply(0 as *u8, p);
+    controls::run_pane_under_bar(v, p);
+    let beside: bool = tab_pad_bottom(p) == h && s.content_inset().bottom == 100.0f64;
+    core::set_view(page, 0 as *u8, views::view_release);
+    core::set_view(p, 0 as *u8, views::view_release);
+    views::view_release(sv);
+    views::view_release(v);
+    if !front || !under || !beside {
+        io::eprintln(text::from_str("  front ${front} under ${under} beside ${beside}"));
+    }
+    return front && under && beside;
+}
+
 // ---- the keyboard ---------------------------------------------------------------
 // A software keyboard covers the bottom of the screen and UIKit moves nothing out
 // from under it, so a tapped field stays hidden behind it. The flip itself needs
@@ -3983,6 +4051,8 @@ fn run_all() -> i32 {
 
     check("the icon font registers without the app shipping it",
           the_icon_font_registers_without_the_app_shipping_it());
+    check("a scroll pane runs under a glass tab bar",
+          a_scroll_pane_runs_under_a_glass_tab_bar());
     check("every named size is a text style UIKit knows",
           every_named_size_is_a_text_style_uikit_knows());
     check("a named size is its text style and a stated size still wins",

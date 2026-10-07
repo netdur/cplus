@@ -278,6 +278,9 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     // child means every absolute frame under it is unchanged, so
                     // the views already sit exactly there.
                     if { (*c).layout_changed() } { reposition_children(c, cf); }
+                    // Its panes are placed now, so the one that runs under a
+                    // floating bar can be taken on to the screen edge.
+                    if core::kind_of(c) == props::K_TABS { controls::run_pane_under_bar(v, c); }
                 } else {
                     // Unbacked: its children hang from the SAME host, placed
                     // against that host's frame — mirroring the mount walk's

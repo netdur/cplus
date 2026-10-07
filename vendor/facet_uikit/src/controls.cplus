@@ -2798,15 +2798,10 @@ fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     if raw == (0 as *u8) { return; }
     let bar: ui::TabBar = ui::TabBar::from_raw(raw);
     let all: bool = dirty == paint::all_bits();
-    if all || (dirty & tabs::P_BAR_PLACEMENT) != (0 as u64) {
-        let h: f64 = tab_bar_height(raw);
-        if tabs_at_bottom(p) {
-            core::ensure_padding_edge(n, flex::Edge::Bottom, h);
-            core::ensure_padding_edge(n, flex::Edge::Top, 0.0f64);
-        } else {
-            core::ensure_padding_edge(n, flex::Edge::Top, h);
-            core::ensure_padding_edge(n, flex::Edge::Bottom, 0.0f64);
-        }
+    // The selection too: whether the shown pane runs under the bar is a fact
+    // about WHICH pane shows (`apply_tab_padding`).
+    if all || (dirty & (tabs::P_BAR_PLACEMENT | tabs::P_SELECTED_INDEX)) != (0 as u64) {
+        apply_tab_padding(v, n, p);
     }
     if all || (dirty & (tabs::P_SELECTED_INDEX | tabs::P_TAB_ITEMS)) != (0 as u64) {
         rebuild_tab_items(v, n, p);
@@ -2881,6 +2876,118 @@ fn rebuild_tab_items(v: *u8, n: *core::Node, p: *props::TabsProps) {
     return;
 }
 
+// WHERE THE BAR TAKES ITS ROOM. The classic bar sits in the node's padding,
+// beside the panes. The iOS 26 bar FLOATS, and what it floats over is the
+// page: a UITabBarController runs a scrolling child under it and insets the
+// scroll's content, and Liquid Glass is that content seen through the bar. So
+// on glass, at the bottom, a SCROLL pane takes the whole box (its content is
+// inset in `place_tab_bar`) and any other pane keeps the padding — a column's
+// last row hidden behind a bar it cannot scroll out from under is worse than
+// no glass. One pane shows at a time, so the padding follows the shown one.
+fn shown_pane_scrolls(n: *core::Node, p: *props::TabsProps) -> bool {
+    let at: i64 = { (*p).selected_index };
+    if at < (0 as i64) { return false; }
+    return match core::child_of(n, at as usize) {
+        option::Option[*core::Node]::Some(c) => core::kind_of(c) == props::K_SCROLL,
+        option::Option[*core::Node]::None => false,
+    };
+}
+
+fn pane_runs_under_bar(n: *core::Node, p: *props::TabsProps) -> bool {
+    return glass_available() && tabs_at_bottom(p) && shown_pane_scrolls(n, p);
+}
+
+fn apply_tab_padding(v: *u8, n: *core::Node, p: *props::TabsProps) {
+    let raw: *u8 = tab_bar_of(v);
+    if raw == (0 as *u8) { return; }
+    let h: f64 = tab_bar_height(raw);
+    if tabs_at_bottom(p) {
+        var room: f64 = h;
+        if pane_runs_under_bar(n, p) { room = 0.0f64; }
+        core::ensure_padding_edge(n, flex::Edge::Bottom, room);
+        core::ensure_padding_edge(n, flex::Edge::Top, 0.0f64);
+    } else {
+        core::ensure_padding_edge(n, flex::Edge::Top, h);
+        core::ensure_padding_edge(n, flex::Edge::Bottom, 0.0f64);
+    }
+    return;
+}
+
+// The bottom content inset a pane's scroll carries for the bar, ADDED to
+// whatever else is there — the keyboard saves the inset it finds and adds its
+// own overlap, so writing an absolute value here would undo it, and it would
+// undo this. What was added last time is remembered on the scroll view.
+fn tab_inset_key() -> *u8 { return 29083 as *u8; }
+
+fn set_tab_inset(sv: *u8, want: f64) {
+    if sv == (0 as *u8) { return; }
+    let had: f64 = { synth::get_associated(sv, tab_inset_key()) as usize as f64 } / 1000.0f64;
+    if had == want { return; }
+    let s: ui::ScrollView = ui::ScrollView::from_raw(sv);
+    let cur: ui::EdgeInsets = s.content_inset();
+    let bottom: f64 = cur.bottom - had + want;
+    s.set_content_inset(ui::EdgeInsets { top: cur.top, left: cur.left, bottom: bottom, right: cur.right });
+    let ind: ui::EdgeInsets = s.vertical_scroll_indicator_insets();
+    s.set_vertical_scroll_indicator_insets(ui::EdgeInsets {
+        top: ind.top, left: ind.left, bottom: ind.bottom - had + want, right: ind.right });
+    synth::set_associated(sv, tab_inset_key(), { (want * 1000.0f64) as usize } as *u8);
+    return;
+}
+
+// AFTER the panes are placed (geometry's walk calls this once it has set
+// their frames): the shown scroll pane runs on down to the SCREEN edge when
+// the tabs end at the window's safe edge — the page goes under the home
+// indicator as it does under the bar — and every scroll pane's content inset
+// is brought to what clears the bar from where its pane now ends.
+fn run_pane_under_bar(v: *u8, n: *core::Node) {
+    let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
+    if p == (0 as *props::TabsProps) { return; }
+    let raw: *u8 = tab_bar_of(v);
+    if raw == (0 as *u8) { return; }
+    let h: f64 = tab_bar_height(raw);
+    var extra: f64 = 0.0f64;
+    if pane_runs_under_bar(n, p) {
+        let b: rt::Rect = ui::View::from_raw(v).bounds();
+        extra = below_safe_edge(v, b);
+        match core::child_of(n, { (*p).selected_index } as usize) {
+            option::Option[*core::Node]::Some(c) => {
+                let pv: *u8 = core::view_of(c);
+                if pv != (0 as *u8) && extra > 0.0f64 {
+                    let f: rt::Rect = ui::View::from_raw(pv).frame();
+                    // To the host's bottom plus the inset, whatever the pane's
+                    // own margin left — idempotent across passes.
+                    ui::View::from_raw(pv).set_frame(rt::Rect {
+                        x: f.x, y: f.y, w: f.w, h: b.h + extra - f.y });
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+    }
+    inset_scroll_panes(n, p, h + extra);
+    return;
+}
+
+fn inset_scroll_panes(n: *core::Node, p: *props::TabsProps, h: f64) {
+    let under: bool = pane_runs_under_bar(n, p);
+    let at: i64 = { (*p).selected_index };
+    let count: usize = core::child_count_of(n);
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SCROLL {
+                    var want: f64 = 0.0f64;
+                    if under && (i as i64) == at { want = h; }
+                    set_tab_inset(core::view_of(c), want);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
 fn show_selected_pane(n: *core::Node, at: i64) {
     let count: usize = core::child_count_of(n);
     var i: usize = 0 as usize;
@@ -2915,6 +3022,7 @@ fn tab_bar_selected(user: *u8, bar: *u8, item: *u8) {
     if { (*p).selected_index } == at { return; }
     { (*p).selected_index = at };
     show_selected_pane(n, at);
+    apply_tab_padding(core::view_of(n), n, p);
     let h: fn(*u8, *u8) = { (*p).on_tab_changed };
     if h != props::no_handler { h(core::view_of(n), { (*p).on_tab_changed_ctx }); }
     return;
@@ -2955,6 +3063,10 @@ fn place_tab_bar(v: *u8, n: *core::Node) {
     // not at all (S13). Setting them again at the real width — and whenever it
     // changes, a rotation or a resize — is what lets each title measure.
     if old_w != r.w { rebuild_tab_items(v, n, p); }
+    // ABOVE THE PANES. The bar is the host's first subview and each pane's
+    // view is added after it, so a pane running under the bar would draw over
+    // it — and on glass one does.
+    host.bring_subview_to_front(ui::View::from_raw(raw));
     return;
 }
 

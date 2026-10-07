@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Glass_music_ios</string>
+    <key>CFBundleExecutable</key>
+    <string>Glass_music_ios</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.cplus.glassmusic</string>
+    <key>CFBundleName</key>
+    <string>Glass_music_ios</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>MinimumOSVersion</key>
+    <string>14.0</string>
+    <!-- A SCENE, because every windowing API on iPadOS hangs off one:
+         the control style, the geometry callback, the size
+         restrictions. An app with no manifest is not answering them
+         badly, it is never asked. facet_uikit synthesizes
+         `FacetUIKitSceneDelegate` before UIApplicationMain and ADOPTS
+         the window the app delegate already built, so naming it here
+         changes nothing about how the app starts.
+         No UISceneStoryboardFile: a storyboard makes UIKit wait for a
+         nib facet does not have, and the screen stays black. That is
+         the key that was correctly avoided; this one is not it. -->
+    <!-- A DEEP LINK'S REGISTRATION, commented out because a scheme is
+         the app's to choose. Uncomment, put your own scheme in, and
+         `applinks::on_link(handler, scheme: "myapp")` receives it —
+         cold start included. WITHOUT THIS KEY the scheme belongs to
+         nobody, the app is never launched for it, and the handler is
+         perfectly correct and perfectly silent.
+ 
+         A UNIVERSAL LINK (https://) IS NOT THIS KEY. It needs the
+         com.apple.developer.associated-domains entitlement, a paid
+         team, and an apple-app-site-association file served from your
+         domain. See vendor/applinks/docs/guide.md.
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>dev.cplus.glassmusic.link</string>
+            <key>CFBundleURLSchemes</key>
+            <array><string>myapp</string></array>
+        </dict>
+    </array>
+    -->
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+        <key>UISceneConfigurations</key>
+        <dict>
+            <key>UIWindowSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneConfigurationName</key>
+                    <string>Default Configuration</string>
+                    <key>UISceneDelegateClassName</key>
+                    <string>FacetUIKitSceneDelegate</string>
+                </dict>
+            </array>
+        </dict>
+    </dict>
+    <key>UIDeviceFamily</key>
+    <array>
+        <integer>1</integer>
+        <integer>2</integer>
+    </array>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <!-- ALL FOUR, and this is not a preference. iPadOS grants an app a
+         real, resizable window only if it supports every orientation;
+         with three it hands out a FULL-SCREEN-SIZED canvas and scales
+         that into whatever window the user drags. Measured on an iPad
+         Pro 11: with three orientations the app was told 834x1194 while
+         its window was 504x722 — a 0.60 scale, which reads as "the text
+         is too big" and hides every layout bug behind it. With four it
+         is told 507x727, the size it actually has. -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+</dict>
+</plist>
