@@ -3290,3 +3290,45 @@ fn a_date_pickers_date_is_read_and_picked_through_the_surface() {
     let last: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
     assert text_of_node(last, "form:date").view() == "2026-10-07";
 }
+
+// ---- a window with a sheet on it is not reachable (spendwise S20 follow-up) -----
+// A person cannot touch a window while a sheet covers it, and an agent clicked
+// under one — the mini player under an open Now Playing sheet — and stacked a
+// second sheet nobody could see. The covered window is still described; its
+// nodes answer not_actionable until the sheet goes.
+
+#[test]
+fn a_window_under_a_sheet_refuses_clicks_until_the_sheet_ends() {
+    let win = fixture_window(300.0, 200.0);
+    let under = add_button(content_of(win), "under");
+    agent::set_agent_id(under.as_view().raw(), "under");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
+
+    let sheet = fixture_window(200.0, 120.0);
+    let on_sheet = add_button(content_of(sheet), "on-sheet");
+    agent::set_agent_id(on_sheet.as_view().raw(), "on-sheet");
+    var sheet_root: core::Node = mirror(content_of(sheet).raw());
+    app::open_window(#addr_of(sheet_root));
+    app::set_window_native(#addr_of(sheet_root), sheet.raw());
+    { rt::msg_void_id_id(win.raw(), rt::sel(#str_ptr("beginSheet:completionHandler:\0")),
+                         sheet.raw(), 0 as *u8) };
+    assert { rt::msg_id(win.raw(), rt::sel(#str_ptr("attachedSheet\0"))) } == sheet.raw();
+
+    CLICKS = 0;
+    var s: agent::Surface = agent::open_app();
+    // Described, and refused.
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    assert has_id(nodes, "under");
+    assert surface::outcome_eq(s.click(auth::operator(), "under"), surface::Outcome::NotActionable);
+    assert CLICKS == 0;
+    // The sheet itself is what can be acted on.
+    assert surface::outcome_eq(s.click(auth::operator(), "on-sheet"), surface::Outcome::Allowed);
+
+    // The sheet ends: the window is reachable again.
+    { rt::msg_void_id(win.raw(), rt::sel(#str_ptr("endSheet:\0")), sheet.raw()) };
+    var after: agent::Surface = agent::open_app();
+    let _d: vec::Vec[agent::AppKitNode] = after.describe(auth::operator());
+    assert surface::outcome_eq(after.click(auth::operator(), "under"), surface::Outcome::Allowed);
+    app::reset_default_for_tests();
+}

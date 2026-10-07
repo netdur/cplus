@@ -1723,11 +1723,36 @@ fn open_app() -> Surface {
         let root: *core::Node = app::window_root(i);
         if !is_null(root as *u8) {
             let win: *u8 = app::window_native(root);
-            if !is_null(win) && !first_seen(seen, win) { walk_window(reg, views, win); }
+            if !is_null(win) && !first_seen(seen, win) {
+                let first: usize = reg.count();
+                walk_window(reg, views, win);
+                if under_sheet(win) { observe_only_from(reg, first); }
+            }
         }
         i = i +% (1 as usize);
     }
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+}
+
+// A WINDOW WITH A SHEET ON IT IS NOT REACHABLE. A person cannot touch it until
+// the sheet is answered — AppKit routes every click to the sheet — and an agent
+// must not either: it clicked the mini player under an open Now Playing sheet
+// and stacked a second sheet nobody could see (glass_music_ios, 2026-10-07).
+// Its nodes are still described, so an agent knows what is underneath; they
+// answer `not_actionable`, as the page under an open iOS alert does.
+fn under_sheet(win: *u8) -> bool {
+    if !responds_to(win, #str_ptr("attachedSheet\0")) { return false; }
+    return !is_null(rt::msg_id(win, rt::sel(#str_ptr("attachedSheet\0"))));
+}
+
+// Every node registered since `first` is observe-only.
+fn observe_only_from(ref reg: identity::Registry, first: usize) {
+    var k: usize = first;
+    while k < reg.count() {
+        reg.set_observe_only(k);
+        k = k +% (1 as usize);
+    }
+    return;
 }
 
 // Have we walked this handle already? Records it when not — so the caller's
