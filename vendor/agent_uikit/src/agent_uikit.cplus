@@ -43,6 +43,7 @@ import "facet/props" as props;
 import "facet/tree" as ftree;
 import "facet/relist" as frelist;
 import "facet/tabs" as ftabs;
+import "facet/popup" as fpopup;
 import "facet/application" as app;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
@@ -666,6 +667,55 @@ fn append_ref(ref views: vec::Vec[ViewRef], view: *u8) -> status_of_append {
 // One Button per pane of a `tabs` node: `<tabs key>:tab:<pane key>`, named by
 // the pane's key (the tab's title everywhere), the showing one described as
 // "selected". A click does what a tap does — `Tabs::pick_tab`.
+// AN ITEM OF A `popup` (spendwise S18). The menu is UIKit's, opened by a press
+// and closed by a choice, so the walk never met the items: an agent could open
+// a popup and choose nothing. Each item is a part `<popup key>:item:<n>`, a
+// Button named by its title; a click is `Popup::pick`, which selects AND fires
+// the app's `on_selected_index_changed`.
+fn add_item_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
+                  view: *u8, parent: usize, base: str, n: *core::Node) {
+    match fpopup::from(n) {
+        option::Option[fpopup::Popup]::Some(pp) => {
+            let chosen: i64 = pp.selected_index();
+            var i: usize = 0 as usize;
+            while i < pp.item_count() {
+                let id: text::Text = "${base}:item:${i}";
+                let child: usize = reg.add_child(parent, option::Option[str]::Some({ id.view() }),
+                                                 identity::Role::Button);
+                reg.set_enabled(child, live_enabled(view) && popup_item_enabled(n, i));
+                reg.set_name(child, pp.item(i));
+                if (i as i64) == chosen { reg.set_description(child, "selected"); }
+                let _r: *u8 = rt::retain(view);
+                views.append(ViewRef { p: view, tab: i as i64, node: n });
+                i = i +% (1 as usize);
+            }
+        }
+        option::Option[fpopup::Popup]::None => { }
+    }
+    return;
+}
+
+fn popup_item_enabled(n: *core::Node, at: usize) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let p: *props::PopupProps = { (*d).props } as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return false; }
+    let f: fn(usize, *u8) -> bool = { (*p).item_enabled };
+    return f(at, { (*p).item_enabled_ctx });
+}
+
+fn pick_item_now(n: *core::Node, at: i64) -> surface::Outcome {
+    return match fpopup::from(n) {
+        option::Option[fpopup::Popup]::Some(pp) => {
+            if at < (0 as i64) || (at as usize) >= pp.item_count() { return surface::Outcome::Stale; }
+            if !popup_item_enabled(n, at as usize) { return surface::Outcome::NotActionable; }
+            let _p: fpopup::Popup = pp.pick(at as usize);
+            surface::Outcome::Allowed
+        },
+        option::Option[fpopup::Popup]::None => surface::Outcome::Stale,
+    };
+}
+
 fn add_tab_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
                  view: *u8, parent: usize, base: str, n: *core::Node) {
     var showing: i64 = -1 as i64;
@@ -715,6 +765,9 @@ struct TabPick {
 
 fn pick_tab_now(n: *core::Node, at: i64) -> surface::Outcome {
     if n == (0 as *core::Node) { return surface::Outcome::Stale; }
+    // A POPUP ITEM rides the same part and the same main-thread hop: what a
+    // person's choice from the menu does (spendwise S18).
+    if core::kind_of(n) == props::K_POPUP { return pick_item_now(n, at); }
     if at < (0 as i64) || (at as usize) >= core::child_count_of(n) { return surface::Outcome::Stale; }
     return match ftabs::from(n) {
         option::Option[ftabs::Tabs]::Some(t) => {
@@ -783,6 +836,7 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             let _r: *u8 = rt::retain(view);
             let _a: status_of_append = append_ref(views, view);
             if core::kind_of(n) == props::K_TABS { add_tab_parts(reg, views, view, me, key, n); }
+            if core::kind_of(n) == props::K_POPUP { add_item_parts(reg, views, view, me, key, n); }
 
             // A ROW IS NOT A FACET NODE — the same exception the AppKit walk
             // makes, for the same reason. The row IS content and the backend

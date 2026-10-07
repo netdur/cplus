@@ -26,6 +26,8 @@ import "facet/relist" as frelist;
 import "facet/obs_vec" as obs_vec;
 import "facet/application" as app;
 import "facet/tabs" as ftabs;
+import "facet/popup" as fpopup;
+import "facet/vocabulary" as vocab;
 import "stdlib/thread" as thread;   // the off-main invoke_menu regression below needs a real second thread
 import "./agent_appkit" as agent;
 
@@ -2935,6 +2937,72 @@ fn mcp_snapshots_read_native_views_on_the_main_thread() {
     win.close(); app::reset_default_for_tests();
 }
 
+
+// ---- a popup's items can be chosen (reports/spendwise/S18) ------------------
+// The menu is the platform's, opened by a press and closed by a choice, so an
+// agent could open a popup and choose nothing — and `set selected_index` was
+// the quiet write, so the app never heard it.
+
+static PICK_HEARD: i64 = 0 as i64;
+fn heard_pick(sender: *u8, ctx: *u8) { PICK_HEARD = PICK_HEARD + (1 as i64); return; }
+fn not_the_header(i: usize, ctx: *u8) -> bool { return i != (2 as usize); }
+
+fn popup_fixture(win: *u8) -> core::Node {
+    let content: *u8 = content_of(ak::Window::from_raw(win)).raw();
+    var items: vocab::TextList = vocab::TextList::new();
+    let _a: status::Status = items.add("macOS");
+    let _b: status::Status = items.add("iOS");
+    let _c: status::Status = items.add("Simulators");
+    var p: core::Node = fpopup::popup("Platform", key: "platform", items: items,
+                                      on_selected_index_changed: heard_pick);
+    core::set_view(#addr_of(p), content, noop_release);
+    match fpopup::from(#addr_of(p)) {
+        option::Option[fpopup::Popup]::Some(pp) => { let _pp = pp.set_item_enabled(not_the_header); }
+        option::Option[fpopup::Popup]::None => { }
+    }
+    return p;
+}
+
+#[test]
+fn each_popup_item_is_a_button_an_agent_can_choose() {
+    PICK_HEARD = 0 as i64;
+    let win = fixture_window(300.0, 200.0);
+    var root: core::Node = popup_fixture(win.raw());
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open_app();
+    let sp: *u8 = #addr_of(s) as *u8;
+    let nodes: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    match mcp_named(nodes, "platform:item:1") {
+        option::Option[*mcpb::UiNode]::Some(n) => {
+            assert identity::role_eq({ (*n).role }, identity::Role::Button);
+            assert { (*n).text.view() } == "iOS";
+            assert { (*n).clickable };
+            assert { (*n).actionable };
+        }
+        option::Option[*mcpb::UiNode]::None => { assert false; }
+    }
+    match mcp_named(nodes, "platform:item:0") {
+        option::Option[*mcpb::UiNode]::Some(n) => { assert { (*n).description.view() } == "selected"; }
+        option::Option[*mcpb::UiNode]::None => { assert false; }
+    }
+    // Choosing it is what a person's choice is: selected, and the app hears it.
+    assert surface::outcome_eq(s.click(auth::operator(), "platform:item:1"),
+                               surface::Outcome::Allowed);
+    match fpopup::from(#addr_of(root)) {
+        option::Option[fpopup::Popup]::Some(pp) => { assert pp.selected_index() == (1 as i64); }
+        option::Option[fpopup::Popup]::None => { assert false; }
+    }
+    assert PICK_HEARD == (1 as i64);
+    // NEGATIVE: a header the app marked unpickable is refused, and nothing fires.
+    let hdr: surface::Outcome = s.click(auth::operator(), "platform:item:2");
+    assert !surface::outcome_eq(hdr, surface::Outcome::Allowed);
+    assert PICK_HEARD == (1 as i64);
+    // NEGATIVE: an observer cannot choose.
+    let ro: surface::Outcome = s.click(auth::reader(), "platform:item:0");
+    assert !surface::outcome_eq(ro, surface::Outcome::Allowed);
+    assert PICK_HEARD == (1 as i64);
+    app::reset_default_for_tests();
+}
 
 // ---- a native tab bar is reachable (reports/spendwise/S12) -------------------
 // The bar's items are the backend's, not facet nodes, so the walk never met

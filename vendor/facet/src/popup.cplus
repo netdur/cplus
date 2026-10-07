@@ -348,6 +348,27 @@ impl Popup {
         return { (*p).items.at(at) };
     }
 
+    // WHAT A PERSON'S CHOICE DOES: select the item AND tell the application,
+    // the way the menu's own action does. `set_selected_index` is the
+    // application's quiet write and fires nothing, so an agent that used it
+    // left the popup SHOWING a choice the app never heard (spendwise S18).
+    // Picking the item already chosen does nothing, as choosing it again in
+    // the menu does nothing. Main thread only, like any write.
+    fn pick(this, at: usize) -> Popup {
+        let p: *props::PopupProps = this._props();
+        if p == (0 as *props::PopupProps) { return this; }
+        if at >= { (*p).items.count() } { return this; }
+        // A header (item_enabled false) cannot be chosen by a person; nor here.
+        let can: fn(usize, *u8) -> bool = { (*p).item_enabled };
+        if !can(at, { (*p).item_enabled_ctx }) { return this; }
+        if { (*p).selected_index } == (at as i64) { return this; }
+        { (*p).selected_index = at as i64 };
+        core::touch(this._p, P_SELECTED_INDEX);
+        let h: fn(*u8, *u8) = { (*p).on_selected_index_changed };
+        if h != props::no_handler { h(core::view_of(this._p), { (*p).on_selected_index_changed_ctx }); }
+        return this;
+    }
+
     // WHAT THE BUTTON READS, whatever is selected.
     //
     // `title` is a prompt and therefore an ITEM — it shows exactly while

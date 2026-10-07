@@ -3429,6 +3429,28 @@ def emit_control(row_type, merged):
         o.append(f"        core::touch(this._p, P_{verb.upper()});\n")
         o.append("        return this;\n    }\n")
 
+    # ---- facet's own: a popup's item chosen the way a person chooses it
+    if mod == "popup":
+        o.append("\n    // WHAT A PERSON'S CHOICE DOES: select the item AND tell the application,\n")
+        o.append("    // the way the menu's own action does. `set_selected_index` is the\n")
+        o.append("    // application's quiet write and fires nothing, so an agent that used it\n")
+        o.append("    // left the popup SHOWING a choice the app never heard (spendwise S18).\n")
+        o.append("    // Picking the item already chosen does nothing, as choosing it again in\n")
+        o.append("    // the menu does nothing. Main thread only, like any write.\n")
+        o.append(f"    fn pick(this, at: usize) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        if at >= { (*p).items.count() } { return this; }\n")
+        o.append("        // A header (item_enabled false) cannot be chosen by a person; nor here.\n")
+        o.append("        let can: fn(usize, *u8) -> bool = { (*p).item_enabled };\n")
+        o.append("        if !can(at, { (*p).item_enabled_ctx }) { return this; }\n")
+        o.append("        if { (*p).selected_index } == (at as i64) { return this; }\n")
+        o.append("        { (*p).selected_index = at as i64 };\n")
+        o.append("        core::touch(this._p, P_SELECTED_INDEX);\n")
+        o.append("        let h: fn(*u8, *u8) = { (*p).on_selected_index_changed };\n")
+        o.append("        if h != props::no_handler { h(core::view_of(this._p), { (*p).on_selected_index_changed_ctx }); }\n")
+        o.append("        return this;\n    }\n")
+
     # ---- facet's own: which tab is showing
     if mod in TAB_SOURCE:
         o.append("\n    // facet's own word. The ledger's TabbedPage describes a STRIP and says\n")

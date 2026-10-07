@@ -36,6 +36,7 @@ import "facet/app_events" as ev;
 import "facet/tree" as tree;
 import "facet/vocabulary" as vocab;
 import "facet/tabs" as tabs;
+import "facet/popup" as fpopup;
 import "facet/list" as flist;
 import "facet/elements" as ui;
 import "facet/icons" as icons;
@@ -1323,6 +1324,59 @@ fn an_agent_can_click_a_tappable_view() -> bool {
                                          surf::Outcome::Allowed);
     let ok: bool = pressed && TAP_FIRED;
     if !ok { io::eprintln(text::from_str("  pressed ${pressed} fired ${TAP_FIRED}")); }
+    app::reset_default_for_tests();
+    { rt::release(win) };
+    return ok;
+}
+
+// spendwise S18: each item of a popup is a part an agent can choose, and the
+// choice is what a person's is — selected, and the app hears it.
+static PICK_HEARD: i32 = 0;
+fn heard_pick(sender: *u8, ctx: *u8) { PICK_HEARD = PICK_HEARD + 1; return; }
+fn not_the_header(i: usize, ctx: *u8) -> bool { return i != (2 as usize); }
+
+fn each_popup_item_is_a_choice_an_agent_can_make() -> bool {
+    PICK_HEARD = 0;
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    if win == (0 as *u8) { return false; }
+    var items: vocab::TextList = vocab::TextList::new();
+    let _a: status::Status = items.add("macOS");
+    let _b: status::Status = items.add("iOS");
+    let _c: status::Status = items.add("Simulators");
+    var n: core::Node = ui::popup("Platform", key: "st:platform", items: items,
+                                  on_selected_index_changed: heard_pick);
+    let p: *core::Node = #addr_of(n);
+    match fpopup::from(p) {
+        option::Option[fpopup::Popup]::Some(pp) => { let _pp = pp.set_item_enabled(not_the_header); }
+        option::Option[fpopup::Popup]::None => { return false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_id(win, rt::sel(#str_ptr("addSubview:\0")), v) };
+    app::reset_default_for_tests();
+    app::open_window(p);
+    app::set_window_native(p, win);
+    var s: agent::Surface = agent::open_app();
+    let sp: *u8 = #addr_of(s) as *u8;
+    let nodes: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    var listed: bool = false;
+    match mcp_find(nodes, "st:platform:item:1") {
+        option::Option[*mcpb::UiNode]::Some(t) => { listed = { (*t).text.view() } == "iOS" && { (*t).clickable }; }
+        option::Option[*mcpb::UiNode]::None => { }
+    }
+    let chose: bool = surf::outcome_eq(s.click(auth::operator(), "st:platform:item:1"),
+                                       surf::Outcome::Allowed);
+    var at: i64 = -1 as i64;
+    match fpopup::from(p) {
+        option::Option[fpopup::Popup]::Some(pp) => { at = pp.selected_index(); }
+        option::Option[fpopup::Popup]::None => { }
+    }
+    let heard_once: bool = PICK_HEARD == 1;
+    let header_refused: bool = !surf::outcome_eq(s.click(auth::operator(), "st:platform:item:2"),
+                                                 surf::Outcome::Allowed) && PICK_HEARD == 1;
+    let ok: bool = listed && chose && at == (1 as i64) && heard_once && header_refused;
+    if !ok { io::eprintln(text::from_str("  listed ${listed} chose ${chose} at ${at} heard ${PICK_HEARD} header ${header_refused}")); }
     app::reset_default_for_tests();
     { rt::release(win) };
     return ok;
@@ -4146,6 +4200,8 @@ fn run_all() -> i32 {
           the_icon_font_registers_without_the_app_shipping_it());
     check("a tab click from the server thread lands on main",
           a_tab_click_from_the_server_thread_lands_on_main());
+    check("each popup item is a choice an agent can make",
+          each_popup_item_is_a_choice_an_agent_can_make());
     check("an agent can click a tappable view",
           an_agent_can_click_a_tappable_view());
     check("a scroll pane runs under a glass tab bar",
