@@ -2936,11 +2936,25 @@ fn place_tab_bar(v: *u8, n: *core::Node) {
     var r: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: b.w, h: h };
     var extra: f64 = 0.0f64;
     if tabs_at_bottom(p) {
-        extra = below_safe_edge(v, b);
+        // NOT ON LIQUID GLASS. iOS 26's bar FLOATS: it draws its capsule to
+        // fill whatever frame it is given and lays its items out against the
+        // inset it is told about, so an extended frame plus the answered
+        // inset gave a capsule half again too tall and a selection lens that
+        // was a circle overflowing it (reports/spendwise/S13, iPhone 17 Pro,
+        // iOS 26.4). The floating bar keeps clear of the home indicator by
+        // design; the extension is for the classic bar, which does not.
+        if !glass_available() { extra = below_safe_edge(v, b); }
         r = rt::Rect { x: 0.0f64, y: b.h - h, w: b.w, h: h + extra };
     }
     set_tab_bar_extension(raw, extra);
+    let old_w: f64 = ui::View::from_raw(raw).frame().w;
     ui::View::from_raw(raw).set_frame(r);
+    // THE ITEMS ARE RE-SET ONCE THE BAR HAS ITS WIDTH. `create_tabs` hands
+    // them over while the bar is 0 wide, and the iOS 26 bar keeps the title
+    // width it measured then: the selected title came out "Da…" and the others
+    // not at all (S13). Setting them again at the real width — and whenever it
+    // changes, a rotation or a resize — is what lets each title measure.
+    if old_w != r.w { rebuild_tab_items(v, n, p); }
     return;
 }
 

@@ -1254,6 +1254,31 @@ fn each_tab_is_a_button_an_agent_can_find_and_press() -> bool {
     return ok;
 }
 
+// reports/spendwise/S13, on an iPhone 17 Pro at iOS 26.4: an extended frame made
+// the floating bar's capsule too tall and its lens a circle, and items set
+// while the bar was 0 wide kept a title width of nothing ("Da…").
+fn a_glass_tab_bar_floats_unextended_and_resets_its_items_at_its_width() -> bool {
+    var n: core::Node = tabs_probe(vocab::BarPlacement::Default);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    uik::View::from_raw(v).set_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: 402.0f64, h: 700.0f64 });
+    let bar: *u8 = controls::tab_bar_of(v);
+    let before: *u8 = { rt::msg_id_i64(tab_items(bar), rt::sel(#str_ptr("objectAtIndex:\0")), 0 as i64) };
+    controls::place_tab_bar(v, p);
+    let after: *u8 = { rt::msg_id_i64(tab_items(bar), rt::sel(#str_ptr("objectAtIndex:\0")), 0 as i64) };
+    // The bar now has a width, so its items were handed over again.
+    let reset: bool = before != after && uik::View::from_raw(bar).frame().w == 402.0f64;
+    // On Liquid Glass nothing extends the frame and nothing answers an inset.
+    var floats: bool = true;
+    if controls::glass_available() {
+        floats = { synth::get_associated(bar, controls::tab_extra_key()) } == (0 as *u8)
+            && uik::View::from_raw(bar).frame().h == controls::tab_bar_height(bar);
+    }
+    views::view_release(v);
+    return reset && floats;
+}
+
 // ---- the keyboard ---------------------------------------------------------------
 // A software keyboard covers the bottom of the screen and UIKit moves nothing out
 // from under it, so a tapped field stays hidden behind it. The flip itself needs
@@ -4149,6 +4174,8 @@ fn run_all() -> i32 {
           an_extended_tab_bar_answers_its_extension_as_safe_area());
     check("each tab is a Button an agent can find and press",
           each_tab_is_a_button_an_agent_can_find_and_press());
+    check("a glass tab bar floats unextended and re-sets its items at its width",
+          a_glass_tab_bar_floats_unextended_and_resets_its_items_at_its_width());
 
     let ran: i32 = RAN;
     let failed: i32 = FAILED;

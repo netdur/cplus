@@ -890,9 +890,15 @@ panes are the node's children shown and hidden by `selected_index`, and a
 pane's title is its key, as on the other backends. On iOS 26 the bar is Liquid
 Glass because it is the system's view.
 
-At the bottom of the window's safe box the bar's frame is extended by the
-bottom inset, so its material reaches the screen edge; UIKit keeps the items
-above the home indicator itself.
+Below iOS 26, at the bottom of the window's safe box the bar's frame is
+extended by the bottom inset so its material reaches the screen edge, and the
+bar (a one-method subclass) answers that extension as its safe area so UIKit
+keeps the items above the home indicator. ON LIQUID GLASS IT IS NOT EXTENDED:
+the iOS 26 bar floats, draws its capsule to fill its frame and keeps clear of
+the indicator itself — extended, its capsule came out too tall with a circular
+lens (reports/spendwise/S13). The items are handed over again once the bar has
+its width, and whenever that width changes: set while it was 0 wide, the iOS 26
+bar kept a title width of nothing ("Da…").
 
 This was a `UISegmentedControl` until 2026-10-07, and it never inserted a
 segment or hid a pane — the section above described a design the code did not
