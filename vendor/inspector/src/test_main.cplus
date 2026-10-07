@@ -1056,9 +1056,12 @@ fn a_control_property_on_an_unkeyed_node_is_unsupported_not_unknown() {
     let h: insp::Handle = unkeyed_of_kind(tree::describe(), props::K_LABEL);
     assert !h.is_none();
 
-    // The NAME was right; this build cannot reach it without a key.
-    assert tree::set(h, "text", insp::Value::Str(text::from_str("nope")))
-        == insp::Outcome::Unsupported;
+    // A CONTROL PROPERTY NEEDS NO KEY ANY MORE (reports/spendwise/S12). The
+    // hand-written tier resolves by key and still cannot; the generated one
+    // opens the kind's cursor from the node itself, so the write lands here.
+    assert tree::set(h, "text", insp::Value::Str(text::from_str("now")))
+        == insp::Outcome::Ok;
+    assert text_eq(h, "text", "now");
     // The common band and flex style still work on that very same node: tiers
     // 1 and 2 need no key at all, which is most of what an inspector edits.
     assert tree::set(h, "opacity", insp::Value::Num(0.5f64)) == insp::Outcome::Ok;
@@ -1089,25 +1092,18 @@ fn a_duplicate_key_refuses_the_write_it_cannot_aim() {
         == insp::Outcome::Ok;
     assert text_eq(first, "text", "ok");
 
-    // The second cannot be aimed, so it is refused.
-    assert tree::set(second, "text", insp::Value::Str(text::from_str("nope")))
-        == insp::Outcome::Unsupported;
-    // And the refused write did not land on the stranger that the key DOES
-    // resolve to — which is the whole reason for the check.
+    // THE SECOND IS AIMED NOW, and that is the reason this test still exists.
+    // The key-resolving tier cannot tell the twins apart and refuses; the
+    // generated tier opens the cursor from the node, so the write lands on
+    // THIS node — and must not land on the stranger the key resolves to.
+    assert tree::set(second, "text", insp::Value::Str(text::from_str("mine")))
+        == insp::Outcome::Ok;
     assert text_eq(first, "text", "ok");
-
-    // The reader is symmetric with the writer: a tier-3 property the inspector
-    // cannot aim is one it declines to report, rather than quietly showing the
-    // other node's value as though it belonged to this one.
-    assert match tree::get(second, "text") {
-        option::Option[insp::Value]::Some(_v) => false,
-        option::Option::None => true,
-    };
-    // So `inspect` offers no text editor on it at all, while the common band
-    // it CAN aim stays available.
+    assert text_eq(second, "text", "mine");
+    // And `inspect` offers its OWN text, as it does the first's.
     match tree::inspect(second) {
         option::Option[insp::Detail]::Some(d) => {
-            assert !prop_named(d.declared, "text");
+            assert prop_named(d.declared, "text");
             assert prop_named(d.declared, "opacity");
         }
         option::Option::None => { assert false; }
@@ -3120,6 +3116,55 @@ fn a_scroll_reads_and_writes_its_offset() {
     assert tree::set(lbl, "scroll_y", insp::Value::Num(1.0)) == insp::Outcome::UnknownProperty;
 }
 
+fn hand_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let t: vec::Vec[insp::Descriptor] = insp::table();
+    var i: usize = 0;
+    while i < t.count() {
+        match t.at_ptr(i) {
+            option::Option[*insp::Descriptor]::Some(p) => { let _s: status::Status = v.append({ (*p).name }); }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return v;
+}
+
+// SPENDWISE S12, as the report wrote it: `set selected_index` on a tabs node
+// answered unknown_property, and nothing reported which tab was showing.
+#[test]
+fn a_tabs_selected_index_and_placement_are_readable_and_writable() {
+    fresh();
+    var root: core::Node = @ui {
+        tabs(key: "nav", bar_placement: vocab::BarPlacement::Bottom) {
+            column(key: "Dashboard") { label("d") }
+            column(key: "Income") { label("i") }
+        }
+    };
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "nav");
+    assert lists(h, "selected_index");
+    assert lists(h, "bar_placement");
+    assert match tree::get(h, "selected_index") {
+        option::Option[insp::Value]::Some(insp::Value::Int(i)) => i == (0 as i64),
+        _ => false,
+    };
+    assert tree::set(h, "selected_index", insp::Value::Int(1 as i64)) == insp::Outcome::Ok;
+    assert match tree::get(h, "selected_index") {
+        option::Option[insp::Value]::Some(insp::Value::Int(i)) => i == (1 as i64),
+        _ => false,
+    };
+    assert enum_is(h, "bar_placement", "bottom");
+    assert tree::set(h, "bar_placement", insp::Value::Str(text::from_str("top"))) == insp::Outcome::Ok;
+    assert enum_is(h, "bar_placement", "top");
+    // A spelling not in the set is refused, not rounded to a default.
+    assert tree::set(h, "bar_placement", insp::Value::Str(text::from_str("sideways")))
+        == insp::Outcome::TypeMismatch;
+    // And a label has neither.
+    let l: insp::Handle = handle_for(#addr_of(root), "Dashboard");
+    assert !lists(l, "selected_index");
+}
+
 // The row that would not centre. `justify_content` and its neighbours were
 // unreachable before — the surface could place a node absolutely but could not
 // say the one word that fixes most layouts.
@@ -3317,7 +3362,10 @@ fn every_advertised_property_is_settable_and_readable() {
     let _h5: status::Status = hs.append(handle_for(#addr_of(col), "p:tb"));
     let _h6: status::Status = hs.append(handle_for(#addr_of(col), "p:scr"));
 
-    let names: vec::Vec[str] = tree::declared_names();
+    // THE HAND-WRITTEN VOCABULARY. Every generated name has its own test, one
+    // per control kind, beside the code that carries it (facet_agent's
+    // inspect_generated: `every_<kind>_property_reads_and_writes_back`).
+    let names: vec::Vec[str] = hand_names();
     assert names.count() > 30;
     var i: usize = 0;
     while i < names.count() {

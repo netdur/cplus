@@ -70,6 +70,7 @@ import "facet/text_button" as text_button;
 import "facet/scroll" as scroll;
 import "agent_core/inspect" as insp;
 import "./inspect_vocabulary" as voc;
+import "./inspect_generated" as generated;
 
 // ---- the override ledger -----------------------------------------------------
 
@@ -730,7 +731,16 @@ fn get(h: insp::Handle, prop: str) -> option::Option[insp::Value] {
         option::Option[insp::Value]::Some(v) => { return option::Option[insp::Value]::Some(v); }
         option::Option::None => { }
     }
-    return get_control(n, prop, h.window);
+    match get_control(n, prop, h.window) {
+        option::Option[insp::Value]::Some(v) => { return option::Option[insp::Value]::Some(v); }
+        option::Option::None => { }
+    }
+    // EVERY OTHER CONTROL PROPERTY, generated from the contract the cursors
+    // come from (inspect_generated.cplus). The hand-written tier above answers
+    // first where it has an answer; this is what reaches the rest — a tab's
+    // `selected_index`, a toggle's state, a popup's selection — and it needs no
+    // key, because each kind's cursor is opened from the node itself.
+    return generated::get(n, prop);
 }
 
 // ---- parsing a value a client sent -------------------------------------------
@@ -1878,9 +1888,20 @@ fn set_inner(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
     }
 
     let r: insp::Outcome = apply_uniform(n, mine, v);
-    return match r {
+    let c: insp::Outcome = match r {
         insp::Outcome::UnknownProperty => apply_control(n, mine, v, h.window),
         _ => r,
+    };
+    // The generated tier for everything the hand-written one does not reach —
+    // including a property it knows by name on a kind it does not cover, and
+    // an UNKEYED node, which it cannot resolve and the cursor's `from` can.
+    return match c {
+        insp::Outcome::UnknownProperty => generated::set(n, mine, v),
+        insp::Outcome::Unsupported => match generated::set(n, mine, v) {
+            insp::Outcome::UnknownProperty => c,
+            g => g,
+        },
+        _ => c,
     };
 }
 // Reset, and then PUT THE OUTLINE BACK.
@@ -1959,6 +1980,18 @@ fn declared_names() -> vec::Vec[str] {
             option::Option::None => { }
         }
         i = i +% 1;
+    }
+    // And every generated control property the table does not already name.
+    let g: vec::Vec[str] = generated::names();
+    var k: usize = 0;
+    while k < g.count() {
+        match g.at(k) {
+            option::Option[str]::Some(nm) => {
+                if !in_list(v, nm) { let _s: status::Status = v.append(nm); }
+            }
+            option::Option::None => { }
+        }
+        k = k +% 1;
     }
     return v;
 }

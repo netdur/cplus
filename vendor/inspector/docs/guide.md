@@ -14,12 +14,19 @@ control it is talking to.
 |---|---|---|
 | 1 — the common band | `props::CommonProps` is inline on **every** node: opacity, background, corners, visibility, transform, tooltip | no |
 | 2 — flex style | facet's tree **is** flex's tree: width, height, padding, margin, gap, grow, shrink | no |
-| 3 — control props | `text`, `title`, `on`, the type face (`font_size`, `font_weight`, `text_color`), a button's border, a value control's `value`/`minimum`/`maximum`, a scroll's live `scroll_x`/`scroll_y` — behind the generated typed handles | **yes** |
+| 3 — control props | every property a control's cursor can set, whose type has an inspector Value (number, bool, string, colour, a closed set by its spelling) — `selected_index` and `bar_placement` on a `tabs`, a popup's selection, a toggle's state, … — plus the hand-written readings (`text`, `title`, `on`, the type face, a button's border, a value control's range, a scroll's live offset) | no |
 
-That shape is why this package is small. Tiers 1 and 2 are uniform across all
-38 control kinds and every bare container, with no kind dispatch and no
-generated metadata. Tier 3 resolves by key, so an unkeyed node answers
-`Unsupported` — a reported limit rather than a hidden one.
+Tiers 1 and 2 are uniform across all 38 control kinds and every bare container,
+with no kind dispatch. Tier 3 IS a kind dispatch, and it is GENERATED:
+`tools/gen_contract.py` writes `facet_agent/src/inspect_generated.cplus` from
+the same rows as the cursors, so a property an application can set through a
+cursor is one this surface can read and write, and a new one arrives with the
+next generation rather than with a hand-written case. Each kind's cursor is
+opened from the node itself (`from(node)`), so tier 3 needs no key — an unkeyed
+node and the second of two duplicate keys are both written exactly. The
+hand-written readings still answer first where they exist. A generated test per
+kind reads every property and writes it back
+(`every_<kind>_property_reads_and_writes_back`).
 
 ## Handles and staleness
 
@@ -237,8 +244,9 @@ could write over any other value.
 
 ## Limits in this version
 
-- **Tier 3 needs a key.** Closes when `gen_contract.py` grows an inspector
-  dispatch layer.
+- **Structured values are not carried.** A property whose type is a Brush,
+  Corners, Shadow, Insets or a list has a cursor setter and no inspector Value
+  yet, so it is not in tier 3.
 - **The maker vocabulary is nine hand-written elements.** Same generator, same
   eventual fix; adding one by hand is two lines.
 - **No point picking.** Selecting an element by clicking it in the app was built

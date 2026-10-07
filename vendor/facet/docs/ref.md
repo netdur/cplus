@@ -404,6 +404,12 @@ tabs(key: "nav", on_tab_changed: this.on_tab, bar_placement: vocab::BarPlacement
 }
 ```
 
+To an agent each tab is a Button: `<tabs key>:tab:<pane key>` in `describe_ui`,
+the showing one described as `selected`, and a `click` does what a tap does —
+`Tabs::pick_tab(at:)`, which selects AND fires `on_tab_changed`
+(`set_selected_index` is the quiet write and fires nothing). `inspect` reads and
+`set` writes `selected_index` and `bar_placement` like any control property.
+
 Once mounted, change an icon through the cursor —
 `tabs::find("nav").set_tab_symbol(at: 1, symbol: icons::savings)` — because a
 pane cannot reach its tabs to say it changed.
