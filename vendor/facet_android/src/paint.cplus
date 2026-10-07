@@ -9,6 +9,7 @@ import "android_view/runtime" as rt;
 import "android_view/widgets" as w;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./dex" as dex;
@@ -501,6 +502,13 @@ fn native_background_of(env: rt::Env, v: *u8) -> jni::jobject {
 }
 
 // Apply the shared band to any view.
+// Kinds whose view has no click of its own — the ones a gesture's tap is armed
+// on. A button, a picker or a check box already carries the click adapter.
+fn takes_gesture_click(kind: u32) -> bool {
+    return kind == core::K_NODE || kind == props::K_BOX || kind == props::K_LABEL
+        || kind == props::K_IMAGE;
+}
+
 fn configure(v: *u8, n: *core::Node, dirty: u64) {
     let env: rt::Env = e::env();
     var view: w::View = wrap(v);
@@ -513,6 +521,21 @@ fn configure(v: *u8, n: *core::Node, dirty: u64) {
     let deco: u64 = props::C_BACKGROUND_COLOR | props::C_BACKGROUND
                   | props::C_CORNER_RADIUS | props::C_CLIP;
     if (dirty & deco) != (0 as u64) { apply_decoration(env, v, n); }
+
+    // THE GESTURE BAND'S TAP. A plain view has no click of its own, so a
+    // `.gesture(on_click:)` on a container, a box, a label or an image is the
+    // same click adapter a button carries, keyed by the node. `fire_click`
+    // routes it to the band. Nothing armed it before, so a tappable card was
+    // dead to a finger and to an agent alike (glass_music_ios, 2026-10-07).
+    if ((dirty & core::C_GESTURES) != (0 as u64) || dirty == all_bits())
+        && takes_gesture_click(core::kind_of(n))
+        && gestures::on_click_of(n) != gestures::no_gesture {
+        let listener: jni::jobject = dex::new_with_token(env, dex::click_class(), { #addr(n) as i64 });
+        if listener != (0 as jni::jobject) {
+            view.set_on_click_listener(listener);
+            env.delete_local_ref(listener);
+        }
+    }
 
     if (dirty & props::C_SHADOW) != (0 as u64) {
         // ELEVATION, which is Android's whole shadow model: a Material shadow
@@ -687,7 +710,8 @@ fn apply_decoration(env: rt::Env, v: *u8, n: *core::Node) {
         // is remembered before the first configure and restored here; for a
         // FacetHost, which has none, this is the null it always was.
         view.set_background(native_background_of(env, v));
-        view.set_clip_to_outline(false);
+        // A scroll keeps its self-clip (controls::clip_to_own_bounds).
+        view.set_clip_to_outline(core::kind_of(n) == props::K_SCROLL);
         unwrap_keep(view);
         return;
     }
@@ -702,7 +726,7 @@ fn apply_decoration(env: rt::Env, v: *u8, n: *core::Node) {
     if brush.is_gradient && brush.start.is_set() && brush.end.is_set() {
         dex::draw_gradient_background(env, v, argb_of(brush.start), argb_of(brush.end),
                                       brush.angle, e::px(radius));
-        view.set_clip_to_outline(has_radius);
+        view.set_clip_to_outline(has_radius || core::kind_of(n) == props::K_SCROLL);
         unwrap_keep(view);
         return;
     }
@@ -717,7 +741,7 @@ fn apply_decoration(env: rt::Env, v: *u8, n: *core::Node) {
     view.set_background(drawable.into_raw());
     // CLIP TO THE OUTLINE, so a rounded background actually clips its children
     // rather than being a rounded rectangle with square content on top of it.
-    view.set_clip_to_outline(has_radius);
+    view.set_clip_to_outline(has_radius || core::kind_of(n) == props::K_SCROLL);
     unwrap_keep(view);
     let _keep: *u8 = d.into_raw();
     return;

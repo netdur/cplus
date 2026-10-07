@@ -11,6 +11,7 @@ import "stdlib/vec" as vec;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "facet/mount" as mount;
 import "facet/label" as label;
@@ -142,6 +143,10 @@ fn is_actionable(n: *core::Node) -> bool {
     let d: *core::Data = core::node_data(n);
     if d == (0 as *core::Data) { return false; }
     let kind: u32 = { (*d).kind };
+    // A TAP ON THE GESTURE BAND is an action, on any kind — a card, a row, a
+    // box. Asked BEFORE the props: a plain container has none, and returning
+    // there made every tappable card observe-only (glass_music_ios).
+    if gestures::on_click_of(n) != gestures::no_gesture { return true; }
     let raw: *u8 = { (*d).props };
     if raw == (0 as *u8) { return false; }
     if kind == props::K_BUTTON {

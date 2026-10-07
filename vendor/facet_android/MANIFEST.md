@@ -740,10 +740,12 @@ rows has closed: what is left is PROPS on controls that already work.
   lighter weights are all plain. Same rounding in the canvas replay, for the
   same reason.
 
-- **The gesture band.** `gestures::install_key_reader` and
-  `component::install_sender_readers` are not filled, so only a button's
-  `on_click` fires. `wants_view` already answers true for a node with gestures,
-  so the tree shape is right and only the arming is missing.
+- **The gesture band, beyond the tap.** A `.gesture(on_click:)` on a container,
+  box, label or image fires since 2026-10-07: `paint::configure` arms the
+  button's click adapter keyed by the node, `fire_click` falls through to the
+  band, and agent_android counts the tap as an action. The rest of the band
+  (double click, long press, pan, pinch, swipe, hover, the key reader) is still
+  unarmed.
 - **`observe_size`.** Android's answer is `addOnLayoutChangeListener`, which
   needs a fifth DEX adapter. Returns 0 (no handle) today.
 - **The recycling tier, and what shares what.** `list` runs on a `ListView`

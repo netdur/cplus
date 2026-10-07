@@ -14,6 +14,7 @@ import "flex_layout/flex_layout" as flex;
 import "android_view/widgets" as w;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/gestures" as gestures;
 import "facet/mount" as mount;
 import "facet/label" as label;
 import "facet/button" as button;
@@ -162,9 +163,14 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
             apply_formatted_text(env, v, { #addr_of((*p).formatted_text) });
         }
     }
+    // UNSET IS THE PRIMARY TEXT COLOUR, as a label's is on the other
+    // platforms. A plain TextView's own default is the theme's SECONDARY text
+    // colour, so an unstyled label came out dimmer than one that asked for
+    // `text_secondary` (examples/glass_music_ios, 2026-10-07).
     if (dirty & label::P_TEXT_COLOR) != (0 as u64) {
-        let c: vocab::Color = { (*p).text_color };
-        if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+        var c: vocab::Color = { (*p).text_color };
+        if !c.is_set() { c = vocab::Color::text(); }
+        tv.set_text_color_i(paint::argb_of(c));
     }
     let typography: u64 = label::P_FONT_FAMILY | label::P_FONT_WEIGHT | label::P_IS_ITALIC
                         | label::P_TEXT_ALIGN | label::P_VERTICAL_ALIGN
@@ -278,7 +284,8 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
                     | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS;
     if (dirty & chrome) != (0 as u64) || dirty == paint::all_bits() {
         apply_control_chrome(env, v, n, { (*p).bordered }, { (*p).border_color },
-                             { (*p).border_width }, { (*p).corner_radius });
+                             { (*p).border_width }, { (*p).corner_radius },
+                             flat_when_unbordered: true);
     }
     let typography: u64 = button::P_FONT_FAMILY | button::P_FONT_WEIGHT
                         | button::P_IS_ITALIC | button::P_LINE_BREAK
@@ -325,7 +332,8 @@ fn fire_click(token: i64) {
     if fire_text_button_click(n) { return; }
     if fire_icon_button_click(n) { return; }
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
-    if p == (0 as *props::ButtonProps) { return; }
+    // Not a button: a plain view whose tap is its gesture band's.
+    if p == (0 as *props::ButtonProps) { let _took: bool = gestures::fire_click(n); return; }
     let h: fn(*u8, *u8) = { (*p).on_click };
     if h != props::no_handler { h(core::view_of(n), { (*p).on_click_ctx }); }
     return;
@@ -357,7 +365,7 @@ fn apply_box(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::BoxProps = props_of(n, props::K_BOX) as *props::BoxProps;
     if p == (0 as *props::BoxProps) { return; }
     let env: rt::Env = e::env();
-    let c: vocab::Color = { (*p).color };
+    var c: vocab::Color = { (*p).color };
     let corners: vocab::Corners = { (*p).corner_radius };
     let radius: f64 = { corners.top_leading };
     let has_radius: bool = radius > 0.0f64;
@@ -365,6 +373,24 @@ fn apply_box(v: *u8, n: *core::Node, dirty: u64) {
     // than clearing it. A box that names no colour is a plain container, and
     // `background_color` on the shared band may still have painted it.
     if !c.is_set() && !has_radius { return; }
+    // NO COLOUR OF ITS OWN: the node's own background is what the radius
+    // rounds. A `box(clear, corner_radius:)` with a gradient set on it drew
+    // NOTHING — this built an empty rounded drawable and installed it over the
+    // gradient `apply_decoration` had just painted (glass_music_ios's covers).
+    var view0: w::View = w::View::from_global(env, env.new_global_ref(v));
+    if !c.is_set() {
+        let brush: vocab::Brush = core::background(n);
+        if brush.is_gradient && brush.start.is_set() && brush.end.is_set() {
+            dex::draw_gradient_background(env, v, paint::argb_of(brush.start),
+                                          paint::argb_of(brush.end), brush.angle, e::px(radius));
+            view0.set_clip_to_outline(has_radius);
+            paint::unwrap_keep(view0);
+            return;
+        }
+        let flat: vocab::Color = core::background_color(n);
+        if flat.is_set() { c = flat; } else if brush.start.is_set() { c = brush.start; }
+    }
+    paint::unwrap_keep(view0);
     var d: w::GradientDrawable = w::GradientDrawable::new_void(env);
     if c.is_set() { d.set_color_i(paint::argb_of(c)); }
     if has_radius { d.set_corner_radius({ e::px(radius) as f32 }); }
@@ -1582,6 +1608,28 @@ fn input_view_of(n: *core::Node) -> *props::InputViewProps {
 // and friends), which the generator SKIPS by design — it emits no invented
 // objects. So the four are read by hand.
 
+// A SCROLL CLIPS ITS OWN CONTENT. Android clips a view's drawing only through
+// its PARENT's clipChildren, and facet's hosts do not clip (a bottom bar runs
+// past its box to the screen edge). So a scrolled page drew past the top of
+// its viewport, over the tab bar above it (glass_music_ios, 2026-10-07). The
+// BOUNDS outline plus clipToOutline is a view clipping itself, whoever its
+// parent is; `paint::apply_decoration` keeps the clip on for a scroll.
+fn clip_to_own_bounds(env: rt::Env, raw: *u8) {
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/view/ViewOutlineProvider\0"));
+    if cls == (0 as jni::jclass) { return; }
+    let fid: jni::jfieldID = env.static_field_id(
+        cls, #str_ptr("BOUNDS\0"), #str_ptr("Landroid/view/ViewOutlineProvider;\0"));
+    if fid == (0 as jni::jfieldID) { return; }
+    let bounds: jni::jobject = { (*(*env.raw())).GetStaticObjectField(env.raw(), cls, fid) };
+    if bounds == (0 as jni::jobject) { return; }
+    var v: w::View = w::View::from_global(env, env.new_global_ref(raw));
+    v.set_outline_provider(bounds);
+    v.set_clip_to_outline(true);
+    paint::unwrap_keep(v);
+    env.delete_local_ref(bounds);
+    return;
+}
+
 fn scale_type(env: rt::Env, name: *u8) -> jni::jobject {
     let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/ImageView$ScaleType\0"));
     let fid: jni::jfieldID = env.static_field_id(
@@ -1953,6 +2001,7 @@ fn create_scroll(n: *core::Node) -> *u8 {
     group.add_view_view(doc);
     var gv: w::View = w::View::from_global(env, group.into_raw());
     gv.set_tag_i_object(SCROLL_DOC_TAG, doc);
+    clip_to_own_bounds(env, raw);
     paint::unwrap_keep(gv);
     env.delete_local_ref(doc);
     // WHERE THE SCROLL IS, reported back. Without this `observe_scrolled` never
@@ -2794,14 +2843,19 @@ fn round_corners(n: *core::Node, stated: vocab::Corners) -> vocab::Corners {
 
 fn apply_control_chrome(env: rt::Env, v: *u8, n: *core::Node, bordered: bool,
                         border_color: vocab::Color, border_width: f64,
-                        corners: vocab::Corners) {
+                        corners: vocab::Corners, flat_when_unbordered: bool = false) {
     // THE RADIUS THE RIPPLE IS CLIPPED TO, which is the control's own when it
     // declared one and the band's otherwise — a rounded card holding a square
     // ripple is the tell that these two were read separately.
     var radius: f64 = corners.top_leading;
     if radius <= 0.0f64 { radius = core::corner_radius(n).top_leading; }
+    // A `button` says `bordered: false` on purpose — its default is true — and
+    // means NO BEZEL, as it does on AppKit and UIKit. Keeping the platform's
+    // background there drew a raised grey Material button for a plain "Back".
+    // So it goes through the drawable below: the band's fill if any, no
+    // stroke, and the ripple.
     if !bordered && border_width <= 0.0f64 && !border_color.is_set()
-       && corners.top_leading <= 0.0f64 {
+       && corners.top_leading <= 0.0f64 && !flat_when_unbordered {
         // NO CHROME OF ITS OWN, so the platform's background stands — but the
         // tap still has to show, and this theme's button background has no
         // pressed layer of its own.
@@ -4400,6 +4454,9 @@ fn agent_click(n: *core::Node) -> bool {
     // an agent has no hands and a modal has no facet tree — so `set_text` is
     // the door for choosing one, not this.
     if kind == props::K_DATE_PICKER { return fire_date_picker_click(n); }
+    // Anything else with a tap on its gesture band: what the finger's click
+    // runs (`fire_click` falls through to the band for a non-button).
+    if gestures::on_click_of(n) != gestures::no_gesture { return gestures::fire_click(n); }
     return false;
 }
 
@@ -5153,8 +5210,6 @@ fn tabs_props(n: *core::Node) -> *props::TabsProps {
     return props_of(n, props::K_TABS) as *props::TabsProps;
 }
 
-fn strip_height() -> f64 { return 40.0f64; }
-
 // MAUI's AndroidSpecific ToolbarPlacement: Default is Android's convention, the
 // TOP strip; Bottom is the Material 3 navigation bar.
 fn tabs_at_bottom(n: *core::Node) -> bool {
@@ -5171,6 +5226,11 @@ fn tabs_at_bottom(n: *core::Node) -> bool {
 // panes carry no icon (MAUI's Page.IconImageSource left unset) is the label row
 // alone, 64dp, with the indicator around the label.
 fn bottom_bar_height() -> f64 { return 64.0f64; }
+// Material 3's PRIMARY TABS, the top bar: 48dp for labels, 64dp with icons.
+// The strip was a 40dp row of raised buttons, too short for icon and label
+// together — only the icons showed, and no tab looked selected.
+fn top_bar_height() -> f64 { return 48.0f64; }
+fn top_bar_height_with_icons() -> f64 { return 64.0f64; }
 fn bottom_bar_height_with_icons() -> f64 { return 80.0f64; }
 
 fn tabs_have_icons(n: *core::Node) -> bool {
@@ -5191,7 +5251,8 @@ fn tab_bar_height(n: *core::Node) -> f64 {
         if tabs_have_icons(n) { return bottom_bar_height_with_icons(); }
         return bottom_bar_height();
     }
-    return strip_height();
+    if tabs_have_icons(n) { return top_bar_height_with_icons(); }
+    return top_bar_height();
 }
 
 // The ACTIVE INDICATOR: Material 3's 64x32 pill in secondary-container, behind
@@ -5239,13 +5300,50 @@ fn dress_bottom_tab(env: rt::Env, n: *core::Node, b: jni::jobject, at: i64, each
     return;
 }
 
+// Primary tabs' ACTIVE INDICATOR: a 3dp line in the primary colour along the
+// bottom of the selected cell, inset from its sides, rounded at the top. Every
+// other cell is bare. The same InsetDrawable shape as the bottom bar's pill, for
+// the same reason: the whole cell stays the touch target.
+fn dress_top_tab(env: rt::Env, n: *core::Node, b: jni::jobject, at: i64, each: f64, h: f64) {
+    let p: *props::TabsProps = tabs_props(n);
+    if p == (0 as *props::TabsProps) { return; }
+    var bv: w::View = w::View::from_global(env, env.new_global_ref(b));
+    if { (*p).selected_index } != at {
+        bv.set_background(0 as jni::jobject);
+        paint::unwrap_keep(bv);
+        return;
+    }
+    var line_color: vocab::Color = { (*p).selected_tab_color };
+    if !line_color.is_set() { line_color = vocab::Color::accent(); }
+    var line: w::GradientDrawable = w::GradientDrawable::new_void(env);
+    line.set_color_i(paint::argb_of(line_color));
+    line.set_corner_radius({ e::px(3.0f64) as f32 });
+    var side: f64 = 16.0f64;
+    if side * 2.0f64 > each - 8.0f64 { side = 4.0f64; }
+    let dx: i32 = { e::px(side) as i32 };
+    let dt: i32 = { e::px(h - 3.0f64) as i32 };
+    let inset: jni::jobject = inset_drawable(env, line.as_obj(), dx, dt, dx, 0 as i32);
+    if inset != (0 as jni::jobject) {
+        let pl: i32 = bv.get_padding_left();
+        let pt: i32 = bv.get_padding_top();
+        let pr: i32 = bv.get_padding_right();
+        let pb: i32 = bv.get_padding_bottom();
+        bv.set_background(inset);
+        bv.set_padding(pl, pt, pr, pb);
+        env.delete_local_ref(inset);
+    }
+    paint::unwrap_keep(bv);
+    let _keep: *u8 = line.into_raw();
+    return;
+}
+
 #[test]
 fn a_tab_bar_is_at_the_top_by_default_and_at_the_bottom_when_asked() {
     // MAUI's Android convention: TabbedPage's strip is at the TOP unless
     // ToolbarPlacement says Bottom (reports/spendwise/S11).
     var d: core::Node = tabs::tabs(key: "t:default");
     assert tabs_at_bottom(#addr_of(d)) == false;
-    assert tab_bar_height(#addr_of(d)) == strip_height();
+    assert tab_bar_height(#addr_of(d)) == top_bar_height();
     var b: core::Node = tabs::tabs(key: "t:bottom", bar_placement: vocab::BarPlacement::Bottom);
     assert tabs_at_bottom(#addr_of(b));
     assert tab_bar_height(#addr_of(b)) == bottom_bar_height();
@@ -5308,7 +5406,7 @@ fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
             core::ensure_padding_edge(n, flex::Edge::Bottom, tab_bar_height(n));
             core::ensure_padding_edge(n, flex::Edge::Top, 0.0f64);
         } else {
-            core::ensure_padding_edge(n, flex::Edge::Top, strip_height());
+            core::ensure_padding_edge(n, flex::Edge::Top, tab_bar_height(n));
             core::ensure_padding_edge(n, flex::Edge::Bottom, 0.0f64);
         }
     }
@@ -5352,7 +5450,12 @@ fn rebuild_tab_strip(v: *u8, n: *core::Node, p: *props::TabsProps) {
     let bottom: bool = tabs_at_bottom(n);
     // A BOTTOM BAR IS A SURFACE: Material 3's surface-container, which on
     // Android 12+ is the wallpaper's tone (palette.cplus) — unless the app said.
-    if bottom && !back.is_set() { back = vocab::Color::control_background(); }
+    // Top tabs sit on the plain SURFACE, and it is drawn: the cells are flat,
+    // so a strip with no fill shows whatever scrolls under it.
+    if !back.is_set() {
+        back = vocab::Color::window_background();
+        if bottom { back = vocab::Color::control_background(); }
+    }
     if back.is_set() {
         var sv: w::View = w::View::from_global(env, env.new_global_ref({ strip as *u8 }));
         sv.set_background_color(paint::argb_of(back));
@@ -5377,14 +5480,19 @@ fn rebuild_tab_strip(v: *u8, n: *core::Node, p: *props::TabsProps) {
                 var fg: vocab::Color = { (*p).unselected_tab_color };
                 if { i as i64 } == at { fg = { (*p).selected_tab_color }; }
                 if !fg.is_set() { fg = { (*p).bar_text_color }; }
-                // Material 3's label colours: on-surface for the selected tab,
-                // on-surface-variant for the rest.
-                if bottom && !fg.is_set() {
+                // Material 3's label colours. The navigation bar (bottom):
+                // on-surface selected, on-surface-variant for the rest. Primary
+                // tabs (top): the primary colour selected, on-surface-variant
+                // for the rest.
+                if !fg.is_set() {
                     fg = vocab::Color::text_secondary();
-                    if { i as i64 } == at { fg = vocab::Color::text(); }
+                    if { i as i64 } == at {
+                        fg = vocab::Color::text();
+                        if !bottom { fg = vocab::Color::accent(); }
+                    }
                 }
-                // A bottom tab is a label on the bar, not a raised button.
-                if bottom { btv.as_view().set_background(0 as jni::jobject); }
+                // A tab is a label on the bar, not a raised button, at either edge.
+                btv.as_view().set_background(0 as jni::jobject);
                 // THE PANE'S ICON (Page.IconImageSource), above the label: a
                 // compound drawable tinted by the label's own colours, so the
                 // selected tab's icon follows its text. 24dp, Material's size.

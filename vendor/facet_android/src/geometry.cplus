@@ -417,6 +417,7 @@ fn place_tab_strip(n: *core::Node, v: *u8, frame: flex::Frame) {
             if b != (0 as jni::jobject) {
                 place({ b as *u8 }, { i as f64 } * each, 0.0f64, each, h);
                 if bottom { controls::dress_bottom_tab(env, n, b, { i as i64 }, each, h); }
+                else { controls::dress_top_tab(env, n, b, { i as i64 }, each, h); }
                 env.delete_local_ref(b);
             }
             i = i +% (1 as i32);
