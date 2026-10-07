@@ -1964,6 +1964,10 @@ impl Surface {
                     }
                     option::Option::None => { }
                 }
+                // Inside a list row, the click is the row's tap — see
+                // `tappable_row_of`. Asked first, because the row content an
+                // app keys usually answers `performClick:` too.
+                if tap_row_of(v) { return surface::Outcome::Allowed; }
                 // `performClick:` only lands on a view that answers it — NSControls,
                 // and facet clickable/actionable views (which implement it to fire
                 // their primary click handler, so a tagged whole-row clickable is
@@ -2479,6 +2483,50 @@ fn select_row_of(v: *u8) -> bool {
     return true;
 }
 
+// A LIST ROW IS TAPPED, NOT SELECTED (reports/spendwise/S21).
+//
+// A pointer's click inside a facet list's row is the table's `mouseDown:`: the
+// selection moves where the mode allows it, then `on_item_tapped` names the
+// row. `select_row_of` did only the first half, so the verb the SKILL tells an
+// app to open a detail from never ran for an agent — and the click answered
+// `allowed`. facet_appkit's list table answers `cplusAgentTapRow:` with both
+// halves, and `cplusAgentRowAnswers:` with whether anything would hear them.
+//
+// A REAL CONTROL INSIDE A ROW STILL GETS ITS OWN PRESS, as it does under a
+// pointer; anything else in the row — the keyed content an app hands back, a
+// gesture a pointer never delivers to — is the row. The row of `v`, or -1 when
+// `v` is not in a list row the table can tap.
+fn tappable_row_of(v: *u8) -> i64 {
+    let none: i64 = 0 as i64 - (1 as i64);
+    if responds_to(v, #str_ptr("action\0")) { return none; }
+    let table: *u8 = enclosing_table(v);
+    if is_null(table) { return none; }
+    if !responds_to(table, #str_ptr("cplusAgentTapRow:\0")) { return none; }
+    return rt::msg_i64_id(table, rt::sel(#str_ptr("rowForView:\0")), v);
+}
+
+fn row_number(row: i64) -> *u8 {
+    return rt::msg_id_i64(rt::get_class(#str_ptr("NSNumber\0")),
+                          rt::sel(#str_ptr("numberWithLongLong:\0")), row);
+}
+
+// Would a click on `v` be a row tap something hears? The read-only half of
+// `tap_row_of`, which `clickable` and `wired` ask.
+fn taps_row_of(v: *u8) -> bool {
+    let row: i64 = tappable_row_of(v);
+    if row < (0 as i64) { return false; }
+    let table: *u8 = enclosing_table(v);
+    return rt::msg_i8_id(table, rt::sel(#str_ptr("cplusAgentRowAnswers:\0")), row_number(row)) != 0;
+}
+
+fn tap_row_of(v: *u8) -> bool {
+    if !taps_row_of(v) { return false; }
+    let table: *u8 = enclosing_table(v);
+    activate_owner_on_main(v);
+    perform_on_main(table, rt::sel(#str_ptr("cplusAgentTapRow:\0")), row_number(tappable_row_of(v)));
+    return true;
+}
+
 // The READ-ONLY half of `select_row_of`: would a click on `v` reach a row?
 // Both of that function's branches require a row — the disclosure toggle asks
 // `rowForView:` before it asks whether the item is expandable — so the row
@@ -2537,6 +2585,7 @@ fn view_clickable(v: *u8, part: u32) -> bool {
     // behind it is `wired`'s question, and the pair is the whole point — a
     // dead button is `clickable` and not `wired`, and neither flag alone
     // separates it from a live one.
+    if taps_row_of(v) { return true; }
     if responds_to(v, #str_ptr("performClick:\0")) { return true; }
     return can_select_row_of(v);
 }
@@ -2574,6 +2623,7 @@ fn view_wired(v: *u8, part: u32) -> bool {
         }
         option::Option::None => { }
     }
+    if taps_row_of(v) { return true; }
     if performs_click(v) { return true; }
     return can_select_row_of(v);
 }

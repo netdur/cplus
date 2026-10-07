@@ -8480,6 +8480,78 @@ fn a_click_that_lands_on_no_row_taps_nothing() {
     assert TAPPED == (0 as i64);
 }
 
+// ---- an agent's tap is a pointer's (reports/spendwise/S21) ---------------------
+// The agent surface has no event to send, so the table answers it directly
+// with the two steps its `mouseDown:` takes. These send what agent_appkit sends.
+
+fn row_number(row: i64) -> *u8 {
+    return { rt::msg_id_i64(rt::get_class(#str_ptr("NSNumber\0")),
+                            rt::sel(#str_ptr("numberWithLongLong:\0")), row) };
+}
+
+fn agent_row_answers(tv: *u8, row: i64) -> bool {
+    return { rt::msg_i8_id(tv, rt::sel(#str_ptr("cplusAgentRowAnswers:\0")), row_number(row)) } != 0;
+}
+
+fn agent_tap_row(tv: *u8, row: i64) {
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("cplusAgentTapRow:\0")), row_number(row)) };
+}
+
+#[test]
+fn an_agent_tap_selects_the_row_and_names_it_on_the_sender() {
+    backend::install();
+    PICKED = 0 as i64;
+    TAPPED = 0 as i64;
+    TAPPED_ROW = 0 as i64 - (1 as i64);
+    var l: core::Node = list::list(key: "agenttap", on_item_selected: h_picked(),
+                                   on_item_tapped: h_tapped(),
+                                   selection_mode: vocab::SelectionMode::Single);
+    let tv: *u8 = two_verb_list(l, "agenttap");
+    assert agent_row_answers(tv, 2 as i64);
+    agent_tap_row(tv, 2 as i64);
+    // What a press does: the selection moved, and then the row was tapped.
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectedRow\0"))) } == (2 as i64);
+    assert PICKED == (1 as i64);
+    assert TAPPED == (1 as i64);
+    assert TAPPED_ROW == (2 as i64);
+}
+
+#[test]
+fn an_agent_tap_on_a_list_that_selects_nothing_taps_and_selects_nothing() {
+    // spendwise's shape: `SelectionMode::None` and `on_item_tapped` alone.
+    backend::install();
+    PICKED = 0 as i64;
+    TAPPED = 0 as i64;
+    TAPPED_ROW = 0 as i64 - (1 as i64);
+    var l: core::Node = list::list(key: "agentnav", on_item_selected: h_picked(),
+                                   on_item_tapped: h_tapped());
+    let tv: *u8 = two_verb_list(l, "agentnav");
+    agent_tap_row(tv, 1 as i64);
+    assert TAPPED == (1 as i64);
+    assert TAPPED_ROW == (1 as i64);
+    assert PICKED == (0 as i64);
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectedRow\0"))) } == (0 as i64) - (1 as i64);
+}
+
+#[test]
+fn an_agent_tap_that_nothing_hears_is_answered_no_and_fires_nothing() {
+    // The negatives. A row past the end, and a list with no handler a tap or
+    // a selection could reach — the agent is told before it sends.
+    backend::install();
+    TAPPED = 0 as i64;
+    var l: core::Node = list::list(key: "agentpast", on_item_tapped: h_tapped());
+    let tv: *u8 = two_verb_list(l, "agentpast");
+    assert !agent_row_answers(tv, 3 as i64);
+    assert !agent_row_answers(tv, 0 as i64 - (1 as i64));
+    agent_tap_row(tv, 3 as i64);
+    assert TAPPED == (0 as i64);
+
+    var quiet: core::Node = list::list(key: "agentquiet", on_item_selected: h_picked());
+    let qv: *u8 = two_verb_list(quiet, "agentquiet");
+    // A selection handler on a list whose selection cannot move hears nothing.
+    assert !agent_row_answers(qv, 0 as i64);
+}
+
 #[test]
 fn a_list_that_selects_nothing_still_draws_no_highlight() {
     // `selection_mode: None` is the generated default now that the enum zeros

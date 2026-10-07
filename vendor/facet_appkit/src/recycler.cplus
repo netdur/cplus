@@ -266,6 +266,80 @@ fn fire_row_tap(tv: *u8, row: i64) {
     return;
 }
 
+// AN AGENT'S TAP ON A ROW IS A POINTER'S (reports/spendwise/S21).
+//
+// A click from the agent surface has no event and never enters `mouseDown:`,
+// so it reached a row only as a bare `selectRowIndexes:` — which moves the
+// selection and, rightly, is not a tap. `on_item_tapped` never ran, and the one
+// way into a detail screen the SKILL recommends was closed to an agent while
+// the click answered `allowed`.
+//
+// So the table answers the agent directly, with the two steps `mouseDown:`
+// takes: the selection a press makes, then `fire_row_tap`. A `None` list is
+// not selected — the pointer's selection there is the table's private
+// mechanics, which the selection handler already drops — and is still tapped.
+// The row arrives as an NSNumber because a `performSelectorOnMainThread:` hop
+// carries one object.
+fn imp_agent_tap_row(self_obj: *u8, cmd: *u8, number: *u8) {
+    let row: i64 = { rt::msg_i64(number, rt::sel(#str_ptr("integerValue\0"))) };
+    if !agent_row_answers(self_obj, row) { return; }
+    let n: *core::Node = list_node_of(self_obj);
+    let p: *props::ListProps = props_of_list(n);
+    let selectable: bool = match { (*p).selection_mode } {
+        vocab::SelectionMode::None => false,
+        vocab::SelectionMode::Single => true,
+        vocab::SelectionMode::Multiple => true,
+    };
+    if selectable {
+        let idx: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                        rt::sel(#str_ptr("indexSetWithIndex:\0")), row as u64) };
+        { rt::msg_void_id_i8(self_obj, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                             idx, false as i8) };
+    }
+    fire_row_tap(self_obj, row);
+    return;
+}
+
+fn imp_agent_row_answers(self_obj: *u8, cmd: *u8, number: *u8) -> i8 {
+    let row: i64 = { rt::msg_i64(number, rt::sel(#str_ptr("integerValue\0"))) };
+    return agent_row_answers(self_obj, row) as i8;
+}
+
+// Would a tap on `row` reach a handler? The agent asks before it sends, so a
+// click it reports `allowed` is one something heard. An item row of a list
+// with `on_item_tapped`, or with `on_item_selected` where the mode lets the
+// selection move; a group header is not an item and answers no.
+fn agent_row_answers(tv: *u8, row: i64) -> bool {
+    let n: *core::Node = list_node_of(tv);
+    if n.is_null() { return false; }
+    let p: *props::ListProps = props_of_list(n);
+    if p.is_null() { return false; }
+    if row < (0 as i64) { return false; }
+    if row >= { rt::msg_i64(tv, rt::sel(#str_ptr("numberOfRows\0"))) } { return false; }
+    let s: *RowSource = source_of(tv);
+    if s.is_null() { return false; }
+    if resolve_row(s, row) < (0 as i64) { return false; }
+    if { (*p).on_item_tapped } != props::no_handler { return true; }
+    if { (*p).on_item_selected } == props::no_handler { return false; }
+    return match { (*p).selection_mode } {
+        vocab::SelectionMode::None => false,
+        vocab::SelectionMode::Single => true,
+        vocab::SelectionMode::Multiple => true,
+    };
+}
+
+static AGENT_ROW_TAP_ARMED: bool = false;
+
+fn arm_agent_row_tap(cls: *u8) {
+    if { AGENT_ROW_TAP_ARMED } { return; }
+    let _a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("cplusAgentTapRow:\0")),
+                                         imp_agent_tap_row, #str_ptr("v@:@\0"));
+    let _b: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("cplusAgentRowAnswers:\0")),
+                                          imp_agent_row_answers, #str_ptr("c@:@\0"));
+    { AGENT_ROW_TAP_ARMED = true; }
+    return;
+}
+
 // A CONTROL INSIDE A FACET ROW ANSWERS THE WAY IT WOULD OUTSIDE ONE.
 //
 // `validateProposedFirstResponder:forEvent:` is the question a control asks the
@@ -342,9 +416,13 @@ fn row_menu_class(base: *u8, name: *u8) -> *u8 {
     return cls;
 }
 
+// The agent's row tap is a LIST's: a tree's row selects or opens, and is driven
+// through the outline the agent already knows.
 fn facet_table_class() -> *u8 {
-    return row_menu_class(rt::get_class(#str_ptr("NSTableView\0")),
-                          #str_ptr("FacetTableView\0"));
+    let cls: *u8 = row_menu_class(rt::get_class(#str_ptr("NSTableView\0")),
+                                  #str_ptr("FacetTableView\0"));
+    arm_agent_row_tap(cls);
+    return cls;
 }
 
 fn facet_outline_class() -> *u8 {

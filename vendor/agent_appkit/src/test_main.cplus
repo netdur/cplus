@@ -800,6 +800,129 @@ fn an_input_transparent_row_root_selects_its_row_rather_than_swallowing_the_clic
     assert TRANSPARENT_CLICKS == 0;
 }
 
+// ---- ...and a facet LIST's row is TAPPED (reports/spendwise/S21) --------------
+//
+// A list's table answers `cplusAgentTapRow:` — select where the mode allows,
+// then `on_item_tapped` — and that is the click, not the bare selection above,
+// which moved the selection and never reached the verb an app opens a detail
+// from. The stand-in table answers the two selectors as facet_appkit's does;
+// facet_appkit's own suite pins what its real table does with them.
+
+static TAPS: i32 = 0;
+static TAPPED_ROW_SEEN: i64 = 0 as i64;
+static ROW_ANSWERS: bool = true;
+fn probe_tap_row(self_obj: *u8, cmd: *u8, number: *u8) {
+    TAPS = TAPS + 1;
+    TAPPED_ROW_SEEN = { rt::msg_i64(number, rt::sel(#str_ptr("integerValue\0"))) };
+}
+fn probe_row_answers(self_obj: *u8, cmd: *u8, number: *u8) -> i8 { return ROW_ANSWERS as i8; }
+
+fn tap_table_class() -> *u8 {
+    let existing: *u8 = { rt::get_class(#str_ptr("AgentProbeTapTable\0")) };
+    if existing.is_not_null() { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSTableView\0")),
+                                              #str_ptr("AgentProbeTapTable\0"), 0);
+    let _a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("cplusAgentTapRow:\0")),
+                                         probe_tap_row, #str_ptr("v@:@\0"));
+    let _b: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("cplusAgentRowAnswers:\0")),
+                                          probe_row_answers, #str_ptr("c@:@\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+// The probe table from the test above, of class `cls`, realised, under a list
+// node: the surface it opens, and the table.
+fn probe_list_surface(win: ak::Window, cls: *u8, ref root: core::Node) -> *u8 {
+    let tv: *u8 = synth::alloc_init_class(cls);
+    { rt::msg_void_rect(tv, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 }) };
+    let col: *u8 = synth::alloc_init_class({ rt::get_class(#str_ptr("NSTableColumn\0")) });
+    { rt::msg_void_f64(col, rt::sel(#str_ptr("setWidth:\0")), 200.0f64) };
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("addTableColumn:\0")), col) };
+    { rt::msg_void_f64(tv, rt::sel(#str_ptr("setRowHeight:\0")), 20.0f64) };
+    let src: *u8 = synth::alloc_init_class(table_source_class());
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("setDataSource:\0")), src) };
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("setDelegate:\0")), src) };
+    let scroll: *u8 = synth::alloc_init_class({ rt::get_class(#str_ptr("NSScrollView\0")) });
+    { rt::msg_void_rect(scroll, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 }) };
+    { rt::msg_void_id(scroll, rt::sel(#str_ptr("setDocumentView:\0")), tv) };
+    content_of(win).add_subview(ak::View::from_raw(scroll));
+    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+    var r: i64 = 0 as i64;
+    while r < (2 as i64) {
+        let _c: *u8 = { rt::msg_id_i64_i64_i8(tv,
+                            rt::sel(#str_ptr("viewAtColumn:row:makeIfNecessary:\0")),
+                            0 as i64, r, 1 as i8) };
+        r = r +% (1 as i64);
+    }
+    core::set_view(#addr_of(root), content_of(win).raw(), noop_release);
+    var list_node: core::Node = core::node_with("library:models", props::K_LIST,
+                                                0 as *u8, noop_release);
+    core::set_view(#addr_of(list_node), tv, noop_release);
+    let _a: status::Status = root.add_child(list_node);
+    mount_tree(#addr_of(root), win.raw());
+    return tv;
+}
+
+#[test]
+fn a_click_on_a_list_rows_content_is_the_rows_tap() {
+    let win = fixture_window(300.0, 200.0);
+    TAPS = 0;
+    TAPPED_ROW_SEEN = 0 as i64 - (1 as i64);
+    ROW_SELECTIONS = 0;
+    TRANSPARENT_CLICKS = 0;
+    ROW_ANSWERS = true;
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    let tv: *u8 = probe_list_surface(win, tap_table_class(), root);
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    var saw: bool = false;
+    var i: usize = 0;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                if { (*n).id.view() } == "library:model:1" {
+                    saw = true;
+                    assert { (*n).clickable };
+                    assert { (*n).wired };
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    assert saw;
+
+    assert surface::outcome_eq(s.click(auth::operator(), "library:model:1"),
+                               surface::Outcome::Allowed);
+    // THE TAP, naming its row — not the bare selection, and not the content's
+    // own empty `performClick:`.
+    assert TAPS == 1;
+    assert TAPPED_ROW_SEEN == (1 as i64);
+    assert ROW_SELECTIONS == 0;
+    assert TRANSPARENT_CLICKS == 0;
+}
+
+#[test]
+fn a_list_row_nothing_would_hear_is_not_reported_tapped() {
+    // NEGATIVE: the table answers that no handler would hear the row, so the
+    // agent does not send the tap and the click is the row's selection, as
+    // before.
+    let win = fixture_window(300.0, 200.0);
+    TAPS = 0;
+    ROW_SELECTIONS = 0;
+    ROW_ANSWERS = false;
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    let _tv: *u8 = probe_list_surface(win, tap_table_class(), root);
+    var s: agent::Surface = agent::open(win.raw());
+    let _n: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    let _o: surface::Outcome = s.click(auth::operator(), "library:model:0");
+    assert TAPS == 0;
+    assert ROW_SELECTIONS == 1;
+    ROW_ANSWERS = true;
+}
+
 // ---- the disclosure part -----------------------------------------------------
 //
 // A folder row has TWO affordances — click the name to select it, click the
