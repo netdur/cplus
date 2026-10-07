@@ -1383,6 +1383,36 @@ fn each_popup_item_is_a_choice_an_agent_can_make() -> bool {
     return ok;
 }
 
+// scroll_to on a view inside TWO scrollers — a cover in a horizontal shelf
+// below the fold. UIKit's `scrollRectToVisible:` moves only the scroll view it
+// is sent to, so the shelf slid and the page never came down to it
+// (glass_music_ios, 2026-10-07). Every enclosing scroller has to move.
+fn uikit_rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect { return rt::Rect { x: x, y: y, w: w, h: h }; }
+
+fn an_agent_scroll_reaches_a_view_inside_two_scrollers() -> bool {
+    let page: *u8 = rt::alloc_init(#str_ptr("UIScrollView\0"));
+    let shelf: *u8 = rt::alloc_init(#str_ptr("UIScrollView\0"));
+    let cover: *u8 = rt::alloc_init(#str_ptr("UIView\0"));
+    if page == (0 as *u8) || shelf == (0 as *u8) || cover == (0 as *u8) { return false; }
+    { rt::msg_void_rect(page, rt::sel(#str_ptr("setFrame:\0")), uikit_rect(0.0, 0.0, 200.0, 200.0)) };
+    { rt::msg_void_size(page, rt::sel(#str_ptr("setContentSize:\0")), rt::Size { w: 200.0, h: 1000.0 }) };
+    { rt::msg_void_rect(shelf, rt::sel(#str_ptr("setFrame:\0")), uikit_rect(0.0, 800.0, 200.0, 100.0)) };
+    { rt::msg_void_size(shelf, rt::sel(#str_ptr("setContentSize:\0")), rt::Size { w: 1000.0, h: 100.0 }) };
+    { rt::msg_void_rect(cover, rt::sel(#str_ptr("setFrame:\0")), uikit_rect(900.0, 0.0, 50.0, 50.0)) };
+    { rt::msg_void_id(shelf, rt::sel(#str_ptr("addSubview:\0")), cover) };
+    { rt::msg_void_id(page, rt::sel(#str_ptr("addSubview:\0")), shelf) };
+    agent::ensure_shims();
+    { rt::msg_void_id(cover, rt::sel(#str_ptr("cplusAgentScrollVisible:\0")), 0 as *u8) };
+    let across: rt::Point = { rt::msg_point(shelf, rt::sel(#str_ptr("contentOffset\0"))) };
+    let down: rt::Point = { rt::msg_point(page, rt::sel(#str_ptr("contentOffset\0"))) };
+    let ok: bool = across.x > 0.0 && down.y > 0.0;
+    if !ok { io::eprintln(text::from_str("  shelf x ${across.x} page y ${down.y}")); }
+    { rt::release(page) };
+    { rt::release(shelf) };
+    { rt::release(cover) };
+    return ok;
+}
+
 // spendwise S22: a date picker's date is on the agent surface. Read as
 // YYYY-MM-DD, and set_text PICKS: the date moves and on_date_selected runs. The
 // second write comes from a thread, as an MCP request does; `pick` writes the
@@ -4389,6 +4419,8 @@ fn run_all() -> i32 {
           a_tab_click_from_the_server_thread_lands_on_main());
     check("each popup item is a choice an agent can make",
           each_popup_item_is_a_choice_an_agent_can_make());
+    check("an agent scroll reaches a view inside two scrollers",
+          an_agent_scroll_reaches_a_view_inside_two_scrollers());
     check("a date picker's date is read and picked by an agent",
           a_date_pickers_date_is_read_and_picked_by_an_agent());
     check("an open alert is read and answered by an agent",

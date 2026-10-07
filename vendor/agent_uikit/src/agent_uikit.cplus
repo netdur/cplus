@@ -294,11 +294,21 @@ fn cplus_agent_scroll_visible(v: *u8, _cmd: *u8, _arg: *u8) {
             }
         }
     }
-    let sv: *u8 = enclosing_scroll_view(v);
-    if is_null(sv) { return; }
+    // EVERY scroller above it, innermost first. UIKit's `scrollRectToVisible:`
+    // moves only the scroll view it is sent to — AppKit's walks the ancestors,
+    // Android's `requestRectangleOnScreen` asks each parent — so a cover in a
+    // horizontal shelf below the fold slid sideways inside its shelf and the
+    // page never came down to it (glass_music_ios, 2026-10-07). Each outer
+    // scroll is asked for the view's rect AFTER the inner one has moved.
     let b: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
-    let target: rt::Rect = { rt::msg_rect_rect_id(v, rt::sel(#str_ptr("convertRect:toView:\0")), b, sv) };
-    { rt::msg_void_rect_i8(sv, rt::sel(#str_ptr("scrollRectToVisible:animated:\0")), target, 0 as i8) };
+    var sv: *u8 = enclosing_scroll_view(v);
+    var depth: i32 = 0 as i32;
+    while !is_null(sv) && depth < (16 as i32) {
+        let target: rt::Rect = { rt::msg_rect_rect_id(v, rt::sel(#str_ptr("convertRect:toView:\0")), b, sv) };
+        { rt::msg_void_rect_i8(sv, rt::sel(#str_ptr("scrollRectToVisible:animated:\0")), target, 0 as i8) };
+        sv = enclosing_scroll_view(sv);
+        depth = depth + (1 as i32);
+    }
     return;
 }
 
