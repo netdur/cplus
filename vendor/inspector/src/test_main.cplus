@@ -20,6 +20,8 @@ import "facet/vocabulary" as vocab;
 import "facet/props" as props;
 import "facet/label" as label;
 import "facet/button" as button;
+import "facet/text_button" as text_button;
+import "facet/scroll" as scroll;
 import "facet/mount" as mount;
 import "facet/tree" as ftree;
 import "agent_core/inspect" as insp;
@@ -3036,6 +3038,88 @@ fn declared_props_lists_only_what_the_kind_carries() {
     assert !lists(lbl, "title");
 }
 
+// SPENDWISE S04. A text button's tint was written with `set_text_color` and
+// nothing on the surface could read it back — `inspect` listed no text
+// property for the kind at all, so the write was unfalsifiable.
+#[test]
+fn a_text_button_reads_and_writes_its_title_and_type_face() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::text_button("Dashboard", key: "tb:tab"));
+    body.add(ui::label("x", key: "tb:lbl"));
+    var root: core::Node = ui::column(body, key: "tb:root");
+    app::open_window(#addr_of(root));
+    let tb: insp::Handle = handle_for(#addr_of(root), "tb:tab");
+    assert tb.is_live();
+
+    assert lists(tb, "title");
+    assert lists(tb, "text_color");
+    assert lists(tb, "font_size");
+    assert lists(tb, "font_weight");
+    assert text_eq(tb, "title", "Dashboard");
+
+    // What the application wrote through its own cursor is what reads back.
+    let tint: vocab::Color = vocab::Color::rgba(0.0, 0.5, 1.0, 1.0);
+    match text_button::find("tb:tab", within: #addr_of(root)) {
+        option::Option[text_button::TextButton]::Some(t) => {
+            let _t: text_button::TextButton = t.set_text_color(tint).set_font_weight(vocab::FontWeight::Bold);
+        }
+        option::Option::None => { assert false; }
+    }
+    assert match tree::get(tb, "text_color") {
+        option::Option[insp::Value]::Some(insp::Value::Color(c)) => c.b == 1.0 && c.g == 0.5,
+        _ => false,
+    };
+    assert enum_is(tb, "font_weight", "bold");
+
+    // And a surface write lands where the application reads.
+    assert tree::set(tb, "title", insp::Value::Str(text::from_str("Income"))) == insp::Outcome::Ok;
+    assert tree::set(tb, "font_size", insp::Value::Num(15.0)) == insp::Outcome::Ok;
+    match text_button::find("tb:tab", within: #addr_of(root)) {
+        option::Option[text_button::TextButton]::Some(t) => {
+            assert t.title() == "Income";
+            assert t.font_size() == 15.0;
+        }
+        option::Option::None => { assert false; }
+    }
+    // A button border is still a button's alone.
+    assert !lists(tb, "border_width");
+}
+
+// SPENDWISE S04, the second instance. `scroll_to` moved a view and nothing
+// could say where it went. The offset is a prop every backend writes back.
+#[test]
+fn a_scroll_reads_and_writes_its_offset() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::scroll(key: "sc:s", axis: vocab::ScrollAxis::Vertical, scroll_y: 40.0));
+    body.add(ui::label("x", key: "sc:lbl"));
+    var root: core::Node = ui::column(body, key: "sc:root");
+    app::open_window(#addr_of(root));
+    let sc: insp::Handle = handle_for(#addr_of(root), "sc:s");
+    let lbl: insp::Handle = handle_for(#addr_of(root), "sc:lbl");
+
+    assert lists(sc, "scroll_x");
+    assert lists(sc, "scroll_y");
+    assert num_prop(sc, "scroll_y") == 40.0;
+    assert num_prop(sc, "scroll_x") == 0.0;
+
+    // A backend's write-back is a prop write; the surface reads the same field.
+    match scroll::find("sc:s", within: #addr_of(root)) {
+        option::Option[scroll::Scroll]::Some(x) => { let _x: scroll::Scroll = x.set_scroll_y(376.0); }
+        option::Option::None => { assert false; }
+    }
+    assert num_prop(sc, "scroll_y") == 376.0;
+
+    assert tree::set(sc, "scroll_x", insp::Value::Num(12.0)) == insp::Outcome::Ok;
+    assert num_prop(sc, "scroll_x") == 12.0;
+    assert tree::set(sc, "scroll_y", insp::Value::Str(text::from_str("far"))) == insp::Outcome::TypeMismatch;
+
+    // Only a scroll has an offset.
+    assert !lists(lbl, "scroll_y");
+    assert tree::set(lbl, "scroll_y", insp::Value::Num(1.0)) == insp::Outcome::UnknownProperty;
+}
+
 // The row that would not centre. `justify_content` and its neighbours were
 // unreachable before — the surface could place a node absolutely but could not
 // say the one word that fixes most layouts.
@@ -3220,6 +3304,8 @@ fn every_advertised_property_is_settable_and_readable() {
     body.add(ui::label("x", key: "p:lbl"));
     body.add(ui::button("x", key: "p:btn"));
     body.add(ui::text_field("x", key: "p:fld"));
+    body.add(ui::text_button("x", key: "p:tb"));
+    body.add(ui::scroll(key: "p:scr"));
     var col: core::Node = ui::column(body, key: "p:col");
     app::open_window(#addr_of(col));
 
@@ -3228,6 +3314,8 @@ fn every_advertised_property_is_settable_and_readable() {
     let _h2: status::Status = hs.append(handle_for(#addr_of(col), "p:lbl"));
     let _h3: status::Status = hs.append(handle_for(#addr_of(col), "p:btn"));
     let _h4: status::Status = hs.append(handle_for(#addr_of(col), "p:fld"));
+    let _h5: status::Status = hs.append(handle_for(#addr_of(col), "p:tb"));
+    let _h6: status::Status = hs.append(handle_for(#addr_of(col), "p:scr"));
 
     let names: vec::Vec[str] = tree::declared_names();
     assert names.count() > 30;

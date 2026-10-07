@@ -74,6 +74,11 @@ same in both.
 Outcomes: `allowed`, `not_found`, `not_exposed`, `not_actionable`, `stale`,
 `version_conflict`.
 
+`allowed` says the scroll was asked for, not where it went. **Read where it
+went** with `inspect` on the scroll ancestor: its `scroll_x`/`scroll_y` are the
+live offset, written back by the backend on every scroll. `describe_tree`
+frames will not show it — they are layout space, the same before and after.
+
 ### `set_text`
 
 `params.id`, `params.value`, `params.base_version` (number → u64).  

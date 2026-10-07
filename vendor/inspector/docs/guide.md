@@ -14,7 +14,7 @@ control it is talking to.
 |---|---|---|
 | 1 — the common band | `props::CommonProps` is inline on **every** node: opacity, background, corners, visibility, transform, tooltip | no |
 | 2 — flex style | facet's tree **is** flex's tree: width, height, padding, margin, gap, grow, shrink | no |
-| 3 — control props | `text`, `title`, `on` — behind the generated typed handles | **yes** |
+| 3 — control props | `text`, `title`, `on`, the type face (`font_size`, `font_weight`, `text_color`), a button's border, a value control's `value`/`minimum`/`maximum`, a scroll's live `scroll_x`/`scroll_y` — behind the generated typed handles | **yes** |
 
 That shape is why this package is small. Tiers 1 and 2 are uniform across all
 38 control kinds and every bare container, with no kind dispatch and no

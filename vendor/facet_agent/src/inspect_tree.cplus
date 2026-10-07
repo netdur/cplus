@@ -66,6 +66,8 @@ import "facet/toggle" as toggle;
 import "facet/slider" as slider;
 import "facet/stepper" as stepper;
 import "facet/progress" as progress;
+import "facet/text_button" as text_button;
+import "facet/scroll" as scroll;
 import "agent_core/inspect" as insp;
 import "./inspect_vocabulary" as voc;
 
@@ -581,7 +583,31 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
                 option::Option::None => option::Option[insp::Value]::None,
             };
         }
+        // A TEXT BUTTON IS TEXT, and it was the one that could not be read: a
+        // selected-tab tint written with `set_text_color` landed and nothing
+        // on the surface could say so (reports/spendwise/S04).
+        if kind == text_button::K_TEXT_BUTTON {
+            return match text_button::find(k, within: root) {
+                option::Option[text_button::TextButton]::Some(t) => {
+                    if prop == "font_size" { return num(t.font_size()); }
+                    if prop == "font_weight" { return named(voc::font_weight_name(t.font_weight())); }
+                    return colour(t.text_color());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
         return option::Option[insp::Value]::None;
+    }
+
+    if is_scroll_offset(prop) {
+        if kind != props::K_SCROLL { return option::Option[insp::Value]::None; }
+        return match scroll::find(k, within: root) {
+            option::Option[scroll::Scroll]::Some(sc) => {
+                if prop == "scroll_x" { return num(sc.scroll_x()); }
+                return num(sc.scroll_y());
+            }
+            option::Option::None => option::Option[insp::Value]::None,
+        };
     }
 
     if is_button_border(prop) {
@@ -666,6 +692,12 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
         if kind == props::K_BUTTON {
             return match button::find(k, within: root) {
                 option::Option[button::Button]::Some(b) => owned(b.title()),
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == text_button::K_TEXT_BUTTON {
+            return match text_button::find(k, within: root) {
+                option::Option[text_button::TextButton]::Some(t) => owned(t.title()),
                 option::Option::None => option::Option[insp::Value]::None,
             };
         }
@@ -1448,6 +1480,13 @@ fn is_type_face(prop: str) -> bool {
     return (prop == "font_size") || (prop == "font_weight") || (prop == "text_color");
 }
 
+// Where a scroll is. Read AND written: a write is the same `set_scroll_x/y` an
+// application calls, so it moves the view and the backend writes the offset it
+// actually reached back over it.
+fn is_scroll_offset(prop: str) -> bool {
+    return (prop == "scroll_x") || (prop == "scroll_y");
+}
+
 fn is_button_border(prop: str) -> bool {
     return (prop == "border_color") || (prop == "border_width");
 }
@@ -1467,7 +1506,8 @@ fn is_value_prop(prop: str) -> bool {
 fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> insp::Outcome {
     let kind: u32 = core::kind_of(n);
     let known: bool = (prop == "text") || (prop == "title") || (prop == "on")
-        || is_type_face(prop) || is_button_border(prop) || is_value_prop(prop);
+        || is_type_face(prop) || is_button_border(prop) || is_value_prop(prop)
+        || is_scroll_offset(prop);
     if !known { return insp::Outcome::UnknownProperty; }
     if !keyed_resolves_here(n, window) { return insp::Outcome::Unsupported; }
     let k: str = { (*n).key() };
@@ -1568,7 +1608,44 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                 option::Option::None => { return insp::Outcome::NotFound; }
             }
         }
+        if kind == text_button::K_TEXT_BUTTON {
+            match text_button::find(k, within: root) {
+                option::Option[text_button::TextButton]::Some(t) => {
+                    if prop == "font_size" {
+                        let _h: text_button::TextButton = t.set_font_size(size);
+                        return insp::Outcome::Ok;
+                    }
+                    if prop == "font_weight" {
+                        let _h: text_button::TextButton = t.set_font_weight(weight);
+                        return insp::Outcome::Ok;
+                    }
+                    let _h: text_button::TextButton = t.set_text_color(color);
+                    return insp::Outcome::Ok;
+                }
+                option::Option::None => { return insp::Outcome::NotFound; }
+            }
+        }
         return insp::Outcome::UnknownProperty;
+    }
+
+    if is_scroll_offset(prop) {
+        if kind != props::K_SCROLL { return insp::Outcome::UnknownProperty; }
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => {
+                match scroll::find(k, within: root) {
+                    option::Option[scroll::Scroll]::Some(sc) => {
+                        if prop == "scroll_x" {
+                            let _h: scroll::Scroll = sc.set_scroll_x(x);
+                            return insp::Outcome::Ok;
+                        }
+                        let _h: scroll::Scroll = sc.set_scroll_y(x);
+                        return insp::Outcome::Ok;
+                    }
+                    option::Option::None => { return insp::Outcome::NotFound; }
+                }
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
     }
 
     // ---- the button's border ----
@@ -1700,9 +1777,20 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
     }
 
     if prop == "title" {
-        if kind != props::K_BUTTON { return insp::Outcome::UnknownProperty; }
+        if kind != props::K_BUTTON && kind != text_button::K_TEXT_BUTTON {
+            return insp::Outcome::UnknownProperty;
+        }
         return match v {
             insp::Value::Str(s) => {
+                if kind == text_button::K_TEXT_BUTTON {
+                    match text_button::find(k, within: root) {
+                        option::Option[text_button::TextButton]::Some(t) => {
+                            let _h: text_button::TextButton = t.set_title(s.view());
+                            return insp::Outcome::Ok;
+                        }
+                        option::Option::None => { return insp::Outcome::NotFound; }
+                    }
+                }
                 match button::find(k, within: root) {
                     option::Option[button::Button]::Some(b) => {
                         let _h: button::Button = b.set_title(s.view());

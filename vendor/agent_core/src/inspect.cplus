@@ -824,7 +824,7 @@ fn table() -> vec::Vec[Descriptor] {
     // ---- what it says ----
     let _c0: status::Status = v.append(d("text", "string", "", "label text_field text_area", "",
         "The words the control shows."));
-    let _c1: status::Status = v.append(d("title", "string", "", "button", "",
+    let _c1: status::Status = v.append(d("title", "string", "", "button text_button", "",
         "The button's label."));
     let _c2: status::Status = v.append(d("on", "bool", "", "checkbox toggle", "",
         "Whether the control is switched on."));
@@ -848,18 +848,31 @@ fn table() -> vec::Vec[Descriptor] {
         "The lowest value the control takes."));
     let _v2: status::Status = v.append(d("maximum", "number", "", "slider stepper", "",
         "The highest value the control takes."));
-    let _c3: status::Status = v.append(d("font_size", "number", "points", "label button text_field text_area", "",
+    let _c3: status::Status = v.append(d("font_size", "number", "points", "label button text_button text_field text_area", "",
         "Point size of the control's text."));
     let _c4: status::Status = v.append(d("font_weight", "enum", "",
-        "label button text_field text_area",
+        "label button text_button text_field text_area",
         "default ultra_light thin light regular medium semibold bold heavy black",
         "Stroke weight of the control's text."));
-    let _c5: status::Status = v.append(d("text_color", "color", "", "label button text_field text_area", "",
+    let _c5: status::Status = v.append(d("text_color", "color", "", "label button text_button text_field text_area", "",
         "Colour of the control's text. Send #rrggbb or #rrggbbaa."));
     let _c6: status::Status = v.append(d("border_color", "color", "", "button", "",
         "Colour of the button's border. Draws nothing until border_width is above zero."));
     let _c7: status::Status = v.append(d("border_width", "number", "points", "button", "",
         "Thickness of the button's border."));
+
+    // ---- where a scroll IS ----
+    //
+    // A SCROLL COULD BE MOVED AND NOT READ. `scroll_to` answers `allowed`, and
+    // nothing on the surface said where the view went: describe_tree frames
+    // are layout space, identical before and after by design, and the scroll
+    // node's native frame is the viewport, which does not move. Every backend
+    // writes the live offset back into these two props on each scroll, so
+    // reading them is reading where the content is now.
+    let _off0: status::Status = v.append(d("scroll_x", "number", "points", "scroll", "",
+        "How far the content is scrolled right — the visible region's left edge, in content coordinates. Live: the backend writes it back on every scroll."));
+    let _off1: status::Status = v.append(d("scroll_y", "number", "points", "scroll", "",
+        "How far the content is scrolled down — the visible region's top edge, in content coordinates. Live: the backend writes it back on every scroll."));
 
     // ---- what it says to someone who cannot see it ----
     let _x0: status::Status = v.append(d("tooltip", "string", "", "*", "",
