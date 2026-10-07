@@ -14,6 +14,7 @@ import "android_view/runtime" as rt;
 import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/application" as app;
+import "facet/navigation" as navigation;
 import "facet/nav" as nav;
 import "facet/app_events" as ev;
 import "stdlib/text" as text;
@@ -59,6 +60,8 @@ fn install() {
     mount::install(renderer());
     services::install_scheduler(scheduler::scheduler());
     theme::set_is_dark_fn(window::is_dark);
+    // A screen the navigator PRESENTS (spendwise S20 item 6).
+    navigation::set_modal_fns(window::present_modal, window::dismiss_modal);
     // AND WHERE `println` GOES. stdout and stderr are /dev/null on this
     // platform, so without this every `io::println` in every package — and
     // every probe written to be read — prints into nothing. See log.cplus.

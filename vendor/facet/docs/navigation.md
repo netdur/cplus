@@ -163,8 +163,13 @@ or `replace` is refused while it is up (it would land underneath, unseen), and
 system Back does. Presenting from a presented screen stacks: the new one goes
 on top of it. A person pulling an iOS sheet down is reported back, and the
 navigator's stack follows. Closing the window takes any presented screens with
-it. Android, Windows and GTK have no presenter yet, and `present` answers
-`false` there.
+it. On Android it is Material's bottom sheet over the window (a scrim, the
+screen on a surface below a margin), or the whole window for the full-screen
+styles, and the system Back closes it. Windows and GTK have no presenter yet,
+and `present` answers `false` there.
+
+While a screen is presented, the window under it is still described to an
+agent, and its nodes answer `not_actionable`, as they would to a person.
 
 Unknown routes, missing or ambiguous slots, stale handles, and commands during
 an unfinished transition return `false`. A pending native window has a handle,

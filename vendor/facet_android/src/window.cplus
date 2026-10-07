@@ -26,6 +26,7 @@ import "facet/mount" as mount;
 import "facet/window" as app_window;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
+import "facet/navigation" as navigation;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "stdlib/text" as text;
@@ -186,6 +187,72 @@ fn add_one(env: rt::Env, host: jni::jobject, v: *u8) {
     hg.add_view_view(v);
     var hv: w::View = w::View::from_global(env, hg.into_raw());
     paint::unwrap_keep(hv);
+    return;
+}
+
+// ---- a screen the navigator PRESENTS (spendwise S20 item 6) ---------------------
+// `Navigator::present` on Android: Material's bottom sheet over the window — a
+// scrim, and the screen on a surface with rounded top corners below a margin —
+// or, for the full-screen styles, the screen over the whole window. The
+// presented root goes into the SAME host view, after the window's, so it draws
+// on top; the scheduler lays out every window root at the window's size. Back
+// reaches it through `Navigator::pop`, which dismisses a presented screen first.
+// The agent surface follows it while it is up, as a sheet on the Mac does.
+const SHEET_TOP: f64 = 48.0f64;
+static SHEETS: vec::Vec[*core::Node] = #zero::[vec::Vec[*core::Node]]();
+
+fn present_modal(p: navigation::ModalPresentation, title: str) -> bool {
+    let host: jni::jobject = e::host();
+    if host == (0 as jni::jobject) { return false; }
+    let full: bool = match p.style {
+        vocab::ModalStyle::FullScreen => true,
+        vocab::ModalStyle::OverFullScreen => true,
+        _ => false,
+    };
+    core::set_background_color(p.shown, vocab::Color::surface());
+    if !full {
+        // A bottom sheet: the scrim behind, the screen below a margin, its top
+        // corners rounded — Material 3's large shape.
+        core::set_background_color(p.root, vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 0.32f64));
+        (*p.shown).set_margin(flex::Edge::Top, flex::StyleLength::points(SHEET_TOP));
+        core::set_corner_radius(p.shown, vocab::Corners { top_leading: 28.0f64, top_trailing: 28.0f64,
+                                                          bottom_leading: 0.0f64, bottom_trailing: 0.0f64 });
+    }
+    let env: rt::Env = e::env();
+    let _m: bool = mount::mount(p.root);
+    add_root_views(env, host, p.root);
+    let _s: status::Status = SHEETS.append(p.root);
+    app::agent_attach({ #addr(p.root) as *u8 });
+    scheduler::relayout_current();
+    return true;
+}
+
+fn dismiss_modal(root: *core::Node, user: bool) {
+    var i: usize = SHEETS.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        let hit: bool = match SHEETS.at_ptr(i) {
+            option::Option[**core::Node]::Some(r) => (*r == root),
+            option::Option[**core::Node]::None => false,
+        };
+        if hit {
+            let _gone = SHEETS.remove(at: i);
+            let host: jni::jobject = e::host();
+            let rv: *u8 = core::view_of(root);
+            if host != (0 as jni::jobject) && rv != (0 as *u8) {
+                var hg: w::ViewGroup = w::ViewGroup::from_global(e::env(), host);
+                hg.remove_view({ rv as jni::jobject });
+                paint::unwrap_keep(w::View::from_global(e::env(), hg.into_raw()));
+            }
+            mount::unmount(root);
+            app::close_window(root);
+            // Back to what is now in front: the sheet beneath, or the window.
+            let front: *core::Node = mount::mounted_root();
+            if front != (0 as *core::Node) { app::agent_attach({ #addr(front) as *u8 }); }
+            scheduler::relayout_current();
+            return;
+        }
+    }
     return;
 }
 
