@@ -117,11 +117,8 @@ impl Counter: component::Lifecycle {
     fn on_detach(ref this, why: component::Detach) { return; }
 }
 
-impl Counter: screen::Screen {
-    fn menu_items(this) -> vec::Vec[screen::MenuItem] {
-        return vec::new::[screen::MenuItem]();
-    }
-}
+// No app-menu items and no navigation hooks: every Screen method defaults.
+impl Counter: screen::Screen { }
 
 fn boxed() -> screen::ScreenBox { return screen::screen_box(Counter::new()); }
 ```
@@ -1070,11 +1067,13 @@ facade does not yet expose `runtime::app()`. Use the screen's retained
 
 An app registers window definitions and starts through `App::run`. Window
 settings belong to the definition. A screen is content and implements
-`Component`, `Lifecycle`, and `Screen`; navigation hooks have defaults.
+`Component`, `Lifecycle`, and `Screen`. Only `build` is required: the
+lifecycle hooks, navigation hooks and `menu_items` all default, so a screen
+that only builds writes `impl X: component::Lifecycle { }` and
+`impl X: screen::Screen { }`.
 
 ```cplus
 impl Home: screen::Screen {
-    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
     fn on_context(ref this, context: nav::Context) { this.context = context; }
     fn on_navigation(ref this, state: nav::State) {
         // Update controls inside this.context.root() from state.can_pop()

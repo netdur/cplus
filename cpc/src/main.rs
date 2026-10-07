@@ -8215,8 +8215,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          import \"facet_agent/agent\" as agent;\n\n\
          import \"./agent_consent\" as agent_consent;\n\
          import \"stdlib/option\" as option;\n\
-         import \"stdlib/status\" as status;\n\
-         import \"stdlib/vec\" as vec;\n\n\
+         import \"stdlib/status\" as status;\n\n\
          struct Home {{\n    taps: i64,\n}}\n\n\
          impl Home {{\n\
          \x20   fn new() -> Home {{ return Home {{ taps: 0 }}; }}\n\n\
@@ -8253,16 +8252,13 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       }};\n\
          \x20   }}\n\
          }}\n\n\
-         impl Home: component::Lifecycle {{\n\
-         \x20   // `why` says WHICH attach: Mount is the screen appearing, Active is\n\
-         \x20   // the app coming to the foreground. Detach mirrors it, and Inactive\n\
-         \x20   // is NOT a release signal — see facet/component.\n\
-         \x20   fn on_attach(ref this, why: component::Attach) {{ }}\n\
-         \x20   fn on_detach(ref this, why: component::Detach) {{ }}\n\
-         }}\n\n\
-         impl Home: screen::Screen {{\n\
-         \x20   fn menu_items(this) -> vec::Vec[screen::MenuItem] {{ return vec::new::[screen::MenuItem](); }}\n\
-         }}\n\n\
+         // `on_attach` / `on_detach` and the Screen hooks all default to\n\
+         // nothing. Write one when the screen has something to start or\n\
+         // release: `why` says WHICH attach — Mount is the screen appearing,\n\
+         // Active the app coming to the foreground — and Inactive is NOT a\n\
+         // release signal. See facet/component.\n\
+         impl Home: component::Lifecycle {{ }}\n\
+         impl Home: screen::Screen {{ }}\n\n\
          // WHAT A ROUTE REGISTERS: a plain factory, so the registry is one shape\n\
          // whatever the screens are. It builds a FRESH screen each time the route\n\
          // is shown — a route is a name, not an instance.\n\

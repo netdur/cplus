@@ -111,26 +111,22 @@ impl Counter: component::Component {
     }
 }
 
-impl Counter: component::Lifecycle {
-    fn on_attach(ref this, why: component::Attach) { }
-    fn on_detach(ref this, why: component::Detach) { }
-}
+// on_attach / on_detach default to nothing; write them when the screen has
+// something to start or release.
+impl Counter: component::Lifecycle { }
 ```
 
 ## 5. A screen and a window
 
-`Screen` receives navigation context and contributes menu items. Window chrome
+`Screen` receives navigation context and may contribute app-menu items
+(`menu_items` defaults to none). Window chrome
 belongs to the app's window registration.
 
 ```cplus
 import "facet/screen" as screen;
-import "stdlib/vec" as vec;
 
 impl Counter: screen::Screen {
     fn on_context(ref this, context: nav::Context) { this.context = context; }
-    fn menu_items(this) -> vec::Vec[screen::MenuItem] {
-        return vec::new::[screen::MenuItem]();
-    }
 }
 
 fn counter_screen() -> screen::ScreenBox {

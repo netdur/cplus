@@ -144,9 +144,11 @@ enum Detach {
     Terminate,
 }
 
+// Both default to nothing, so a component with nothing to set up or release
+// declares the conformance and writes no bodies: `impl Home: Lifecycle { }`.
 interface Lifecycle {
-    fn on_attach(ref this, why: Attach);
-    fn on_detach(ref this, why: Detach);
+    fn on_attach(ref this, why: Attach) { }
+    fn on_detach(ref this, why: Detach) { }
 }
 
 // ---- the reasons the TREE can raise -------------------------------------------

@@ -399,8 +399,9 @@ interface Screen {
     // mounting and after every committed transition in this window.
     fn on_context(ref this, context: navigation::Context) { }
     fn on_navigation(ref this, state: navigation::State) { }
-    // Optional app-menu contribution from this content.
-    fn menu_items(this) -> vec::Vec[MenuItem];
+    // Optional app-menu contribution from this content. None by default —
+    // most screens add nothing to the app menu.
+    fn menu_items(this) -> vec::Vec[MenuItem] { return vec::new::[MenuItem](); }
     // What a native navigation bar calls this screen when it is pushed over
     // the whole window. Empty is "no title", which is the default.
     fn title(this) -> str { return ""; }
@@ -880,6 +881,33 @@ fn chrome_stated_size_below_the_desktop_floor_is_kept() {
     assert sc_approx(again.width, 480.0f64);
     assert sc_approx(again.min_width, 480.0f64);
     assert sc_approx(again.min_height, 600.0f64);
+}
+
+// A screen that only builds: no state to set up, no menu to add. The two
+// conformances are declared and nothing else is written — the defaults stand.
+struct PlainScreen { }
+
+impl PlainScreen: component::Component {
+    fn build(ref this) -> Node {
+        SBT_BUILDS = SBT_BUILDS + 1;
+        return core::column(core::Builder::new());
+    }
+}
+
+impl PlainScreen: component::Lifecycle { }
+impl PlainScreen: Screen { }
+
+#[test]
+fn a_screen_that_only_builds_needs_no_other_bodies() {
+    sbt_reset();
+    var sb: ScreenBox = screen_box(PlainScreen { });
+    assert sb.valid();
+    var root: Node = sb.build();
+    root.calculate_layout(width: 100.0f64, height: 100.0f64);
+    assert SBT_BUILDS == 1;
+    sb.on_attach(component::Attach::Mount);
+    sb.on_detach(component::Detach::Unmount);
+    assert sb.menu_items().count() == (0 as usize);
 }
 
 #[test]

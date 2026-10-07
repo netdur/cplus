@@ -198,7 +198,18 @@ a parent disposes its nested screens and their associated history.
 A screen implements `Component`, `Lifecycle`, and `Screen`. `on_context` runs
 before build. `on_navigation` runs after mounting and after committed
 transitions; it also reaches the surrounding screen when a slot changes.
-Both hooks have default empty implementations. `menu_items()` is required.
+Both hooks have default empty implementations, and so do `menu_items()`
+(no app-menu items) and `Lifecycle`'s `on_attach`/`on_detach`. A screen that
+only builds declares the two conformances and writes no other bodies:
+
+```cplus
+struct Radio { }
+impl Radio: component::Component {
+    fn build(ref this) -> core::Node { return @ui { label("Radio") }; }
+}
+impl Radio: component::Lifecycle { }
+impl Radio: screen::Screen { }
+```
 
 This complete screen uses its own root to update its Back button:
 
@@ -229,10 +240,7 @@ impl Page: component::Component {
         };
     }
 }
-impl Page: component::Lifecycle {
-    fn on_attach(ref this, why: component::Attach) { }
-    fn on_detach(ref this, why: component::Detach) { }
-}
+impl Page: component::Lifecycle { }
 impl Page: screen::Screen {
     fn on_context(ref this, context: nav::Context) { this.context = context; }
     fn on_navigation(ref this, state: nav::State) {
@@ -241,7 +249,6 @@ impl Page: screen::Screen {
             option::Option[button::Button]::None => { }
         }
     }
-    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
 }
 ```
 
