@@ -1446,6 +1446,28 @@ fn an_open_alert_is_read_and_answered_by_an_agent() -> bool {
     return ok;
 }
 
+// spendwise S20 D3: a gradient box drew square while a solid box with the same
+// corner_radius drew rounded. The gradient sublayer takes the host's corners.
+fn a_gradient_box_keeps_its_corner_radius() -> bool {
+    var n: core::Node = ui::box(vocab::Color::clear(), key: "st:grad",
+                                corner_radius: vocab::Corners::all(14.0f64));
+    n.set_background(vocab::Brush { start: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+                                    end: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64),
+                                    angle: 135.0f64, is_gradient: true });
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    uik::View::from_raw(v).set_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    paint::resize_gradient(v);
+    let host: *u8 = uik::View::from_raw(v).layer().raw();
+    let g: *u8 = { synth::get_associated(host, paint::gradient_key()) };
+    var r: f64 = -1.0f64;
+    if g != (0 as *u8) { r = { rt::msg_f64(g, rt::sel(#str_ptr("cornerRadius\0"))) }; }
+    views::view_release(v);
+    if r != 14.0f64 { io::eprintln(text::from_str("  gradient radius ${r}")); }
+    return r == 14.0f64;
+}
+
 // AN MCP CLICK ARRIVES ON THE SERVER'S THREAD, and picking a tab writes the
 // tree, which only the main thread may do. The test above clicks from the main
 // thread and passed while a real agent's tab click trapped the app
@@ -4268,6 +4290,8 @@ fn run_all() -> i32 {
           each_popup_item_is_a_choice_an_agent_can_make());
     check("an open alert is read and answered by an agent",
           an_open_alert_is_read_and_answered_by_an_agent());
+    check("a gradient box keeps its corner radius",
+          a_gradient_box_keeps_its_corner_radius());
     check("an agent can click a tappable view",
           an_agent_can_click_a_tappable_view());
     check("a scroll pane runs under a glass tab bar",

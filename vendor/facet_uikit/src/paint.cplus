@@ -621,10 +621,26 @@ fn apply_brush(view: ui::View, b: vocab::Brush) {
     set_layer_point(g.raw(), #str_ptr("setStartPoint:\0"), 0.5f64 - dx, 0.5f64 + dy);
     set_layer_point(g.raw(), #str_ptr("setEndPoint:\0"), 0.5f64 + dx, 0.5f64 - dy);
     { msg_void_rect(g.raw(), rt::sel(#str_ptr("setFrame:\0")), view.bounds()) };
+    match_corners(host.raw(), g.raw());
     return;
 }
 
 fn gradient_key() -> *u8 { return 29060 as *u8; }
+
+// THE GRADIENT HAS THE HOST'S CORNERS. A sublayer is not clipped by its
+// host's corner radius unless the host masks, and masking would clip the
+// control's own content too. So a gradient box with `corner_radius: 14` drew a
+// square gradient while a solid one drew rounded (spendwise S20 D3). The
+// layer takes the host's radius and curve itself; `resize_gradient` repeats
+// it every pass, because the radius can be applied after the brush.
+fn match_corners(host: *u8, g: *u8) {
+    if host == (0 as *u8) || g == (0 as *u8) { return; }
+    let r: f64 = { rt::msg_f64(host, rt::sel(#str_ptr("cornerRadius\0"))) };
+    { rt::msg_void_f64(g, rt::sel(#str_ptr("setCornerRadius:\0")), r) };
+    let curve: *u8 = { rt::msg_id(host, rt::sel(#str_ptr("cornerCurve\0"))) };
+    if curve != (0 as *u8) { { rt::msg_void_id(g, rt::sel(#str_ptr("setCornerCurve:\0")), curve) }; }
+    return;
+}
 
 // A GRADIENT SUBLAYER DOES NOT FOLLOW ITS VIEW. `apply_brush` sizes it from
 // `view.bounds()`, and at apply time those bounds are ZERO — the frame walk
@@ -639,6 +655,7 @@ fn resize_gradient(v: *u8) {
     let existing: *u8 = { synth::get_associated(view.layer().raw(), gradient_key()) };
     if existing == (0 as *u8) { return; }
     { msg_void_rect(existing, rt::sel(#str_ptr("setFrame:\0")), view.bounds()) };
+    match_corners(view.layer().raw(), existing);
     return;
 }
 
