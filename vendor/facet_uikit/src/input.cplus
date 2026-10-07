@@ -280,11 +280,18 @@ fn arm_tap(v: *u8, n: *core::Node) {
     ui::View::from_raw(v).set_user_interaction_enabled(true);
     { rt::msg_void_id(v, rt::sel(#str_ptr("addGestureRecognizer:\0")), g) };
     synth::set_associated(v, tap_key(), g);
+    // FOR THE AGENT. A recogniser's target is not readable through any public
+    // API, so agent_uikit fires `facetTap:` on the target it finds pinned here
+    // — without it an agent saw a tappable row as clickable and every click
+    // answered NotActionable.
+    synth::set_associated(g, tap_target_key(), t);
     { rt::release(g) };
     return;
 }
 
 fn tap_key() -> *u8 { return 41002 as *u8; }
+// agent_uikit reads the same number (it does not import this package).
+fn tap_target_key() -> *u8 { return 41004 as *u8; }
 
 // ---- firing back into facet --------------------------------------------------
 

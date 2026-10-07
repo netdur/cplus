@@ -203,6 +203,8 @@ fn ensure_shims() {
                           cplus_agent_select_row, #str_ptr("v@:@\0"));
     rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentScrollVisible:\0")),
                           cplus_agent_scroll_visible, #str_ptr("v@:@\0"));
+    rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentPickTab:\0")),
+                          cplus_agent_pick_tab, #str_ptr("v@:@\0"));
     SHIMS_REGISTERED = true;
     return;
 }
@@ -699,7 +701,19 @@ fn add_tab_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
     return;
 }
 
-fn click_tab(n: *core::Node, at: i64) -> surface::Outcome {
+// ON THE MAIN THREAD. `pick_tab` writes the tree — `core::touch` asserts it is
+// on the UI thread — and an MCP click arrives on the server's thread, so a
+// tab click trapped the app (glass_music_ios, 2026-10-07). The selftest
+// clicked from the main thread and could not see it. Every other click here
+// already goes through `perform_on_main`; this is the same hop, with the
+// request on the caller's stack because the wait keeps it alive.
+struct TabPick {
+    opaque node: *core::Node,
+    at: i64,
+    outcome: surface::Outcome,
+}
+
+fn pick_tab_now(n: *core::Node, at: i64) -> surface::Outcome {
     if n == (0 as *core::Node) { return surface::Outcome::Stale; }
     if at < (0 as i64) || (at as usize) >= core::child_count_of(n) { return surface::Outcome::Stale; }
     return match ftabs::from(n) {
@@ -709,6 +723,26 @@ fn click_tab(n: *core::Node, at: i64) -> surface::Outcome {
         },
         option::Option[ftabs::Tabs]::None => surface::Outcome::Stale,
     };
+}
+
+fn cplus_agent_pick_tab(receiver: *u8, _cmd: *u8, boxed: *u8) {
+    let req: *TabPick = { rt::msg_id(boxed, rt::sel(#str_ptr("pointerValue\0"))) } as *TabPick;
+    if req == (0 as *TabPick) { return; }
+    { (*req).outcome = pick_tab_now({ (*req).node }, { (*req).at }) };
+    return;
+}
+
+fn click_tab(n: *core::Node, at: i64) -> surface::Outcome {
+    if on_main_thread() { return pick_tab_now(n, at); }
+    ensure_shims();
+    var req: TabPick = TabPick { node: n, at: at, outcome: surface::Outcome::Stale };
+    let boxed: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSValue\0")),
+                                     rt::sel(#str_ptr("valueWithPointer:\0")),
+                                     #addr_of(req) as *u8) };
+    let host: *u8 = core::view_of(n);
+    if is_null(host) || is_null(boxed) { return surface::Outcome::Stale; }
+    perform_on_main(host, rt::sel(#str_ptr("cplusAgentPickTab:\0")), boxed);
+    return req.outcome;
 }
 
 // ---- the walk over FACET'S tree ------------------------------------------------
@@ -1284,8 +1318,11 @@ fn fire_recogniser(g: *u8) -> bool {
 }
 
 // The key facet_uikit's `arm_tap` pins its target under, so an agent can reach
-// the same object without importing the backend.
-fn tap_target_key() -> *u8 { return 41003 as *u8; }
+// the same object without importing the backend. facet_uikit's
+// `input::tap_target_key` is the other half. It was 41003 here and pinned
+// nowhere there (41003 is a popup's index key), so every gesture click was
+// NotActionable.
+fn tap_target_key() -> *u8 { return 41004 as *u8; }
 
 // The deepest view a touch at this view's own centre would land on, tested from
 // the window so ancestors and siblings above it are honoured.

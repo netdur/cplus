@@ -23,6 +23,7 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/io" as io;
 import "stdlib/status" as status;
+import "stdlib/thread" as thread;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/relist" as relist;
@@ -1283,6 +1284,98 @@ fn mcp_find(nodes: vec::Vec[mcpb::UiNode], id: str) -> option::Option[*mcpb::UiN
         i = i +% (1 as usize);
     }
     return option::Option[*mcpb::UiNode]::None;
+}
+
+static TAP_FIRED: bool = false;
+fn note_tap(sender: *u8, ctx: *u8) -> bool { TAP_FIRED = true; return true; }
+
+// A plain view with `.gesture(on_click:)` is a tap recogniser here, and an agent
+// clicks it by firing the recogniser's action on the target facet_uikit pinned
+// to it. The pin was missing, so the row was listed clickable and every click
+// was NotActionable (found on examples/glass_music_ios's album cards).
+fn an_agent_can_click_a_tappable_view() -> bool {
+    TAP_FIRED = false;
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    if win == (0 as *u8) { return false; }
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::column(core::Builder::new(), key: "st:tap:card")
+        .gesture(on_click: note_tap));
+    var n: core::Node = ui::column(b, key: "st:tap:root");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    var card: *core::Node = 0 as *core::Node;
+    match core::child_of(p, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => { card = c; }
+        option::Option[*core::Node]::None => { return false; }
+    }
+    let cv: *u8 = views::create(0 as *u8, card);
+    if cv == (0 as *u8) { return false; }
+    core::set_view(card, cv, views::view_release);
+    uik::View::from_raw(v).add_subview(uik::View::from_raw(cv));
+    { rt::msg_void_id(win, rt::sel(#str_ptr("addSubview:\0")), v) };
+    app::reset_default_for_tests();
+    app::open_window(p);
+    app::set_window_native(p, win);
+    var s: agent::Surface = agent::open_app();
+    let pressed: bool = surf::outcome_eq(s.click(auth::operator(), "st:tap:card"),
+                                         surf::Outcome::Allowed);
+    let ok: bool = pressed && TAP_FIRED;
+    if !ok { io::eprintln(text::from_str("  pressed ${pressed} fired ${TAP_FIRED}")); }
+    app::reset_default_for_tests();
+    { rt::release(win) };
+    return ok;
+}
+
+// AN MCP CLICK ARRIVES ON THE SERVER'S THREAD, and picking a tab writes the
+// tree, which only the main thread may do. The test above clicks from the main
+// thread and passed while a real agent's tab click trapped the app
+// (glass_music_ios, 2026-10-07). This one clicks from a thread, turning the
+// main run loop meanwhile so the hop to main can land.
+fn click_goals_from_a_thread(take surface_addr: usize) -> i32 {
+    let s: *agent::Surface = surface_addr as *agent::Surface;
+    let oc: surf::Outcome = { (*s).click(auth::operator(), "tb:probe:tab:Goals") };
+    if surf::outcome_eq(oc, surf::Outcome::Allowed) { return 1; }
+    return 0;
+}
+
+fn a_tab_click_from_the_server_thread_lands_on_main() -> bool {
+    TAB_FIRED = false;
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    if win == (0 as *u8) { return false; }
+    var n: core::Node = tabs_probe(vocab::BarPlacement::Default);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_id(win, rt::sel(#str_ptr("addSubview:\0")), v) };
+    app::reset_default_for_tests();
+    app::open_window(p);
+    app::set_window_native(p, win);
+    var s: agent::Surface = agent::open_app();
+    let h: thread::JoinHandle[i32] = thread::spawn_with::[usize, i32](
+        #addr_of(s) as usize, click_goals_from_a_thread);
+    let rl: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSRunLoop\0")),
+                               rt::sel(#str_ptr("currentRunLoop\0"))) };
+    var spins: i32 = 0;
+    while !h.is_finished() && spins < 500 {
+        let until: *u8 = { rt::msg_id_f64(rt::get_class(#str_ptr("NSDate\0")),
+                                          rt::sel(#str_ptr("dateWithTimeIntervalSinceNow:\0")), 0.01f64) };
+        { rt::msg_void_id(rl, rt::sel(#str_ptr("runUntilDate:\0")), until) };
+        spins = spins + 1;
+    }
+    let pressed: bool = h.join() == 1;
+    var at: i64 = -1 as i64;
+    match tabs::find("tb:probe", within: p) {
+        option::Option[tabs::Tabs]::Some(t) => { at = t.selected_index(); }
+        option::Option[tabs::Tabs]::None => { }
+    }
+    let ok: bool = pressed && at == (2 as i64) && TAB_FIRED;
+    if !ok { io::eprintln(text::from_str("  pressed ${pressed} at ${at} fired ${TAB_FIRED}")); }
+    app::reset_default_for_tests();
+    { rt::release(win) };
+    return ok;
 }
 
 fn each_tab_is_a_button_an_agent_can_find_and_press() -> bool {
@@ -4051,6 +4144,10 @@ fn run_all() -> i32 {
 
     check("the icon font registers without the app shipping it",
           the_icon_font_registers_without_the_app_shipping_it());
+    check("a tab click from the server thread lands on main",
+          a_tab_click_from_the_server_thread_lands_on_main());
+    check("an agent can click a tappable view",
+          an_agent_can_click_a_tappable_view());
     check("a scroll pane runs under a glass tab bar",
           a_scroll_pane_runs_under_a_glass_tab_bar());
     check("every named size is a text style UIKit knows",

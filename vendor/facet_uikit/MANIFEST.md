@@ -909,7 +909,10 @@ content inset grows by the bar's height and that gap. The inset is ADDED and
 taken back by the same amount, never written absolutely, so the keyboard's own
 inset composes with it. Any other pane keeps the bar's room, because a column
 cannot scroll its last row out from behind the bar. The bar is brought in front
-of the panes on every layout pass. Below iOS 26 nothing changes.
+of the panes on every layout pass. Below iOS 26 nothing changes. A ROUTED pane counts too: a
+`slot` holds a navigation wrapper that holds the screen, so the scroll is
+found by following the one shown child down, and that scroll is what is
+extended and inset.
 
 This was a `UISegmentedControl` until 2026-10-07, and it never inserted a
 segment or hid a pane — the section above described a design the code did not

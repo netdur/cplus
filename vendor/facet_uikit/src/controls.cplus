@@ -2884,11 +2884,44 @@ fn rebuild_tab_items(v: *u8, n: *core::Node, p: *props::TabsProps) {
 // inset in `place_tab_bar`) and any other pane keeps the padding — a column's
 // last row hidden behind a bar it cannot scroll out from under is worse than
 // no glass. One pane shows at a time, so the padding follows the shown one.
+// The scroll a pane IS, looking through what only wraps one: a routed pane
+// is `slot` -> navigation wrapper -> the screen's root, and the screen's root
+// is the scroll. One shown child at each step — a pushed screen parks the one
+// beneath it — and anything else (a column of several things) is not a page
+// that can run under the bar.
+fn scroll_in_pane(c: *core::Node) -> *core::Node {
+    var at: *core::Node = c;
+    var depth: i32 = 0;
+    while at != (0 as *core::Node) && depth < 8 {
+        if core::kind_of(at) == props::K_SCROLL { return at; }
+        var only: *core::Node = 0 as *core::Node;
+        var shown: i32 = 0;
+        var i: usize = 0 as usize;
+        while i < core::child_count_of(at) {
+            match core::child_of(at, i) {
+                option::Option[*core::Node]::Some(ch) => {
+                    let gone: bool = match { (*ch).style.display } {
+                        flex::Display::None => true,
+                        _ => false,
+                    } || core::is_hidden(ch);
+                    if !gone { only = ch; shown = shown + 1; }
+                }
+                option::Option[*core::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        if shown != 1 { return 0 as *core::Node; }
+        at = only;
+        depth = depth + 1;
+    }
+    return 0 as *core::Node;
+}
+
 fn shown_pane_scrolls(n: *core::Node, p: *props::TabsProps) -> bool {
     let at: i64 = { (*p).selected_index };
     if at < (0 as i64) { return false; }
     return match core::child_of(n, at as usize) {
-        option::Option[*core::Node]::Some(c) => core::kind_of(c) == props::K_SCROLL,
+        option::Option[*core::Node]::Some(c) => scroll_in_pane(c) != (0 as *core::Node),
         option::Option[*core::Node]::None => false,
     };
 }
@@ -2951,13 +2984,20 @@ fn run_pane_under_bar(v: *u8, n: *core::Node) {
         extra = below_safe_edge(v, b);
         match core::child_of(n, { (*p).selected_index } as usize) {
             option::Option[*core::Node]::Some(c) => {
-                let pv: *u8 = core::view_of(c);
-                if pv != (0 as *u8) && extra > 0.0f64 {
-                    let f: rt::Rect = ui::View::from_raw(pv).frame();
-                    // To the host's bottom plus the inset, whatever the pane's
-                    // own margin left — idempotent across passes.
-                    ui::View::from_raw(pv).set_frame(rt::Rect {
-                        x: f.x, y: f.y, w: f.w, h: b.h + extra - f.y });
+                let sv: *u8 = core::view_of(scroll_in_pane(c));
+                if sv != (0 as *u8) && extra > 0.0f64 {
+                    // The SCROLL is extended, not the pane: a routed pane's
+                    // scroll sits a few nodes down, in its own superview's
+                    // space, so the host's bottom is converted into it. To the
+                    // host's bottom plus the inset — idempotent across passes.
+                    let sup: *u8 = { rt::msg_id(sv, rt::sel(#str_ptr("superview\0"))) };
+                    if sup != (0 as *u8) {
+                        let edge: rt::Rect = { msg_rect_rect_id_tabs(v, rt::sel(#str_ptr("convertRect:toView:\0")),
+                            rt::Rect { x: 0.0f64, y: b.h + extra, w: 1.0f64, h: 0.0f64 }, sup) };
+                        let f: rt::Rect = ui::View::from_raw(sv).frame();
+                        ui::View::from_raw(sv).set_frame(rt::Rect {
+                            x: f.x, y: f.y, w: f.w, h: edge.y - f.y });
+                    }
                 }
             }
             option::Option[*core::Node]::None => { }
@@ -2975,10 +3015,11 @@ fn inset_scroll_panes(n: *core::Node, p: *props::TabsProps, h: f64) {
     while i < count {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
-                if core::kind_of(c) == props::K_SCROLL {
+                let sc: *core::Node = scroll_in_pane(c);
+                if sc != (0 as *core::Node) {
                     var want: f64 = 0.0f64;
                     if under && (i as i64) == at { want = h; }
-                    set_tab_inset(core::view_of(c), want);
+                    set_tab_inset(core::view_of(sc), want);
                 }
             }
             option::Option[*core::Node]::None => { }
