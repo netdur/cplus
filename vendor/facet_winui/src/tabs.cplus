@@ -2,6 +2,7 @@
 import "stdlib/box" as box;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/text" as text;
 import "winui/winui" as ui;
 import "winrt/runtime" as rt;
 import "facet/facet" as core;
@@ -14,6 +15,7 @@ import "./native" as native;
 import "./style" as style;
 import "./typography" as typography;
 import "./choice_colors" as colors;
+import "./agent_hooks" as agent_hooks;
 struct Pane {opaque node: *core::Node,display: flex::Display,item: rt::Object}
 struct State {strip: rt::Object,panes: vec::Vec[Pane],token: ui::EventRegistrationToken}
 static LIVE: i64=0;
@@ -85,7 +87,7 @@ fn apply(r: *record::View) {
             if old_focus!=ui::focus_state_unfocused {focus_index=i as i64;focus_state=old_focus;}
             let replacement=native::must::[ui::TabViewItem](ui::TabViewItem::new());native::check(replacement.set_is_closable(false));native::check(replacement.set_header(header((*pane).node)));
             let styled=item_palette(replacement.object(),p);item_background(replacement.object(),p);
-            native::check(entries(r).set_at(i as u32,replacement.object()));(*pane).item=replacement.object();
+            agent_hooks::release((*pane).item);native::check(entries(r).set_at(i as u32,replacement.object()));(*pane).item=replacement.object();publish_tab(r,(*pane).node,(*pane).item);
         } else {item_background((*pane).item,p);}
     },option::Option::None=>{}}i=i+1;}
     sync_selection(r);
@@ -104,6 +106,15 @@ fn header(node: *core::Node) -> rt::Object {
     let children=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](native::must::[ui::IPanel](ui::IPanel::query(panel.object())).children())));native::check(children.append(icon.object()));native::check(children.append(label.object()));
     return panel.object();
 }
+// A TAB AN AGENT CAN PRESS (reports/spendwise/S12). The TabViewItems are this
+// backend's, not facet nodes, so each is published under `<tabs key>:tab:<pane
+// key>`; the agent's click selects it through UI Automation's selection
+// pattern, and the TabView's own SelectionChanged — the one a person's click
+// raises — writes `selected_index` and tells the application.
+fn publish_tab(r: *record::View,pane: *core::Node,item: rt::Object) {
+    let owner: str=(*(*r).node).key();if owner=="" {return;}
+    let id: text::Text="${owner}:tab:${(*pane).key()}";agent_hooks::alias(item,(*r).node,id.view());
+}
 // A pane's icon changed (tabs::Tabs::set_tab_symbol): every header is re-made.
 fn refresh_headers(r: *record::View) {
     let s=state(r);var i: usize=0;while i<(*s).panes.count() {match (*s).panes.at_ptr(i) {option::Option::Some(pane)=>{
@@ -112,12 +123,12 @@ fn refresh_headers(r: *record::View) {
 }
 fn insert(r: *record::View,child: *record::View,index: usize) {
     (*r).applying=true;let item=native::must::[ui::TabViewItem](ui::TabViewItem::new());native::check(item.set_is_closable(false));native::check(item.set_header(header((*child).node)));
-    assert (*state(r)).panes.insert(Pane {node:(*child).node,display:core::display_of((*child).node),item:item.object()},index).is_ok();native::check(entries(r).insert_at(index as u32,item.object()));apply(r);
+    assert (*state(r)).panes.insert(Pane {node:(*child).node,display:core::display_of((*child).node),item:item.object()},index).is_ok();native::check(entries(r).insert_at(index as u32,item.object()));publish_tab(r,(*child).node,item.object());apply(r);
 }
 fn remove(r: *record::View,child: *record::View) {
     (*r).applying=true;let s=state(r);var i: usize=0;while i<(*s).panes.count() {
         match (*s).panes.at_ptr(i) {option::Option::Some(pane)=>{if (*pane).node==(*child).node {
-            (*(*pane).node).set_display((*pane).display);let removed=(*s).panes.remove(i);native::check(entries(r).remove_at(i as u32));sync_selection(r);(*r).applying=false;return;
+            (*(*pane).node).set_display((*pane).display);agent_hooks::release((*pane).item);let removed=(*s).panes.remove(i);native::check(entries(r).remove_at(i as u32));sync_selection(r);(*r).applying=false;return;
         }},option::Option::None=>{}}i=i+1;
     }
     (*r).applying=false;

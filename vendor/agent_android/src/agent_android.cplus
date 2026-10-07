@@ -26,6 +26,7 @@ import "facet_android/recycler" as recycler;
 import "facet_android/mainthread" as mainthread;
 import "facet/tree" as tree;
 import "facet/relist" as frelist;
+import "facet/tabs" as ftabs;
 
 // A registry index and the facet node behind it, in step by construction: the
 // walk appends to both together.
@@ -175,6 +176,79 @@ fn register(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
     return idx;
 }
 
+// A TAB of a `tabs` node, as a Button an agent can press (reports/spendwise/
+// S12). The bar is this backend's own strip — buttons facet never sees as
+// nodes — so the walk never met them. Each pane gets `<tabs key>:tab:<pane
+// key>`, named by the pane's key (its title), the showing one described as
+// "selected". The entry's node is the PANE, a real node, so every other verb
+// that resolves it stays safe; `click` recognises the part by its id and
+// picks the pane's index through its parent, the tabs node.
+fn register_tab_parts(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
+                      me: usize, base: str, n: *core::Node) {
+    var showing: i64 = -1 as i64;
+    match ftabs::from(n) {
+        option::Option[ftabs::Tabs]::Some(t) => { showing = t.selected_index(); }
+        option::Option[ftabs::Tabs]::None => { }
+    }
+    var i: usize = 0 as usize;
+    while i < core::child_count_of(n) {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                var title: text::Text = text::from_str({ (*c).key() });
+                if title.is_empty() { title = "${i}"; }
+                let id: text::Text = "${base}:tab:${title}";
+                let at: usize = register(reg, nodes, me, { id.view() }, identity::Role::Button, c);
+                reg.set_name(at, { title.view() });
+                if (i as i64) == showing { reg.set_description(at, "selected"); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Which tab registry entry `node` is a part for: the pane's index under its
+// tabs node, or -1 when the entry is not a tab part. Recognised by its parent
+// (a `tabs` node) and its id (`<tabs key>:tab:…`) — the pane's own entry has
+// the same parent and node, and is not a part.
+fn tab_part_index(s: *Surface, node: usize) -> i64 {
+    let parent: usize = match { (*s).reg.parent_of(node) } {
+        option::Option[usize]::Some(p) => p,
+        option::Option[usize]::None => { return -1 as i64; },
+    };
+    let owner: *core::Node = node_of(s, parent);
+    if owner == (0 as *core::Node) || core::kind_of(owner) != props::K_TABS { return -1 as i64; }
+    let prefix: text::Text = "${{ (*owner).key() }}:tab:";
+    let id: str = { (*s).reg.resolved_id(node) };
+    if !id.has_prefix({ prefix.view() }) { return -1 as i64; }
+    let pane: *core::Node = node_of(s, node);
+    var i: usize = 0 as usize;
+    while i < core::child_count_of(owner) {
+        match core::child_of(owner, i) {
+            option::Option[*core::Node]::Some(c) => { if c == pane { return i as i64; } }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return -1 as i64;
+}
+
+// If registry entry `node` is a tab part, pick its tab — what a tap does.
+fn click_tab_part(s: *Surface, node: usize) -> bool {
+    let at: i64 = tab_part_index(s, node);
+    if at < (0 as i64) { return false; }
+    let parent: usize = match { (*s).reg.parent_of(node) } {
+        option::Option[usize]::Some(p) => p,
+        option::Option[usize]::None => { return false; },
+    };
+    match ftabs::from(node_of(s, parent)) {
+        option::Option[ftabs::Tabs]::Some(t) => { let _t: ftabs::Tabs = t.pick_tab(at as usize); }
+        option::Option[ftabs::Tabs]::None => { return false; }
+    }
+    return true;
+}
+
 fn open(root: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var nodes: vec::Vec[usize] = vec::new::[usize]();
@@ -198,6 +272,7 @@ fn walk_rooted(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
         let t: text::Text = text_of(n);
         if { t.view() } != "" { reg.set_content_name(me, { t.view() }); }
         if !is_actionable(n) { reg.set_observe_only(me); }
+        if core::kind_of(n) == props::K_TABS { register_tab_parts(reg, nodes, me, key, n); }
     }
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
@@ -379,7 +454,7 @@ fn live_node(s: *Surface, index: usize, view: identity::NodeView) -> mcpb::UiNod
         // CLICKABLE is what the CONTROL offers, `actionable` is what this grant
         // may do with it. iris's components.txt records gtk and win32 filling
         // one with the other; keeping them apart is the whole point of the pair.
-        clickable: is_actionable(n),
+        clickable: is_actionable(n) || tab_part_index(s, index) >= (0 as i64),
         // WIRED: does the control actually have a handler behind it? None means
         // "this backend did not look", and here it always looked.
         wired: option::Option[bool]::Some(is_actionable(n)),
@@ -448,6 +523,7 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
                 let n: *core::Node = node_of(#addr_of(this) as *Surface, node);
                 if n == (0 as *core::Node) { return surface::Outcome::NotFound; }
+                if click_tab_part(#addr_of(this) as *Surface, node) { return surface::Outcome::Allowed; }
                 if controls::agent_click(n) { return surface::Outcome::Allowed; }
                 // A ROW IS CLICKED THROUGH ITS LIST, not through itself: the
                 // row's own node is a bare container with no handler, and the

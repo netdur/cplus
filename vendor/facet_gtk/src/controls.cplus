@@ -3505,6 +3505,17 @@ fn rebuild_tab_strip(v: *u8, n: *core::Node, count: usize) {
                 // title of its own, and a key is the one name every node has.
                 let b: gtk::Button = gtk::Button::new_with_label({ (*pane).key() });
                 b.upcast().add_css_class("flat");
+                // A TAB AN AGENT CAN PRESS (reports/spendwise/S12). A widget's
+                // name is its agent id here — what `set_identity` writes for a
+                // keyed node — so naming the strip button `<tabs key>:tab:<pane
+                // key>` puts the tab in the agent's tree as a Button, and its
+                // click is this button's own handler: the same tap a person
+                // makes. The strip is the backend's, so nothing else could.
+                let owner_key: str = { (*n).key() };
+                if owner_key != "" {
+                    let tab_id: text::Text = "${owner_key}:tab:${{ (*pane).key() }}";
+                    b.upcast().set_name(tab_id.view());
+                }
                 // The pane's icon (MAUI's Page.IconImageSource): on this backend
                 // a bundled glyph is TEXT, so it is a markup label before the
                 // title, in a box like a button's own image + label.

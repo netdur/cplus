@@ -32,6 +32,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/tree" as ftree;
 import "facet/relist" as frelist;
+import "facet/tabs" as ftabs;
 import "facet/application" as app;
 import "facet/window" as fwindow;
 import "agent_core/identity" as identity;
@@ -1026,10 +1027,20 @@ const PART_CLEAR: u32 = 2u32;
 // triangle gets its own address, the same way a search field's cancel glyph
 // does, and the row's own click means what a click on a row means: select.
 const PART_DISCLOSURE: u32 = 3u32;
+// A TAB of a `tabs` node: PART_TAB_BASE + the pane's index. A native tab bar's
+// items are the backend's — a UITabBar item, an Android strip button — not facet
+// nodes, so the walk never met them and an agent could reach every label in an
+// app and not the four controls that navigate it (reports/spendwise/S12). Each
+// pane gets a part `<tabs key>:tab:<pane key>`, a Button, and a click on it does
+// what a person's tap does: `Tabs::pick_tab`, which selects AND tells the app.
+const PART_TAB_BASE: u32 = 1000u32;
 
 struct ViewRef {
     opaque p: *u8,
     part: u32,
+    // The facet node a part acts on, when the view alone cannot say which —
+    // a `tabs` node's TAB parts. Null for every other entry.
+    opaque node: *core::Node,
 }
 
 // The live surface of one window: the identity tree, the NodeId->NSView map
@@ -1086,6 +1097,20 @@ fn view_a11y_string(view: *u8, prop: str) -> text::Text {
 //           does. Through the same two notifications `set_text` uses, so the
 //           props, the view and the app stay in step — emptying the field
 //           behind them is the desync that made `set_text` a bug once already.
+// A tab part: what a person's tap on that tab does. Runs on the main thread —
+// every verb here does.
+fn click_tab(n: *core::Node, at: u32) -> surface::Outcome {
+    if n.is_null() { return surface::Outcome::Stale; }
+    return match ftabs::from(n) {
+        option::Option[ftabs::Tabs]::Some(t) => {
+            if (at as usize) >= core::child_count_of(n) { return surface::Outcome::Stale; }
+            let _t: ftabs::Tabs = t.pick_tab(at as usize);
+            surface::Outcome::Allowed
+        },
+        option::Option[ftabs::Tabs]::None => surface::Outcome::Stale,
+    };
+}
+
 fn click_part(v: *u8, part: u32) -> surface::Outcome {
     if part == PART_SEARCH {
         activate_owner_on_main(v);
@@ -1151,7 +1176,31 @@ fn add_part(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
     reg.set_enabled(child, live_enabled(owner));
     reg.set_name(child, name);
     let _r: *u8 = rt::retain(owner);
-    views.append(ViewRef { p: owner, part: part });
+    views.append(ViewRef { p: owner, part: part, node: 0 as *core::Node });
+    return;
+}
+
+// One TAB of a `tabs` node as its own Button. The id is the tabs' key, `:tab:`,
+// and the pane's key — which is the tab's title everywhere, so it is also the
+// name. The showing tab says so in its description, because a tab bar's whole
+// state is which one that is.
+fn add_tab_part(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
+                owner: *u8, parent: usize, base: str, n: *core::Node, at: usize,
+                selected: bool) {
+    var title: text::Text = text::new();
+    match core::child_of(n, at) {
+        option::Option[*core::Node]::Some(c) => { title = text::from_str({ (*c).key() }); }
+        option::Option[*core::Node]::None => { }
+    }
+    if title.is_empty() { title = "${at}"; }
+    let id: text::Text = "${base}:tab:${title}";
+    let child: usize = reg.add_child(parent, option::Option[str]::Some({ id.view() }),
+                                     identity::Role::Button);
+    reg.set_enabled(child, live_enabled(owner));
+    reg.set_name(child, { title.view() });
+    if selected { reg.set_description(child, "selected"); }
+    let _r: *u8 = rt::retain(owner);
+    views.append(ViewRef { p: owner, part: PART_TAB_BASE + (at as u32), node: n });
     return;
 }
 
@@ -1212,7 +1261,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
         option::Option::None => { }
     }
     let _r: *u8 = rt::retain(view);
-    views.append(ViewRef { p: view, part: PART_SELF });
+    views.append(ViewRef { p: view, part: PART_SELF, node: 0 as *core::Node });
 
     // The parts a subview walk cannot reach. Only for a field the developer
     // tagged: exposure is opt-in, and a sub-control of an unexposed control has
@@ -1301,7 +1350,7 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
                 option::Option::None => { }
             }
             let _r: *u8 = rt::retain(view);
-            views.append(ViewRef { p: view, part: PART_SELF });
+            views.append(ViewRef { p: view, part: PART_SELF, node: 0 as *core::Node });
 
             // The parts a tree walk cannot reach: a control that carries more
             // than one affordance. Same rule as before — only on a keyed node.
@@ -1311,6 +1360,18 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             }
             if row_is_expandable(view) {
                 add_part(reg, views, view, me, key, PART_DISCLOSURE, ":disclosure", "Disclosure");
+            }
+            if core::kind_of(n) == props::K_TABS {
+                var showing: i64 = -1 as i64;
+                match ftabs::from(n) {
+                    option::Option[ftabs::Tabs]::Some(t) => { showing = t.selected_index(); }
+                    option::Option[ftabs::Tabs]::None => { }
+                }
+                var ti: usize = 0 as usize;
+                while ti < core::child_count_of(n) {
+                    add_tab_part(reg, views, view, me, key, n, ti, (ti as i64) == showing);
+                    ti = ti +% (1 as usize);
+                }
             }
 
             // A ROW IS NOT A FACET NODE, and it is the one thing an
@@ -1507,7 +1568,7 @@ fn walk_window(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window
         }
     };
     let _rw: *u8 = rt::retain(window);
-    views.append(ViewRef { p: window, part: PART_SELF });
+    views.append(ViewRef { p: window, part: PART_SELF, node: 0 as *core::Node });
 
     if !is_null(root as *u8) {
         walk_facet(reg, views, root, win_reg);
@@ -1546,7 +1607,7 @@ fn open(window: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
     // NodeId 0 is the synthetic app root — no backing view.
-    views.append(ViewRef { p: null(), part: PART_SELF });
+    views.append(ViewRef { p: null(), part: PART_SELF, node: 0 as *core::Node });
     walk_window(reg, views, window);
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
 }
@@ -1577,7 +1638,7 @@ fn open(window: *u8) -> Surface {
 fn open_app() -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
-    views.append(ViewRef { p: null(), part: PART_SELF });
+    views.append(ViewRef { p: null(), part: PART_SELF, node: 0 as *core::Node });
     // ONE WALK PER NATIVE WINDOW, not per registered root. macOS gives every
     // screen its own NSWindow — a sheet included — so this changes nothing
     // here today; it is what keeps the loop honest for a platform where one
@@ -1652,6 +1713,13 @@ impl Surface {
         return match this.views.at_ptr(node) {
             option::Option[*ViewRef]::Some(r) => { (*r).part },
             option::Option::None => PART_SELF,
+        };
+    }
+
+    fn facet_node_of(this, node: usize) -> *core::Node {
+        return match this.views.at_ptr(node) {
+            option::Option[*ViewRef]::Some(r) => { (*r).node },
+            option::Option::None => 0 as *core::Node,
         };
     }
 
@@ -1807,6 +1875,9 @@ impl Surface {
                 // its view, and the field declares drive_text, so the check
                 // would refuse a click on a button that is genuinely a button.
                 let part: u32 = this.part_of(node);
+                if part >= PART_TAB_BASE {
+                    return click_tab(this.facet_node_of(node), part - PART_TAB_BASE);
+                }
                 if part != PART_SELF {
                     return click_part(v, part);
                 }
@@ -2376,7 +2447,11 @@ fn view_clickable(v: *u8, part: u32) -> bool {
     // answering true here is not a claim taken on trust — `row_is_expandable`
     // asked the outline before the node existed.
     if part != PART_SELF {
-        return part == PART_SEARCH || part == PART_CLEAR || part == PART_DISCLOSURE;
+        // A tab part exists only for a pane that exists, `click_tab` answers it,
+        // and `pick_tab` fires the app's `on_tab_changed` — so it is clickable
+        // and wired, like the other three.
+        return part == PART_SEARCH || part == PART_CLEAR || part == PART_DISCLOSURE
+            || part >= PART_TAB_BASE;
     }
     match get_declared_drive(v) {
         option::Option[u32]::Some(d) => {
@@ -2414,7 +2489,11 @@ fn view_clickable(v: *u8, part: u32) -> bool {
 fn view_wired(v: *u8, part: u32) -> bool {
     if is_null(v) { return false; }
     if part != PART_SELF {
-        return part == PART_SEARCH || part == PART_CLEAR || part == PART_DISCLOSURE;
+        // A tab part exists only for a pane that exists, `click_tab` answers it,
+        // and `pick_tab` fires the app's `on_tab_changed` — so it is clickable
+        // and wired, like the other three.
+        return part == PART_SEARCH || part == PART_CLEAR || part == PART_DISCLOSURE
+            || part >= PART_TAB_BASE;
     }
     match get_declared_drive(v) {
         option::Option[u32]::Some(d) => {

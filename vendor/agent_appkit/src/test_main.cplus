@@ -25,6 +25,7 @@ import "facet/tree" as ftree;
 import "facet/relist" as frelist;
 import "facet/obs_vec" as obs_vec;
 import "facet/application" as app;
+import "facet/tabs" as ftabs;
 import "stdlib/thread" as thread;   // the off-main invoke_menu regression below needs a real second thread
 import "./agent_appkit" as agent;
 
@@ -2932,4 +2933,81 @@ fn mcp_snapshots_read_native_views_on_the_main_thread() {
     assert READ_PROBE_OFF_MAIN == 0;
     READ_PROBE_SURFACE = 0 as *u8;
     win.close(); app::reset_default_for_tests();
+}
+
+
+// ---- a native tab bar is reachable (reports/spendwise/S12) -------------------
+// The bar's items are the backend's, not facet nodes, so the walk never met
+// them: an agent could reach every label and not the controls that navigate.
+
+static TAB_HEARD: i64 = 0 as i64;
+fn heard_tab(sender: *u8, ctx: *u8) { TAB_HEARD = TAB_HEARD + (1 as i64); return; }
+
+fn tabs_fixture(win: *u8) -> core::Node {
+    let content: *u8 = content_of(ak::Window::from_raw(win)).raw();
+    var t: core::Node = ftabs::tabs(key: "nav", on_tab_changed: heard_tab);
+    core::set_view(#addr_of(t), content, noop_release);
+    let _a: status::Status = t.add_child(core::column(core::Builder::new(), key: "Dashboard"));
+    let _b: status::Status = t.add_child(core::column(core::Builder::new(), key: "Income"));
+    let _c: status::Status = t.add_child(core::column(core::Builder::new(), key: "Goals"));
+    return t;
+}
+
+#[test]
+fn each_tab_of_a_tabs_node_is_a_button_an_agent_can_find() {
+    let win = fixture_window(300.0, 200.0);
+    var root: core::Node = tabs_fixture(win.raw());
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open_app();
+    let sp: *u8 = #addr_of(s) as *u8;
+    let nodes: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    assert has_mcp(nodes, "nav:tab:Dashboard");
+    assert has_mcp(nodes, "nav:tab:Income");
+    assert has_mcp(nodes, "nav:tab:Goals");
+    match mcp_named(nodes, "nav:tab:Income") {
+        option::Option[*mcpb::UiNode]::Some(n) => {
+            assert identity::role_eq({ (*n).role }, identity::Role::Button);
+            assert { (*n).clickable };
+            assert { (*n).actionable };
+        }
+        option::Option[*mcpb::UiNode]::None => { assert false; }
+    }
+    // The showing tab says so.
+    match mcp_named(nodes, "nav:tab:Dashboard") {
+        option::Option[*mcpb::UiNode]::Some(n) => { assert { (*n).description.view() } == "selected"; }
+        option::Option[*mcpb::UiNode]::None => { assert false; }
+    }
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn clicking_a_tab_selects_it_and_the_app_hears_it() {
+    TAB_HEARD = 0 as i64;
+    let win = fixture_window(300.0, 200.0);
+    var root: core::Node = tabs_fixture(win.raw());
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open_app();
+    assert surface::outcome_eq(s.click(auth::operator(), "nav:tab:Income"),
+                               surface::Outcome::Allowed);
+    match ftabs::from(#addr_of(root)) {
+        option::Option[ftabs::Tabs]::Some(t) => { assert t.selected_index() == (1 as i64); }
+        option::Option[ftabs::Tabs]::None => { assert false; }
+    }
+    assert TAB_HEARD == (1 as i64);
+    // The tab already showing: nothing happens, as a tap on it does nothing.
+    let _again: surface::Outcome = s.click(auth::operator(), "nav:tab:Income");
+    assert TAB_HEARD == (1 as i64);
+    // And the next describe moves the marker.
+    let sp: *u8 = #addr_of(s) as *u8;
+    let nodes: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    match mcp_named(nodes, "nav:tab:Income") {
+        option::Option[*mcpb::UiNode]::Some(n) => { assert { (*n).description.view() } == "selected"; }
+        option::Option[*mcpb::UiNode]::None => { assert false; }
+    }
+    // NEGATIVE: an observer cannot press it.
+    TAB_HEARD = 0 as i64;
+    let ro: surface::Outcome = s.click(auth::reader(), "nav:tab:Goals");
+    assert !surface::outcome_eq(ro, surface::Outcome::Allowed);
+    assert TAB_HEARD == (0 as i64);
+    app::reset_default_for_tests();
 }

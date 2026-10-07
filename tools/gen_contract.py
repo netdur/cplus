@@ -3456,6 +3456,22 @@ def emit_control(row_type, merged):
         o.append("        }\n")
         o.append("        core::touch(this._p, P_TAB_ITEMS);\n")
         o.append("        return this;\n    }\n")
+        o.append("\n    // WHAT A PERSON'S TAP DOES: select the tab AND tell the application, the\n")
+        o.append("    // way every backend's own tap handler does. `set_selected_index` is the\n")
+        o.append("    // application's quiet write and fires nothing; this is the door an agent\n")
+        o.append("    // goes through (reports/spendwise/S12), so the app hears it exactly as it\n")
+        o.append("    // hears a finger. Picking the tab already showing does nothing, as a tap\n")
+        o.append("    // on it does nothing. Main thread only, like any write.\n")
+        o.append(f"    fn pick_tab(this, at: usize) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        if at >= core::child_count_of(this._p) { return this; }\n")
+        o.append("        if { (*p).selected_index } == (at as i64) { return this; }\n")
+        o.append("        { (*p).selected_index = at as i64 };\n")
+        o.append("        core::touch(this._p, P_SELECTED_INDEX);\n")
+        o.append("        let h: fn(*u8, *u8) = { (*p).on_tab_changed };\n")
+        o.append("        if h != props::no_handler { h(core::view_of(this._p), { (*p).on_tab_changed_ctx }); }\n")
+        o.append("        return this;\n    }\n")
         o.append("\n    fn tab_symbol(this, at: usize) -> u32 {\n")
         o.append("        return match core::child_of(this._p, at) {\n")
         o.append("            option::Option[*core::Node]::Some(c) => core::tab_symbol(c),\n")
@@ -4530,7 +4546,8 @@ def emit_manifest(rows_by_control):
                      "| AndroidSpecific.TabbedPage.ToolbarPlacement |\n")
             o.append("| `set_tab_symbol(at:)` / `tab_symbol(at:)` | u32 (`facet/icons`), on the pane "
                      "| Page.IconImageSource |\n")
-            total += 4
+            o.append("| `pick_tab(at:)` | what a tap does: select + on_tab_changed | **facet's own** |\n")
+            total += 5
         if mod in ROW_SOURCE:
             o.append("| `set_count` / `count()` | usize | **facet's own** |\n")
             o.append("| `set_row(_:ctx:)` / `build_row(at:)` | fn(usize, *u8) -> Node "

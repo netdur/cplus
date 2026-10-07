@@ -42,6 +42,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/tree" as ftree;
 import "facet/relist" as frelist;
+import "facet/tabs" as ftabs;
 import "facet/application" as app;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
@@ -597,7 +598,11 @@ fn subview_at(view: *u8, i: usize) -> *u8 {
 
 // ---- the surface ----------------------------------------------------------------
 
-struct ViewRef { opaque p: *u8 }
+// A TAB of a `tabs` node is an entry too (reports/spendwise/S12): `p` is the
+// tabs' own view, `tab` the pane's index (-1 for every other entry), `node` the
+// tabs node a click picks through. A UITabBar's items are UIKit's, not facet
+// nodes, so the walk never met them.
+struct ViewRef { opaque p: *u8, tab: i64, opaque node: *core::Node }
 
 struct Surface {
     reg: identity::Registry,
@@ -652,8 +657,51 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8,
 struct status_of_append { _u: i32 }
 fn append_ref(ref views: vec::Vec[ViewRef], view: *u8) -> status_of_append {
     let _s: status_of_append = status_of_append { _u: 0 };
-    views.append(ViewRef { p: view });
+    views.append(ViewRef { p: view, tab: -1 as i64, node: 0 as *core::Node });
     return _s;
+}
+
+// One Button per pane of a `tabs` node: `<tabs key>:tab:<pane key>`, named by
+// the pane's key (the tab's title everywhere), the showing one described as
+// "selected". A click does what a tap does — `Tabs::pick_tab`.
+fn add_tab_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
+                 view: *u8, parent: usize, base: str, n: *core::Node) {
+    var showing: i64 = -1 as i64;
+    match ftabs::from(n) {
+        option::Option[ftabs::Tabs]::Some(t) => { showing = t.selected_index(); }
+        option::Option[ftabs::Tabs]::None => { }
+    }
+    var i: usize = 0 as usize;
+    while i < core::child_count_of(n) {
+        var title: text::Text = text::new();
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { title = text::from_str({ (*c).key() }); }
+            option::Option[*core::Node]::None => { }
+        }
+        if title.is_empty() { title = "${i}"; }
+        let id: text::Text = "${base}:tab:${title}";
+        let child: usize = reg.add_child(parent, option::Option[str]::Some({ id.view() }),
+                                         identity::Role::Button);
+        reg.set_enabled(child, live_enabled(view));
+        reg.set_name(child, { title.view() });
+        if (i as i64) == showing { reg.set_description(child, "selected"); }
+        let _r: *u8 = rt::retain(view);
+        views.append(ViewRef { p: view, tab: i as i64, node: n });
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn click_tab(n: *core::Node, at: i64) -> surface::Outcome {
+    if n == (0 as *core::Node) { return surface::Outcome::Stale; }
+    if at < (0 as i64) || (at as usize) >= core::child_count_of(n) { return surface::Outcome::Stale; }
+    return match ftabs::from(n) {
+        option::Option[ftabs::Tabs]::Some(t) => {
+            let _t: ftabs::Tabs = t.pick_tab(at as usize);
+            surface::Outcome::Allowed
+        },
+        option::Option[ftabs::Tabs]::None => surface::Outcome::Stale,
+    };
 }
 
 // ---- the walk over FACET'S tree ------------------------------------------------
@@ -693,6 +741,7 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             if { ds.is_empty() } == false { reg.set_description(me, { ds.view() }); }
             let _r: *u8 = rt::retain(view);
             let _a: status_of_append = append_ref(views, view);
+            if core::kind_of(n) == props::K_TABS { add_tab_parts(reg, views, view, me, key, n); }
 
             // A ROW IS NOT A FACET NODE — the same exception the AppKit walk
             // makes, for the same reason. The row IS content and the backend
@@ -838,7 +887,7 @@ fn walk_window(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window
             reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window),
     };
     let _rw: *u8 = rt::retain(window);
-    views.append(ViewRef { p: window });
+    views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node });
 
     var ri: usize = 0 as usize;
     while ri < { roots.count() } {
@@ -858,7 +907,7 @@ fn open(window: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
     // NodeId 0 is the synthetic app root — no backing view.
-    views.append(ViewRef { p: null() });
+    views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node });
     walk_window(reg, views, window);
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
 }
@@ -878,7 +927,7 @@ fn open(window: *u8) -> Surface {
 fn open_app() -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
-    views.append(ViewRef { p: null() });
+    views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node });
     var seen: vec::Vec[usize] = vec::new::[usize]();
     let n: usize = app::window_count();
     var i: usize = 0 as usize;
@@ -934,6 +983,27 @@ impl Surface {
         };
     }
 
+    fn tab_of(this, node: usize) -> i64 {
+        return match this.views.at_ptr(node) {
+            option::Option[*ViewRef]::Some(r) => { (*r).tab },
+            option::Option[*ViewRef]::None => -1 as i64,
+        };
+    }
+
+    fn tabs_node_of(this, node: usize) -> *core::Node {
+        return match this.views.at_ptr(node) {
+            option::Option[*ViewRef]::Some(r) => { (*r).node },
+            option::Option[*ViewRef]::None => 0 as *core::Node,
+        };
+    }
+
+    // A tab part is clickable whatever its owner's view says: `click_tab`
+    // answers it.
+    fn node_clickable(this, node: usize) -> bool {
+        if this.tab_of(node) >= (0 as i64) { return true; }
+        return view_clickable(this.view_of(node));
+    }
+
     // The live snapshot. Reads each node's frame / hidden / text from its view,
     // so it reflects state NOW. The synthetic app root is omitted; snapshot
     // index = NodeId - 1.
@@ -976,7 +1046,7 @@ impl Surface {
                 // model reads this as its tool list, and reporting the ceiling
                 // advertises writes every attempt then refuses.
                 actionable: this.reg.can_act(grant, node),
-                clickable: view_clickable(view),
+                clickable: this.node_clickable(node),
                 // UIKit has the same NSControl-shaped hazard (a UIControl consumes
                 // its own touch), but the reader has not been written here.
                 // `None` says "not answered", which is the only honest value.
@@ -995,6 +1065,10 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
                 let v: *u8 = this.view_of(node);
                 if is_detached(v) { return surface::Outcome::Stale; }
+                // A TAB is answered before the identity check below: its id is
+                // the part's, not the view's.
+                let tab: i64 = this.tab_of(node);
+                if tab >= (0 as i64) { return click_tab(this.tabs_node_of(node), tab); }
                 if !view_still_is(v, id) { return surface::Outcome::Stale; }
                 return click_view(v);
             }
@@ -1355,8 +1429,12 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
         match views.at_ptr(i) {
             option::Option[*identity::NodeView]::Some(n) => {
                 var live: *u8 = null();
+                var is_tab: bool = false;
                 match { (*s).reg.lookup({ (*n).id.view() }) } {
-                    option::Option[usize]::Some(idx) => { live = { (*s).view_of(idx) }; }
+                    option::Option[usize]::Some(idx) => {
+                        live = { (*s).view_of(idx) };
+                        is_tab = { (*s).tab_of(idx) } >= (0 as i64);
+                    }
                     option::Option[usize]::None => { }
                 }
                 // In the lean view the NAME is the text — with one exception,
@@ -1393,7 +1471,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     tier: { (*n).tier },
                     readable: { (*n).readable },
                     actionable: { (*n).actionable },
-                    clickable: view_clickable(live),
+                    clickable: is_tab || view_clickable(live),
                     // This backend has not been taught the question; `None` says so
                     // rather than guessing. See backend::UiNode.wired.
                     wired: option::Option[bool]::None,
