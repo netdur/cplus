@@ -23,6 +23,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "uikit/uikit" as ui;
 import "./window" as window;
+import "./device" as device;
 import "facet/native_dialog" as native_dialog;
 
 // ---- the pending answer -------------------------------------------------------
@@ -146,17 +147,43 @@ fn presenter() -> *u8 {
 fn present(alert: *u8) -> bool {
     let vc: *u8 = presenter();
     if vc == (0 as *u8) { return false; }
+    anchor_popover(alert, vc);
     { msg_void_id_i8_id(vc, rt::sel(#str_ptr("presentViewController:animated:completion:\0")),
                         alert, 1 as i8, 0 as *u8) };
     return true;
 }
 
+// AN ACTION SHEET IS A POPOVER ON AN iPAD, and UIKit raises rather than guess
+// where it points from: presenting one with no source view is an
+// NSGenericException. It is anchored to the bottom centre of the presenter's
+// view with no arrow, where a phone's sheet rises from.
+//
+// NOT ON A PHONE. iOS 26 makes an ANCHORED sheet a popover on a phone too,
+// pinned to the anchor; unanchored, the phone shows its own centred glass
+// card over a dimmed screen (both measured on the iPhone 17 Pro simulator,
+// iOS 26.0, preferredStyle read back as ActionSheet). `choose` is not told
+// which element asked, so the phone keeps the system's presentation.
+fn anchor_popover(alert: *u8, vc: *u8) {
+    if device::is_phone() { return; }
+    let pop: *u8 = { rt::msg_id(alert, rt::sel(#str_ptr("popoverPresentationController\0"))) };
+    if pop == (0 as *u8) { return; }
+    let host: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    if host == (0 as *u8) { return; }
+    let b: rt::Rect = { rt::msg_rect(host, rt::sel(#str_ptr("bounds\0"))) };
+    { rt::msg_void_id(pop, rt::sel(#str_ptr("setSourceView:\0")), host) };
+    { rt::msg_void_rect(pop, rt::sel(#str_ptr("setSourceRect:\0")),
+                        rt::Rect { x: b.x + b.w / 2.0, y: b.y + b.h, w: 1.0, h: 1.0 }) };
+    { rt::msg_void_u64(pop, rt::sel(#str_ptr("setPermittedArrowDirections:\0")), 0 as u64) };
+    return;
+}
+
 // The shared build. `titles` are the buttons in order; the first is the
 // preferred one, which is what `primary` means everywhere in facet's vocabulary.
 fn build(title: str, message: str, want_field: bool, placeholder: str,
-         initial: str = "") -> *u8 {
+         initial: str = "",
+         style: ui::AlertControllerStyle = ui::AlertControllerStyle::Alert) -> *u8 {
     let c: ui::AlertController = ui::AlertController::alert_controller_with_title(
-        title, message, ui::AlertControllerStyle::Alert);
+        title, message, style);
     let raw: *u8 = c.raw();
     if raw == (0 as *u8) { return 0 as *u8; }
     { rt::retain(raw) };
@@ -197,9 +224,15 @@ fn alert(title: str, message: str, primary: str, secondary: str,
     return;
 }
 
+// AN ACTION SHEET, which is what iOS's "pick one of these" is and what MAUI's
+// `DisplayActionSheet` — the row `choose` carries — draws on iOS. It was built
+// as a centred alert, a shape the platform keeps for a question with an answer
+// rather than a list of choices (spendwise S20, item 7). On iOS 26 the sheet
+// rises from the bottom as glass.
 fn choose(title: str, message: str, options: *vec::Vec[text::Text],
           on_answer: fn(i32, *u8), on_answer_ctx: *u8) {
-    let a: *u8 = build(title, message, false, "");
+    let a: *u8 = build(title, message, false, "",
+                       style: ui::AlertControllerStyle::ActionSheet);
     if a == (0 as *u8) { return; }
     ALERT = a;
     ANSWER_FN = on_answer;

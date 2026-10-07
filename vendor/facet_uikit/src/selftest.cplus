@@ -3138,6 +3138,40 @@ fn a_prompt_gets_exactly_one_text_field() -> bool {
     return n == (1 as u64);
 }
 
+// spendwise S20 item 7: `choose` is an ACTION SHEET, the shape iOS gives "pick
+// one of these" and the one MAUI's DisplayActionSheet draws there.
+fn a_choice_is_built_as_an_action_sheet() -> bool {
+    let a: *u8 = dialogs::build("Pick", "", false, "", style: uik::AlertControllerStyle::ActionSheet);
+    if a == (0 as *u8) { return false; }
+    // UIAlertControllerStyleActionSheet is 0.
+    let style: i64 = { rt::msg_i64(a, rt::sel(#str_ptr("preferredStyle\0"))) };
+    { rt::release(a) };
+    let plain: *u8 = dialogs::build("T", "M", false, "");
+    let plain_style: i64 = { rt::msg_i64(plain, rt::sel(#str_ptr("preferredStyle\0"))) };
+    { rt::release(plain) };
+    return style == (0 as i64) && plain_style == (1 as i64);
+}
+
+// On an iPad the sheet is a popover, and UIKit RAISES when one is presented
+// with no source view. The anchor is the presenter's view.
+fn an_action_sheet_is_anchored_to_its_presenter() -> bool {
+    let a: *u8 = dialogs::build("Pick", "", false, "", style: uik::AlertControllerStyle::ActionSheet);
+    let vc: *u8 = rt::alloc_init(#str_ptr("UIViewController\0"));
+    if a == (0 as *u8) || vc == (0 as *u8) { return false; }
+    let host: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    dialogs::anchor_popover(a, vc);
+    let pop: *u8 = { rt::msg_id(a, rt::sel(#str_ptr("popoverPresentationController\0"))) };
+    var ok: bool = true;
+    if pop != (0 as *u8) {
+        let src: *u8 = { rt::msg_id(pop, rt::sel(#str_ptr("sourceView\0"))) };
+        // A phone keeps its bottom sheet: anchoring makes it a popover there.
+        if device::is_phone() { ok = src == (0 as *u8); } else { ok = src == host; }
+    }
+    { rt::release(a) };
+    { rt::release(vc) };
+    return ok;
+}
+
 // An alert with no window to present on must clean up rather than leave the
 // pending answer armed forever — the next question would inherit it.
 fn a_dialog_with_nowhere_to_present_leaves_no_pending_answer() -> bool {
@@ -4654,6 +4688,9 @@ fn run_all() -> i32 {
     check("a user activity without a webpage url is not a link",
           a_user_activity_without_a_webpage_url_is_not_a_link());
     check("every activity in a set is delivered", every_activity_in_a_set_is_delivered());
+    check("a choice is built as an action sheet", a_choice_is_built_as_an_action_sheet());
+    check("an action sheet is anchored to its presenter",
+          an_action_sheet_is_anchored_to_its_presenter());
     check("an alert carries one button per named title",
           an_alert_carries_one_button_per_named_title());
     check("a prompt gets exactly one text field", a_prompt_gets_exactly_one_text_field());
