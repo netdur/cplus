@@ -1468,6 +1468,31 @@ fn a_gradient_box_keeps_its_corner_radius() -> bool {
     return r == 14.0f64;
 }
 
+// spendwise S20 D4: a root screen asking for `SafeArea::Content` stopped at
+// the status bar while a pushed one ran under it. With nothing pushed, the
+// root's own request now decides, as a pushed screen's does.
+fn a_root_asking_for_content_runs_under_the_bars() -> bool {
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    if win == (0 as *u8) { return false; }
+    let ins: uik::EdgeInsets = uik::EdgeInsets { top: 62.0f64, left: 0.0f64, bottom: 34.0f64, right: 0.0f64 };
+    var plain: core::Node = ui::column(core::Builder::new(), key: "st:sa:plain");
+    app::reset_default_for_tests();
+    app::open_window(#addr_of(plain));
+    app::set_window_native(#addr_of(plain), win);
+    let kept: bool = window::insets_with_bar(win, ins).top == 62.0f64;
+    var full: core::Node = ui::column(core::Builder::new(), key: "st:sa:full");
+    full.set_safe_area(vocab::SafeArea::Content);
+    app::reset_default_for_tests();
+    app::open_window(#addr_of(full));
+    app::set_window_native(#addr_of(full), win);
+    let under: uik::EdgeInsets = window::insets_with_bar(win, ins);
+    let zeroed: bool = under.top == 0.0f64 && under.bottom == 0.0f64;
+    app::reset_default_for_tests();
+    { rt::release(win) };
+    if !kept || !zeroed { io::eprintln(text::from_str("  kept ${kept} zeroed ${zeroed}")); }
+    return kept && zeroed;
+}
+
 // AN MCP CLICK ARRIVES ON THE SERVER'S THREAD, and picking a tab writes the
 // tree, which only the main thread may do. The test above clicks from the main
 // thread and passed while a real agent's tab click trapped the app
@@ -4292,6 +4317,8 @@ fn run_all() -> i32 {
           an_open_alert_is_read_and_answered_by_an_agent());
     check("a gradient box keeps its corner radius",
           a_gradient_box_keeps_its_corner_radius());
+    check("a root asking for Content runs under the bars",
+          a_root_asking_for_content_runs_under_the_bars());
     check("an agent can click a tappable view",
           an_agent_can_click_a_tappable_view());
     check("a scroll pane runs under a glass tab bar",

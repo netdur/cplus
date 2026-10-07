@@ -115,14 +115,11 @@ fn serve_agent_if_asked() {
 
 // ---- modal verbs ---------------------------------------------------------------
 //
-// NOT BUILT, and named rather than approximated. `UIAlertController` is the iOS
-// answer and every one of its actions carries a HANDLER BLOCK — the same block
-// bridge `popup`'s UIMenu and the web tier are waiting on. An alert whose
-// buttons cannot call back is not an alert.
-//
-// facet's own sheet answer (an ordinary facet tree in a window, so an agent can
-// reach it by key) is the better port anyway, and it needs the modal
-// presentation tier rather than UIAlertController.
+// UIAlertController, the system's own (glass on iOS 26), in facet_uikit's
+// dialogs.cplus: present-and-return, the answer arriving in `on_answer` — the
+// same non-blocking shape the desktop's sheets have. An agent reads and answers
+// an open one through `facet/native_dialog`, under the keys the desktop sheet's
+// nodes carry (`alert:primary`, `choose:opt:N`, `prompt:value`, ...).
 
 fn alert(title: str, message: str, primary: str, secondary: str = "",
          on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
