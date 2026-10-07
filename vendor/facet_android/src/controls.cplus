@@ -2569,6 +2569,42 @@ fn embedded_typeface(env: rt::Env, fill: i32) -> jni::jobject {
 // em of `side` pixels, baseline at the bottom, because every Material glyph
 // fills 0..1 em above its baseline. It is drawn in black and TINTED by the
 // view, so it follows the title's colour and its pressed and disabled states.
+// The glyph's INK rectangle relative to its baseline origin, from
+// `Paint.getTextBounds`: what is actually drawn, which is what centring needs.
+struct GlyphBounds { left: i32, top: i32, right: i32, bottom: i32 }
+
+fn glyph_bounds(env: rt::Env, paint_obj: jni::jobject, glyph: jni::jstring, cp: u32) -> GlyphBounds {
+    var out: GlyphBounds = GlyphBounds { left: 0 as i32, top: 0 as i32, right: 0 as i32, bottom: 0 as i32 };
+    let rect: jni::jobject = env.new_object_0(#str_ptr("android/graphics/Rect\0"), #str_ptr("()V\0"));
+    env.clear_exception();
+    if rect == (0 as jni::jobject) { return out; }
+    // One code point: one UTF-16 unit, or a surrogate pair above the BMP.
+    var len: i32 = 1 as i32;
+    if cp > 65535u32 { len = 2 as i32; }
+    let mid: jni::jmethodID = env.method(#str_ptr("android/graphics/Paint\0"), #str_ptr("getTextBounds\0"),
+        #str_ptr("(Ljava/lang/String;IILandroid/graphics/Rect;)V\0"));
+    if mid != (0 as jni::jmethodID) {
+        var a: [jni::JValue; 4] = [jni::arg_object(glyph), jni::arg_int(0 as i32),
+                                   jni::arg_int(len), jni::arg_object(rect)];
+        { (*(*env.raw())).CallVoidMethodA(env.raw(), paint_obj, mid, #addr_of(a[0])) };
+        env.clear_exception();
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/graphics/Rect\0"));
+        let fl: jni::jfieldID = env.field_id(cls, #str_ptr("left\0"), #str_ptr("I\0"));
+        let ft: jni::jfieldID = env.field_id(cls, #str_ptr("top\0"), #str_ptr("I\0"));
+        let fr: jni::jfieldID = env.field_id(cls, #str_ptr("right\0"), #str_ptr("I\0"));
+        let fb: jni::jfieldID = env.field_id(cls, #str_ptr("bottom\0"), #str_ptr("I\0"));
+        if fl != (0 as jni::jfieldID) && ft != (0 as jni::jfieldID)
+           && fr != (0 as jni::jfieldID) && fb != (0 as jni::jfieldID) {
+            out.left = { (*(*env.raw())).GetIntField(env.raw(), rect, fl) };
+            out.top = { (*(*env.raw())).GetIntField(env.raw(), rect, ft) };
+            out.right = { (*(*env.raw())).GetIntField(env.raw(), rect, fr) };
+            out.bottom = { (*(*env.raw())).GetIntField(env.raw(), rect, fb) };
+        }
+    }
+    env.delete_local_ref(rect);
+    return out;
+}
+
 fn glyph_drawable(env: rt::Env, cp: u32, side: i32) -> jni::jobject {
     if cp == 0u32 || side <= (0 as i32) { return 0 as jni::jobject; }
     let tf: jni::jobject = bundled_typeface(env, 0 as i32);
@@ -2616,8 +2652,20 @@ fn glyph_drawable(env: rt::Env, cp: u32, side: i32) -> jni::jobject {
         let draw: jni::jmethodID = env.method(#str_ptr("android/graphics/Canvas\0"),
             #str_ptr("drawText\0"), #str_ptr("(Ljava/lang/String;FFLandroid/graphics/Paint;)V\0"));
         if draw != (0 as jni::jmethodID) && glyph != (0 as jni::jobject) {
-            var dargs: [jni::JValue; 4] = [jni::arg_object(glyph), jni::arg_float(0.0 as f32),
-                                           jni::arg_float(side as f32), jni::arg_object(paint_obj)];
+            // CENTRED BY ITS INK, not stood on the bitmap's bottom edge. A
+            // Material Symbols glyph does not fill its em box down from the
+            // baseline, so drawing at (0, side) left every icon high in its
+            // box: a bottom-bar icon sat at the top of its selection pill,
+            // not in it (glass_music_ios on Android, 2026-10-07).
+            var x: f32 = 0.0 as f32;
+            var y: f32 = side as f32;
+            let b: GlyphBounds = glyph_bounds(env, paint_obj, glyph, cp);
+            if b.right > b.left && b.bottom > b.top {
+                x = { ((side - (b.right - b.left)) as f32) / (2.0 as f32) } - (b.left as f32);
+                y = { ((side - (b.bottom - b.top)) as f32) / (2.0 as f32) } - (b.top as f32);
+            }
+            var dargs: [jni::JValue; 4] = [jni::arg_object(glyph), jni::arg_float(x),
+                                           jni::arg_float(y), jni::arg_object(paint_obj)];
             { (*(*env.raw())).CallVoidMethodA(env.raw(), canvas, draw, #addr_of(dargs[0])) };
             env.clear_exception();
         }
@@ -5264,6 +5312,19 @@ fn dress_bottom_tab(env: rt::Env, n: *core::Node, b: jni::jobject, at: i64, each
     let p: *props::TabsProps = tabs_props(n);
     if p == (0 as *props::TabsProps) { return; }
     var bv: w::View = w::View::from_global(env, env.new_global_ref(b));
+    // THE ICON IN THE PILL, not above it. Material 3 puts the 32dp indicator
+    // 12dp from the bar's top and the 24dp icon centred in it, 16dp down, with
+    // the label 4dp under the indicator. The button's own centring placed the
+    // icon-and-label block by its text metrics, and the icon came out at the
+    // top edge of its pill (glass_music_ios on Android, 2026-10-07).
+    if tabs_have_icons(n) {
+        var tv: w::TextView = w::TextView::from_global(env, env.new_global_ref(b));
+        tv.set_gravity(49 as i32);   // Gravity.TOP | Gravity.CENTER_HORIZONTAL
+        tv.set_compound_drawable_padding({ e::px(8.0f64) as i32 });
+        // `tv` holds a global ref of its own and drops it; the padding goes
+        // through `bv`, which the paths below keep.
+        bv.set_padding(0 as i32, { e::px(16.0f64) as i32 }, 0 as i32, 0 as i32);
+    }
     if { (*p).selected_index } != at {
         bv.set_background(0 as jni::jobject);
         paint::unwrap_keep(bv);
