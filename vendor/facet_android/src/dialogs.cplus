@@ -1,0 +1,233 @@
+// facet_android dialogs — alert, choose, prompt.
+//
+// These were the three verbs Android did not have: the runtime answered
+// `no_backend` for every one of them, so an app's confirmation or rename on a
+// phone did nothing at all. The macOS shape is the model, and for the same
+// reason it was chosen there: the dialog is an ordinary FACET TREE with keyed
+// parts, not a platform AlertDialog, so an agent reads and answers it like any
+// other screen —
+//
+//   alert:title  alert:message  alert:primary  alert:secondary
+//   choose:title choose:message choose:opt:N
+//   prompt:title prompt:message prompt:value   prompt:ok  prompt:cancel
+//
+// — the same keys the desktop sheet and the iOS seam answer to, so one agent
+// script works on every platform. It is drawn as Material 3's dialog: a card
+// with the large corner, the raised surface colour, a headline and text
+// buttons on the right, centred over a scrim, over the window the way a
+// presented screen is (window.cplus `add_overlay`).
+//
+// NON-BLOCKING, as everywhere: the verb returns and the answer arrives on the
+// handler. ONE AT A TIME: a second question while one is open is refused, as
+// iOS refuses to present over an open alert. BACK CANCELS: the secondary
+// answer of an alert that has one, Cancel for a prompt, -1 for a choice — the
+// system Back is how a person leaves a dialog on Android.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/box" as box;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet/text_field" as text_field;
+import "./window" as window;
+import "./scheduler" as scheduler;
+
+const KIND_ALERT: u32 = 1u32;
+const KIND_CHOOSE: u32 = 2u32;
+const KIND_PROMPT: u32 = 3u32;
+
+static OPEN: *core::Node = 0 as *core::Node;
+static OPEN_KIND: u32 = 0u32;
+static HAS_SECONDARY: bool = false;
+static ANSWER_FN: fn(i32, *u8) = 0 as fn(i32, *u8);
+static ANSWER_CTX: *u8 = 0 as *u8;
+static TYPED_FN: fn(str, *u8) = 0 as fn(str, *u8);
+static TYPED_CTX: *u8 = 0 as *u8;
+
+fn is_showing() -> bool { return OPEN != (0 as *core::Node); }
+
+// ---- the three verbs ----------------------------------------------------------
+
+fn alert(title: str, message: str, primary: str, secondary: str,
+         on_answer: fn(i32, *u8), on_answer_ctx: *u8) -> bool {
+    if is_showing() { return false; }
+    var buttons: core::Builder = core::Builder::new();
+    if secondary != "" { buttons.add(text_action(secondary, "alert:secondary", 1)); }
+    buttons.add(text_action(primary, "alert:primary", 0));
+    var b: core::Builder = core::Builder::new();
+    add_heading(b, "alert", title, message);
+    b.add(core::row(buttons, key: "alert:buttons").gap(8.0f64).justify(flex::Justify::FlexEnd));
+    HAS_SECONDARY = secondary != "";
+    return show(core::column(b, key: "alert"), KIND_ALERT, on_answer, on_answer_ctx);
+}
+
+fn choose(title: str, message: str, options: *vec::Vec[text::Text],
+          on_answer: fn(i32, *u8), on_answer_ctx: *u8) -> bool {
+    if is_showing() { return false; }
+    var opts: core::Builder = core::Builder::new();
+    var i: usize = 0 as usize;
+    while i < { (*options).count() } {
+        match { (*options).at_ptr(i) } {
+            option::Option[*text::Text]::Some(t) => {
+                let k: text::Text = "choose:opt:${i}";
+                opts.add(text_action({ (*t).view() }, k.view(), i as i64));
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    var b: core::Builder = core::Builder::new();
+    add_heading(b, "choose", title, message);
+    b.add(core::column(opts, key: "choose:options").gap(4.0f64).align(flex::Align::Stretch));
+    HAS_SECONDARY = false;
+    return show(core::column(b, key: "choose"), KIND_CHOOSE, on_answer, on_answer_ctx);
+}
+
+fn prompt(title: str, message: str, placeholder: str, primary: str, secondary: str,
+          on_typed: fn(str, *u8), on_typed_ctx: *u8,
+          on_answer: fn(i32, *u8), on_answer_ctx: *u8, initial: str) -> bool {
+    if is_showing() { return false; }
+    var b: core::Builder = core::Builder::new();
+    add_heading(b, "prompt", title, message);
+    b.add(ui::text_field(initial, key: "prompt:value", placeholder: placeholder));
+    var buttons: core::Builder = core::Builder::new();
+    if secondary != "" { buttons.add(text_action(secondary, "prompt:cancel", 1)); }
+    buttons.add(ui::button(primary, key: "prompt:ok", bordered: false, on_click: on_prompt_ok));
+    b.add(core::row(buttons, key: "prompt:buttons").gap(8.0f64).justify(flex::Justify::FlexEnd));
+    TYPED_FN = on_typed;
+    TYPED_CTX = on_typed_ctx;
+    HAS_SECONDARY = true;
+    return show(core::column(b, key: "prompt"), KIND_PROMPT, on_answer, on_answer_ctx);
+}
+
+// THE SYSTEM BACK, while a dialog is open: it is answered as a cancel. True
+// when there was one to cancel, so Back does nothing else.
+fn cancel() -> bool {
+    if !is_showing() { return false; }
+    var answer: i32 = 1;
+    if OPEN_KIND == KIND_CHOOSE { answer = -1; }
+    if OPEN_KIND == KIND_ALERT && !HAS_SECONDARY { answer = 0; }
+    finish(answer);
+    return true;
+}
+
+// ---- building ------------------------------------------------------------------
+
+fn add_heading(ref b: core::Builder, kind: str, title: str, message: str) {
+    let tk: text::Text = "${kind}:title";
+    b.add(ui::label(title, key: tk.view(), named_size: vocab::NamedSize::Title,
+                    line_break: vocab::LineBreak::WordWrap));
+    if message != "" {
+        let mk: text::Text = "${kind}:message";
+        b.add(ui::label(message, key: mk.view(), named_size: vocab::NamedSize::Body,
+                        line_break: vocab::LineBreak::WordWrap,
+                        text_color: vocab::Color::text_secondary()));
+    }
+    return;
+}
+
+// A text button — Material's dialog action. The answer index rides the ctx.
+fn text_action(title: str, key: str, index: i64) -> core::Node {
+    return ui::button(title, key: key, bordered: false, on_click: on_action,
+                      on_click_ctx: index as *u8);
+}
+
+fn show(take card: core::Node, kind: u32, on_answer: fn(i32, *u8), on_answer_ctx: *u8) -> bool {
+    var body: core::Node = card;
+    // Material 3's dialog: the large corner, the raised surface, 24dp inside.
+    body.set_background_color(vocab::Color::raised());
+    body.set_corner_radius(vocab::Corners::all(28.0f64));
+    body.set_padding(flex::Edge::All, flex::StyleLength::points(24.0f64));
+    body.set_gap(flex::Gutter::All, flex::StyleLength::points(16.0f64));
+    var wide: f64 = scheduler::width() - 48.0f64;
+    if wide > 560.0f64 { wide = 560.0f64; }
+    if wide < 280.0f64 { wide = 280.0f64; }
+    body.set_width(flex::StyleLength::points(wide));
+    var b: core::Builder = core::Builder::new();
+    b.add(body);
+    var scrim: core::Node = core::column(b, key: "@dialog");
+    scrim.set_background_color(vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 0.32f64));
+    scrim.set_grow(1.0f64);
+    scrim.set_justify_content(flex::Justify::Center);
+    scrim.set_align_items(flex::Align::Center);
+    let rp: *core::Node = match box::new::[core::Node](scrim) {
+        option::Option[box::Box[core::Node]]::Some(bx) => bx.into_raw() as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if rp == (0 as *core::Node) { return false; }
+    OPEN = rp;
+    OPEN_KIND = kind;
+    ANSWER_FN = on_answer;
+    ANSWER_CTX = on_answer_ctx;
+    if !window::add_overlay(rp) {
+        OPEN = 0 as *core::Node;
+        let _t = box::from_raw::[core::Node](rp as *u8);
+        return false;
+    }
+    return true;
+}
+
+// ---- answering -----------------------------------------------------------------
+
+fn on_action(sender: *u8, ctx: *u8) { finish({ #addr(ctx) } as i32); return; }
+
+// The prompt's OK reads the field BEFORE the tree goes.
+fn on_prompt_ok(sender: *u8, ctx: *u8) {
+    match text_field::find("prompt:value", within: OPEN) {
+        option::Option[text_field::TextField]::Some(f) => {
+            let typed: text::Text = text::from_str(f.text());
+            let g: fn(str, *u8) = TYPED_FN;
+            if g != (0 as fn(str, *u8)) { g(typed.view(), TYPED_CTX); }
+        }
+        option::Option[text_field::TextField]::None => { }
+    }
+    finish(0);
+    return;
+}
+
+// Off the screen, then the answer. The tree is freed on the NEXT turn: this
+// runs inside a click on one of its own buttons.
+fn finish(answer: i32) {
+    let root: *core::Node = OPEN;
+    if root == (0 as *core::Node) { return; }
+    OPEN = 0 as *core::Node;
+    OPEN_KIND = 0u32;
+    let f: fn(i32, *u8) = ANSWER_FN;
+    let ctx: *u8 = ANSWER_CTX;
+    ANSWER_FN = 0 as fn(i32, *u8);
+    TYPED_FN = 0 as fn(str, *u8);
+    window::remove_overlay(root);
+    services::free_next_turn(free_root, root as *u8);
+    if f != (0 as fn(i32, *u8)) { f(answer, ctx); }
+    return;
+}
+
+fn free_root(p: *u8) { let _t = box::from_raw::[core::Node](p); }
+
+// ---- tests ----------------------------------------------------------------------
+// The drawing needs an Activity; what is checkable headless is that a dialog
+// with nowhere to draw is REFUSED and leaves nothing armed — a stale handler
+// would answer the next question with this one's callback.
+
+static TEST_ANSWERS: i32 = 0;
+fn test_answer(index: i32, ctx: *u8) { TEST_ANSWERS = TEST_ANSWERS + 1; return; }
+
+#[test]
+fn with_no_window_a_dialog_is_refused_and_nothing_is_left_open() {
+    TEST_ANSWERS = 0;
+    assert !alert("Delete?", "Gone for good.", "Delete", "Cancel", test_answer, 0 as *u8);
+    assert !is_showing();
+    var opts: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let _a = opts.append(text::from_str("one"));
+    assert !choose("Pick", "", #addr_of(opts), test_answer, 0 as *u8);
+    assert !prompt("Rename", "", "", "OK", "Cancel", 0 as fn(str, *u8), 0 as *u8,
+                   test_answer, 0 as *u8, "old");
+    assert !is_showing();
+    // Back with nothing open is not a dialog's to take.
+    assert !cancel();
+    assert TEST_ANSWERS == 0;
+}

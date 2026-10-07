@@ -28,6 +28,7 @@ import "facet_android/facet_android" as backend;
 import "facet_android/entry" as entry;
 import "facet_android/window" as host;
 import "facet_android/scheduler" as sched;
+import "facet_android/dialogs" as dialogs;
 
 type Node = flex::Node;
 type Builder = core::Builder;
@@ -168,7 +169,11 @@ fn app_appearance() -> vocab::Appearance {
 fn alert(title: str, message: str, primary: str, secondary: str = "",
          on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
          on_answer_ctx: *u8 = 0 as *u8) {
-    no_backend("alert");
+    // A Material dialog drawn as a keyed facet tree (facet_android/dialogs),
+    // answered on the handler. Without an Activity there is nowhere to draw it.
+    if !dialogs::alert(title, message, primary, secondary, on_answer, on_answer_ctx) {
+        no_backend("alert");
+    }
     return;
 }
 
@@ -400,7 +405,10 @@ fn prompt(title: str, message: str, placeholder: str = "", primary: str = "OK",
           on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
           on_answer_ctx: *u8 = 0 as *u8,
           initial: str = "") {
-    no_backend("prompt");
+    if !dialogs::prompt(title, message, placeholder, primary, secondary,
+                        on_typed, on_typed_ctx, on_answer, on_answer_ctx, initial) {
+        no_backend("prompt");
+    }
     return;
 }
 
@@ -411,7 +419,9 @@ fn choose(title: str, message: str, take options: vec::Vec[text::Text],
           on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
           on_answer_ctx: *u8 = 0 as *u8) {
     var owned: vec::Vec[text::Text] = options;
-    no_backend("choose");
+    if !dialogs::choose(title, message, #addr_of(owned), on_answer, on_answer_ctx) {
+        no_backend("choose");
+    }
     return;
 }
 
@@ -484,6 +494,8 @@ fn owned_attached(ctx: *u8) {
     windows::named(nav_model::Navigator { owner: (*s).owner, id: (*s).id });
 }
 fn owned_back() -> bool {
+    // An open dialog first: Back is how a person leaves one on Android.
+    if dialogs::cancel() { return true; }
     let r = nav_model::registry(app::current());
     if r.is_null() { return false; }
     match (*r).sessions.at_ptr(0 as usize) {

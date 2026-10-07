@@ -15,6 +15,7 @@ import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/application" as app;
 import "facet/navigation" as navigation;
+import "./dialogs" as dialogs;
 import "facet/nav" as nav;
 import "facet/app_events" as ev;
 import "stdlib/text" as text;
@@ -62,6 +63,9 @@ fn install() {
     theme::set_is_dark_fn(window::is_dark);
     // A screen the navigator PRESENTS (spendwise S20 item 6).
     navigation::set_modal_fns(window::present_modal, window::dismiss_modal);
+    // A dialog is not open at install; this also keeps `dialogs` in the module
+    // graph, so its tests run with the package's.
+    let _open: bool = dialogs::is_showing();
     // AND WHERE `println` GOES. stdout and stderr are /dev/null on this
     // platform, so without this every `io::println` in every package — and
     // every probe written to be read — prints into nothing. See log.cplus.

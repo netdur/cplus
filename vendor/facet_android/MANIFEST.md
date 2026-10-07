@@ -1021,3 +1021,22 @@ facade computes the port and writes the descriptor.
 Measured on an emulator, 2026-08-27, in both directions: without the permission
 `/proc/net/tcp` has no listener and `describe_tree` never connects; with
 it, `0100007F:2253` is there and the tree comes back.
+
+## Dialogs and presented screens (2026-10-07)
+
+- **`runtime::alert` / `choose` / `prompt`** are Material 3 dialogs drawn as
+  keyed facet trees (`dialogs.cplus`): a card with the large corner over a
+  scrim, text buttons on the right. The keys are the macOS sheet's and the iOS
+  seam's (`alert:primary`, `choose:opt:N`, `prompt:value`, ...), so one agent
+  script answers all three platforms. Non-blocking, and one at a time: a second
+  question while one is open is refused. The system Back cancels: the
+  secondary answer of an alert that has one, Cancel for a prompt, -1 for a
+  choice. While one is open, the agent surface is the dialog alone.
+- **`Navigator::present`** is Material's bottom sheet over the window (scrim,
+  surface, rounded top corners below a margin), or the whole window for the
+  full-screen styles. Back dismisses it through `Navigator::pop`.
+- Both are roots drawn OVER the window in the same host (`window.cplus`
+  `add_overlay` / `remove_overlay`); the scheduler lays out every window root.
+- Not yet: per-corner radii (a sheet's bottom corners round too; the
+  background drawable takes one radius, and `setCornerRadii` needs a float[]
+  that vendor/jni cannot build — a FacetDraw helper and a dex rebuild).

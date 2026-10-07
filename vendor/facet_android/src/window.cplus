@@ -218,13 +218,40 @@ fn present_modal(p: navigation::ModalPresentation, title: str) -> bool {
         core::set_corner_radius(p.shown, vocab::Corners { top_leading: 28.0f64, top_trailing: 28.0f64,
                                                           bottom_leading: 0.0f64, bottom_trailing: 0.0f64 });
     }
-    let env: rt::Env = e::env();
-    let _m: bool = mount::mount(p.root);
-    add_root_views(env, host, p.root);
+    if !add_overlay(p.root) { return false; }
     let _s: status::Status = SHEETS.append(p.root);
-    app::agent_attach({ #addr(p.root) as *u8 });
+    return true;
+}
+
+// A ROOT DRAWN OVER THE WINDOW — a presented screen or a dialog. Mounted, its
+// views put into the window's host after the window's own (so on top), laid
+// out at the window's size, and followed by the agent surface while it is up.
+fn add_overlay(root: *core::Node) -> bool {
+    let host: jni::jobject = e::host();
+    if host == (0 as jni::jobject) { return false; }
+    let _m: bool = mount::mount(root);
+    add_root_views(e::env(), host, root);
+    app::agent_attach({ #addr(root) as *u8 });
     scheduler::relayout_current();
     return true;
+}
+
+// The other half: out of the host, unmounted, off the app's window list, and
+// the agent surface back on whatever is now in front.
+fn remove_overlay(root: *core::Node) {
+    let host: jni::jobject = e::host();
+    let rv: *u8 = core::view_of(root);
+    if host != (0 as jni::jobject) && rv != (0 as *u8) {
+        var hg: w::ViewGroup = w::ViewGroup::from_global(e::env(), host);
+        hg.remove_view({ rv as jni::jobject });
+        paint::unwrap_keep(w::View::from_global(e::env(), hg.into_raw()));
+    }
+    mount::unmount(root);
+    app::close_window(root);
+    let front: *core::Node = mount::mounted_root();
+    if front != (0 as *core::Node) { app::agent_attach({ #addr(front) as *u8 }); }
+    scheduler::relayout_current();
+    return;
 }
 
 fn dismiss_modal(root: *core::Node, user: bool) {
@@ -237,19 +264,7 @@ fn dismiss_modal(root: *core::Node, user: bool) {
         };
         if hit {
             let _gone = SHEETS.remove(at: i);
-            let host: jni::jobject = e::host();
-            let rv: *u8 = core::view_of(root);
-            if host != (0 as jni::jobject) && rv != (0 as *u8) {
-                var hg: w::ViewGroup = w::ViewGroup::from_global(e::env(), host);
-                hg.remove_view({ rv as jni::jobject });
-                paint::unwrap_keep(w::View::from_global(e::env(), hg.into_raw()));
-            }
-            mount::unmount(root);
-            app::close_window(root);
-            // Back to what is now in front: the sheet beneath, or the window.
-            let front: *core::Node = mount::mounted_root();
-            if front != (0 as *core::Node) { app::agent_attach({ #addr(front) as *u8 }); }
-            scheduler::relayout_current();
+            remove_overlay(root);
             return;
         }
     }
