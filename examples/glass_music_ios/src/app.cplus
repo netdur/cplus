@@ -16,7 +16,7 @@ fn run() -> i32 {
 
     let app: runtime::App = runtime::App::new("glass_music_ios");
     let music = app.window("music", shell::Shell::boxed,
-                           chrome: screen::Chrome::new(title: "Music"));
+                           chrome: screen::Chrome::new(title: "Music", width: 1100.0, height: 760.0));
     music.route("home", home::Home::boxed);
     music.route("new", new_music::NewMusic::boxed);
     music.route("radio", radio::Radio::boxed);

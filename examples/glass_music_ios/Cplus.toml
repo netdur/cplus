@@ -5,6 +5,9 @@ edition = "2026"
 app_id  = "dev.cplus.glassmusic"
 
 [ios]
+entry = "src/main_ios.cplus"
+
+[macos]
 entry = "src/main.cplus"
 
 [dependencies]
@@ -32,3 +35,18 @@ agent_core  = "*"
 agent_inapp = "*"
 agent_mcp   = "*"
 json        = "*"
+
+# facet's AppKit backend and its closure.
+[macos.dependencies]
+facet_appkit = "*"
+appkit       = "*"
+objc         = "*"
+quartzcore   = "*"
+webkit       = "*"
+inspector    = "*"
+facet_agent  = "*"
+agent_appkit = "*"
+agent_core   = "*"
+agent_inapp  = "*"
+agent_mcp    = "*"
+json         = "*"
