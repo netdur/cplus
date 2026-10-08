@@ -1825,6 +1825,14 @@ fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
     let p: *symbol::SymbolProps = props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
     if p.is_null() { return; }
     let f: ak::TextField = ak::TextField::from_raw(v);
+    // A SYMBOL IS AN IMAGE that happens to be drawn by a text field (spendwise
+    // S37). Unsaid, the field is static TEXT whose string is a private-use
+    // codepoint: VoiceOver had nothing to read and the agent reported the
+    // glyph as text. The role tells both the truth; a label the app gives the
+    // symbol is still what VoiceOver says.
+    if dirty == paint::all_bits() {
+        { rt::msg_void_id(v, rt::sel(#str_ptr("setAccessibilityRole:\0")), bridge::nsstring("AXImage")) };
+    }
     if (dirty & (symbol::P_NAME | symbol::P_ICON | symbol::P_SIZE | symbol::P_FONT
                  | symbol::P_FILL)) != (0 as u64) {
         // The System set is a real SF Symbol; a bundled glyph is its codepoint

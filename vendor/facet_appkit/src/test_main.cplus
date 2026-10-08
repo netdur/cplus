@@ -1371,6 +1371,44 @@ fn force_repositions_views_the_cache_would_have_skipped() {
     backend::uninstall();
 }
 
+// iris's agent panel, reduced. A box pinned to the window's foot grows UPWARD
+// when the field inside it gets taller, so the row at its own foot keeps its
+// absolute frame and cache-skips — but the row and the column inside it have
+// no views, so the button under them is placed relative to the BOX, which
+// moved. Measured: the send arrow stayed at y=87 inside a box whose controls
+// row had gone to y=365, drawn over the prompt text.
+#[test]
+fn a_view_under_unbacked_nodes_follows_a_host_that_grew_upward() {
+    backend::install();
+    var slot: core::Builder = core::Builder::new();
+    slot.add(core::column(core::Builder::new(), key: "btn").height(30.0f64).width(30.0f64));
+    var row: core::Builder = core::Builder::new();
+    row.add(core::column(core::Builder::new(), key: "peer").height(30.0f64).width(30.0f64));
+    row.add(core::column(slot).height(30.0f64).width(30.0f64));
+    var inner: core::Builder = core::Builder::new();
+    inner.add(core::column(core::Builder::new(), key: "field").height(40.0f64));
+    inner.add(core::row(row).height(30.0f64));
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new()).grow(1.0f64));
+    b.add(core::column(inner, key: "box"));
+    var root: core::Node = core::column(b, key: "root");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 200.0f64, 300.0f64, 1.0f64);
+    assert frame_of_key(rp, "btn").y == 40.0f64;
+
+    if let option::Option[*core::Node]::Some(f) = core::find_in(rp, "field") {
+        core::set_height(f, 120.0f64);
+    }
+    geometry::relayout_root(rp, 200.0f64, 300.0f64, 1.0f64);
+    // The direct child of the row was always re-placed; the one a level
+    // deeper is the claim.
+    assert frame_of_key(rp, "peer").y == 120.0f64;
+    assert frame_of_key(rp, "btn").y == 120.0f64;
+    mount::unmount(rp);
+    backend::uninstall();
+}
+
 // Is `v` a whole number of 1/scale units? The test's own arithmetic, kept out
 // of the assertions so they read as the claim rather than the check.
 fn on_grid(v: f64, scale: f64) -> bool {
@@ -13963,6 +14001,20 @@ fn a_bundled_symbol_puts_its_codepoint_in_the_label() {
     // is NOT the decimal codepoint rendered as text.
     assert got.view() != "";
     assert got.view() != "59826";
+    views::view_release(v);
+}
+
+// spendwise S37: the glyph is drawn by a text field, but the node is an IMAGE,
+// and says so — VoiceOver and the agent both read the role, not the class.
+#[test]
+fn a_symbol_says_it_is_an_image() {
+    backend::install();
+    var n: core::Node = symbol::symbol(0xE9B2u32, key: "img:home", size: 24.0f64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert v.is_not_null();
+    let r: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("accessibilityRole\0"))) };
+    assert r.is_not_null();
+    assert bridge::to_text(r).view() == "AXImage";
     views::view_release(v);
 }
 

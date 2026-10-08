@@ -476,6 +476,18 @@ fn get_declared_drive(view: *u8) -> option::Option[u32] {
 
 // ---- roles ---------------------------------------------------------------------
 
+#[link_name = "dlsym"]
+extern fn trait_dlsym(handle: *u8, name: *u8) -> *u8;
+
+fn has_image_trait(view: *u8) -> bool {
+    let p: *u8 = { trait_dlsym(((0 as usize) -% (2 as usize)) as *u8, #str_ptr("UIAccessibilityTraitImage\0")) };
+    if p == (0 as *u8) { return false; }
+    let image: u64 = { *(p as *u64) };
+    if image == (0 as u64) { return false; }
+    let t: u64 = { rt::msg_u64(view, rt::sel(#str_ptr("accessibilityTraits\0"))) };
+    return (t & image) != (0 as u64);
+}
+
 fn classify(view: *u8) -> identity::Role {
     if is_kind(view, #str_ptr("UIButton\0")) { return identity::Role::Button; }
     if is_kind(view, #str_ptr("UITextField\0")) { return identity::Role::Input; }
@@ -489,6 +501,10 @@ fn classify(view: *u8) -> identity::Role {
         }
         return identity::Role::Input;
     }
+    // A LABEL THAT SAYS IT IS AN IMAGE is one: facet's `symbol` draws its
+    // glyph in a UILabel and marks it with the image trait (spendwise S37).
+    // Classified by class it was text whose text was a private-use codepoint.
+    if is_kind(view, #str_ptr("UILabel\0")) && has_image_trait(view) { return identity::Role::Group; }
     if is_kind(view, #str_ptr("UILabel\0")) { return identity::Role::Text; }
     if is_kind(view, #str_ptr("UITableView\0")) { return identity::Role::List; }
     if is_kind(view, #str_ptr("UICollectionView\0")) { return identity::Role::List; }

@@ -2339,6 +2339,48 @@ fn the_walked_view_is_not_a_way_around_an_exclusion() {
     };
 }
 
+// spendwise S37: a glyph drawn by a text field that SAYS it is an image (as
+// facet's `symbol` does) is scenery with no text — not static text whose text
+// is a private-use codepoint.
+#[test]
+fn a_text_field_that_says_it_is_an_image_is_not_text() {
+    let win = fixture_window(300.0, 200.0);
+    let content = content_of(win);
+    let f = ak::TextField::label_with_string("");
+    content.add_subview(f.as_view());
+    agent::set_agent_id(f.as_view().raw(), "cam:close:icon");
+    { rt::msg_void_id(f.as_view().raw(), rt::sel(#str_ptr("setAccessibilityRole:\0")), bridge::nsstring("AXImage")) };
+    let plain = ak::TextField::label_with_string("Total");
+    content.add_subview(plain.as_view());
+    agent::set_agent_id(plain.as_view().raw(), "total");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    var saw_icon: bool = false;
+    var saw_text: bool = false;
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                if { (*n).id.view() } == "cam:close:icon" {
+                    saw_icon = true;
+                    assert identity::role_eq({ (*n).role }, identity::Role::Group);
+                    assert { (*n).text.view() } == "";
+                }
+                if { (*n).id.view() } == "total" {
+                    saw_text = true;
+                    assert identity::role_eq({ (*n).role }, identity::Role::Text);
+                    assert { (*n).text.view() } == "Total";
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert saw_icon && saw_text;
+}
+
 #[test]
 fn describe_carries_the_accessibility_label_as_the_node_name() {
     // The walk already read the label into the registry's name — the curated

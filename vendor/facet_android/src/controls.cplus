@@ -333,6 +333,10 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
         tv.set_text_str(gbase);
         apply_icon_font(env, tv, "", 0.0f64);
     }
+    // The glyph-as-title is not text to TalkBack (S37); a titled button is.
+    if (dirty & (button::P_TITLE | button::P_SYMBOL)) != (0 as u64) || dirty == paint::all_bits() {
+        dex::set_glyph_text(env, v, cp != 0u32 && titleless);
+    }
     return;
 }
 
@@ -2441,6 +2445,20 @@ fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
         }
         return;
     }
+    // A GLYPH IS AN IMAGE drawn by a TextView (spendwise S37). TalkBack reads
+    // a view's text when it has no content description, and this text is a
+    // private-use codepoint. So an unlabelled glyph is not announced at all,
+    // as an unlabelled image is not; a labelled one is read by its label.
+    if (dirty & props::C_SEMANTICS) != (0 as u64) || dirty == paint::all_bits() {
+        // View.IMPORTANT_FOR_ACCESSIBILITY_YES 1, _NO 2.
+        var important: i32 = 2 as i32;
+        if core::accessibility_label(n) != "" { important = 1 as i32; }
+        env.call_void_1(v, #str_ptr("android/view/View\0"), #str_ptr("setImportantForAccessibility\0"),
+                        #str_ptr("(I)V\0"), jni::arg_int(important));
+        env.clear_exception();
+    }
+    // And the codepoint is never the node's text, labelled or not.
+    if dirty == paint::all_bits() { dex::set_glyph_text(env, v, true); }
     var tv: w::TextView = w::TextView::from_global(env, v);
     // THE GLYPH, ITS FONT AND ITS FILL ARE ONE WRITE: the fill is an axis of
     // the font, so a new fill is a new Typeface and the glyph has to be put

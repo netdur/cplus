@@ -765,6 +765,13 @@ fn run_has_trait(attrs: *u8, mask: u64) -> bool {
 // Fallback only — preferred path is a declared affordance (set_affordance /
 // facet set_identity). NSTextField splits on editability; table/outline views
 // are Lists; everything else (plain views, stacks, scroll views) is Group.
+fn says_it_is_an_image(view: *u8) -> bool {
+    if !responds_to(view, #str_ptr("accessibilityRole\0")) { return false; }
+    let r: *u8 = rt::msg_id(view, rt::sel(#str_ptr("accessibilityRole\0")));
+    if is_null(r) { return false; }
+    return bridge::to_text(r).view() == "AXImage";
+}
+
 fn classify(view: *u8) -> identity::Role {
     // Before the type checks: a text area presents as its scroller, and a
     // scroller answers Group. The agent was told a writable field was scenery.
@@ -772,6 +779,11 @@ fn classify(view: *u8) -> identity::Role {
     if is_kind(view, #str_ptr("NSButton\0")) {
         return identity::Role::Button;
     }
+    // A VIEW THAT SAYS IT IS AN IMAGE is one, whatever draws it — facet's
+    // `symbol` is a glyph in a text field, and classified by class it was
+    // static text whose text was a private-use codepoint (spendwise S37).
+    // Images are scenery here, as an NSImageView is.
+    if says_it_is_an_image(view) { return identity::Role::Group; }
     if is_kind(view, #str_ptr("NSTextField\0")) {
         if rt::msg_i8(view, rt::sel(#str_ptr("isEditable\0"))) != 0 {
             return identity::Role::Input;

@@ -1525,6 +1525,47 @@ fn an_icon_buttons_color_is_its_tint() -> bool {
     return is_white && back;
 }
 
+// spendwise S37: a bundled symbol is an IMAGE to the agent — scenery with no
+// text — not static text whose text is a private-use codepoint.
+fn a_symbol_is_an_image_to_the_agent() -> bool {
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    if win == (0 as *u8) { return false; }
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::symbol(0xE5CDu32, key: "st:close:icon", size: 24.0f64));
+    b.add(ui::label("Total", key: "st:total"));
+    var n: core::Node = core::column(b, key: "st:symroot");
+    let p: *core::Node = #addr_of(n);
+    if !mount::mount(p) { return false; }
+    let v: *u8 = core::view_of(p);
+    if v == (0 as *u8) { return false; }
+    { rt::msg_void_id(win, rt::sel(#str_ptr("addSubview:\0")), v) };
+    app::reset_default_for_tests();
+    app::open_window(p);
+    app::set_window_native(p, win);
+    var s: agent::Surface = agent::open_app();
+    let sp: *u8 = #addr_of(s) as *u8;
+    let nodes: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(sp, auth::operator());
+    var icon_ok: bool = false;
+    var text_ok: bool = false;
+    match mcp_find(nodes, "st:close:icon") {
+        option::Option[*mcpb::UiNode]::Some(t) => {
+            icon_ok = identity::role_eq({ (*t).role }, identity::Role::Group) && { (*t).text.view() } == "";
+            if !icon_ok { io::eprintln(text::from_str("  icon text '${(*t).text.view()}'")); }
+        }
+        option::Option[*mcpb::UiNode]::None => { io::eprintln("  icon not described"); }
+    }
+    match mcp_find(nodes, "st:total") {
+        option::Option[*mcpb::UiNode]::Some(t) => {
+            text_ok = identity::role_eq({ (*t).role }, identity::Role::Text) && { (*t).text.view() } == "Total";
+        }
+        option::Option[*mcpb::UiNode]::None => { }
+    }
+    app::reset_default_for_tests();
+    mount::unmount(p);
+    { rt::release(win) };
+    return icon_ok && text_ok;
+}
+
 // A LIST'S ROWS ARE DESCRIBED IN THE ORDER THE USER SEES. A table's subviews
 // come in the order UIKit added or reused its cells — on a fresh list, bottom
 // to top — and the agent walk listed them that way: rows 3, 2, 1, 0 over a
@@ -4735,6 +4776,8 @@ fn run_all() -> i32 {
           a_bordered_button_is_configured_and_keeps_its_font());
     check("an icon button's color is its tint",
           an_icon_buttons_color_is_its_tint());
+    check("a symbol is an image to the agent",
+          a_symbol_is_an_image_to_the_agent());
     check("a list's rows are described top to bottom",
           a_lists_rows_are_described_top_to_bottom());
     check("an agent scroll reaches a view inside two scrollers",

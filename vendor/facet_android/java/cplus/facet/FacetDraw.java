@@ -421,6 +421,29 @@ public final class FacetDraw {
         if (android.os.Build.VERSION.SDK_INT >= 28) v.setAccessibilityHeading(heading);
     }
 
+    // A GLYPH DRAWN AS TEXT IS NOT TEXT. A titleless glyph button draws its
+    // icon as its title, in the icon font, so the title's gravity centres it
+    // (spendwise S30); the title is then a private-use codepoint, which
+    // TalkBack would try to read (S37). With this on, the accessibility node
+    // carries no text: the button is read by its content description, or as
+    // an unlabelled button, which is what it was before the glyph moved.
+    public static void setGlyphText(android.view.View v, boolean glyph) {
+        if (!glyph) { v.setAccessibilityDelegate(null); return; }
+        v.setAccessibilityDelegate(new android.view.View.AccessibilityDelegate() {
+            @Override
+            public void onInitializeAccessibilityNodeInfo(android.view.View host,
+                    android.view.accessibility.AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setText(null);
+            }
+            @Override
+            public void onPopulateAccessibilityEvent(android.view.View host,
+                    android.view.accessibility.AccessibilityEvent event) {
+                // Nothing of the glyph in what is announced.
+            }
+        });
+    }
+
     // A TWO-STATE COLOUR, which is what a switch is: one colour when it is on
     // and another when it is off. `ColorStateList.valueOf` gives one colour for
     // every state, and the constructor that takes the pair takes an `int[][]` —
