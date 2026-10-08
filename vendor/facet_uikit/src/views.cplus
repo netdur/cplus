@@ -302,10 +302,33 @@ fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     // asks for — and a modest default when the parent is unbounded.
     var w: f64 = s.w;
     var h: f64 = s.h;
+    // ...BUT AN EMPTY LABEL'S ZERO IS AN ANSWER (spendwise S50). A label with
+    // no text truthfully fits in nothing, and the floor above turned that into
+    // ALL the available space: an empty WordWrap status line in a centred
+    // column measured 338 x 714 and pushed its siblings off the window. It is
+    // one line tall and no wider than nothing — what AppKit's empty field
+    // answers — so it keeps its place in the rhythm and takes no more.
+    if (w > 0.0f64) == false && is_empty_label(ctx) {
+        let f: *u8 = { rt::msg_id(ctx, rt::sel(#str_ptr("font\0"))) };
+        var line: f64 = 20.0f64;
+        if f != (0 as *u8) { line = { rt::msg_f64(f, rt::sel(#str_ptr("lineHeight\0"))) }; }
+        return flex::Size { width: 0.0f64, height: line };
+    }
     if (w > 0.0f64) == false { w = fallback_extent(avail_w, 100.0f64); }
     if (h > 0.0f64) == false { h = fallback_extent(avail_h, 20.0f64); }
     return flex::Size { width: w, height: h };
 }
+
+fn is_empty_label(v: *u8) -> bool {
+    let cls: *u8 = rt::get_class(#str_ptr("UILabel\0"));
+    if { msg_i8_cls(v, rt::sel(#str_ptr("isKindOfClass:\0")), cls) } == (0 as i8) { return false; }
+    let t: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("text\0"))) };
+    if t == (0 as *u8) { return true; }
+    return { rt::msg_u64(t, rt::sel(#str_ptr("length\0"))) } == (0 as u64);
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_i8_cls(recv: *u8, sel: *u8, cls: *u8) -> i8;
 
 // flex states an unbounded axis as NaN or a non-positive number.
 fn bounded_or_large(avail: f64) -> f64 {

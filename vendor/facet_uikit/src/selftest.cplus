@@ -1583,6 +1583,31 @@ fn a_padded_label_insets_its_text() -> bool {
     return ok;
 }
 
+// spendwise S50: an EMPTY wrapping label measures one line, not the space it
+// is offered (it measured 338 x 714 and pushed the lock screen off the window).
+fn an_empty_label_measures_one_line() -> bool {
+    var n: core::Node = ui::label("", key: "st:empty", line_break: vocab::LineBreak::WordWrap);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    let s: flex::Size = views::measure_view(v, 338.0f64, flex::MeasureMode::AtMost,
+                                            714.0f64, flex::MeasureMode::AtMost);
+    let ok: bool = s.height > 10.0f64 && s.height < 40.0f64 && s.width < 1.0f64;
+    if !ok { io::eprintln(text::from_str("  empty label measured ${s.width} x ${s.height}")); }
+    // And the same label with text still measures its text.
+    var m: core::Node = ui::label("Hi", key: "st:hi", line_break: vocab::LineBreak::WordWrap);
+    let mp: *core::Node = #addr_of(m);
+    let mv: *u8 = views::create(0 as *u8, mp);
+    if mv == (0 as *u8) { return false; }
+    core::set_view(mp, mv, views::view_release);
+    let t: flex::Size = views::measure_view(mv, 338.0f64, flex::MeasureMode::AtMost,
+                                            714.0f64, flex::MeasureMode::AtMost);
+    let text_ok: bool = t.width > 5.0f64 && t.width < 100.0f64 && t.height < 40.0f64;
+    if !text_ok { io::eprintln(text::from_str("  'Hi' measured ${t.width} x ${t.height}")); }
+    return ok && text_ok;
+}
+
 // A LIST'S ROWS ARE DESCRIBED IN THE ORDER THE USER SEES. A table's subviews
 // come in the order UIKit added or reused its cells — on a fresh list, bottom
 // to top — and the agent walk listed them that way: rows 3, 2, 1, 0 over a
@@ -4797,6 +4822,8 @@ fn run_all() -> i32 {
           a_symbol_is_an_image_to_the_agent());
     check("a padded label insets its text",
           a_padded_label_insets_its_text());
+    check("an empty label measures one line",
+          an_empty_label_measures_one_line());
     check("a list's rows are described top to bottom",
           a_lists_rows_are_described_top_to_bottom());
     check("an agent scroll reaches a view inside two scrollers",
