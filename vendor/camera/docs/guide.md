@@ -157,7 +157,7 @@ original argument come apart on this platform: there is no permission dialog to
 be interrupted by, and the alternative is a backend whose every real code path
 is unexercised. The recording light does come on for a few seconds per run.
 If that trade stops being worth it, the opening tests are the ones that begin
-`if _c_count() == 0 { return; }` — they are already written to no-op on a
+`if _camera_count() == 0 { return; }` — they are already written to no-op on a
 machine with no lens, so gating them behind an environment variable is a small
 change.
 

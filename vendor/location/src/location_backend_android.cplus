@@ -219,7 +219,7 @@ fn _env_ready() -> option::Option[rt::Env] {
     return option::Option[rt::Env]::Some(env);
 }
 
-export extern fn _c_available() -> i32 {
+export extern fn _location_available() -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::Some(_e) => { return 1; }
         option::Option[rt::Env]::None => { return 0; }
@@ -229,7 +229,7 @@ export extern fn _c_available() -> i32 {
 // PERMISSION IS THE APP'S JOB HERE, which is the opposite of Apple. Android
 // throws from `requestLocationUpdates` rather than prompting, so this only
 // REPORTS — `permissions::request` is what asks.
-export extern fn _c_permission() -> i32 {
+export extern fn _location_permission() -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::None => { return 5; }
         option::Option[rt::Env]::Some(env) => {
@@ -259,7 +259,7 @@ export extern fn _c_permission() -> i32 {
     }
 }
 
-export extern fn _c_enabled() -> i32 {
+export extern fn _location_enabled() -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::None => { return 0; }
         option::Option[rt::Env]::Some(env) => {
@@ -360,21 +360,21 @@ fn _start(req: *loc::Request, on_fix: fn(loc::Fix, *u8), ctx: *u8,
     }
 }
 
-export extern fn _c_once(req: *loc::Request, on_fix: fn(loc::Fix, *u8), ctx: *u8) -> i32 {
+export extern fn _location_once(req: *loc::Request, on_fix: fn(loc::Fix, *u8), ctx: *u8) -> i32 {
     var code: i32 = 0;
     let s: *_Session = _start(req, on_fix, ctx, true, #addr_of(code));
     if s.is_null() { return code; }
     return 0;
 }
 
-export extern fn _c_updates_start(req: *loc::Request, on_fix: fn(loc::Fix, *u8),
+export extern fn _location_updates_start(req: *loc::Request, on_fix: fn(loc::Fix, *u8),
                                   ctx: *u8, out_code: *i32) -> *u8 {
     let s: *_Session = _start(req, on_fix, ctx, false, out_code);
     if s.is_null() { return 0 as *u8; }
     return s as *u8;
 }
 
-export extern fn _c_last_known(into: *loc::Fix) -> i32 {
+export extern fn _location_last_known(into: *loc::Fix) -> i32 {
     // NOT IMPLEMENTED, and said rather than faked. The framework's
     // `getLastKnownLocation` needs a session to deliver through — the Java half
     // has the verb and this seam has no place to put the answer synchronously.
@@ -382,7 +382,7 @@ export extern fn _c_last_known(into: *loc::Fix) -> i32 {
     return 0;
 }
 
-export extern fn _c_updates_accuracy(h: *u8) -> i32 {
+export extern fn _location_updates_accuracy(h: *u8) -> i32 {
     if h.is_null() { return 1; }
     match _env_ready() {
         option::Option[rt::Env]::None => { return 1; }
@@ -403,20 +403,20 @@ export extern fn _c_updates_accuracy(h: *u8) -> i32 {
     }
 }
 
-export extern fn _c_updates_status(h: *u8) -> i32 {
+export extern fn _location_updates_status(h: *u8) -> i32 {
     // Android has no asynchronous authorization callback: the grant is known
-    // synchronously, so this is the same answer `_c_permission` gives.
-    return _c_permission();
+    // synchronously, so this is the same answer `_location_permission` gives.
+    return _location_permission();
 }
 
-export extern fn _c_updates_running(h: *u8) -> i32 {
+export extern fn _location_updates_running(h: *u8) -> i32 {
     if h.is_null() { return 0; }
     let s: *_Session = h as *_Session;
     if { (*s).running } { return 1; }
     return 0;
 }
 
-export extern fn _c_updates_stop(h: *u8) {
+export extern fn _location_updates_stop(h: *u8) {
     if h.is_null() { return; }
     let s: *_Session = h as *_Session;
     if !{ (*s).running } { return; }

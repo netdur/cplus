@@ -197,7 +197,7 @@ impl Request {
 // is how an app ends up telling someone to grant a permission they already
 // granted.
 fn available() -> bool {
-    return { _c_available() } != (0 as i32);
+    return { _location_available() } != (0 as i32);
 }
 
 // What the person has said, WITHOUT starting a stream.
@@ -208,7 +208,7 @@ fn available() -> bool {
 // `Updates::permission()` is the better source: it reports what the delegate
 // actually saw rather than what a fresh manager guesses.
 fn permission() -> perm::State {
-    let c: i32 = { _c_permission() };
+    let c: i32 = { _location_permission() };
     if c == 1 { return perm::State::Granted; }
     if c == 3 { return perm::State::Denied; }
     if c == 4 { return perm::State::Blocked; }
@@ -223,14 +223,14 @@ fn permission() -> perm::State {
 // question. It is the DEVICE's switch, and `Outcome::Disabled` is the answer a
 // verb gives when it is off.
 fn services_enabled() -> bool {
-    return { _c_enabled() } != (0 as i32);
+    return { _location_enabled() } != (0 as i32);
 }
 
 // The most recent fix the SYSTEM already had, with no radio work at all.
 // Answers None when there is none. Free, possibly stale — check `timestamp_ms`.
 fn last_known() -> option::Option[Fix] {
     var f: Fix = #zero::[Fix]();
-    if { _c_last_known(#addr_of(f)) } == (0 as i32) { return option::Option[Fix]::None; }
+    if { _location_last_known(#addr_of(f)) } == (0 as i32) { return option::Option[Fix]::None; }
     return option::Option[Fix]::Some(f);
 }
 
@@ -254,7 +254,7 @@ fn once(on_fix: fn(Fix, *u8),
         request: Request = Request::defaults()) -> Outcome {
     if on_fix.is_null() { return Outcome::Failed; }
     var req: Request = request;
-    let code: i32 = { _c_once(#addr_of(req), on_fix, ctx) };
+    let code: i32 = { _location_once(#addr_of(req), on_fix, ctx) };
     return Outcome::from_code(code);
 }
 
@@ -270,7 +270,7 @@ fn updates(on_fix: fn(Fix, *u8),
     if on_fix.is_null() { return result::Result[Updates, Outcome]::Err(Outcome::Failed); }
     var req: Request = request;
     var code: i32 = 0;
-    let h: *u8 = { _c_updates_start(#addr_of(req), on_fix, ctx, #addr_of(code)) };
+    let h: *u8 = { _location_updates_start(#addr_of(req), on_fix, ctx, #addr_of(code)) };
     if h.is_null() { return result::Result[Updates, Outcome]::Err(Outcome::from_code(code)); }
     return result::Result[Updates, Outcome]::Ok(Updates { _h: h });
 }
@@ -279,7 +279,7 @@ impl Updates {
     // WHAT WE ACTUALLY GOT, read from the platform rather than echoed back. A
     // coarse-only grant answers `Coarse` here however fine the request was.
     fn accuracy(this) -> Accuracy {
-        return Accuracy::from_code({ _c_updates_accuracy(this._h) });
+        return Accuracy::from_code({ _location_updates_accuracy(this._h) });
     }
 
     // WHY NOTHING IS ARRIVING, when nothing is arriving.
@@ -290,7 +290,7 @@ impl Updates {
     // a value to capture once.
     fn permission(this) -> perm::State {
         if this._h.is_null() { return perm::State::Unknown; }
-        let st: i32 = { _c_updates_status(this._h) };
+        let st: i32 = { _location_updates_status(this._h) };
         if st == 1 { return perm::State::Blocked; }
         if st == 2 { return perm::State::Denied; }
         if st == 3 { return perm::State::Granted; }
@@ -299,12 +299,12 @@ impl Updates {
     }
 
     fn is_running(this) -> bool {
-        return this._h.is_not_null() && { _c_updates_running(this._h) } != (0 as i32);
+        return this._h.is_not_null() && { _location_updates_running(this._h) } != (0 as i32);
     }
 
     fn stop(ref this) {
         if this._h.is_null() { return; }
-        { _c_updates_stop(this._h) };
+        { _location_updates_stop(this._h) };
         this._h = 0 as *u8;
         return;
     }
@@ -321,14 +321,14 @@ impl Updates {
 //
 // The two halves meet at these symbols and never import each other — a facade
 // that imported its backend, or the reverse, is the import cycle E0404 names.
-extern fn _c_permission() -> i32;
-extern fn _c_available() -> i32;
-extern fn _c_enabled() -> i32;
-extern fn _c_last_known(into: *Fix) -> i32;
-extern fn _c_once(req: *Request, on_fix: fn(Fix, *u8), ctx: *u8) -> i32;
-extern fn _c_updates_start(req: *Request, on_fix: fn(Fix, *u8), ctx: *u8,
+extern fn _location_permission() -> i32;
+extern fn _location_available() -> i32;
+extern fn _location_enabled() -> i32;
+extern fn _location_last_known(into: *Fix) -> i32;
+extern fn _location_once(req: *Request, on_fix: fn(Fix, *u8), ctx: *u8) -> i32;
+extern fn _location_updates_start(req: *Request, on_fix: fn(Fix, *u8), ctx: *u8,
                            out_code: *i32) -> *u8;
-extern fn _c_updates_accuracy(h: *u8) -> i32;
-extern fn _c_updates_status(h: *u8) -> i32;
-extern fn _c_updates_running(h: *u8) -> i32;
-extern fn _c_updates_stop(h: *u8);
+extern fn _location_updates_accuracy(h: *u8) -> i32;
+extern fn _location_updates_status(h: *u8) -> i32;
+extern fn _location_updates_running(h: *u8) -> i32;
+extern fn _location_updates_stop(h: *u8);

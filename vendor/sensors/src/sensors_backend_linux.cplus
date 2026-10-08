@@ -38,13 +38,13 @@
 
 import "./sensors" as sens;
 
-export extern fn _c_available(kind: i32) -> i32 {
+export extern fn _sensors_available(kind: i32) -> i32 {
     return 0 as i32;
 }
 
 // No handle, and `Unavailable` in `out_code` — the shape the Darwin backend
 // uses for a device with no such sensor, so `sensors.cplus` needs no branch.
-export extern fn _c_start(kind: i32, req: *sens::Request,
+export extern fn _sensors_start(kind: i32, req: *sens::Request,
                           on_sample: fn(sens::Sample, *u8), ctx: *u8,
                           out_code: *i32) -> *u8 {
     if out_code.is_not_null() { { *out_code = sens::Outcome::Unavailable.to_code() }; }
@@ -54,15 +54,15 @@ export extern fn _c_start(kind: i32, req: *sens::Request,
 // Nothing hands out a handle, so these are only ever reached with a null one —
 // written out rather than omitted, because the point of a shadow file is that
 // the surface matches.
-export extern fn _c_kind(h: *u8) -> i32 {
+export extern fn _sensors_kind(h: *u8) -> i32 {
     return 0 as i32;
 }
 
-export extern fn _c_running(h: *u8) -> i32 {
+export extern fn _sensors_running(h: *u8) -> i32 {
     return 0 as i32;
 }
 
-export extern fn _c_stop(h: *u8) {
+export extern fn _sensors_stop(h: *u8) {
     return;
 }
 
@@ -74,7 +74,7 @@ fn no_kind_is_available() {
     // be the surprising kind of wrong.
     var k: i32 = 0 as i32;
     while k < (8 as i32) {
-        assert { _c_available(k) } == (0 as i32);
+        assert { _sensors_available(k) } == (0 as i32);
         k = k +% (1 as i32);
     }
 }
@@ -83,7 +83,7 @@ fn no_kind_is_available() {
 fn starting_answers_unavailable_and_hands_back_no_handle() {
     var code: i32 = 0 -% 1;
     let cb: fn(sens::Sample, *u8) = _sink;
-    let h: *u8 = { _c_start(0 as i32, 0 as *sens::Request, cb, 0 as *u8, #addr_of(code)) };
+    let h: *u8 = { _sensors_start(0 as i32, 0 as *sens::Request, cb, 0 as *u8, #addr_of(code)) };
     assert h.is_null();
     assert code == sens::Outcome::Unavailable.to_code();
 }
@@ -104,7 +104,7 @@ fn unavailable_is_not_denied_and_not_unsupported() {
 fn a_null_handle_answers_rather_than_traps() {
     // Nothing here hands one out, so every accessor is only ever called this
     // way; each must answer instead of dereferencing.
-    assert { _c_kind(0 as *u8) } == (0 as i32);
-    assert { _c_running(0 as *u8) } == (0 as i32);
-    { _c_stop(0 as *u8) };
+    assert { _sensors_kind(0 as *u8) } == (0 as i32);
+    assert { _sensors_running(0 as *u8) } == (0 as i32);
+    { _sensors_stop(0 as *u8) };
 }

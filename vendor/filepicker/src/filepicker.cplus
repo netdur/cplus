@@ -53,7 +53,7 @@ impl Pick {
 }
 
 fn available() -> bool {
-    return { _c_available() } != (0 as i32);
+    return { _filepicker_available() } != (0 as i32);
 }
 
 // Choose an existing file.
@@ -76,7 +76,7 @@ fn open(on_pick: fn(Pick, *u8),
     if on_pick.is_null() { return Outcome::InvalidInput; }
     let b: *u8 = _bridge(on_pick, ctx);
     if b.is_null() { return Outcome::Failed; }
-    return Outcome::from_code({ _c_open(_tramp, b,
+    return Outcome::from_code({ _filepicker_open(_tramp, b,
                                         #str_ptr(types), #str_len(types)) });
 }
 
@@ -91,7 +91,7 @@ fn save(suggested: str,
     if #str_len(suggested) == (0 as usize) { return Outcome::InvalidInput; }
     let b: *u8 = _bridge(on_pick, ctx);
     if b.is_null() { return Outcome::Failed; }
-    return Outcome::from_code({ _c_save(#str_ptr(suggested), #str_len(suggested),
+    return Outcome::from_code({ _filepicker_save(#str_ptr(suggested), #str_len(suggested),
                                         _tramp, b) });
 }
 
@@ -132,8 +132,8 @@ fn _bridge(on_pick: fn(Pick, *u8), ctx: *u8) -> *u8 {
     };
 }
 
-extern fn _c_available() -> i32;
-extern fn _c_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
+extern fn _filepicker_available() -> i32;
+extern fn _filepicker_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
                   types: *u8, types_len: usize) -> i32;
-extern fn _c_save(suggested: *u8, suggested_len: usize,
+extern fn _filepicker_save(suggested: *u8, suggested_len: usize,
                   on_pick: fn(*u8, usize, *u8), ctx: *u8) -> i32;

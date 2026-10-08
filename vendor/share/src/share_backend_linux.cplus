@@ -44,32 +44,32 @@
 // nothing back, and a cycle is rejected (E0404).
 fn _unsupported() -> i32 { return 1 as i32; }
 
-export extern fn _c_available() -> i32 {
+export extern fn _share_available() -> i32 {
     return 0 as i32;
 }
 
-export extern fn _c_text(body: *u8, body_len: usize,
+export extern fn _share_text(body: *u8, body_len: usize,
                          subject: *u8, subject_len: usize) -> i32 {
     return _unsupported();
 }
 
-export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
+export extern fn _share_url(link: *u8, link_len: usize) -> i32 {
     return _unsupported();
 }
 
-export extern fn _c_file(path: *u8, path_len: usize) -> i32 {
+export extern fn _share_file(path: *u8, path_len: usize) -> i32 {
     return _unsupported();
 }
 
 #[test]
 fn there_is_no_sheet_and_nothing_pretends_otherwise() {
-    assert { _c_available() } == (0 as i32);
+    assert { _share_available() } == (0 as i32);
     let t: str = "hello";
     let u: str = "https://example.invalid";
     let f: str = "/tmp/nothing";
-    assert { _c_text(#str_ptr(t), #str_len(t), #str_ptr(""), 0 as usize) } == _unsupported();
-    assert { _c_url(#str_ptr(u), #str_len(u)) } == _unsupported();
-    assert { _c_file(#str_ptr(f), #str_len(f)) } == _unsupported();
+    assert { _share_text(#str_ptr(t), #str_len(t), #str_ptr(""), 0 as usize) } == _unsupported();
+    assert { _share_url(#str_ptr(u), #str_len(u)) } == _unsupported();
+    assert { _share_file(#str_ptr(f), #str_len(f)) } == _unsupported();
 }
 
 #[test]

@@ -1,7 +1,7 @@
 // haptics_backend_windows — a game pad's rumble motors, through XInput.
 //
 // THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `haptics.cplus` declares three
-// stable symbols — `_c_available`, `_c_play`, `_c_prepare` — and something must
+// stable symbols — `_haptics_available`, `_haptics_play`, `_haptics_prepare` — and something must
 // define them on every platform the package claims. Without a `_windows`
 // sibling the build falls back to `haptics_backend.cplus`, the AppKit half, and
 // stops at `import "objc/runtime"`, which is not available here.
@@ -199,7 +199,7 @@ fn _stopper(arg: *u8) -> *u8 {
 // POLLED, NOT CACHED: a pad plugged in after launch must start working and one
 // unplugged must stop being claimed. XInput's own poll is cheap enough for a
 // question a UI asks when it draws a settings row.
-export extern fn _c_available() -> i32 {
+export extern fn _haptics_available() -> i32 {
     _ensure_loaded();
     if !_loaded() { return 0 as i32; }
     var i: u32 = 0 as u32;
@@ -213,7 +213,7 @@ export extern fn _c_available() -> i32 {
 // Play one. Reports whether a pad ACCEPTED it, never whether anything was felt —
 // the facade's own distinction, and it matters more here than on a phone: a pad
 // can be connected and sitting on a desk.
-export extern fn _c_play(feel: i32) -> i32 {
+export extern fn _haptics_play(feel: i32) -> i32 {
     _ensure_loaded();
     if !_loaded() { return 0 as i32; }
     let left: u16 = _left_speed(feel);
@@ -245,7 +245,7 @@ export extern fn _c_play(feel: i32) -> i32 {
 // `LoadLibrary` and two `GetProcAddress`es, and that is exactly the kind of
 // first-time cost `prepare` exists to move off the gesture. Binding here means
 // the tap that follows is already bound.
-export extern fn _c_prepare(feel: i32) {
+export extern fn _haptics_prepare(feel: i32) {
     _ensure_loaded();
     return;
 }
@@ -279,10 +279,10 @@ fn availability_is_a_yes_or_no_and_never_traps() {
     // 0 with nothing plugged in, 1 with a pad. Both are correct; what is
     // asserted is that the answer is one of them and that binding XInput on a
     // machine that may not have it does not fault.
-    let a: i32 = { _c_available() };
+    let a: i32 = { _haptics_available() };
     assert a == (0 as i32) || a == (1 as i32);
     // Idempotent: the second call takes the already-bound path.
-    assert { _c_available() } == a;
+    assert { _haptics_available() } == a;
 }
 
 #[test]
@@ -290,10 +290,10 @@ fn play_never_traps_on_any_feel_and_reports_what_it_took() {
     // With no pad this is 0 for every feel — the facade promises `play` is safe
     // to call when unavailable, so the whole range has to be walked without a
     // fault whether or not hardware answers.
-    let connected: bool = { _c_available() } == (1 as i32);
+    let connected: bool = { _haptics_available() } == (1 as i32);
     var f: i32 = 0 as i32;
     while f <= (6 as i32) {
-        let r: i32 = { _c_play(f) };
+        let r: i32 = { _haptics_play(f) };
         assert r == (0 as i32) || r == (1 as i32);
         // Never claims a tap nobody could feel.
         if !connected { assert r == (0 as i32); }
@@ -303,10 +303,10 @@ fn play_never_traps_on_any_feel_and_reports_what_it_took() {
 
 #[test]
 fn prepare_binds_without_trapping() {
-    { _c_prepare(hap::Feel::Light.to_code()) };
-    { _c_prepare(hap::Feel::Error.to_code()) };
+    { _haptics_prepare(hap::Feel::Light.to_code()) };
+    { _haptics_prepare(hap::Feel::Error.to_code()) };
     // And having prepared, availability still answers the same way.
-    let a: i32 = { _c_available() };
+    let a: i32 = { _haptics_available() };
     assert a == (0 as i32) || a == (1 as i32);
 }
 

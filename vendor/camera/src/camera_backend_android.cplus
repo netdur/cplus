@@ -68,7 +68,7 @@ struct _CRequest {
     buffers: i32,
 }
 
-// A live session. Heap-allocated; `_c_open` hands out the pointer, `_c_close`
+// A live session. Heap-allocated; `_camera_open` hands out the pointer, `_camera_close`
 // is the only thing that frees it. Every pointer is `opaque` for the same
 // reason the Apple half's is: this is reached through a raw `*u8` across the C
 // seam, so no `drop` on it would ever run (E0510).
@@ -275,7 +275,7 @@ extern fn _free(p: *u8);
 
 // ---- the seam --------------------------------------------------------------
 
-export extern fn _c_count() -> i64 {
+export extern fn _camera_count() -> i64 {
     if !_ready() { return 0 as i64; }
     let env: rt::Env = _env();
     if env.raw().is_null() { return 0 as i64; }
@@ -290,7 +290,7 @@ export extern fn _c_count() -> i64 {
     return n as i64;
 }
 
-export extern fn _c_has(facing: i32) -> i32 {
+export extern fn _camera_has(facing: i32) -> i32 {
     if !_ready() { return 0 as i32; }
     let env: rt::Env = _env();
     if env.raw().is_null() { return 0 as i32; }
@@ -306,11 +306,11 @@ export extern fn _c_has(facing: i32) -> i32 {
     return 1 as i32;
 }
 
-export extern fn _c_last_error() -> i32 {
+export extern fn _camera_last_error() -> i32 {
     return _LAST_ERROR;
 }
 
-export extern fn _c_open(req: *_CRequest) -> *u8 {
+export extern fn _camera_open(req: *_CRequest) -> *u8 {
     if req.is_null() { return 0 as *u8; }
     let facing: i32 = { (*req).facing };
     let want_width: i32 = { (*req).width };
@@ -367,7 +367,7 @@ export extern fn _c_open(req: *_CRequest) -> *u8 {
         #str_ptr("(Landroid/content/Context;ZII)Z\0"));
     if m == (0 as jni::jmethodID) {
         env.clear_exception();
-        _c_close(raw);
+        _camera_close(raw);
         return 0 as *u8;
     }
     var args: [jni::JValue; 4] = [jni::arg_object(_context()), rt::arg_bool(facing == (1 as i32)),
@@ -391,7 +391,7 @@ export extern fn _c_open(req: *_CRequest) -> *u8 {
         } else {
             env.clear_exception();
         }
-        _c_close(raw);
+        _camera_close(raw);
         _LAST_ERROR = why;
         return 0 as *u8;
     }
@@ -399,7 +399,7 @@ export extern fn _c_open(req: *_CRequest) -> *u8 {
     return raw;
 }
 
-export extern fn _c_close(h: *u8) {
+export extern fn _camera_close(h: *u8) {
     if h.is_null() { return; }
     let s: *_Session = h as *_Session;
     let obj: jni::jobject = { (*s).obj };
@@ -407,7 +407,7 @@ export extern fn _c_close(h: *u8) {
         let env: rt::Env = _env();
         if env.raw().is_not_null() {
             // THROUGH `_C_CAMERA`, never through a class NAME. See the note on
-            // `_c_preview_create`.
+            // `_camera_preview_create`.
             let m: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("close\0"),
                                                   #str_ptr("()V\0"));
             if m != (0 as jni::jmethodID) {
@@ -425,9 +425,9 @@ export extern fn _c_close(h: *u8) {
     box::from_raw::[_Session](h);
 }
 
-extern fn _c_preview_fit_for(h: *u8) -> i32;
+extern fn _camera_preview_fit_for(h: *u8) -> i32;
 
-export extern fn _c_preview_create(h: *u8) -> *u8 {
+export extern fn _camera_preview_create(h: *u8) -> *u8 {
     if h.is_null() { return 0 as *u8; }
     let s: *_Session = h as *_Session;
     let obj: jni::jobject = { (*s).obj };
@@ -448,27 +448,27 @@ export extern fn _c_preview_create(h: *u8) -> *u8 {
         #str_ptr("(Landroid/content/Context;I)Landroid/view/View;\0"));
     if m == (0 as jni::jmethodID) { env.clear_exception(); return 0 as *u8; }
     // The fit `preview(fit:)` asked for, kept per session in camera.cplus.
-    var args: [jni::JValue; 2] = [jni::arg_object(_context()), jni::arg_int({ _c_preview_fit_for(h) })];
+    var args: [jni::JValue; 2] = [jni::arg_object(_context()), jni::arg_int({ _camera_preview_fit_for(h) })];
     let local: jni::jobject = {
         (*(*env.raw())).CallObjectMethodA(env.raw(), obj, m, #addr_of(args[0]))
     };
     if _threw(env) || local == (0 as jni::jobject) { return 0 as *u8; }
     // A GLOBAL REF, because facet holds this across the mount and a local ref
-    // dies when this JNI frame does. `_c_preview_release` is the matching
+    // dies when this JNI frame does. `_camera_preview_release` is the matching
     // delete, and facet guarantees it — the factory contract pairs them.
     let g: jni::jobject = env.new_global_ref(local);
     env.delete_local_ref(local);
     return { g as *u8 };
 }
 
-export extern fn _c_preview_release(v: *u8) {
+export extern fn _camera_preview_release(v: *u8) {
     if v.is_null() { return; }
     let env: rt::Env = _env();
     if env.raw().is_null() { return; }
     env.delete_global_ref({ v as jni::jobject });
 }
 
-export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+export extern fn _camera_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
     let obj: jni::jobject = { (*s).obj };
@@ -491,7 +491,7 @@ export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
 }
 
 
-export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+export extern fn _camera_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
     let obj: jni::jobject = { (*s).obj };
@@ -509,7 +509,7 @@ export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), 
     return cam::Outcome::Ok.to_code();
 }
 
-export extern fn _c_stop_frames(h: *u8) -> i32 {
+export extern fn _camera_stop_frames(h: *u8) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
     { (*s).frame_cb = 0 as fn(*u8, i32, i32, i32, i32, *u8, *u8) };
@@ -542,11 +542,11 @@ fn _int_getter(h: *u8, name: *u8) -> i32 {
     return v;
 }
 
-export extern fn _c_actual_facing(h: *u8) -> i32 {
+export extern fn _camera_actual_facing(h: *u8) -> i32 {
     return _int_getter(h, #str_ptr("actualFacing\0"));
 }
 
-export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
+export extern fn _camera_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
     { (*out_width) = _int_getter(h, #str_ptr("frameWidth\0")) };
     { (*out_height) = _int_getter(h, #str_ptr("frameHeight\0")) };
 }
@@ -554,7 +554,7 @@ export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
 // Android has exactly one delivery today: `YUV_420_888`, whose plane 0 is
 // 8-bit luma — `Luma8` (1) in `camera::PixelFormat::to_code()`. Not a stub:
 // this is the true answer for every frame this backend hands over.
-export extern fn _c_pixel_format(h: *u8) -> i32 {
+export extern fn _camera_pixel_format(h: *u8) -> i32 {
     if h.is_null() { return 0 as i32; }
     return 1 as i32;
 }
@@ -569,39 +569,39 @@ export extern fn _c_pixel_format(h: *u8) -> i32 {
 // not yet done, not a platform limit. The macOS half is the one being measured
 // first; see the status lines on `camera::Request`.
 
-export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
+export extern fn _camera_device(h: *u8, into: *text::Text) -> i32 {
     return cam::Outcome::Unsupported.to_code();
 }
 
-export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
+export extern fn _camera_set_zoom(h: *u8, factor: f64) -> i32 {
     return cam::Outcome::Unsupported.to_code();
 }
 
-export extern fn _c_zoom(h: *u8) -> f64 { return 1.0; }
-export extern fn _c_max_zoom(h: *u8) -> f64 { return 1.0; }
+export extern fn _camera_zoom(h: *u8) -> f64 { return 1.0; }
+export extern fn _camera_max_zoom(h: *u8) -> f64 { return 1.0; }
 
-export extern fn _c_has_torch(h: *u8) -> i32 { return 0 as i32; }
+export extern fn _camera_has_torch(h: *u8) -> i32 { return 0 as i32; }
 
-export extern fn _c_set_torch(h: *u8, on: i32) -> i32 {
+export extern fn _camera_set_torch(h: *u8, on: i32) -> i32 {
     return cam::Outcome::Unsupported.to_code();
 }
 
-export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_focus(h: *u8, mode: i32) -> i32 {
     return cam::Outcome::Unsupported.to_code();
 }
 
-export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_exposure(h: *u8, mode: i32) -> i32 {
     return cam::Outcome::Unsupported.to_code();
 }
 
-export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_white_balance(h: *u8, mode: i32) -> i32 {
     return cam::Outcome::Unsupported.to_code();
 }
 
-export extern fn _c_frame_rate(h: *u8) -> i32 { return 0 as i32; }
+export extern fn _camera_frame_rate(h: *u8) -> i32 { return 0 as i32; }
 
 
-export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
+export extern fn _camera_switch_to(h: *u8, facing: i32) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
     let obj: jni::jobject = { (*s).obj };

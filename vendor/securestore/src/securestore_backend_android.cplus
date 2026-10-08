@@ -43,7 +43,7 @@ import "android_view/runtime" as rt;
 import "facet/app_events" as ev;
 import "./securestore" as ss;
 
-// The status codes the facade maps back. Negative, because `_c_get` reports a
+// The status codes the facade maps back. Negative, because `_securestore_get` reports a
 // byte count through the same return.
 fn _ok() -> i32 { return 0 as i32; }
 fn _not_found() -> i32 { return 0 -% 1; }
@@ -263,7 +263,7 @@ fn _apply(env: rt::Env, editor: jni::jobject) {
 
 // ---- the verbs ---------------------------------------------------------------
 
-export extern fn _c_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
+export extern fn _securestore_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
                         service: *u8, service_len: usize) -> i32 {
     if !_ready() { return _unsupported(); }
     let env: rt::Env = _current_env();
@@ -340,7 +340,7 @@ export extern fn _c_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
     return _ok();
 }
 
-export extern fn _c_get(key: *u8, key_len: usize, service: *u8, service_len: usize,
+export extern fn _securestore_get(key: *u8, key_len: usize, service: *u8, service_len: usize,
                         out: *u8, cap: usize) -> i64 {
     if !_ready() { return { _unsupported() as i64 }; }
     let env: rt::Env = _current_env();
@@ -418,7 +418,7 @@ export extern fn _c_get(key: *u8, key_len: usize, service: *u8, service_len: usi
     return { n as i64 };
 }
 
-export extern fn _c_remove(key: *u8, key_len: usize,
+export extern fn _securestore_remove(key: *u8, key_len: usize,
                            service: *u8, service_len: usize) -> i32 {
     if !_ready() { return _unsupported(); }
     let env: rt::Env = _current_env();
@@ -444,7 +444,7 @@ export extern fn _c_remove(key: *u8, key_len: usize,
     return _ok();
 }
 
-export extern fn _c_contains(key: *u8, key_len: usize,
+export extern fn _securestore_contains(key: *u8, key_len: usize,
                              service: *u8, service_len: usize) -> i32 {
     if !_ready() { return 0 as i32; }
     let env: rt::Env = _current_env();
@@ -463,7 +463,7 @@ export extern fn _c_contains(key: *u8, key_len: usize,
     return 0 as i32;
 }
 
-export extern fn _c_clear(service: *u8, service_len: usize) -> i32 {
+export extern fn _securestore_clear(service: *u8, service_len: usize) -> i32 {
     if !_ready() { return _unsupported(); }
     let env: rt::Env = _current_env();
     if env.raw().is_null() { return _unsupported(); }

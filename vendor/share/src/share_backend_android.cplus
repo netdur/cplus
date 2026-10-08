@@ -124,7 +124,7 @@ fn _send_text(env: rt::Env, body: str, subject: str) -> i32 {
     return 0;
 }
 
-export extern fn _c_available() -> i32 {
+export extern fn _share_available() -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::None => { return 0; }
         option::Option[rt::Env]::Some(_e) => {
@@ -134,7 +134,7 @@ export extern fn _c_available() -> i32 {
     }
 }
 
-export extern fn _c_text(body: *u8, body_len: usize,
+export extern fn _share_text(body: *u8, body_len: usize,
                          subject: *u8, subject_len: usize) -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::None => { return 1; }
@@ -150,7 +150,7 @@ export extern fn _c_text(body: *u8, body_len: usize,
 // parse the URL out of EXTRA_TEXT themselves. The Apple platforms DO treat a
 // URL differently, which is why the facade keeps the two verbs apart even
 // though this backend does not.
-export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
+export extern fn _share_url(link: *u8, link_len: usize) -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::None => { return 1; }
         option::Option[rt::Env]::Some(env) => {
@@ -164,6 +164,6 @@ export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
 // XML — this package cannot add either on the caller's behalf, and a `file://`
 // URI has thrown FileUriExposedException since API 24. Answering Unsupported
 // beats crashing the app that trusted us.
-export extern fn _c_file(path: *u8, path_len: usize) -> i32 {
+export extern fn _share_file(path: *u8, path_len: usize) -> i32 {
     return 1;
 }

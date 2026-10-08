@@ -52,7 +52,7 @@ fn _new_context() -> *u8 {
                       rt::sel(#str_ptr("init\0")));
 }
 
-export extern fn _c_kind() -> i32 {
+export extern fn _biometrics_kind() -> i32 {
     let c: *u8 = _new_context();
     if c.is_null() { return 0; }
     // `biometryType` is only populated AFTER canEvaluatePolicy has run — it
@@ -69,7 +69,7 @@ export extern fn _c_kind() -> i32 {
     return 0;
 }
 
-export extern fn _c_available() -> i32 {
+export extern fn _biometrics_available() -> i32 {
     let c: *u8 = _new_context();
     if c.is_null() { return 0; }
     let ok: bool = la::Context::from_raw(c)
@@ -115,7 +115,7 @@ fn _reply(ctx: *u8, success: i8, error: *u8) {
     return;
 }
 
-export extern fn _c_authenticate(reason: *u8, reason_len: usize,
+export extern fn _biometrics_authenticate(reason: *u8, reason_len: usize,
                                  on_result: fn(bio::Outcome, *u8), ctx: *u8,
                                  allow_passcode: i32) -> i32 {
     let c: *u8 = _new_context();

@@ -201,10 +201,10 @@ struct _CRequest {
     buffers: i32,
 }
 
-// A live session. Heap-allocated; `_c_open` hands out the pointer and
-// `_c_close` is the only thing that frees it.
+// A live session. Heap-allocated; `_camera_open` hands out the pointer and
+// `_camera_close` is the only thing that frees it.
 // Every pointer is `opaque`: this struct is reached only through a raw `*u8`
-// across the C seam, so it can have no `drop` that would ever run. `_c_close`
+// across the C seam, so it can have no `drop` that would ever run. `_camera_close`
 // is the single owner and releases all four (E0510).
 struct _Session {
     opaque session: *u8,     // AVCaptureSession, +1
@@ -220,8 +220,8 @@ struct _Session {
     opaque queue: *u8,       // the dispatch queue frames arrive on, +1
     frame_cb: fn(*u8, i32, i32, i32, i32, *u8, *u8),
     opaque frame_ctx: *u8,
-    // What the device actually settled on, answered by `_c_actual_facing` and
-    // `_c_frame_size`. Filled at open; a request is only ever a wish.
+    // What the device actually settled on, answered by `_camera_actual_facing` and
+    // `_camera_frame_size`. Filled at open; a request is only ever a wish.
     actual_facing: i32,
     actual_width: i32,
     actual_height: i32,
@@ -233,7 +233,7 @@ struct _Session {
     want_pixel: i32,
 }
 
-// The last failure `_c_open` saw. A single slot rather than a per-session field
+// The last failure `_camera_open` saw. A single slot rather than a per-session field
 // because it exists to explain a NULL return, and a NULL return has no session
 // to hang it off.
 static _LAST_ERROR: i32 = 0 as i32;
@@ -808,7 +808,7 @@ fn _reassert_rate(h: *u8) {
     // AND THE OUTPUT'S PIXEL FORMAT. Third time this pattern has bitten:
     // re-applying the session preset resets the frame duration, the active
     // format AND the video output's `videoSettings`. A BGRA request made at
-    // `_c_on_frame` was silently back to 420 by the time frames arrived —
+    // `_camera_on_frame` was silently back to 420 by the time frames arrived —
     // measured, `luma()` was still 640*480 bytes.
     let v: *u8 = { (*s).video };
     if v.is_null() { return; }
@@ -830,21 +830,21 @@ fn _with_locked_device(h: *u8) -> *u8 {
 
 // ---- the seam -------------------------------------------------------------
 
-export extern fn _c_count() -> i64 {
+export extern fn _camera_count() -> i64 {
     let devices: vec::Vec[av::CaptureDevice] = av::CaptureDevice::devices_with_media_type(_MEDIA_VIDEO);
     return devices.count() as i64;
 }
 
-export extern fn _c_has(facing: i32) -> i32 {
+export extern fn _camera_has(facing: i32) -> i32 {
     if _device_for(facing).is_null() { return 0 as i32; }
     return 1 as i32;
 }
 
-export extern fn _c_last_error() -> i32 {
+export extern fn _camera_last_error() -> i32 {
     return _LAST_ERROR;
 }
 
-export extern fn _c_open(req: *_CRequest) -> *u8 {
+export extern fn _camera_open(req: *_CRequest) -> *u8 {
     _LAST_ERROR = cam::Outcome::Failed.to_code();
     if req.is_null() { return 0 as *u8; }
 
@@ -971,7 +971,7 @@ export extern fn _c_open(req: *_CRequest) -> *u8 {
     };
 }
 
-export extern fn _c_close(h: *u8) {
+export extern fn _camera_close(h: *u8) {
     if h.is_null() { return; }
     let s: *_Session = h as *_Session;
     let sess: *u8 = { (*s).session };
@@ -1019,11 +1019,11 @@ export extern fn _c_close(h: *u8) {
 // The fit `preview(fit:)` asked for (camera.cplus keeps it per session), as the
 // layer's videoGravity: AspectFit letterboxes, AspectFill fills and crops,
 // Fill stretches (spendwise S26). The layer's default was all there was.
-extern fn _c_preview_fit_for(h: *u8) -> i32;
+extern fn _camera_preview_fit_for(h: *u8) -> i32;
 
 fn _apply_gravity(layer: *u8, h: *u8) {
     if layer.is_null() { return; }
-    let fit: i32 = { _c_preview_fit_for(h) };
+    let fit: i32 = { _camera_preview_fit_for(h) };
     var g: str = "AVLayerVideoGravityResizeAspect";
     if fit == 1 { g = "AVLayerVideoGravityResizeAspectFill"; }
     if fit == 2 { g = "AVLayerVideoGravityResize"; }
@@ -1035,7 +1035,7 @@ fn _apply_gravity(layer: *u8, h: *u8) {
     return;
 }
 
-export extern fn _c_preview_create(h: *u8) -> *u8 {
+export extern fn _camera_preview_create(h: *u8) -> *u8 {
     if h.is_null() { return 0 as *u8; }
     let s: *_Session = h as *_Session;
     let sess: *u8 = { (*s).session };
@@ -1078,7 +1078,7 @@ export extern fn _c_preview_create(h: *u8) -> *u8 {
     return view;
 }
 
-export extern fn _c_preview_release(v: *u8) {
+export extern fn _camera_preview_release(v: *u8) {
     if v.is_null() { return; }
     rt::release(v);
 }
@@ -1104,7 +1104,7 @@ fn _orient_photo_connection(out: *u8) {
     return;
 }
 
-export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+export extern fn _camera_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
     let out: *u8 = { (*s).output };
@@ -1113,7 +1113,7 @@ export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
     { (*s).cb = cb };
     { (*s).ctx = ctx };
 
-    // ONE DELEGATE PER SESSION, built on first use and released by `_c_close`.
+    // ONE DELEGATE PER SESSION, built on first use and released by `_camera_close`.
     // AVFoundation does not keep it alive for you across the whole capture on
     // every OS version, and a delegate freed between the shutter and the
     // callback is a crash that reproduces about one time in five.
@@ -1157,10 +1157,10 @@ export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
 //
 // Traced with a dyld interposer on objc_retain/objc_release
 // (`bugs/closed/camera-flipping-the-lens-over-releases-the-video-output.md`):
-// the count reached zero inside `_c_close` and the next two releases were ours.
+// the count reached zero inside `_camera_close` and the next two releases were ours.
 // `rt::release(session)` and friends nearby are NOT this — those are raw `*u8`
 // handles with no wrapper and no destructor, and they must stay.
-export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+export extern fn _camera_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
     let sess: *u8 = { (*s).session };
@@ -1222,7 +1222,7 @@ export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), 
     return cam::Outcome::Ok.to_code();
 }
 
-export extern fn _c_stop_frames(h: *u8) -> i32 {
+export extern fn _camera_stop_frames(h: *u8) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
     let v: *u8 = { (*s).video };
@@ -1235,7 +1235,7 @@ export extern fn _c_stop_frames(h: *u8) -> i32 {
 }
 
 
-export extern fn _c_actual_facing(h: *u8) -> i32 {
+export extern fn _camera_actual_facing(h: *u8) -> i32 {
     if h.is_null() { return 0 as i32; }
     let s: *_Session = h as *_Session;
     return { (*s).actual_facing };
@@ -1243,7 +1243,7 @@ export extern fn _c_actual_facing(h: *u8) -> i32 {
 
 // The active format's min frame duration, as a rate. `CMTime` is
 // value/timescale seconds, so fps is timescale/value.
-export extern fn _c_frame_rate(h: *u8) -> i32 {
+export extern fn _camera_frame_rate(h: *u8) -> i32 {
     let dev: *u8 = _with_locked_device(h);
     if dev.is_null() { return 0 as i32; }
     let d: av::CMTime = av::CaptureDevice::from_raw(dev).active_video_min_frame_duration();
@@ -1257,7 +1257,7 @@ export extern fn _c_frame_rate(h: *u8) -> i32 {
 // Measured — a session that negotiated 640x480 reported 640x480 here while
 // delivering 1920x1080 frames, and the only thing that noticed was CoreML
 // refusing the wrong-sized input.
-export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
+export extern fn _camera_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
     { (*out_width) = 0 };
     { (*out_height) = 0 };
     if h.is_null() { return; }
@@ -1278,10 +1278,10 @@ export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
 }
 
 // WHAT THE STREAM DELIVERS, read back from the output's `videoSettings` rather
-// than remembered from the request — the `_c_frame_size` judgement again: a
+// than remembered from the request — the `_camera_frame_size` judgement again: a
 // remembered answer goes stale the moment the session preset is re-applied.
 // No video output yet means no delivery format yet, which is `Any` (0).
-export extern fn _c_pixel_format(h: *u8) -> i32 {
+export extern fn _camera_pixel_format(h: *u8) -> i32 {
     if h.is_null() { return 0 as i32; }
     let s: *_Session = h as *_Session;
     let v: *u8 = { (*s).video };
@@ -1299,7 +1299,7 @@ export extern fn _c_pixel_format(h: *u8) -> i32 {
     return 0 as i32;
 }
 
-export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
+export extern fn _camera_device(h: *u8, into: *text::Text) -> i32 {
     let dev: *u8 = _with_locked_device(h);
     if dev.is_null() { return cam::Outcome::Failed.to_code(); }
     var id: text::Text = av::CaptureDevice::from_raw(dev).unique_i_d();
@@ -1307,7 +1307,7 @@ export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
     return cam::Outcome::Ok.to_code();
 }
 
-export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
+export extern fn _camera_set_zoom(h: *u8, factor: f64) -> i32 {
     let dev: *u8 = _with_locked_device(h);
     if dev.is_null() { return cam::Outcome::Failed.to_code(); }
     let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
@@ -1324,26 +1324,26 @@ export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
     return cam::Outcome::Ok.to_code();
 }
 
-export extern fn _c_zoom(h: *u8) -> f64 {
+export extern fn _camera_zoom(h: *u8) -> f64 {
     let dev: *u8 = _with_locked_device(h);
     if dev.is_null() { return 1.0; }
     return av::CaptureDevice::from_raw(dev).video_zoom_factor();
 }
 
-export extern fn _c_max_zoom(h: *u8) -> f64 {
+export extern fn _camera_max_zoom(h: *u8) -> f64 {
     let dev: *u8 = _with_locked_device(h);
     if dev.is_null() { return 1.0; }
     return av::CaptureDevice::from_raw(dev).max_available_video_zoom_factor();
 }
 
-export extern fn _c_has_torch(h: *u8) -> i32 {
+export extern fn _camera_has_torch(h: *u8) -> i32 {
     let dev: *u8 = _with_locked_device(h);
     if dev.is_null() { return 0 as i32; }
     if av::CaptureDevice::from_raw(dev).has_torch() { return 1 as i32; }
     return 0 as i32;
 }
 
-export extern fn _c_set_torch(h: *u8, on: i32) -> i32 {
+export extern fn _camera_set_torch(h: *u8, on: i32) -> i32 {
     let dev: *u8 = _with_locked_device(h);
     if dev.is_null() { return cam::Outcome::Failed.to_code(); }
     let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
@@ -1357,7 +1357,7 @@ export extern fn _c_set_torch(h: *u8, on: i32) -> i32 {
     return cam::Outcome::Ok.to_code();
 }
 
-export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_focus(h: *u8, mode: i32) -> i32 {
     let dev: *u8 = _with_locked_device(h);
     if dev.is_null() { return cam::Outcome::Failed.to_code(); }
     let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
@@ -1371,7 +1371,7 @@ export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
     return cam::Outcome::Ok.to_code();
 }
 
-export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_exposure(h: *u8, mode: i32) -> i32 {
     let dev: *u8 = _with_locked_device(h);
     if dev.is_null() { return cam::Outcome::Failed.to_code(); }
     let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
@@ -1385,7 +1385,7 @@ export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
     return cam::Outcome::Ok.to_code();
 }
 
-export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_white_balance(h: *u8, mode: i32) -> i32 {
     let dev: *u8 = _with_locked_device(h);
     if dev.is_null() { return cam::Outcome::Failed.to_code(); }
     let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
@@ -1415,7 +1415,7 @@ fn the_seam_request_layout_matches_the_facade() {
 //
 // The negotiated format and rate belong to the DEVICE, so both are re-applied
 // against the new one; `_reassert_rate` does the pair.
-export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
+export extern fn _camera_switch_to(h: *u8, facing: i32) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
     let sess: *u8 = { (*s).session };
@@ -1452,7 +1452,7 @@ export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
     if prev.is_not_null() { rt::release(prev); }
     { (*s).device = rt::retain(dev) };
 
-    // What the new device actually is, never the request. Same rule as `_c_open`.
+    // What the new device actually is, never the request. Same rule as `_camera_open`.
     let pos: av::CaptureDevicePosition = av::CaptureDevice::from_raw(dev).position();
     var got: i32 = 3 as i32;
     if av::capture_device_position_raw(pos) == av::capture_device_position_raw(av::CaptureDevicePosition::Front) { got = 1 as i32; }

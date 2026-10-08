@@ -2,7 +2,7 @@
 // DataTransferManager.
 //
 // THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `share.cplus` declares four stable
-// symbols (`_c_available`, `_c_text`, `_c_url`, `_c_file`) and something must
+// symbols (`_share_available`, `_share_text`, `_share_url`, `_share_file`) and something must
 // define them on every platform the package claims; without a `_windows`
 // sibling the build falls back to `share_backend.cplus` — the AppKit half — and
 // stops at `import "objc/runtime"`, which is not available here.
@@ -38,7 +38,7 @@
 //
 // ---- THE SHEET IS ASYNCHRONOUS, THE SEAM IS NOT ------------------------------
 //
-// `_c_text` returns as soon as the sheet is ASKED for, which is what the
+// `_share_text` returns as soon as the sheet is ASKED for, which is what the
 // facade's `Ok` already means ("the sheet was PRESENTED. Not that anything was
 // shared"). The payload is stashed in statics and handed over later, on the
 // message loop, when the shell raises `DataRequested`. A caller that never
@@ -554,7 +554,7 @@ fn delivered() -> i32 { return DELIVERED; }
 
 // ---- the seam ---------------------------------------------------------------------
 
-export extern fn _c_available() -> i32 {
+export extern fn _share_available() -> i32 {
     var iid: [u8; 16] = iid_interop();
     let f: *u8 = activation_factory(
         "Windows.ApplicationModel.DataTransfer.DataTransferManager",
@@ -564,7 +564,7 @@ export extern fn _c_available() -> i32 {
     return 1 as i32;
 }
 
-export extern fn _c_text(body: *u8, body_len: usize,
+export extern fn _share_text(body: *u8, body_len: usize,
                          subject: *u8, subject_len: usize) -> i32 {
     let b: str = { #str_from_raw_parts(body, body_len) };
     let s: str = { #str_from_raw_parts(subject, subject_len) };
@@ -575,7 +575,7 @@ export extern fn _c_text(body: *u8, body_len: usize,
     return present();
 }
 
-export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
+export extern fn _share_url(link: *u8, link_len: usize) -> i32 {
     let l: str = { #str_from_raw_parts(link, link_len) };
     if l == "" { return share::Outcome::InvalidInput.to_code(); }
     PENDING_KIND = kind_url();
@@ -593,7 +593,7 @@ export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
 //
 // `Unsupported` rather than `Failed`: the platform can do this and this build
 // cannot, which is the distinction the facade's two codes exist to carry.
-export extern fn _c_file(path: *u8, path_len: usize) -> i32 {
+export extern fn _share_file(path: *u8, path_len: usize) -> i32 {
     let _p: str = { #str_from_raw_parts(path, path_len) };
     return share::Outcome::Unsupported.to_code();
 }
@@ -740,9 +740,9 @@ fn an_empty_item_is_refused_before_any_sheet_is_asked_for() {
     // decided BEFORE the platform is touched — otherwise an empty share opens a
     // sheet with nothing in it.
     let e: str = "";
-    assert { _c_text({ #str_ptr(e) }, { #str_len(e) }, { #str_ptr(e) }, { #str_len(e) }) }
+    assert { _share_text({ #str_ptr(e) }, { #str_len(e) }, { #str_ptr(e) }, { #str_len(e) }) }
         == share::Outcome::InvalidInput.to_code();
-    assert { _c_url({ #str_ptr(e) }, { #str_len(e) }) }
+    assert { _share_url({ #str_ptr(e) }, { #str_len(e) }) }
         == share::Outcome::InvalidInput.to_code();
 }
 
@@ -752,7 +752,7 @@ fn a_file_is_refused_as_unsupported_rather_than_failed() {
     // code whose meaning is "no code for that here", and collapsing it into
     // `Failed` would send a caller looking for a bug.
     let p: str = "C:/does/not/matter.txt";
-    assert { _c_file({ #str_ptr(p) }, { #str_len(p) }) }
+    assert { _share_file({ #str_ptr(p) }, { #str_len(p) }) }
         == share::Outcome::Unsupported.to_code();
 }
 
@@ -763,12 +763,12 @@ fn the_share_manager_is_reachable_on_this_machine() {
     // the interop IID is right — which is the fact an earlier pass got wrong.
     // A machine without the class answers 0 and every verb degrades to
     // `Unsupported`, so both outcomes are legal and neither is asserted blindly.
-    let ok: i32 = { _c_available() };
+    let ok: i32 = { _share_available() };
     assert ok == (0 as i32) || ok == (1 as i32);
     if ok == (1 as i32) {
         // Reachable twice: the factory is released, not leaked into a
         // one-shot.
-        assert { _c_available() } == (1 as i32);
+        assert { _share_available() } == (1 as i32);
     }
 }
 

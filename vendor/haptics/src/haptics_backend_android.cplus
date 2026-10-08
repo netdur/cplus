@@ -89,7 +89,7 @@ fn _duration_ms(feel: i32) -> i64 {
     return 30 as i64;
 }
 
-export extern fn _c_available() -> i32 {
+export extern fn _haptics_available() -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::None => { return 0; }
         option::Option[rt::Env]::Some(env) => {
@@ -107,7 +107,7 @@ export extern fn _c_available() -> i32 {
     }
 }
 
-export extern fn _c_play(feel: i32) -> i32 {
+export extern fn _haptics_play(feel: i32) -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::None => { return 0; }
         option::Option[rt::Env]::Some(env) => {
@@ -149,6 +149,6 @@ export extern fn _c_play(feel: i32) -> i32 {
 
 // NOTHING TO WARM. Android's motor has no idle state to wake, so this is a
 // no-op rather than an approximation.
-export extern fn _c_prepare(feel: i32) {
+export extern fn _haptics_prepare(feel: i32) {
     return;
 }

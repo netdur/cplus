@@ -215,7 +215,7 @@ fn _static_int(env: rt::Env, name: *u8) -> i32 {
     return v;
 }
 
-export extern fn _c_kind() -> i32 {
+export extern fn _biometrics_kind() -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::None => { return 0; }
         option::Option[rt::Env]::Some(env) => {
@@ -224,7 +224,7 @@ export extern fn _c_kind() -> i32 {
     }
 }
 
-export extern fn _c_available() -> i32 {
+export extern fn _biometrics_available() -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::None => { return 0; }
         option::Option[rt::Env]::Some(env) => {
@@ -234,7 +234,7 @@ export extern fn _c_available() -> i32 {
     }
 }
 
-export extern fn _c_authenticate(reason: *u8, reason_len: usize,
+export extern fn _biometrics_authenticate(reason: *u8, reason_len: usize,
                                  on_result: fn(bio::Outcome, *u8), ctx: *u8,
                                  allow_passcode: i32) -> i32 {
     match _env_ready() {

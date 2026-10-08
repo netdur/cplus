@@ -62,7 +62,7 @@ fn _show(items: *u8) -> i32 {
     return 0;
 }
 
-export extern fn _c_available() -> i32 {
+export extern fn _share_available() -> i32 {
     if rt::get_class(#str_ptr("NSSharingServicePicker\0")).is_null() { return 0; }
     if _key_window_view().is_null() { return 0; }
     return 1;
@@ -73,14 +73,14 @@ export extern fn _c_available() -> i32 {
 // choosing the service first — the opposite of showing a picker. Rather than
 // pick a service on the caller's behalf, this shares the body and lets Mail
 // fill its own subject line.
-export extern fn _c_text(body: *u8, body_len: usize,
+export extern fn _share_text(body: *u8, body_len: usize,
                          subject: *u8, subject_len: usize) -> i32 {
     let s: *u8 = bridge::nsstring({ #str_from_raw_parts(body, body_len) });
     if s.is_null() { return 3; }
     return _show(_array_of(s));
 }
 
-export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
+export extern fn _share_url(link: *u8, link_len: usize) -> i32 {
     let s: *u8 = bridge::nsstring({ #str_from_raw_parts(link, link_len) });
     if s.is_null() { return 3; }
     // AN NSURL, NOT A STRING. AppKit gives a real URL a different service list
@@ -91,7 +91,7 @@ export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
     return _show(_array_of(u));
 }
 
-export extern fn _c_file(path: *u8, path_len: usize) -> i32 {
+export extern fn _share_file(path: *u8, path_len: usize) -> i32 {
     let s: *u8 = bridge::nsstring({ #str_from_raw_parts(path, path_len) });
     if s.is_null() { return 3; }
     let u: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),

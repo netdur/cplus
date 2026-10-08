@@ -2,7 +2,7 @@
 // on this build.
 //
 // THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `biometrics.cplus` declares three
-// stable symbols — `_c_kind`, `_c_available`, `_c_authenticate` — and something
+// stable symbols — `_biometrics_kind`, `_biometrics_available`, `_biometrics_authenticate` — and something
 // must define them on every platform the package claims. Without a `_windows`
 // sibling the build falls back to `biometrics_backend.cplus` — the Apple half —
 // and stops at `import "objc/runtime"` / `localauthentication`, neither of which
@@ -30,27 +30,27 @@
 // WebAuthn / `WscGetSecurityProviderHealth` surfaces. All of them need the
 // WinRT/COM apartment and projection this pass does not pull in — the same wall
 // `permissions_backend_windows` names for its WinRT authorization reads. When
-// that projection lands, `_c_kind` becomes Face/Fingerprint from
-// `UserConsentVerifier.CheckAvailabilityAsync`, `_c_available` its `Available`
-// arm, and `_c_authenticate` a `RequestVerificationAsync` whose completion maps
+// that projection lands, `_biometrics_kind` becomes Face/Fingerprint from
+// `UserConsentVerifier.CheckAvailabilityAsync`, `_biometrics_available` its `Available`
+// arm, and `_biometrics_authenticate` a `RequestVerificationAsync` whose completion maps
 // onto `Outcome`. Until then this stays an honest STUB.
 
 import "./biometrics" as bio;
 
 // What the device has. No enrolled sensor is reachable from this build, so the
 // answer is `None` — code 0.
-export extern fn _c_kind() -> i32 {
+export extern fn _biometrics_kind() -> i32 {
     return bio::Kind::None.to_code();
 }
 
 // Can a prompt be shown right now? Never, on this build.
-export extern fn _c_available() -> i32 {
+export extern fn _biometrics_available() -> i32 {
     return 0 as i32;
 }
 
 // Ask. There is nothing to ask with, so report `Unavailable` and — critically —
 // still fire the handler once so a caller waiting on the answer does not hang.
-export extern fn _c_authenticate(reason: *u8, reason_len: usize,
+export extern fn _biometrics_authenticate(reason: *u8, reason_len: usize,
                                  on_result: fn(bio::Outcome, *u8), ctx: *u8,
                                  allow_passcode: i32) -> i32 {
     // The facade already guards a null handler before it reaches here, but a
@@ -67,13 +67,13 @@ export extern fn _c_authenticate(reason: *u8, reason_len: usize,
 
 #[test]
 fn available_is_false_on_this_build() {
-    assert { _c_available() } == (0 as i32);
+    assert { _biometrics_available() } == (0 as i32);
 }
 
 #[test]
 fn kind_is_none() {
-    assert { _c_kind() } == bio::Kind::None.to_code();
-    assert { _c_kind() } == (0 as i32);
+    assert { _biometrics_kind() } == bio::Kind::None.to_code();
+    assert { _biometrics_kind() } == (0 as i32);
 }
 
 static _CB_SEEN: i32 = 0 as i32;
@@ -89,7 +89,7 @@ fn authenticate_fires_the_callback_once_with_unavailable() {
     _CB_SEEN = 0 as i32;
     _CB_LAST = 99 as i32;
     let f: fn(bio::Outcome, *u8) = _probe;
-    let rc: i32 = { _c_authenticate(#str_ptr("unlock"), #str_len("unlock"),
+    let rc: i32 = { _biometrics_authenticate(#str_ptr("unlock"), #str_len("unlock"),
                                     f, 0 as *u8, 1 as i32) };
     // Returned code and delivered outcome agree, and the handler ran exactly
     // once — the property that keeps an awaiting caller from hanging.
@@ -101,7 +101,7 @@ fn authenticate_fires_the_callback_once_with_unavailable() {
 #[test]
 fn a_null_handler_is_refused() {
     let nil: fn(bio::Outcome, *u8) = 0 as fn(bio::Outcome, *u8);
-    assert { _c_authenticate(#str_ptr("unlock"), #str_len("unlock"),
+    assert { _biometrics_authenticate(#str_ptr("unlock"), #str_len("unlock"),
                              nil, 0 as *u8, 1 as i32) }
         == bio::Outcome::Failed.to_code();
 }

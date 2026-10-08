@@ -43,16 +43,16 @@
 // promises JPEG, which the camera will produce itself as MJPG but which nothing
 // here could encode from YUYV.
 //
-// So the session streams YUYV and `_c_capture` switches: stop the pump, stream
+// So the session streams YUYV and `_camera_capture` switches: stop the pump, stream
 // off, re-negotiate MJPG, take one frame, and put everything back. The visible
 // cost is that a still interrupts a live preview for a moment, which is honest
-// and is what the comment above `_c_capture` says. A device with no MJPG
+// and is what the comment above `_camera_capture` says. A device with no MJPG
 // answers `Unsupported` for stills; a device with no YUYV streams MJPG and
 // answers `Unsupported` for frames.
 //
 // ---- the pump is a thread ---------------------------------------------------
 //
-// `VIDIOC_DQBUF` blocks until a frame is ready, so `_c_on_frame` starts a
+// `VIDIOC_DQBUF` blocks until a frame is ready, so `_camera_on_frame` starts a
 // thread that dequeues in a loop and calls the handler from there — which is
 // the contract `camera.cplus` states for `on_frame` and the same one both other
 // backends have. `poll` with a timeout rather than a bare blocking dequeue, so
@@ -144,7 +144,7 @@ fn _unsupported() -> i32 { return 2 as i32; }
 fn _busy() -> i32 { return 3 as i32; }
 fn _failed() -> i32 { return 4 as i32; }
 
-// `Facing::External` — see `_c_actual_facing`.
+// `Facing::External` — see `_camera_actual_facing`.
 fn _facing_external() -> i32 { return 2 as i32; }
 fn _facing_unspecified() -> i32 { return 3 as i32; }
 // `PixelFormat`
@@ -279,7 +279,7 @@ fn node_is_capture(fd: i32) -> bool {
 }
 
 // Open node `n` when it is a streamable capture node, else -1. `EBUSY` is
-// reported through `LAST_ERROR` so `_c_open` can answer `Busy` rather than
+// reported through `LAST_ERROR` so `_camera_open` can answer `Busy` rather than
 // pretending the camera is not there.
 fn open_capture_node(n: i32) -> i32 {
     var path: [u8; 24] = [0u8; 24];
@@ -327,7 +327,7 @@ fn device_offers(fd: i32, fourcc: u32) -> bool {
 
 struct Session {
     fd: i32,
-    opaque path: *u8,          // malloc'd C string, also what `_c_device` answers
+    opaque path: *u8,          // malloc'd C string, also what `_camera_device` answers
     width: i32,
     height: i32,
     stride: i32,               // of the LUMA plane handed to a frame handler
@@ -760,7 +760,7 @@ fn get_control(fd: i32, id: u32, ref out: i32) -> bool {
 
 // ---- the seam ---------------------------------------------------------------------------
 
-export extern fn _c_count() -> i64 {
+export extern fn _camera_count() -> i64 {
     return count_devices();
 }
 
@@ -769,13 +769,13 @@ export extern fn _c_count() -> i64 {
 // Answering "no front camera" on a laptop whose only lens faces the user would
 // be a worse lie than answering "there is a camera" and reporting `External`
 // from `facing()`, which is what a caller reads to find out.
-export extern fn _c_has(facing: i32) -> i32 {
+export extern fn _camera_has(facing: i32) -> i32 {
     let _f: i32 = facing;
     if count_devices() > (0 as i64) { return 1 as i32; }
     return 0 as i32;
 }
 
-export extern fn _c_open(req: *_CRequest) -> *u8 {
+export extern fn _camera_open(req: *_CRequest) -> *u8 {
     LAST_ERROR = _ok();
     if req == (0 as *_CRequest) { LAST_ERROR = _failed(); return 0 as *u8; }
 
@@ -814,7 +814,7 @@ export extern fn _c_open(req: *_CRequest) -> *u8 {
     { memset(s as *u8, 0 as i32, #size_of::[Session]()) };
     { (*s).fd = fd };
     { (*s).path = 0 as *u8 };
-    // Keep the path: `_c_device` answers it and it is the only stable name a
+    // Keep the path: `_camera_device` answers it and it is the only stable name a
     // caller can pass back through `Request::device`.
     var i: usize = 0 as usize;
     while { *(pp + i) } != (0 as u8) { i = i +% (1 as usize); }
@@ -868,18 +868,18 @@ export extern fn _c_open(req: *_CRequest) -> *u8 {
 
 // EXTERNAL, and never a guess — the same answer and the same reason as the
 // Windows half. V4L2 does not report which way a camera points.
-export extern fn _c_actual_facing(h: *u8) -> i32 {
+export extern fn _camera_actual_facing(h: *u8) -> i32 {
     if live(h) == (0 as *Session) { return _facing_unspecified(); }
     return _facing_external();
 }
 
-export extern fn _c_frame_rate(h: *u8) -> i32 {
+export extern fn _camera_frame_rate(h: *u8) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return 0 as i32; }
     return { (*s).frame_rate };
 }
 
-export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
+export extern fn _camera_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
     let s: *Session = live(h);
     if out_width != (0 as *i32) { { (*out_width) = if s == (0 as *Session) { 0 as i32 } else { (*s).width } }; }
     if out_height != (0 as *i32) { { (*out_height) = if s == (0 as *Session) { 0 as i32 } else { (*s).height } }; }
@@ -888,14 +888,14 @@ export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
 // LUMA8 WHEN THE SESSION STREAMS YUYV, `Any` when it streams MJPG — because the
 // facade's rule is that this reports what a frame handler will actually see,
 // and an MJPG session hands a handler nothing at all.
-export extern fn _c_pixel_format(h: *u8) -> i32 {
+export extern fn _camera_pixel_format(h: *u8) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _pix_any(); }
     if { (*s).stream_fourcc } == fourcc_yuyv() { return _pix_luma8(); }
     return _pix_any();
 }
 
-export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
+export extern fn _camera_device(h: *u8, into: *text::Text) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) || into == (0 as *text::Text) { return 0 as i32; }
     let p: *u8 = { (*s).path };
@@ -910,7 +910,7 @@ export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
 // control's range, because V4L2's numbers are steps of an optical or digital
 // zoom with no defined relationship to a magnification — the facade already
 // says the scale is not portable.
-export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
+export extern fn _camera_set_zoom(h: *u8, factor: f64) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _failed(); }
     var lo: i32 = 0 as i32;
@@ -925,7 +925,7 @@ export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
     return _ok();
 }
 
-export extern fn _c_zoom(h: *u8) -> f64 {
+export extern fn _camera_zoom(h: *u8) -> f64 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return 1.0 as f64; }
     var lo: i32 = 0 as i32;
@@ -936,7 +936,7 @@ export extern fn _c_zoom(h: *u8) -> f64 {
     return (1.0 as f64) + { (v -% lo) as f64 };
 }
 
-export extern fn _c_max_zoom(h: *u8) -> f64 {
+export extern fn _camera_max_zoom(h: *u8) -> f64 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return 1.0 as f64; }
     var lo: i32 = 0 as i32;
@@ -947,8 +947,8 @@ export extern fn _c_max_zoom(h: *u8) -> f64 {
 }
 
 // FLASH_LED_MODE = 2 is TORCH, 0 is off. Almost no webcam has it; the ones that
-// refuse say so through `_c_has_torch` rather than through a failed call.
-export extern fn _c_set_torch(h: *u8, on: i32) -> i32 {
+// refuse say so through `_camera_has_torch` rather than through a failed call.
+export extern fn _camera_set_torch(h: *u8, on: i32) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _failed(); }
     var lo: i32 = 0 as i32;
@@ -960,7 +960,7 @@ export extern fn _c_set_torch(h: *u8, on: i32) -> i32 {
     return _ok();
 }
 
-export extern fn _c_has_torch(h: *u8) -> i32 {
+export extern fn _camera_has_torch(h: *u8) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return 0 as i32; }
     var lo: i32 = 0 as i32;
@@ -974,7 +974,7 @@ export extern fn _c_has_torch(h: *u8) -> i32 {
 // FOCUS_AUTO is a BOOLEAN — continuous or held. `Once` has no counterpart:
 // V4L2 has no one-shot autofocus trigger in the user API, and firing auto and
 // then clearing it after a guessed delay would be a race dressed as a feature.
-export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_focus(h: *u8, mode: i32) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _failed(); }
     if mode == _mode_once() { return _unsupported(); }
@@ -997,7 +997,7 @@ export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
 // exposure", so `Auto` tries the strict one and falls back to the one every
 // UVC camera actually implements, and `Locked` does the same for MANUAL.
 // Reading the range and trusting it would report `Failed` on every laptop.
-export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_exposure(h: *u8, mode: i32) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _failed(); }
     if mode == _mode_once() { return _unsupported(); }
@@ -1015,7 +1015,7 @@ export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
 
 // AUTO_WHITE_BALANCE is a boolean: 1 continuous, 0 held at whatever is current
 // — which is exactly `Mode::Locked`.
-export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_white_balance(h: *u8, mode: i32) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _failed(); }
     if mode == _mode_once() { return _unsupported(); }
@@ -1027,9 +1027,9 @@ export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
     return _ok();
 }
 
-export extern fn _c_last_error() -> i32 { return LAST_ERROR; }
+export extern fn _camera_last_error() -> i32 { return LAST_ERROR; }
 
-export extern fn _c_close(h: *u8) {
+export extern fn _camera_close(h: *u8) {
     if h == (0 as *u8) { return; }
     let s: *Session = { h as *Session };
     stop_pump(s);
@@ -1047,7 +1047,7 @@ export extern fn _c_close(h: *u8) {
 // NO FACING TO SWITCH TO. V4L2 addresses cameras by path and reports no
 // position, so there is no honest way to answer "give me the other one" — a
 // caller that wants a different device opens one with `Request::device`.
-export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
+export extern fn _camera_switch_to(h: *u8, facing: i32) -> i32 {
     let _f: i32 = facing;
     if live(h) == (0 as *Session) { return _failed(); }
     return _unsupported();
@@ -1063,14 +1063,14 @@ export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
 //
 // CALLED AT EVERY MOUNT, and a node may be mounted more than once, so the
 // picture is created once and handed out at +1 each time. `release_view` drops
-// the caller's reference; the session keeps its own until `_c_close`.
+// the caller's reference; the session keeps its own until `_camera_close`.
 //
 // STARTING THE PUMP IS THE POINT. An application that only wants to SEE the
 // camera never calls `on_frame`, so mounting the preview is what puts the
 // stream on screen.
-extern fn _c_preview_fit_for(h: *u8) -> i32;
+extern fn _camera_preview_fit_for(h: *u8) -> i32;
 
-export extern fn _c_preview_create(h: *u8) -> *u8 {
+export extern fn _camera_preview_create(h: *u8) -> *u8 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return 0 as *u8; }
     // No display, no widget — and `gtk_init_check` answers that without the
@@ -1096,7 +1096,7 @@ export extern fn _c_preview_create(h: *u8) -> *u8 {
     // How the frame meets the box — `preview(fit:)`, spendwise S26. GTK's own
     // ContentFit is the same three answers: CONTAIN letterboxes (its default),
     // COVER fills and crops, FILL stretches. COVER clips to the widget itself.
-    let fit: i32 = { _c_preview_fit_for(h) };
+    let fit: i32 = { _camera_preview_fit_for(h) };
     var content: i32 = gtk::content_fit_contain();
     if fit == 1 { content = gtk::content_fit_cover(); }
     if fit == 2 { content = gtk::content_fit_fill(); }
@@ -1105,7 +1105,7 @@ export extern fn _c_preview_create(h: *u8) -> *u8 {
     return { g_object_ref({ (*s).preview }) };
 }
 
-export extern fn _c_preview_release(v: *u8) {
+export extern fn _camera_preview_release(v: *u8) {
     if v == (0 as *u8) { return; }
     { g_object_unref(v) };
 }
@@ -1116,7 +1116,7 @@ export extern fn _c_preview_release(v: *u8) {
 // promises the main thread and says `Ok` means "accepted, not taken"; both hold
 // — this is simply the strictest way to keep the first promise, since there is
 // no capture queue on this platform to be asynchronous about.
-export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+export extern fn _camera_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _failed(); }
     if cb.is_null() { return _failed(); }
@@ -1158,7 +1158,7 @@ export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
     stream_off(s);
     release_buffers(s);
     // BACK TO WHAT THE SESSION WAS. A failure to restore leaves the handle
-    // alive but not streaming, which `_c_on_frame` will then refuse — better
+    // alive but not streaming, which `_camera_on_frame` will then refuse — better
     // than a session that silently reports YUYV and delivers JPEG.
     if set_format(s, { (*s).stream_fourcc }, want_w, want_h) && alloc_buffers(s, 4 as i32) {
         let _on: bool = stream_on(s);
@@ -1193,7 +1193,7 @@ fn ensure_pump(s: *Session) -> bool {
     return true;
 }
 
-export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+export extern fn _camera_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _failed(); }
     if cb.is_null() { return _failed(); }
@@ -1210,7 +1210,7 @@ export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), 
 // session is a second reader of the same stream and the facade's `stop_frames`
 // says nothing about it — tearing the pump down here would blank a preview the
 // caller never asked to stop. With no preview this is exactly what it was.
-export extern fn _c_stop_frames(h: *u8) -> i32 {
+export extern fn _camera_stop_frames(h: *u8) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _failed(); }
     { (*s).on_frame = 0 as fn(*u8, i32, i32, i32, i32, *u8, *u8) };
@@ -1264,7 +1264,7 @@ fn t_photo(data: *u8, len: usize, _ctx: *u8) {
     }
 }
 
-fn a_camera_is_here() -> bool { return { _c_count() } > (0 as i64); }
+fn a_camera_is_here() -> bool { return { _camera_count() } > (0 as i64); }
 
 fn open_default() -> *u8 {
     var req: _CRequest = #zero::[_CRequest]();
@@ -1273,7 +1273,7 @@ fn open_default() -> *u8 {
     req.frame_rate = 30 as i32;
     req.pixel = _pix_luma8();
     req.buffers = 4 as i32;
-    return { _c_open(#addr_of(req)) };
+    return { _camera_open(#addr_of(req)) };
 }
 
 #[test]
@@ -1307,20 +1307,20 @@ fn the_fourccs_are_the_four_letters_packed_little_endian() {
 
 #[test]
 fn a_closed_handle_answers_everywhere_rather_than_faulting() {
-    assert { _c_actual_facing(0 as *u8) } == _facing_unspecified();
-    assert { _c_frame_rate(0 as *u8) } == (0 as i32);
-    assert { _c_pixel_format(0 as *u8) } == _pix_any();
-    assert { _c_zoom(0 as *u8) } == (1.0 as f64);
-    assert { _c_max_zoom(0 as *u8) } == (1.0 as f64);
-    assert { _c_has_torch(0 as *u8) } == (0 as i32);
-    assert { _c_switch_to(0 as *u8, 1 as i32) } == _failed();
-    assert { _c_stop_frames(0 as *u8) } == _failed();
+    assert { _camera_actual_facing(0 as *u8) } == _facing_unspecified();
+    assert { _camera_frame_rate(0 as *u8) } == (0 as i32);
+    assert { _camera_pixel_format(0 as *u8) } == _pix_any();
+    assert { _camera_zoom(0 as *u8) } == (1.0 as f64);
+    assert { _camera_max_zoom(0 as *u8) } == (1.0 as f64);
+    assert { _camera_has_torch(0 as *u8) } == (0 as i32);
+    assert { _camera_switch_to(0 as *u8, 1 as i32) } == _failed();
+    assert { _camera_stop_frames(0 as *u8) } == _failed();
     var w: i32 = 7 as i32;
     var h: i32 = 7 as i32;
-    { _c_frame_size(0 as *u8, #addr_of(w), #addr_of(h)) };
+    { _camera_frame_size(0 as *u8, #addr_of(w), #addr_of(h)) };
     assert w == (0 as i32);
     assert h == (0 as i32);
-    { _c_close(0 as *u8) };
+    { _camera_close(0 as *u8) };
 }
 
 #[test]
@@ -1330,18 +1330,18 @@ fn a_session_reports_the_format_the_driver_agreed_to() {
     assert h != (0 as *u8);
     var w: i32 = 0 as i32;
     var ht: i32 = 0 as i32;
-    { _c_frame_size(h, #addr_of(w), #addr_of(ht)) };
+    { _camera_frame_size(h, #addr_of(w), #addr_of(ht)) };
     assert w > (0 as i32);
     assert ht > (0 as i32);
     // Requested 640x480 and this driver offers it; a driver that answered
     // something else would still pass, which is the point — the size reported
     // is read back from the struct, never echoed from the request.
-    assert { _c_pixel_format(h) } == _pix_luma8();
-    assert { _c_actual_facing(h) } == _facing_external();
+    assert { _camera_pixel_format(h) } == _pix_luma8();
+    assert { _camera_actual_facing(h) } == _facing_external();
     var name: text::Text = text::new();
-    assert { _c_device(h, #addr_of(name)) } == (1 as i32);
+    assert { _camera_device(h, #addr_of(name)) } == (1 as i32);
     assert name.view() != "";
-    { _c_close(h) };
+    { _camera_close(h) };
 }
 
 #[test]
@@ -1353,16 +1353,16 @@ fn frames_arrive_with_the_promised_geometry() {
     assert h != (0 as *u8);
     var w: i32 = 0 as i32;
     var ht: i32 = 0 as i32;
-    { _c_frame_size(h, #addr_of(w), #addr_of(ht)) };
-    assert { _c_on_frame(h, t_frame, 0 as *u8) } == _ok();
+    { _camera_frame_size(h, #addr_of(w), #addr_of(ht)) };
+    assert { _camera_on_frame(h, t_frame, 0 as *u8) } == _ok();
     // A second start is not an error and must not spawn a second pump.
-    assert { _c_on_frame(h, t_frame, 0 as *u8) } == _ok();
+    assert { _camera_on_frame(h, t_frame, 0 as *u8) } == _ok();
     var spins: i32 = 0 as i32;
     while SEEN_FRAMES < (3 as i32) && spins < (60 as i32) {
         let _u: i32 = { usleep(100000 as u32) };
         spins = spins +% (1 as i32);
     }
-    assert { _c_stop_frames(h) } == _ok();
+    assert { _camera_stop_frames(h) } == _ok();
     assert SEEN_FRAMES >= (3 as i32);
     assert SEEN_W == w;
     assert SEEN_H == ht;
@@ -1370,7 +1370,7 @@ fn frames_arrive_with_the_promised_geometry() {
     // and not the YUYV `bytesperline`, which is twice it.
     assert SEEN_STRIDE == w;
     assert SEEN_NONZERO;
-    { _c_close(h) };
+    { _camera_close(h) };
 }
 
 #[test]
@@ -1381,14 +1381,14 @@ fn a_still_really_is_a_jpeg_and_the_session_survives_it() {
     SEEN_FRAMES = 0 as i32;
     let h: *u8 = open_default();
     assert h != (0 as *u8);
-    assert { _c_on_frame(h, t_frame, 0 as *u8) } == _ok();
+    assert { _camera_on_frame(h, t_frame, 0 as *u8) } == _ok();
     var spins: i32 = 0 as i32;
     while SEEN_FRAMES < (2 as i32) && spins < (60 as i32) {
         let _u: i32 = { usleep(100000 as u32) };
         spins = spins +% (1 as i32);
     }
     let before: i32 = SEEN_FRAMES;
-    assert { _c_capture(h, t_photo, 0 as *u8) } == _ok();
+    assert { _camera_capture(h, t_photo, 0 as *u8) } == _ok();
     assert SHOT_LEN > (1000 as usize);
     assert SHOT_SOI;
     // THE PUMP COMES BACK. A capture that left the session dark would be a
@@ -1399,8 +1399,8 @@ fn a_still_really_is_a_jpeg_and_the_session_survives_it() {
         spins = spins +% (1 as i32);
     }
     assert SEEN_FRAMES > before;
-    assert { _c_stop_frames(h) } == _ok();
-    { _c_close(h) };
+    assert { _camera_stop_frames(h) } == _ok();
+    { _camera_close(h) };
 }
 
 #[test]
@@ -1410,18 +1410,18 @@ fn the_controls_answer_unsupported_rather_than_failed_when_absent() {
     assert h != (0 as *u8);
     // Whatever this hardware has, none of these may report `Failed`: a caller
     // hides a control on `Unsupported` and shows an error on `Failed`.
-    assert { _c_set_white_balance(h, _mode_auto()) } != _failed();
-    assert { _c_set_exposure(h, _mode_auto()) } != _failed();
-    assert { _c_set_focus(h, _mode_auto()) } != _failed();
-    assert { _c_set_torch(h, 0 as i32) } != _failed();
+    assert { _camera_set_white_balance(h, _mode_auto()) } != _failed();
+    assert { _camera_set_exposure(h, _mode_auto()) } != _failed();
+    assert { _camera_set_focus(h, _mode_auto()) } != _failed();
+    assert { _camera_set_torch(h, 0 as i32) } != _failed();
     // `Once` has no V4L2 counterpart and says so on every device.
-    assert { _c_set_focus(h, _mode_once()) } == _unsupported();
-    assert { _c_set_exposure(h, _mode_once()) } == _unsupported();
-    assert { _c_set_white_balance(h, _mode_once()) } == _unsupported();
-    assert { _c_max_zoom(h) } >= (1.0 as f64);
+    assert { _camera_set_focus(h, _mode_once()) } == _unsupported();
+    assert { _camera_set_exposure(h, _mode_once()) } == _unsupported();
+    assert { _camera_set_white_balance(h, _mode_once()) } == _unsupported();
+    assert { _camera_max_zoom(h) } >= (1.0 as f64);
     // No facing to switch to on this platform, and never a silent no-op.
-    assert { _c_switch_to(h, 0 as i32) } == _unsupported();
-    { _c_close(h) };
+    assert { _camera_switch_to(h, 0 as i32) } == _unsupported();
+    { _camera_close(h) };
 }
 
 fn gtk_here() -> bool { return { gtk_init_check() } != (0 as i32); }
@@ -1432,25 +1432,25 @@ fn a_preview_is_a_real_widget_and_the_same_one_at_every_mount() {
     if !gtk_here() { return; }
     let h: *u8 = open_default();
     assert h != (0 as *u8);
-    let v1: *u8 = { _c_preview_create(h) };
+    let v1: *u8 = { _camera_preview_create(h) };
     assert v1 != (0 as *u8);
     // A NODE MAY BE MOUNTED MORE THAN ONCE and `preview()` is a recipe facet
     // runs at every mount. The widget is the session's, handed out again — a
     // second picture would leave the first one painting into nothing.
-    let v2: *u8 = { _c_preview_create(h) };
+    let v2: *u8 = { _camera_preview_create(h) };
     assert v2 == v1;
     // Mounting the preview is what puts the stream on screen: an application
     // that only wants to SEE the camera never calls `on_frame`.
-    assert { _c_updates_running_probe(h) };
+    assert { _camera_updates_running_probe(h) };
     // Each handout is +1 and `release_view` drops one; the session keeps its
     // own until close, so releasing both leaves the widget alive.
-    { _c_preview_release(v1) };
-    { _c_preview_release(v2) };
-    { _c_close(h) };
+    { _camera_preview_release(v1) };
+    { _camera_preview_release(v2) };
+    { _camera_close(h) };
 }
 
 // The pump flag, which is private state the seam does not expose.
-fn _c_updates_running_probe(h: *u8) -> bool {
+fn _camera_updates_running_probe(h: *u8) -> bool {
     let s: *Session = live(h);
     if s == (0 as *Session) { return false; }
     return { (*s).running };
@@ -1519,8 +1519,8 @@ fn a_frame_reaches_the_widget_through_the_main_loop() {
     assert h != (0 as *u8);
     var w: i32 = 0 as i32;
     var ht: i32 = 0 as i32;
-    { _c_frame_size(h, #addr_of(w), #addr_of(ht)) };
-    let v: *u8 = { _c_preview_create(h) };
+    { _camera_frame_size(h, #addr_of(w), #addr_of(ht)) };
+    let v: *u8 = { _camera_preview_create(h) };
     assert v != (0 as *u8);
     // Nothing painted yet — the picture is empty until a frame arrives.
     assert { gtk_picture_get_paintable(v) } == (0 as *u8);
@@ -1542,6 +1542,6 @@ fn a_frame_reaches_the_widget_through_the_main_loop() {
     assert { gdk_paintable_get_intrinsic_width(painted) } == w;
     assert { gdk_paintable_get_intrinsic_height(painted) } == ht;
 
-    { _c_preview_release(v) };
-    { _c_close(h) };
+    { _camera_preview_release(v) };
+    { _camera_close(h) };
 }

@@ -44,11 +44,11 @@
 import "./biometrics" as bio;
 
 // Kind::None
-export extern fn _c_kind() -> i32 {
+export extern fn _biometrics_kind() -> i32 {
     return 0 as i32;
 }
 
-export extern fn _c_available() -> i32 {
+export extern fn _biometrics_available() -> i32 {
     return 0 as i32;
 }
 
@@ -56,7 +56,7 @@ export extern fn _c_available() -> i32 {
 // screen would hang forever otherwise, and the facade's contract is that the
 // outcome arrives on the handler. It is called before this returns, which is
 // allowed — the facade promises the main thread, not a later turn.
-export extern fn _c_authenticate(reason: *u8, reason_len: usize,
+export extern fn _biometrics_authenticate(reason: *u8, reason_len: usize,
                                  on_result: fn(bio::Outcome, *u8), ctx: *u8,
                                  allow_passcode: i32) -> i32 {
     if !on_result.is_null() { on_result(bio::Outcome::Unavailable, ctx); }
@@ -77,8 +77,8 @@ fn _sink(o: bio::Outcome, _ctx: *u8) {
 fn the_pair_an_app_branches_on_describes_what_this_build_can_do() {
     // Not "is there a reader on this machine" — `Kind::Fingerprint` here would
     // put a sign-in button on screen that can never succeed.
-    assert { _c_kind() } == bio::Kind::None.to_code();
-    assert { _c_available() } == (0 as i32);
+    assert { _biometrics_kind() } == bio::Kind::None.to_code();
+    assert { _biometrics_available() } == (0 as i32);
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn authenticating_answers_unavailable_and_still_calls_the_handler() {
     _GOT = 0 -% 1;
     let cb: fn(bio::Outcome, *u8) = _sink;
     let r: str = "unlock the vault";
-    let rc: i32 = { _c_authenticate(#str_ptr(r), #str_len(r), cb, 0 as *u8, 1 as i32) };
+    let rc: i32 = { _biometrics_authenticate(#str_ptr(r), #str_len(r), cb, 0 as *u8, 1 as i32) };
     // A caller that waits for the handler must not hang.
     assert _CALLED == (1 as i32);
     assert _GOT == bio::Outcome::Unavailable.to_code();

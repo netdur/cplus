@@ -80,7 +80,7 @@ impl Outcome {
 
 // What the device has, whether or not anything is enrolled.
 fn kind() -> Kind {
-    return Kind::from_code({ _c_kind() });
+    return Kind::from_code({ _biometrics_kind() });
 }
 
 // Can a prompt be shown right now?
@@ -89,7 +89,7 @@ fn kind() -> Kind {
 // no hardware, nothing enrolled, or locked out after too many tries.
 // `authenticate` reports which; this is the cheap yes/no for hiding a button.
 fn available() -> bool {
-    return { _c_available() } != (0 as i32);
+    return { _biometrics_available() } != (0 as i32);
 }
 
 // Ask.
@@ -113,12 +113,12 @@ fn authenticate(reason: str,
     if #str_len(reason) == (0 as usize) { return Outcome::Failed; }
     var pass: i32 = 0;
     if allow_passcode { pass = 1; }
-    return Outcome::from_code({ _c_authenticate(#str_ptr(reason), #str_len(reason),
+    return Outcome::from_code({ _biometrics_authenticate(#str_ptr(reason), #str_len(reason),
                                                 on_result, ctx, pass) });
 }
 
-extern fn _c_kind() -> i32;
-extern fn _c_available() -> i32;
-extern fn _c_authenticate(reason: *u8, reason_len: usize,
+extern fn _biometrics_kind() -> i32;
+extern fn _biometrics_available() -> i32;
+extern fn _biometrics_authenticate(reason: *u8, reason_len: usize,
                           on_result: fn(Outcome, *u8), ctx: *u8,
                           allow_passcode: i32) -> i32;

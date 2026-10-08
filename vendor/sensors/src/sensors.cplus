@@ -131,7 +131,7 @@ impl Request {
 // per-thing query — where `location::available()` takes none and keeps its own
 // name honestly.
 fn has(kind: Kind) -> bool {
-    return { _c_available(kind.to_code()) } != (0 as i32);
+    return { _sensors_available(kind.to_code()) } != (0 as i32);
 }
 
 // A running stream. STOPS ON DROP, like `location::Updates` — a sensor left
@@ -148,23 +148,23 @@ fn updates(kind: Kind,
     if on_sample.is_null() { return result::Result[Readings, Outcome]::Err(Outcome::Failed); }
     var req: Request = request;
     var code: i32 = 0;
-    let h: *u8 = { _c_start(kind.to_code(), #addr_of(req), on_sample, ctx, #addr_of(code)) };
+    let h: *u8 = { _sensors_start(kind.to_code(), #addr_of(req), on_sample, ctx, #addr_of(code)) };
     if h.is_null() { return result::Result[Readings, Outcome]::Err(Outcome::from_code(code)); }
     return result::Result[Readings, Outcome]::Ok(Readings { _h: h });
 }
 
 impl Readings {
     fn kind(this) -> Kind {
-        return Kind::from_code({ _c_kind(this._h) });
+        return Kind::from_code({ _sensors_kind(this._h) });
     }
 
     fn is_running(this) -> bool {
-        return this._h.is_not_null() && { _c_running(this._h) } != (0 as i32);
+        return this._h.is_not_null() && { _sensors_running(this._h) } != (0 as i32);
     }
 
     fn stop(ref this) {
         if this._h.is_null() { return; }
-        { _c_stop(this._h) };
+        { _sensors_stop(this._h) };
         this._h = 0 as *u8;
         return;
     }
@@ -176,9 +176,9 @@ impl Readings {
 }
 
 // ---- the seam ----------------------------------------------------------------
-extern fn _c_available(kind: i32) -> i32;
-extern fn _c_start(kind: i32, req: *Request, on_sample: fn(Sample, *u8), ctx: *u8,
+extern fn _sensors_available(kind: i32) -> i32;
+extern fn _sensors_start(kind: i32, req: *Request, on_sample: fn(Sample, *u8), ctx: *u8,
                    out_code: *i32) -> *u8;
-extern fn _c_kind(h: *u8) -> i32;
-extern fn _c_running(h: *u8) -> i32;
-extern fn _c_stop(h: *u8);
+extern fn _sensors_kind(h: *u8) -> i32;
+extern fn _sensors_running(h: *u8) -> i32;
+extern fn _sensors_stop(h: *u8);

@@ -103,3 +103,80 @@ fn vendor_cplus_sources_contain_no_raw_nul_bytes() {
         offenders.join("\n")
     );
 }
+
+/// Every `export extern fn NAME` in `src`, as written. An export is a bare C
+/// symbol: the name IS the symbol, not module-scoped like everything else.
+fn exported_names(src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let key = "export extern fn ";
+    let mut rest = src;
+    while let Some(i) = rest.find(key) {
+        let after = &rest[i + key.len()..];
+        let name: String = after
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            out.push(name);
+        }
+        rest = after;
+    }
+    out
+}
+
+/// TWO PACKAGES MUST NOT EXPORT THE SAME SYMBOL.
+///
+/// A package's facade and its platform backend meet at bare C symbols
+/// (`export extern fn`), because the backend imports the facade for its types
+/// and an import back would be a cycle. Those names are global to the link, so
+/// an app that links two packages using the same one fails: spendwise on
+/// Android, 2026-10-08, `ld.lld: duplicate symbol: _c_available` — biometrics
+/// and haptics both called their seam `_c_available`, and so did filepicker,
+/// location, sensors and share; `_c_kind` and `_c_open` collided too. Nothing
+/// caught it before an app linked two of them, and each package's own tests
+/// link only itself. The convention since: a package prefixes its seam with
+/// its own name (`_haptics_available`).
+///
+/// Platform overrides of ONE package export the same name on purpose — only
+/// one of them is compiled per target — so this compares across packages only.
+#[test]
+fn no_two_vendor_packages_export_the_same_symbol() {
+    let root = repo_root();
+    let vendor = root.join("vendor");
+    if !vendor.is_dir() {
+        return;
+    }
+    let mut owners: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    let Ok(packages) = fs::read_dir(&vendor) else { return };
+    let mut seen = 0usize;
+    for pkg in packages.flatten() {
+        let Ok(ft) = pkg.file_type() else { continue };
+        if !ft.is_dir() {
+            continue;
+        }
+        let name = pkg.file_name().to_string_lossy().to_string();
+        let mut files = Vec::new();
+        cplus_sources(&pkg.path().join("src"), &mut files);
+        for f in &files {
+            let Ok(text) = fs::read_to_string(f) else { continue };
+            for sym in exported_names(&text) {
+                owners.entry(sym).or_default().insert(name.clone());
+                seen += 1;
+            }
+        }
+    }
+    assert!(seen > 50, "expected the vendor exports, found only {seen} — did the layout move?");
+    let shared: Vec<String> = owners
+        .iter()
+        .filter(|(_, pkgs)| pkgs.len() > 1)
+        .map(|(sym, pkgs)| format!("  {sym}: {}", pkgs.iter().cloned().collect::<Vec<_>>().join(", ")))
+        .collect();
+    assert!(
+        shared.is_empty(),
+        "these symbols are exported by more than one vendor package, so an app \
+         linking both fails with a duplicate symbol — prefix each package's seam \
+         with the package's name:\n{}",
+        shared.join("\n")
+    );
+}

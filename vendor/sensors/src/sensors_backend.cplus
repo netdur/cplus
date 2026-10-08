@@ -74,7 +74,7 @@ fn _availability_selector(kind: i32) -> *u8 {
 // Apple's altimeter reports kilopascals; the facade promises hectopascals.
 const _KPA_TO_HPA: f64 = 10.0f64;
 
-export extern fn _c_available(kind: i32) -> i32 {
+export extern fn _sensors_available(kind: i32) -> i32 {
     // THE BAROMETER IS A DIFFERENT CLASS and the only one here that takes a
     // BLOCK — `CMAltimeter` has no polled form. See `_start_barometer`.
     if kind == _KIND_BARO {
@@ -230,10 +230,10 @@ fn _start_barometer(on_sample: fn(sens::Sample, *u8), ctx: *u8,
     return s as *u8;
 }
 
-export extern fn _c_start(kind: i32, req: *sens::Request,
+export extern fn _sensors_start(kind: i32, req: *sens::Request,
                           on_sample: fn(sens::Sample, *u8), ctx: *u8,
                           out_code: *i32) -> *u8 {
-    if _c_available(kind) == 0 {
+    if _sensors_available(kind) == 0 {
         // 2 = Unavailable: there is a backend, the device has no such sensor.
         if out_code.is_not_null() { { *out_code = 2 }; }
         return 0 as *u8;
@@ -305,20 +305,20 @@ export extern fn _c_start(kind: i32, req: *sens::Request,
     return s as *u8;
 }
 
-export extern fn _c_kind(h: *u8) -> i32 {
+export extern fn _sensors_kind(h: *u8) -> i32 {
     if h.is_null() { return 0; }
     let s: *_Session = h as *_Session;
     return { (*s).kind };
 }
 
-export extern fn _c_running(h: *u8) -> i32 {
+export extern fn _sensors_running(h: *u8) -> i32 {
     if h.is_null() { return 0; }
     let s: *_Session = h as *_Session;
     if { (*s).running } { return 1; }
     return 0;
 }
 
-export extern fn _c_stop(h: *u8) {
+export extern fn _sensors_stop(h: *u8) {
     if h.is_null() { return; }
     let s: *_Session = h as *_Session;
     if !{ (*s).running } { return; }

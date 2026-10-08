@@ -24,31 +24,31 @@
 // application asks first and skips the tap; nothing degrades and nothing lies.
 // `play` returning 0 says the same thing to a caller that did not ask.
 
-export extern fn _c_available() -> i32 {
+export extern fn _haptics_available() -> i32 {
     return 0 as i32;
 }
 
 // 0, never 1. A caller that skipped `available()` still learns that nothing
 // happened, rather than being told a tap it never felt was delivered.
-export extern fn _c_play(feel: i32) -> i32 {
+export extern fn _haptics_play(feel: i32) -> i32 {
     return 0 as i32;
 }
 
 // Warming up an actuator that does not exist. Void on every platform — the
 // Darwin body is a `return;` too, because AppKit has no prepare step either.
-export extern fn _c_prepare(feel: i32) {
+export extern fn _haptics_prepare(feel: i32) {
     return;
 }
 
 #[test]
 fn nothing_is_available_and_nothing_claims_to_have_played() {
-    assert { _c_available() } == (0 as i32);
+    assert { _haptics_available() } == (0 as i32);
     // Every Feel, because a backend that answered for one and not another would
     // be the surprising kind of wrong.
     var f: i32 = 0 as i32;
     while f < (8 as i32) {
-        assert { _c_play(f) } == (0 as i32);
-        { _c_prepare(f) };
+        assert { _haptics_play(f) } == (0 as i32);
+        { _haptics_prepare(f) };
         f = f +% (1 as i32);
     }
 }

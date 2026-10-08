@@ -33,13 +33,13 @@
 // ---- THE FRAME PUMP IS A THREAD ---------------------------------------------
 //
 // `IMFSourceReader::ReadSample` blocks until a frame is ready. A UI cannot call
-// it, so `_c_on_frame` starts a thread that reads in a loop and calls the
+// it, so `_camera_on_frame` starts a thread that reads in a loop and calls the
 // handler from there — and the handler therefore runs OFF the UI thread, which
 // is the same contract the AppKit half has (AVFoundation delivers on its own
 // queue). A caller that touches the UI hops itself, exactly as it must there.
 //
 // The loop owns the reader for its lifetime and stops on a flag. Nothing is
-// freed under it: `_c_close` sets the flag, waits for the thread to notice, and
+// freed under it: `_camera_close` sets the flag, waits for the thread to notice, and
 // only then releases the COM objects.
 
 import "stdlib/text" as text;
@@ -459,7 +459,7 @@ struct Session {
     // is running — two `ReadSample` calls on one reader from two threads is not
     // something Media Foundation promises — so it leaves the handler here and
     // the pump encodes the next frame it already has. With no pump running,
-    // `_c_capture` reads that one frame itself on the caller's thread.
+    // `_camera_capture` reads that one frame itself on the caller's thread.
     on_photo: fn(*u8, usize, *u8),
     opaque photo_ctx: *u8,
     want_photo: bool,
@@ -827,8 +827,8 @@ fn halftone() -> i32 { return 4 as i32; }
 fn blackness() -> u32 { return 0x00000042 as u32; }
 
 // The facade's rect maths (camera.cplus), so the fit is tested on every host.
-extern fn _c_preview_fit_for(h: *u8) -> i32;
-extern fn _c_preview_fit_rect(fit: i32, box_w: i32, box_h: i32,
+extern fn _camera_preview_fit_for(h: *u8) -> i32;
+extern fn _camera_preview_fit_rect(fit: i32, box_w: i32, box_h: i32,
                               frame_w: i32, frame_h: i32, out: *i32);
 
 // Blit the published frame into the window.
@@ -872,7 +872,7 @@ fn paint_preview(hwnd: *u8) {
             // stretch of the whole frame onto the whole window was the only
             // thing this did, so every preview was distorted (spendwise S26).
             var r: [i32; 8] = #zero::[[i32; 8]]();
-            { _c_preview_fit_rect(SESSION.pv_fit, cw, ch, w, h, { #addr_of(r) as *i32 }) };
+            { _camera_preview_fit_rect(SESSION.pv_fit, cw, ch, w, h, { #addr_of(r) as *i32 }) };
             // THE BARS ARE PAINTED, not left: WM_ERASEBKGND is swallowed, so
             // a fit frame would sit in whatever the window last showed. Four
             // strips around the picture; the empty ones draw nothing.
@@ -959,7 +959,7 @@ fn free_preview_buffers() {
 
 // ---- the seam ---------------------------------------------------------------------
 
-export extern fn _c_count() -> i64 {
+export extern fn _camera_count() -> i64 {
     var count: u32 = 0 as u32;
     let devices: **u8 = enumerate(#addr_of(count));
     if devices == (0 as **u8) { return 0 as i64; }
@@ -970,15 +970,15 @@ export extern fn _c_count() -> i64 {
 // WINDOWS HAS NO FACING. A capture device is addressed by name or by index and
 // says nothing about which way it points — `Facing` is an Apple and Android
 // idea, and the contract's own comment says so where it defines `External`. So
-// any camera answers a request for any facing, and `_c_actual_facing` reports
+// any camera answers a request for any facing, and `_camera_actual_facing` reports
 // `External` rather than guessing a side.
-export extern fn _c_has(facing: i32) -> i32 {
+export extern fn _camera_has(facing: i32) -> i32 {
     let _f: i32 = facing;
-    if { _c_count() } > (0 as i64) { return 1 as i32; }
+    if { _camera_count() } > (0 as i64) { return 1 as i32; }
     return 0 as i32;
 }
 
-export extern fn _c_last_error() -> i32 { return LAST_ERROR; }
+export extern fn _camera_last_error() -> i32 { return LAST_ERROR; }
 
 // Read the settled format off the reader's current media type.
 fn read_format(reader: *u8) {
@@ -1017,7 +1017,7 @@ fn read_format(reader: *u8) {
     return;
 }
 
-export extern fn _c_open(req: *_CRequest) -> *u8 {
+export extern fn _camera_open(req: *_CRequest) -> *u8 {
     LAST_ERROR = camera::Outcome::Ok.to_code();
     // ONE AT A TIME. A second open would ask Windows for a device this process
     // already holds, and the honest answer to that is Busy rather than a second
@@ -1110,7 +1110,7 @@ fn is_live(h: *u8) -> bool {
     return SESSION.live;
 }
 
-export extern fn _c_actual_facing(h: *u8) -> i32 {
+export extern fn _camera_actual_facing(h: *u8) -> i32 {
     if !is_live(h) { return 3 as i32; }          // Unspecified
     // EXTERNAL, and never a guess. Windows does not report which way a camera
     // points, so calling a laptop's built-in lens `Front` would be inventing
@@ -1118,12 +1118,12 @@ export extern fn _c_actual_facing(h: *u8) -> i32 {
     return 2 as i32;
 }
 
-export extern fn _c_frame_rate(h: *u8) -> i32 {
+export extern fn _camera_frame_rate(h: *u8) -> i32 {
     if !is_live(h) { return 0 as i32; }
     return SESSION.fps;
 }
 
-export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
+export extern fn _camera_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
     if out_width != (0 as *i32) { { *out_width = 0 as i32 }; }
     if out_height != (0 as *i32) { { *out_height = 0 as i32 }; }
     if !is_live(h) { return; }
@@ -1137,7 +1137,7 @@ export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
 // and has no luma plane, so it reports `Bgra32` and the pixels arrive through
 // `Frame::native`. Anything else answers `Any` rather than naming a layout a
 // caller would then read by.
-export extern fn _c_pixel_format(h: *u8) -> i32 {
+export extern fn _camera_pixel_format(h: *u8) -> i32 {
     if !is_live(h) { return 0 as i32; }
     if SESSION.fourcc == fourcc_nv12() { return 1 as i32; }
     if SESSION.fourcc == fourcc_yuy2() { return 1 as i32; }
@@ -1145,7 +1145,7 @@ export extern fn _c_pixel_format(h: *u8) -> i32 {
     return 0 as i32;
 }
 
-export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
+export extern fn _camera_device(h: *u8, into: *text::Text) -> i32 {
     if into == (0 as *text::Text) { return camera::Outcome::Failed.to_code(); }
     if !is_live(h) { return camera::Outcome::Failed.to_code(); }
     { *into = SESSION.name.clone() };
@@ -1593,7 +1593,7 @@ fn pump_still_wanted() -> bool {
     return f.is_not_null();
 }
 
-export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+export extern fn _camera_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
     if !is_live(h) { return camera::Outcome::Failed.to_code(); }
     if cb.is_null() { return camera::Outcome::Failed.to_code(); }
     SESSION.on_frame = cb;
@@ -1603,7 +1603,7 @@ export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), 
 }
 
 // Stop the pump and WAIT for it. The thread holds the reader for the length of
-// a `ReadSample`, so returning before it has noticed would let `_c_close`
+// a `ReadSample`, so returning before it has noticed would let `_camera_close`
 // release an interface a live call is still inside.
 fn stop_pump() {
     if SESSION.streaming {
@@ -1632,7 +1632,7 @@ fn stop_pump() {
 // in both cases because AVFoundation's delivery queue is never the caller's;
 // here the common case already is it, and a hop would need a message loop this
 // package has no claim on.
-export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+export extern fn _camera_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
     if cb.is_null() { return camera::Outcome::Failed.to_code(); }
     if !is_live(h) { cb(0 as *u8, 0 as usize, ctx); return camera::Outcome::Failed.to_code(); }
     // A FORMAT WITH NO CONVERSION cannot become a JPEG, and saying so before
@@ -1666,7 +1666,7 @@ export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
 // STOP DELIVERING TO THE HANDLER, which is not the same as stopping the reader.
 // A live preview is the other consumer of the same frames, and a `stop_frames`
 // that killed the pump would blank a view the caller never mentioned.
-export extern fn _c_stop_frames(h: *u8) -> i32 {
+export extern fn _camera_stop_frames(h: *u8) -> i32 {
     if !is_live(h) { return camera::Outcome::Failed.to_code(); }
     SESSION.on_frame = #zero::[fn(*u8, i32, i32, i32, i32, *u8, *u8)]();
     SESSION.frame_ctx = 0 as *u8;
@@ -1674,7 +1674,7 @@ export extern fn _c_stop_frames(h: *u8) -> i32 {
     return camera::Outcome::Ok.to_code();
 }
 
-export extern fn _c_close(h: *u8) {
+export extern fn _camera_close(h: *u8) {
     if !is_live(h) { return; }
     // A PREVIEW OUTLIVING ITS SESSION would blit a buffer nothing refills. The
     // window itself belongs to facet's release, not to close, so what happens
@@ -1705,30 +1705,30 @@ export extern fn _c_close(h: *u8) {
 // from "it did" — a `set_torch` that reported success and did nothing is
 // exactly the silent failure the whole package is written against.
 
-// A LAPTOP WEBCAM HAS NO TORCH, and `_c_has_torch` is a flat no rather than a
+// A LAPTOP WEBCAM HAS NO TORCH, and `_camera_has_torch` is a flat no rather than a
 // query because there is nothing on this road to query: neither
 // `IAMCameraControl` nor `IAMVideoProcAmp` has a lamp property. A camera that
 // does have one exposes it through `Windows.Devices.Lights.Lamp` or a
 // KSPROPERTY extended-control set, both of which are a different pipeline.
-export extern fn _c_set_torch(h: *u8, on: i32) -> i32 { return camera::Outcome::Unsupported.to_code(); }
-export extern fn _c_has_torch(h: *u8) -> i32 { return 0 as i32; }
+export extern fn _camera_set_torch(h: *u8, on: i32) -> i32 { return camera::Outcome::Unsupported.to_code(); }
+export extern fn _camera_has_torch(h: *u8) -> i32 { return 0 as i32; }
 
 // FOCUS, EXPOSURE and WHITE BALANCE are modes, and both interfaces express a
 // mode the same way: a per-property flag that is Auto or Manual. So all three
 // are `apply_mode` against a different property on a different interface, and
 // each ASKS the device rather than assuming — `set_focus` refuses on the camera
 // this was written against and would work unchanged on one with a focus motor.
-export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_focus(h: *u8, mode: i32) -> i32 {
     if !is_live(h) { return camera::Outcome::Failed.to_code(); }
     return apply_mode({ SESSION.camctl as *u8 }, prop_focus(), mode);
 }
 
-export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_exposure(h: *u8, mode: i32) -> i32 {
     if !is_live(h) { return camera::Outcome::Failed.to_code(); }
     return apply_mode({ SESSION.camctl as *u8 }, prop_exposure(), mode);
 }
 
-export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
+export extern fn _camera_set_white_balance(h: *u8, mode: i32) -> i32 {
     if !is_live(h) { return camera::Outcome::Failed.to_code(); }
     return apply_mode({ SESSION.procamp as *u8 }, prop_white_balance(), mode);
 }
@@ -1743,7 +1743,7 @@ export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
 // THIS DEVICE HAS NO ZOOM, so what is exercised here is the refusal: all three
 // verbs query and answer 1.0 or `Unsupported` because `GetRange` says the
 // property is not supported, rather than because the answer was written in.
-export extern fn _c_max_zoom(h: *u8) -> f64 {
+export extern fn _camera_max_zoom(h: *u8) -> f64 {
     if !is_live(h) { return 1.0; }
     let cc: *u8 = { SESSION.camctl as *u8 };
     var lo: i32 = 0 as i32;
@@ -1753,7 +1753,7 @@ export extern fn _c_max_zoom(h: *u8) -> f64 {
     return (hi as f64) / (lo as f64);
 }
 
-export extern fn _c_zoom(h: *u8) -> f64 {
+export extern fn _camera_zoom(h: *u8) -> f64 {
     if !is_live(h) { return 1.0; }
     let cc: *u8 = { SESSION.camctl as *u8 };
     var lo: i32 = 0 as i32;
@@ -1766,7 +1766,7 @@ export extern fn _c_zoom(h: *u8) -> f64 {
     return (cur as f64) / (lo as f64);
 }
 
-export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
+export extern fn _camera_set_zoom(h: *u8, factor: f64) -> i32 {
     if !is_live(h) { return camera::Outcome::Failed.to_code(); }
     let cc: *u8 = { SESSION.camctl as *u8 };
     var lo: i32 = 0 as i32;
@@ -1789,9 +1789,9 @@ export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
 }
 
 // SWITCHING BY FACING NEEDS A FACING, and Windows has none — see
-// `_c_actual_facing`. An application that wants a different camera on this
+// `_camera_actual_facing`. An application that wants a different camera on this
 // platform names it in `Request::device` and opens that one.
-export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 { return camera::Outcome::Unsupported.to_code(); }
+export extern fn _camera_switch_to(h: *u8, facing: i32) -> i32 { return camera::Outcome::Unsupported.to_code(); }
 
 // A PREVIEW IS A WINDOW THIS PACKAGE OWNS — see the preview section above for
 // the shape and for why it is created as a hidden popup.
@@ -1804,7 +1804,7 @@ export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 { return camera::Outco
 // flex sizes it — `grow(1)` or a stated width and height. A preview given
 // neither lays out at 0x0 and is invisible, which is the same on every backend
 // and is what `adopt_native`'s own note describes.
-export extern fn _c_preview_create(h: *u8) -> *u8 {
+export extern fn _camera_preview_create(h: *u8) -> *u8 {
     if !is_live(h) { return 0 as *u8; }
     // ONE PREVIEW. A second would be a second window blitting the same buffers,
     // and the session has one slot to remember it by.
@@ -1827,7 +1827,7 @@ export extern fn _c_preview_create(h: *u8) -> *u8 {
     SESSION.pv_front = 0 as i32;
     SESSION.pv_w = 0 as i32;
     SESSION.pv_h = 0 as i32;
-    SESSION.pv_fit = { _c_preview_fit_for(h) };
+    SESSION.pv_fit = { _camera_preview_fit_for(h) };
     let proc: fn(*u8, u32, usize, usize) -> usize = preview_proc;
     let prev: i64 = { SetWindowLongPtrW(hwnd, gwlp_wndproc(), proc as i64) };
     SESSION.preview_proc = prev as usize;
@@ -1843,7 +1843,7 @@ export extern fn _c_preview_create(h: *u8) -> *u8 {
 // The release `adopt_native_with` was given, and the only thing that means
 // "gone" — facet fires it on drop, on detach, and when a later view replaces
 // this one.
-export extern fn _c_preview_release(v: *u8) {
+export extern fn _camera_preview_release(v: *u8) {
     if v == (0 as *u8) { return; }
     // FORGET IT BEFORE DESTROYING IT, so the pump cannot paint into a window
     // that is on its way out. The pump reads `SESSION.preview` every frame.
@@ -1919,84 +1919,84 @@ fn counting_devices_does_not_need_a_camera_to_be_safe() {
     // 0 on a machine with no lens and a positive number on one with. Both are
     // correct; what is asserted is that enumeration completes and never reports
     // a negative count.
-    let n: i64 = { _c_count() };
+    let n: i64 = { _camera_count() };
     assert n >= (0 as i64);
     // Idempotent — the attribute block and the device array are released each
     // time, so a second call must answer the same.
-    assert { _c_count() } == n;
+    assert { _camera_count() } == n;
 }
 
 #[test]
 fn has_answers_for_every_facing_the_same_way() {
     // Windows reports no facing, so every facing is answered by whether ANY
-    // camera is present — see `_c_has`. What must never happen is a `true` for
+    // camera is present — see `_camera_has`. What must never happen is a `true` for
     // one facing and `false` for another on the same machine, which would send
     // an application looking for a second lens that does not exist.
-    let back: i32 = { _c_has(0 as i32) };
-    let front: i32 = { _c_has(1 as i32) };
-    let ext: i32 = { _c_has(2 as i32) };
+    let back: i32 = { _camera_has(0 as i32) };
+    let front: i32 = { _camera_has(1 as i32) };
+    let ext: i32 = { _camera_has(2 as i32) };
     assert back == front;
     assert front == ext;
-    if { _c_count() } > (0 as i64) { assert back == (1 as i32); }
+    if { _camera_count() } > (0 as i64) { assert back == (1 as i32); }
     else { assert back == (0 as i32); }
 }
 
 #[test]
 fn opening_and_closing_a_real_camera_reports_a_real_format() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
 
     // A REAL FORMAT, read off the reader's own media type rather than assumed.
     var w: i32 = 0 as i32;
     var ht: i32 = 0 as i32;
-    { _c_frame_size(h, #addr_of(w), #addr_of(ht)) };
+    { _camera_frame_size(h, #addr_of(w), #addr_of(ht)) };
     assert w > (0 as i32);
     assert ht > (0 as i32);
-    assert { _c_frame_rate(h) } > (0 as i32);
+    assert { _camera_frame_rate(h) } > (0 as i32);
 
     // And the device names itself.
     var name: text::Text = text::new();
-    assert { _c_device(h, #addr_of(name)) } == camera::Outcome::Ok.to_code();
+    assert { _camera_device(h, #addr_of(name)) } == camera::Outcome::Ok.to_code();
     assert name.count() > (0 as usize);
 
     // Windows has no facing: External, never a guess at a side.
-    assert { _c_actual_facing(h) } == (2 as i32);
+    assert { _camera_actual_facing(h) } == (2 as i32);
 
-    { _c_close(h) };
+    { _camera_close(h) };
     // Closed means closed: the geometry is gone rather than stale.
     var w2: i32 = 9 as i32;
-    { _c_frame_size(h, #addr_of(w2), #addr_of(ht)) };
+    { _camera_frame_size(h, #addr_of(w2), #addr_of(ht)) };
     assert w2 == (0 as i32);
 }
 
 #[test]
 fn a_second_open_is_busy_rather_than_a_second_handle() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
     // BUSY, not a second view of the same device — and the code says which, so
     // a caller can retry rather than conclude there is no camera.
-    let second: *u8 = { _c_open(#addr_of(req)) };
+    let second: *u8 = { _camera_open(#addr_of(req)) };
     assert second == (0 as *u8);
-    assert { _c_last_error() } == camera::Outcome::Busy.to_code();
-    { _c_close(h) };
+    assert { _camera_last_error() } == camera::Outcome::Busy.to_code();
+    { _camera_close(h) };
 }
 
 #[test]
 fn a_device_name_nothing_matches_is_refused_rather_than_substituted() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     let want: str = "no-such-camera-on-this-machine";
     var req: _CRequest = #zero::[_CRequest]();
     req.device = { #str_ptr(want) };
     req.device_len = { #str_len(want) };
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     // Handing back a DIFFERENT camera than the one asked for is the lie this
     // package exists to avoid.
     assert h == (0 as *u8);
-    assert { _c_last_error() } == camera::Outcome::Unsupported.to_code();
+    assert { _camera_last_error() } == camera::Outcome::Unsupported.to_code();
 }
 
 static FRAMES: i32 = 0 as i32;
@@ -2013,14 +2013,14 @@ fn count_frame(luma: *u8, w: i32, h: i32, stride: i32, rotation: i32,
 
 #[test]
 fn frames_arrive_from_a_real_lens() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
     FRAMES = 0 as i32;
     FRAME_W = 0 as i32;
     let cb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
-    assert { _c_on_frame(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
+    assert { _camera_on_frame(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
 
     // A camera takes a moment to start; 30fps means a frame every 33ms, so this
     // is generous rather than tight.
@@ -2033,11 +2033,11 @@ fn frames_arrive_from_a_real_lens() {
     // The frame carries the geometry the session reported, not zeroes.
     var w: i32 = 0 as i32;
     var ht: i32 = 0 as i32;
-    { _c_frame_size(h, #addr_of(w), #addr_of(ht)) };
+    { _camera_frame_size(h, #addr_of(w), #addr_of(ht)) };
     assert FRAME_W == w;
 
-    assert { _c_stop_frames(h) } == camera::Outcome::Ok.to_code();
-    { _c_close(h) };
+    assert { _camera_stop_frames(h) } == camera::Outcome::Ok.to_code();
+    { _camera_close(h) };
 }
 
 #[test]
@@ -2045,25 +2045,25 @@ fn the_controls_answer_for_a_closed_camera_without_touching_anything() {
     // WITH NO SESSION there is no interface to ask, and the answer must still
     // be a defined one rather than a call through a null vtable.
     let h: *u8 = 0 as *u8;
-    assert { _c_set_zoom(h, 2.0) } == camera::Outcome::Failed.to_code();
-    assert { _c_set_focus(h, 0 as i32) } == camera::Outcome::Failed.to_code();
-    assert { _c_set_exposure(h, 0 as i32) } == camera::Outcome::Failed.to_code();
-    assert { _c_set_white_balance(h, 0 as i32) } == camera::Outcome::Failed.to_code();
+    assert { _camera_set_zoom(h, 2.0) } == camera::Outcome::Failed.to_code();
+    assert { _camera_set_focus(h, 0 as i32) } == camera::Outcome::Failed.to_code();
+    assert { _camera_set_exposure(h, 0 as i32) } == camera::Outcome::Failed.to_code();
+    assert { _camera_set_white_balance(h, 0 as i32) } == camera::Outcome::Failed.to_code();
     // Zoom reads as 1.0 rather than 0, which would read as "no image".
-    assert { _c_zoom(h) } == (1.0);
-    assert { _c_max_zoom(h) } == (1.0);
+    assert { _camera_zoom(h) } == (1.0);
+    assert { _camera_max_zoom(h) } == (1.0);
     // A laptop lens has no lamp behind it, and there is nothing to query.
-    assert { _c_set_torch(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
-    assert { _c_has_torch(h) } == (0 as i32);
+    assert { _camera_set_torch(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _camera_has_torch(h) } == (0 as i32);
     // Windows has no facing, so switching by one cannot mean anything.
-    assert { _c_switch_to(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _camera_switch_to(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
 }
 
 #[test]
 fn exposure_and_white_balance_really_change_the_devices_mode() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
 
     // THE POINT OF THIS TEST is that `Ok` is earned. Each mode is set and then
@@ -2074,14 +2074,14 @@ fn exposure_and_white_balance_really_change_the_devices_mode() {
     if ctl_caps(cc, prop_exposure()) >= (0 as i32) {
         let caps: i32 = ctl_caps(cc, prop_exposure());
         if (caps & flag_manual()) != (0 as i32) {
-            assert { _c_set_exposure(h, 2 as i32) } == camera::Outcome::Ok.to_code();
+            assert { _camera_set_exposure(h, 2 as i32) } == camera::Outcome::Ok.to_code();
             var v: i32 = 0 as i32;
             var f: i32 = 0 as i32;
             assert ctl_get(cc, prop_exposure(), #addr_of(v), #addr_of(f)) == ok();
             assert f == flag_manual();
         }
         if (caps & flag_auto()) != (0 as i32) {
-            assert { _c_set_exposure(h, 0 as i32) } == camera::Outcome::Ok.to_code();
+            assert { _camera_set_exposure(h, 0 as i32) } == camera::Outcome::Ok.to_code();
             var v2: i32 = 0 as i32;
             var f2: i32 = 0 as i32;
             assert ctl_get(cc, prop_exposure(), #addr_of(v2), #addr_of(f2)) == ok();
@@ -2092,7 +2092,7 @@ fn exposure_and_white_balance_really_change_the_devices_mode() {
     if ctl_caps(amp, prop_white_balance()) >= (0 as i32) {
         let caps: i32 = ctl_caps(amp, prop_white_balance());
         if (caps & flag_manual()) != (0 as i32) {
-            assert { _c_set_white_balance(h, 2 as i32) } == camera::Outcome::Ok.to_code();
+            assert { _camera_set_white_balance(h, 2 as i32) } == camera::Outcome::Ok.to_code();
             var v: i32 = 0 as i32;
             var f: i32 = 0 as i32;
             assert ctl_get(amp, prop_white_balance(), #addr_of(v), #addr_of(f)) == ok();
@@ -2101,7 +2101,7 @@ fn exposure_and_white_balance_really_change_the_devices_mode() {
         if (caps & flag_auto()) != (0 as i32) {
             // And put it back, so a suite run does not leave the camera latched
             // to whatever the last assertion wanted.
-            assert { _c_set_white_balance(h, 0 as i32) } == camera::Outcome::Ok.to_code();
+            assert { _camera_set_white_balance(h, 0 as i32) } == camera::Outcome::Ok.to_code();
             var v2: i32 = 0 as i32;
             var f2: i32 = 0 as i32;
             assert ctl_get(amp, prop_white_balance(), #addr_of(v2), #addr_of(f2)) == ok();
@@ -2109,39 +2109,39 @@ fn exposure_and_white_balance_really_change_the_devices_mode() {
         }
     }
 
-    { _c_close(h) };
+    { _camera_close(h) };
 }
 
 #[test]
 fn a_mode_the_device_does_not_have_is_refused_from_a_real_query() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
 
     // `Once` MEANS "adjust once, then hold", and neither interface has a
     // one-shot. It is refused for every property, including the two this
     // device does support — which is what proves the refusal is about the
     // mode and not about the property being missing.
-    assert { _c_set_exposure(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
-    assert { _c_set_white_balance(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
-    assert { _c_set_focus(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _camera_set_exposure(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _camera_set_white_balance(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _camera_set_focus(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
 
     // And a property the device really lacks refuses because `GetRange` said so.
     // On a camera WITH a focus motor this same code would answer Ok, which is
     // the difference between asking and assuming.
     let cc: *u8 = { SESSION.camctl as *u8 };
     if ctl_caps(cc, prop_focus()) < (0 as i32) {
-        assert { _c_set_focus(h, 0 as i32) } == camera::Outcome::Unsupported.to_code();
+        assert { _camera_set_focus(h, 0 as i32) } == camera::Outcome::Unsupported.to_code();
     }
     if ctl_caps(cc, prop_zoom()) < (0 as i32) {
-        assert { _c_set_zoom(h, 2.0) } == camera::Outcome::Unsupported.to_code();
+        assert { _camera_set_zoom(h, 2.0) } == camera::Outcome::Unsupported.to_code();
         // No zoom means exactly 1x, both current and maximum.
-        assert { _c_max_zoom(h) } == (1.0);
-        assert { _c_zoom(h) } == (1.0);
+        assert { _camera_max_zoom(h) } == (1.0);
+        assert { _camera_zoom(h) } == (1.0);
     }
 
-    { _c_close(h) };
+    { _camera_close(h) };
 }
 
 #[test]
@@ -2165,40 +2165,40 @@ fn the_bitmap_header_is_the_forty_bytes_gdi_expects() {
 fn a_preview_needs_a_live_camera_and_only_one_at_a_time() {
     // A CLOSED SESSION HAS NO WINDOW TO GIVE, and answering one would hand
     // facet a view that never receives a frame.
-    assert { _c_preview_create(0 as *u8) } == (0 as *u8);
-    if { _c_count() } == (0 as i64) { return; }
+    assert { _camera_preview_create(0 as *u8) } == (0 as *u8);
+    if { _camera_count() } == (0 as i64) { return; }
 
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
-    let v: *u8 = { _c_preview_create(h) };
+    let v: *u8 = { _camera_preview_create(h) };
     assert v != (0 as *u8);
     // The preview STARTS THE READER ITSELF — `preview()` is independent of
     // `on_frame` in the contract, so a preview with no handler must still show
     // something.
     assert SESSION.streaming;
     // ONE PREVIEW. A second would be a second window blitting the same buffers.
-    assert { _c_preview_create(h) } == (0 as *u8);
+    assert { _camera_preview_create(h) } == (0 as *u8);
 
-    { _c_preview_release(v) };
+    { _camera_preview_release(v) };
     assert SESSION.preview == (0 as usize);
     // Nothing else wanted the frames, so the reader stopped with it.
     assert SESSION.streaming == false;
-    { _c_close(h) };
+    { _camera_close(h) };
 }
 
 #[test]
 fn stopping_frames_does_not_blank_a_live_preview() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
-    let v: *u8 = { _c_preview_create(h) };
+    let v: *u8 = { _camera_preview_create(h) };
     assert v != (0 as *u8);
 
     let cb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
     FRAMES = 0 as i32;
-    assert { _c_on_frame(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
+    assert { _camera_on_frame(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
     var waited: i32 = 0 as i32;
     while FRAMES == (0 as i32) && waited < (5000 as i32) {
         { Sleep(20 as u32) };
@@ -2208,7 +2208,7 @@ fn stopping_frames_does_not_blank_a_live_preview() {
 
     // TWO INDEPENDENT CONSUMERS. `stop_frames` ends the handler's delivery and
     // must NOT kill the reader, or it blanks a view the caller never mentioned.
-    assert { _c_stop_frames(h) } == camera::Outcome::Ok.to_code();
+    assert { _camera_stop_frames(h) } == camera::Outcome::Ok.to_code();
     assert SESSION.streaming;
     let f: fn(*u8, i32, i32, i32, i32, *u8, *u8) = SESSION.on_frame;
     assert f.is_null();
@@ -2224,34 +2224,34 @@ fn stopping_frames_does_not_blank_a_live_preview() {
     assert SESSION.pv_w > (0 as i32);
     assert SESSION.pv_h > (0 as i32);
 
-    { _c_preview_release(v) };
+    { _camera_preview_release(v) };
     assert SESSION.streaming == false;
-    { _c_close(h) };
+    { _camera_close(h) };
 }
 
 #[test]
 fn closing_the_camera_forgets_a_preview_the_pump_would_paint_into() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
-    let v: *u8 = { _c_preview_create(h) };
+    let v: *u8 = { _camera_preview_create(h) };
     assert v != (0 as *u8);
     // A PREVIEW OUTLIVING ITS SESSION would blit a buffer nothing refills, so
     // close forgets it even though the window belongs to facet's release.
-    { _c_close(h) };
+    { _camera_close(h) };
     assert SESSION.preview == (0 as usize);
     assert SESSION.streaming == false;
     // The release still runs — facet fires it on drop regardless — and must be
     // safe after the session is gone.
-    { _c_preview_release(v) };
+    { _camera_preview_release(v) };
 }
 
 #[test]
 fn the_control_interfaces_are_released_with_the_session() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
     // A REAL CAPTURE SOURCE ANSWERS AT LEAST ONE of the two, and asserting it
     // is what keeps the two tests above from passing vacuously: with both
@@ -2260,7 +2260,7 @@ fn the_control_interfaces_are_released_with_the_session() {
     assert SESSION.camctl != (0 as usize) || SESSION.procamp != (0 as usize);
     // Whatever was taken is given back, because these are views onto the media
     // source and outliving it is a use-after-free.
-    { _c_close(h) };
+    { _camera_close(h) };
     assert SESSION.camctl == (0 as usize);
     assert SESSION.procamp == (0 as usize);
 }
@@ -2291,7 +2291,7 @@ fn a_dead_handle_still_calls_the_capture_handler_back() {
     // coming — the facade's own note, and the rule every seam here follows.
     CAPTURED = 0 as i32;
     let cb: fn(*u8, usize, *u8) = note_capture;
-    assert { _c_capture(0 as *u8, cb, 0 as *u8) } == camera::Outcome::Failed.to_code();
+    assert { _camera_capture(0 as *u8, cb, 0 as *u8) } == camera::Outcome::Failed.to_code();
     assert CAPTURED == (1 as i32);
     assert PHOTO_LEN == (0 as usize);
 }
@@ -2411,9 +2411,9 @@ fn nv12_converts_to_the_colours_it_encodes() {
 
 #[test]
 fn a_still_photo_comes_off_a_real_lens_as_jpeg() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
     CAPTURED = 0 as i32;
     PHOTO_LEN = 0 as usize;
@@ -2421,24 +2421,24 @@ fn a_still_photo_comes_off_a_real_lens_as_jpeg() {
     let cb: fn(*u8, usize, *u8) = note_capture;
     // NOT STREAMING, so this takes its own frame and the handler runs before
     // the call returns.
-    let rc: i32 = { _c_capture(h, cb, 0 as *u8) };
+    let rc: i32 = { _camera_capture(h, cb, 0 as *u8) };
     assert rc == camera::Outcome::Ok.to_code();
     assert CAPTURED == (1 as i32);
     assert PHOTO_MAGIC;
     // A photo of a real scene at a real resolution is never a few hundred bytes.
     assert PHOTO_LEN > (1024 as usize);
-    { _c_close(h) };
+    { _camera_close(h) };
 }
 
 #[test]
 fn a_capture_asked_for_mid_stream_rides_the_next_frame() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
     FRAMES = 0 as i32;
     let fcb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
-    assert { _c_on_frame(h, fcb, 0 as *u8) } == camera::Outcome::Ok.to_code();
+    assert { _camera_on_frame(h, fcb, 0 as *u8) } == camera::Outcome::Ok.to_code();
     var waited: i32 = 0 as i32;
     while FRAMES == (0 as i32) && waited < (5000 as i32) {
         { Sleep(20 as u32) };
@@ -2451,7 +2451,7 @@ fn a_capture_asked_for_mid_stream_rides_the_next_frame() {
     let cb: fn(*u8, usize, *u8) = note_capture;
     // ACCEPTED, not delivered — the bytes come on the pump's next frame, which
     // is the whole difference this return value carries.
-    assert { _c_capture(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
+    assert { _camera_capture(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
     var w2: i32 = 0 as i32;
     while CAPTURED == (0 as i32) && w2 < (5000 as i32) {
         { Sleep(20 as u32) };
@@ -2466,25 +2466,25 @@ fn a_capture_asked_for_mid_stream_rides_the_next_frame() {
     { Sleep(200 as u32) };
     assert FRAMES > before;
 
-    assert { _c_stop_frames(h) } == camera::Outcome::Ok.to_code();
-    { _c_close(h) };
+    assert { _camera_stop_frames(h) } == camera::Outcome::Ok.to_code();
+    { _camera_close(h) };
 }
 
 #[test]
 fn stopping_settles_a_capture_that_would_never_arrive() {
-    if { _c_count() } == (0 as i64) { return; }
+    if { _camera_count() } == (0 as i64) { return; }
     var req: _CRequest = #zero::[_CRequest]();
-    let h: *u8 = { _c_open(#addr_of(req)) };
+    let h: *u8 = { _camera_open(#addr_of(req)) };
     assert h != (0 as *u8);
     // Ask while streaming, then stop before a frame can carry it. The handler
     // is still owed a call, and gets one with an empty slice rather than being
     // dropped on the floor.
     let fcb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
-    assert { _c_on_frame(h, fcb, 0 as *u8) } == camera::Outcome::Ok.to_code();
+    assert { _camera_on_frame(h, fcb, 0 as *u8) } == camera::Outcome::Ok.to_code();
     CAPTURED = 0 as i32;
     SESSION.on_photo = note_capture;
     SESSION.photo_ctx = 0 as *u8;
     SESSION.want_photo = true;
-    { _c_close(h) };
+    { _camera_close(h) };
     assert CAPTURED == (1 as i32);
 }

@@ -130,12 +130,12 @@ fn _pending(on_pick: fn(*u8, usize, *u8), ctx: *u8, panel: *u8, saving: bool) ->
     };
 }
 
-export extern fn _c_available() -> i32 {
+export extern fn _filepicker_available() -> i32 {
     if rt::get_class(#str_ptr("NSOpenPanel\0")).is_null() { return 0; }
     return 1;
 }
 
-export extern fn _c_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
+export extern fn _filepicker_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
                          types: *u8, types_len: usize) -> i32 {
     let cls: *u8 = rt::get_class(#str_ptr("NSOpenPanel\0"));
     if cls.is_null() { return 1; }
@@ -169,7 +169,7 @@ export extern fn _c_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
     return 0;
 }
 
-export extern fn _c_save(suggested: *u8, suggested_len: usize,
+export extern fn _filepicker_save(suggested: *u8, suggested_len: usize,
                          on_pick: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
     let cls: *u8 = rt::get_class(#str_ptr("NSSavePanel\0"));
     if cls.is_null() { return 1; }

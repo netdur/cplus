@@ -32,7 +32,7 @@ fn _performer() -> *u8 {
     return rt::msg_id(cls, rt::sel(#str_ptr("defaultPerformer\0")));
 }
 
-export extern fn _c_available() -> i32 {
+export extern fn _haptics_available() -> i32 {
     // A NIL PERFORMER IS THE ANSWER. AppKit hands back nothing on a machine
     // with no Force Touch trackpad, which is the only availability signal it
     // offers — there is no `isHapticFeedbackAvailable`.
@@ -40,7 +40,7 @@ export extern fn _c_available() -> i32 {
     return 1;
 }
 
-export extern fn _c_play(feel: i32) -> i32 {
+export extern fn _haptics_play(feel: i32) -> i32 {
     let p: *u8 = _performer();
     if p.is_null() { return 0; }
 
@@ -59,6 +59,6 @@ export extern fn _c_play(feel: i32) -> i32 {
 
 // NOTHING TO WARM. macOS has no equivalent of the Taptic Engine's idle, so
 // this is a no-op rather than an approximation — the facade documents that.
-export extern fn _c_prepare(feel: i32) {
+export extern fn _haptics_prepare(feel: i32) {
     return;
 }

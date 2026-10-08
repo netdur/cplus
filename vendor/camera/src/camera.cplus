@@ -160,7 +160,7 @@ impl Outcome {
 // Needs no permission on either platform, which is what makes it usable for
 // "should this screen exist at all" before any prompt.
 fn count() -> usize {
-    let n: i64 = { _c_count() };
+    let n: i64 = { _camera_count() };
     if n <= (0 as i64) { return 0 as usize; }
     return n as usize;
 }
@@ -175,7 +175,7 @@ fn count() -> usize {
 // succeeds for either. The alternative reads worse: `has` saying no on a
 // machine where `open` works.
 fn has(facing: Facing) -> bool {
-    return { _c_has(facing.to_code()) } != (0 as i32);
+    return { _camera_has(facing.to_code()) } != (0 as i32);
 }
 
 // Permission, without the platform's own vocabulary.
@@ -641,7 +641,7 @@ struct _CRequest {
     buffers: i32,
 }
 
-fn _c_request_of(r: Request) -> _CRequest {
+fn _camera_request_of(r: Request) -> _CRequest {
     return _CRequest {
         device: { #str_ptr(r.device) },
         device_len: { #str_len(r.device) },
@@ -679,10 +679,10 @@ fn open(request: Request = Request::new()) -> result::Result[Camera, Outcome] {
     if p.to_code() != _C_OK {
         return result::Result[Camera, Outcome]::Err(p);
     }
-    var creq: _CRequest = _c_request_of(request);
-    let h: *u8 = { _c_open(#addr_of(creq)) };
+    var creq: _CRequest = _camera_request_of(request);
+    let h: *u8 = { _camera_open(#addr_of(creq)) };
     if h.is_null() {
-        return result::Result[Camera, Outcome]::Err(Outcome::from_code({ _c_last_error() }));
+        return result::Result[Camera, Outcome]::Err(Outcome::from_code({ _camera_last_error() }));
     }
     return result::Result[Camera, Outcome]::Ok(Camera { _h: h });
 }
@@ -705,13 +705,13 @@ impl Camera {
     // `Back` there succeeds and answers `Front` here.
     fn facing(this) -> Facing {
         if this._h.is_null() { return Facing::Unspecified; }
-        return Facing::from_code({ _c_actual_facing(this._h) });
+        return Facing::from_code({ _camera_actual_facing(this._h) });
     }
 
     // Frames per second the device settled on. 0 when it will not say.
     fn frame_rate(this) -> i32 {
         if this._h.is_null() { return 0; }
-        return { _c_frame_rate(this._h) };
+        return { _camera_frame_rate(this._h) };
     }
 
     // The device this session actually opened — the platform's own identifier,
@@ -719,7 +719,7 @@ impl Camera {
     // Empty when the backend will not say.
     fn device(this, ref into: text::Text) -> Outcome {
         if this._h.is_null() { return Outcome::Failed; }
-        return Outcome::from_code({ _c_device(this._h, #addr_of(into)) });
+        return Outcome::from_code({ _camera_device(this._h, #addr_of(into)) });
     }
 
     // THE FRAME SIZE THE PLATFORM SETTLED ON. `Size::any()` before the session
@@ -730,7 +730,7 @@ impl Camera {
         if this._h.is_null() { return Size::any(); }
         var w: i32 = 0;
         var h: i32 = 0;
-        { _c_frame_size(this._h, #addr_of(w), #addr_of(h)) };
+        { _camera_frame_size(this._h, #addr_of(w), #addr_of(h)) };
         return Size::new(w, h);
     }
 
@@ -744,7 +744,7 @@ impl Camera {
     // EMPTY and the image rides in `Frame::native()`.
     fn pixel_format(this) -> PixelFormat {
         if this._h.is_null() { return PixelFormat::Any; }
-        return PixelFormat::from_code({ _c_pixel_format(this._h) });
+        return PixelFormat::from_code({ _camera_pixel_format(this._h) });
     }
 
     // The preview surface, as a node to put in a facet tree.
@@ -792,7 +792,7 @@ impl Camera {
         if on_photo.is_null() { return Outcome::Failed; }
         let slot: *u8 = _remember(this._h, on_photo, on_photo_ctx);
         if slot.is_null() { return Outcome::Failed; }
-        return Outcome::from_code({ _c_capture(this._h, _deliver, slot) });
+        return Outcome::from_code({ _camera_capture(this._h, _deliver, slot) });
     }
 
     // Start delivering frames to `on_frame`. `stop_frames` ends it, and so
@@ -814,7 +814,7 @@ impl Camera {
         if on_frame.is_null() { return Outcome::Failed; }
         let slot: *u8 = _remember_frame(this._h, on_frame, on_frame_ctx);
         if slot.is_null() { return Outcome::Failed; }
-        return Outcome::from_code({ _c_on_frame(this._h, _deliver_frame, slot) });
+        return Outcome::from_code({ _camera_on_frame(this._h, _deliver_frame, slot) });
     }
 
     // ---- runtime controls ---------------------------------------------------
@@ -835,18 +835,18 @@ impl Camera {
     //           control. Untested on hardware that actually zooms.
     fn set_zoom(this, factor: f64) -> Outcome {
         if this._h.is_null() { return Outcome::Failed; }
-        return Outcome::from_code({ _c_set_zoom(this._h, factor) });
+        return Outcome::from_code({ _camera_set_zoom(this._h, factor) });
     }
 
     fn zoom(this) -> f64 {
         if this._h.is_null() { return 1.0; }
-        return { _c_zoom(this._h) };
+        return { _camera_zoom(this._h) };
     }
 
     // The largest `set_zoom` this device accepts. 1.0 means no zoom at all.
     fn max_zoom(this) -> f64 {
         if this._h.is_null() { return 1.0; }
-        return { _c_max_zoom(this._h) };
+        return { _camera_max_zoom(this._h) };
     }
 
     // The lamp, held on — not a photo flash.
@@ -858,12 +858,12 @@ impl Camera {
         if this._h.is_null() { return Outcome::Failed; }
         var v: i32 = 0 as i32;
         if on { v = 1 as i32; }
-        return Outcome::from_code({ _c_set_torch(this._h, v) });
+        return Outcome::from_code({ _camera_set_torch(this._h, v) });
     }
 
     fn has_torch(this) -> bool {
         if this._h.is_null() { return false; }
-        return { _c_has_torch(this._h) } != (0 as i32);
+        return { _camera_has_torch(this._h) } != (0 as i32);
     }
 
     //   macOS   IMPLEMENTED; the FaceTime HD camera supports NO mode of
@@ -872,7 +872,7 @@ impl Camera {
     //           genuinely has nothing to set.
     fn set_focus(this, mode: Mode) -> Outcome {
         if this._h.is_null() { return Outcome::Failed; }
-        return Outcome::from_code({ _c_set_focus(this._h, mode.to_code()) });
+        return Outcome::from_code({ _camera_set_focus(this._h, mode.to_code()) });
     }
 
     //   macOS   IMPLEMENTED; the FaceTime HD camera supports NO mode of
@@ -881,7 +881,7 @@ impl Camera {
     //           genuinely has nothing to set.
     fn set_exposure(this, mode: Mode) -> Outcome {
         if this._h.is_null() { return Outcome::Failed; }
-        return Outcome::from_code({ _c_set_exposure(this._h, mode.to_code()) });
+        return Outcome::from_code({ _camera_set_exposure(this._h, mode.to_code()) });
     }
 
     //   macOS   IMPLEMENTED; the FaceTime HD camera supports NO mode of
@@ -890,7 +890,7 @@ impl Camera {
     //           genuinely has nothing to set.
     fn set_white_balance(this, mode: Mode) -> Outcome {
         if this._h.is_null() { return Outcome::Failed; }
-        return Outcome::from_code({ _c_set_white_balance(this._h, mode.to_code()) });
+        return Outcome::from_code({ _camera_set_white_balance(this._h, mode.to_code()) });
     }
 
     // Stop delivering frames. The preview keeps running.
@@ -899,7 +899,7 @@ impl Camera {
     // ends the stream, it does not interrupt a call in progress.
     fn stop_frames(this) -> Outcome {
         if this._h.is_null() { return Outcome::Failed; }
-        let c: i32 = { _c_stop_frames(this._h) };
+        let c: i32 = { _camera_stop_frames(this._h) };
         _forget_frame(this._h);
         return Outcome::from_code(c);
     }
@@ -926,7 +926,7 @@ impl Camera {
     //           the TextureView, so only the session is rebuilt
     fn switch_to(this, facing: Facing) -> Outcome {
         if this._h.is_null() { return Outcome::Failed; }
-        return Outcome::from_code({ _c_switch_to(this._h, facing.to_code()) });
+        return Outcome::from_code({ _camera_switch_to(this._h, facing.to_code()) });
     }
 
     // Stop the session and release the device.
@@ -941,10 +941,10 @@ impl Camera {
         // STOP THE STREAM FIRST. Clearing the handler while frames are still
         // arriving is the one ordering that can call a handler belonging to a
         // screen that has gone.
-        let _s: i32 = { _c_stop_frames(h) };
+        let _s: i32 = { _camera_stop_frames(h) };
         _forget(h);
         _forget_fit(h);
-        { _c_close(h) };
+        { _camera_close(h) };
     }
 
     fn drop(ref this) {
@@ -1100,7 +1100,7 @@ fn _deliver(data: *u8, len: usize, slot: *u8) {
 // paired with the node. Free functions rather than methods because this IS the
 // C-shaped hook facet hands to a backend.
 // ---- the fit a preview was asked for, per session ------------------------------
-// Kept here, read by the backends that can honour it (`_c_preview_fit_for`)
+// Kept here, read by the backends that can honour it (`_camera_preview_fit_for`)
 // when they build the preview view — which may be at mount, after `preview`
 // returned. Codes: 0 AspectFit, 1 AspectFill, 2 Fill (Center draws as Fit).
 struct _FitFor { opaque h: *u8, fit: i32 }
@@ -1142,7 +1142,7 @@ fn _forget_fit(h: *u8) {
     return;
 }
 
-export extern fn _c_preview_fit_for(h: *u8) -> i32 {
+export extern fn _camera_preview_fit_for(h: *u8) -> i32 {
     var i: usize = 0 as usize;
     while i < _FITS.count() {
         match _FITS.at_ptr(i) {
@@ -1159,7 +1159,7 @@ export extern fn _c_preview_fit_for(h: *u8) -> i32 {
 // in the frame. Fit centres the whole frame and leaves bars; fill crops the
 // frame's centre to the box's aspect; stretch is the whole of both. Here, not
 // in the backend, so it is tested on every host.
-export extern fn _c_preview_fit_rect(fit: i32, box_w: i32, box_h: i32,
+export extern fn _camera_preview_fit_rect(fit: i32, box_w: i32, box_h: i32,
                                      frame_w: i32, frame_h: i32, out: *i32) {
     var d: [i32; 8] = [0, 0, box_w, box_h, 0, 0, frame_w, frame_h];
     if fit != 2 && box_w > 0 && box_h > 0 && frame_w > 0 && frame_h > 0 {
@@ -1204,38 +1204,38 @@ export extern fn _c_preview_fit_rect(fit: i32, box_w: i32, box_h: i32,
 
 fn _preview_create(ctx: *u8) -> *u8 {
     if ctx.is_null() { return 0 as *u8; }
-    return { _c_preview_create(ctx) };
+    return { _camera_preview_create(ctx) };
 }
 
 fn _preview_release(v: *u8) {
     if v.is_null() { return; }
-    { _c_preview_release(v) };
+    { _camera_preview_release(v) };
 }
 
-extern fn _c_count() -> i64;
-extern fn _c_has(facing: i32) -> i32;
-extern fn _c_open(req: *_CRequest) -> *u8;
-extern fn _c_actual_facing(h: *u8) -> i32;
-extern fn _c_frame_rate(h: *u8) -> i32;
-extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32);
-extern fn _c_pixel_format(h: *u8) -> i32;
-extern fn _c_device(h: *u8, into: *text::Text) -> i32;
-extern fn _c_set_zoom(h: *u8, factor: f64) -> i32;
-extern fn _c_zoom(h: *u8) -> f64;
-extern fn _c_max_zoom(h: *u8) -> f64;
-extern fn _c_set_torch(h: *u8, on: i32) -> i32;
-extern fn _c_has_torch(h: *u8) -> i32;
-extern fn _c_set_focus(h: *u8, mode: i32) -> i32;
-extern fn _c_set_exposure(h: *u8, mode: i32) -> i32;
-extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32;
-extern fn _c_last_error() -> i32;
-extern fn _c_close(h: *u8);
-extern fn _c_switch_to(h: *u8, facing: i32) -> i32;
-extern fn _c_preview_create(h: *u8) -> *u8;
-extern fn _c_preview_release(v: *u8);
-extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32;
-extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32;
-extern fn _c_stop_frames(h: *u8) -> i32;
+extern fn _camera_count() -> i64;
+extern fn _camera_has(facing: i32) -> i32;
+extern fn _camera_open(req: *_CRequest) -> *u8;
+extern fn _camera_actual_facing(h: *u8) -> i32;
+extern fn _camera_frame_rate(h: *u8) -> i32;
+extern fn _camera_frame_size(h: *u8, out_width: *i32, out_height: *i32);
+extern fn _camera_pixel_format(h: *u8) -> i32;
+extern fn _camera_device(h: *u8, into: *text::Text) -> i32;
+extern fn _camera_set_zoom(h: *u8, factor: f64) -> i32;
+extern fn _camera_zoom(h: *u8) -> f64;
+extern fn _camera_max_zoom(h: *u8) -> f64;
+extern fn _camera_set_torch(h: *u8, on: i32) -> i32;
+extern fn _camera_has_torch(h: *u8) -> i32;
+extern fn _camera_set_focus(h: *u8, mode: i32) -> i32;
+extern fn _camera_set_exposure(h: *u8, mode: i32) -> i32;
+extern fn _camera_set_white_balance(h: *u8, mode: i32) -> i32;
+extern fn _camera_last_error() -> i32;
+extern fn _camera_close(h: *u8);
+extern fn _camera_switch_to(h: *u8, facing: i32) -> i32;
+extern fn _camera_preview_create(h: *u8) -> *u8;
+extern fn _camera_preview_release(v: *u8);
+extern fn _camera_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32;
+extern fn _camera_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32;
+extern fn _camera_stop_frames(h: *u8) -> i32;
 
 // ---- tests -------------------------------------------------------------------
 //
@@ -1652,20 +1652,20 @@ fn a_preview_remembers_the_fit_it_was_asked_for_per_session() {
     let a: *u8 = 4096 as *u8;
     let b: *u8 = 8192 as *u8;
     // Unasked is the platform default: fit, letterboxed.
-    assert { _c_preview_fit_for(a) } == 0;
+    assert { _camera_preview_fit_for(a) } == 0;
     _remember_fit(a, vocab::ImageFit::AspectFill);
     _remember_fit(b, vocab::ImageFit::Fill);
-    assert { _c_preview_fit_for(a) } == 1;
-    assert { _c_preview_fit_for(b) } == 2;
+    assert { _camera_preview_fit_for(a) } == 1;
+    assert { _camera_preview_fit_for(b) } == 2;
     // Asked again, it is replaced, not appended.
     _remember_fit(a, vocab::ImageFit::AspectFit);
-    assert { _c_preview_fit_for(a) } == 0;
+    assert { _camera_preview_fit_for(a) } == 0;
     // Center has no gravity of its own and draws as fit.
     _remember_fit(a, vocab::ImageFit::Center);
-    assert { _c_preview_fit_for(a) } == 0;
+    assert { _camera_preview_fit_for(a) } == 0;
     // A closed session's handle may be reused; it must not inherit a fit.
     _forget_fit(b);
-    assert { _c_preview_fit_for(b) } == 0;
+    assert { _camera_preview_fit_for(b) } == 0;
     _forget_fit(a);
 }
 
@@ -1673,23 +1673,23 @@ fn a_preview_remembers_the_fit_it_was_asked_for_per_session() {
 fn a_blitted_frame_fits_fills_or_stretches_into_its_box() {
     var r: [i32; 8] = #zero::[[i32; 8]]();
     // A 4:3 frame in a tall 300x800 box.
-    _c_preview_fit_rect(0, 300, 800, 640, 480, #addr_of(r) as *i32);
+    _camera_preview_fit_rect(0, 300, 800, 640, 480, #addr_of(r) as *i32);
     // Fit: full width, 225 tall, centred — bars above and below.
     assert r[0] == 0 && r[1] == 287 && r[2] == 300 && r[3] == 225;
     assert r[4] == 0 && r[5] == 0 && r[6] == 640 && r[7] == 480;
-    _c_preview_fit_rect(1, 300, 800, 640, 480, #addr_of(r) as *i32);
+    _camera_preview_fit_rect(1, 300, 800, 640, 480, #addr_of(r) as *i32);
     // Fill: the whole box, from a 180x480 strip out of the frame's centre.
     assert r[0] == 0 && r[1] == 0 && r[2] == 300 && r[3] == 800;
     assert r[4] == 230 && r[5] == 0 && r[6] == 180 && r[7] == 480;
-    _c_preview_fit_rect(2, 300, 800, 640, 480, #addr_of(r) as *i32);
+    _camera_preview_fit_rect(2, 300, 800, 640, 480, #addr_of(r) as *i32);
     assert r[0] == 0 && r[1] == 0 && r[2] == 300 && r[3] == 800;
     assert r[4] == 0 && r[5] == 0 && r[6] == 640 && r[7] == 480;
     // The other way round: a wide 800x300 box.
-    _c_preview_fit_rect(0, 800, 300, 640, 480, #addr_of(r) as *i32);
+    _camera_preview_fit_rect(0, 800, 300, 640, 480, #addr_of(r) as *i32);
     assert r[0] == 200 && r[1] == 0 && r[2] == 400 && r[3] == 300;
-    _c_preview_fit_rect(1, 800, 300, 640, 480, #addr_of(r) as *i32);
+    _camera_preview_fit_rect(1, 800, 300, 640, 480, #addr_of(r) as *i32);
     assert r[4] == 0 && r[5] == 120 && r[6] == 640 && r[7] == 240;
     // An unsized box draws nothing odd: both rects are passed through.
-    _c_preview_fit_rect(1, 0, 0, 640, 480, #addr_of(r) as *i32);
+    _camera_preview_fit_rect(1, 0, 0, 640, 480, #addr_of(r) as *i32);
     assert r[2] == 0 && r[3] == 0 && r[6] == 640 && r[7] == 480;
 }

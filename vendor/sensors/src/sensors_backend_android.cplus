@@ -189,7 +189,7 @@ fn _env_ready() -> option::Option[rt::Env] {
     return option::Option[rt::Env]::Some(env);
 }
 
-export extern fn _c_available(kind: i32) -> i32 {
+export extern fn _sensors_available(kind: i32) -> i32 {
     match _env_ready() {
         option::Option[rt::Env]::None => { return 0; }
         option::Option[rt::Env]::Some(env) => {
@@ -208,7 +208,7 @@ export extern fn _c_available(kind: i32) -> i32 {
     }
 }
 
-export extern fn _c_start(kind: i32, req: *sens::Request,
+export extern fn _sensors_start(kind: i32, req: *sens::Request,
                           on_sample: fn(sens::Sample, *u8), ctx: *u8,
                           out_code: *i32) -> *u8 {
     match _env_ready() {
@@ -275,20 +275,20 @@ export extern fn _c_start(kind: i32, req: *sens::Request,
     }
 }
 
-export extern fn _c_kind(h: *u8) -> i32 {
+export extern fn _sensors_kind(h: *u8) -> i32 {
     if h.is_null() { return 0; }
     let s: *_Session = h as *_Session;
     return { (*s).kind };
 }
 
-export extern fn _c_running(h: *u8) -> i32 {
+export extern fn _sensors_running(h: *u8) -> i32 {
     if h.is_null() { return 0; }
     let s: *_Session = h as *_Session;
     if { (*s).running } { return 1; }
     return 0;
 }
 
-export extern fn _c_stop(h: *u8) {
+export extern fn _sensors_stop(h: *u8) {
     if h.is_null() { return; }
     let s: *_Session = h as *_Session;
     if !{ (*s).running } { return; }

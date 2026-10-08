@@ -38,7 +38,7 @@ impl Outcome {
 
 // Is there a sheet to show?
 fn available() -> bool {
-    return { _c_available() } != (0 as i32);
+    return { _share_available() } != (0 as i32);
 }
 
 // Share plain text.
@@ -55,7 +55,7 @@ fn available() -> bool {
 // itself, which is why this returns no such answer rather than a wrong one.
 fn text(body: str, subject: str = "") -> Outcome {
     if #str_len(body) == (0 as usize) { return Outcome::InvalidInput; }
-    return Outcome::from_code({ _c_text(#str_ptr(body), #str_len(body),
+    return Outcome::from_code({ _share_text(#str_ptr(body), #str_len(body),
                                         #str_ptr(subject), #str_len(subject)) });
 }
 
@@ -66,7 +66,7 @@ fn text(body: str, subject: str = "") -> Outcome {
 // "Copy" — and a URL passed as text gets none of it.
 fn url(link: str) -> Outcome {
     if #str_len(link) == (0 as usize) { return Outcome::InvalidInput; }
-    return Outcome::from_code({ _c_url(#str_ptr(link), #str_len(link)) });
+    return Outcome::from_code({ _share_url(#str_ptr(link), #str_len(link)) });
 }
 
 // Share a file by path.
@@ -76,10 +76,10 @@ fn url(link: str) -> Outcome {
 // deleted immediately after this returns arrives empty.
 fn file(path: str) -> Outcome {
     if #str_len(path) == (0 as usize) { return Outcome::InvalidInput; }
-    return Outcome::from_code({ _c_file(#str_ptr(path), #str_len(path)) });
+    return Outcome::from_code({ _share_file(#str_ptr(path), #str_len(path)) });
 }
 
-extern fn _c_available() -> i32;
-extern fn _c_text(body: *u8, body_len: usize, subject: *u8, subject_len: usize) -> i32;
-extern fn _c_url(link: *u8, link_len: usize) -> i32;
-extern fn _c_file(path: *u8, path_len: usize) -> i32;
+extern fn _share_available() -> i32;
+extern fn _share_text(body: *u8, body_len: usize, subject: *u8, subject_len: usize) -> i32;
+extern fn _share_url(link: *u8, link_len: usize) -> i32;
+extern fn _share_file(path: *u8, path_len: usize) -> i32;

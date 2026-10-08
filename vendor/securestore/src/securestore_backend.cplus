@@ -171,7 +171,7 @@ fn _usable() -> bool {
     return _const(#str_ptr("kSecClass\0")) != (0 as *u8);
 }
 
-export extern fn _c_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
+export extern fn _securestore_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
                         service: *u8, service_len: usize) -> i32 {
     if !_usable() { return 0 -% 3; }
     let k: str = _view(key, key_len);
@@ -214,7 +214,7 @@ export extern fn _c_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
     return _map(add(insert, 0 as *u8));
 }
 
-export extern fn _c_get(key: *u8, key_len: usize, service: *u8, service_len: usize,
+export extern fn _securestore_get(key: *u8, key_len: usize, service: *u8, service_len: usize,
                         out: *u8, cap: usize) -> i64 {
     if !_usable() { return (0 -% 3) as i64; }
     let copy: fn(*u8, *u8) -> i32 = _fn2(#str_ptr("SecItemCopyMatching\0"));
@@ -242,7 +242,7 @@ export extern fn _c_get(key: *u8, key_len: usize, service: *u8, service_len: usi
 #[link_name = "memcpy"]
 extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
 
-export extern fn _c_remove(key: *u8, key_len: usize,
+export extern fn _securestore_remove(key: *u8, key_len: usize,
                            service: *u8, service_len: usize) -> i32 {
     if !_usable() { return 0 -% 3; }
     let del: fn(*u8) -> i32 = _fn1(#str_ptr("SecItemDelete\0"));
@@ -250,7 +250,7 @@ export extern fn _c_remove(key: *u8, key_len: usize,
     return _map(del(_query(_view(key, key_len), _view(service, service_len))));
 }
 
-export extern fn _c_contains(key: *u8, key_len: usize,
+export extern fn _securestore_contains(key: *u8, key_len: usize,
                              service: *u8, service_len: usize) -> i32 {
     if !_usable() { return 0 as i32; }
     let copy: fn(*u8, *u8) -> i32 = _fn2(#str_ptr("SecItemCopyMatching\0"));
@@ -264,7 +264,7 @@ export extern fn _c_contains(key: *u8, key_len: usize,
     return 0 as i32;
 }
 
-export extern fn _c_clear(service: *u8, service_len: usize) -> i32 {
+export extern fn _securestore_clear(service: *u8, service_len: usize) -> i32 {
     if !_usable() { return 0 -% 3; }
     let del: fn(*u8) -> i32 = _fn1(#str_ptr("SecItemDelete\0"));
     if del == (0 as fn(*u8) -> i32) { return 0 -% 3; }

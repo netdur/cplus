@@ -6,9 +6,9 @@
 // implemented rather than stubbed.
 //
 // THE DIALOG IS MODAL. macOS's `NSOpenPanel` completes asynchronously, so its
-// `_c_open` returns `Ok` immediately and the handler fires later; the Win32
+// `_filepicker_open` returns `Ok` immediately and the handler fires later; the Win32
 // common dialog runs its own modal loop and does NOT return until the person
-// chooses or cancels. So here the handler fires BEFORE `_c_open` returns, on the
+// chooses or cancels. So here the handler fires BEFORE `_filepicker_open` returns, on the
 // calling thread — the same "runs before the verb returns when no async wait is
 // needed" shape `permissions::request` documents. The `Outcome` and the handler
 // still mean exactly what the facade says: `Ok` = a panel was shown, an empty
@@ -19,7 +19,7 @@
 // double-NUL-terminated filter form, a refinement on top of a working picker.
 //
 // UNIT-UNTESTABLE BY NATURE: a modal dialog blocks on a window, so only
-// `_c_available` is asserted here; the dialogs themselves have a hand-run probe
+// `_filepicker_available` is asserted here; the dialogs themselves have a hand-run probe
 // under `playground/filepicker_probe`, the way drag/wheel behaviours do.
 
 import "stdlib/text" as text;
@@ -133,27 +133,27 @@ fn _run(on_pick: fn(*u8, usize, *u8), ctx: *u8, saving: bool, suggested: str) ->
     return fp::Outcome::Failed.to_code();
 }
 
-export extern fn _c_available() -> i32 {
+export extern fn _filepicker_available() -> i32 {
     return 1 as i32;
 }
 
-export extern fn _c_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
+export extern fn _filepicker_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
                          types: *u8, types_len: usize) -> i32 {
     return _run(on_pick, ctx, false, "");
 }
 
-export extern fn _c_save(suggested: *u8, suggested_len: usize,
+export extern fn _filepicker_save(suggested: *u8, suggested_len: usize,
                          on_pick: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
     let name: str = { #str_from_raw_parts(suggested, suggested_len) };
     return _run(on_pick, ctx, true, name);
 }
 
 // ---- tests -------------------------------------------------------------------
-// Only availability is unit-testable — `_c_open`/`_c_save` show a MODAL dialog
+// Only availability is unit-testable — `_filepicker_open`/`_filepicker_save` show a MODAL dialog
 // that would block the suite on a window. The dialogs are exercised by
 // `playground/filepicker_probe`, run by hand.
 
 #[test]
 fn a_file_dialog_is_available_on_windows() {
-    assert { _c_available() } == (1 as i32);
+    assert { _filepicker_available() } == (1 as i32);
 }

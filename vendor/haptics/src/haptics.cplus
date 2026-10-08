@@ -63,7 +63,7 @@ impl Feel {
 // regardless — it is a no-op — and use this only to hide a "vibrate" setting
 // that would do nothing.
 fn available() -> bool {
-    return { _c_available() } != (0 as i32);
+    return { _haptics_available() } != (0 as i32);
 }
 
 // Play one. Returns whether the platform ACCEPTED it, never whether anything
@@ -73,7 +73,7 @@ fn available() -> bool {
 // nothing rather than failing, because a UI that has to guard every tap reads
 // worse than one that asks and is ignored.
 fn play(feel: Feel = Feel::Light) -> bool {
-    return { _c_play(feel.to_code()) } != (0 as i32);
+    return { _haptics_play(feel.to_code()) } != (0 as i32);
 }
 
 // PREPARE THE HARDWARE, milliseconds before it is needed.
@@ -85,10 +85,10 @@ fn play(feel: Feel = Feel::Light) -> bool {
 //
 // Not required. Skipping it costs latency on the first tap and nothing else.
 fn prepare(feel: Feel = Feel::Light) {
-    { _c_prepare(feel.to_code()) };
+    { _haptics_prepare(feel.to_code()) };
     return;
 }
 
-extern fn _c_available() -> i32;
-extern fn _c_play(feel: i32) -> i32;
-extern fn _c_prepare(feel: i32);
+extern fn _haptics_available() -> i32;
+extern fn _haptics_play(feel: i32) -> i32;
+extern fn _haptics_prepare(feel: i32);

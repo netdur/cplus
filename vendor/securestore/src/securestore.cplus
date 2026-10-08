@@ -94,7 +94,7 @@ fn set(key: str, to: str, service: str = "") -> Outcome {
     // REFUSED AT THE WRITE, which is the only place it can be reported to
     // somebody who can act on it — see MAX_VALUE_BYTES.
     if #str_len(to) > MAX_VALUE_BYTES { return Outcome::Failed; }
-    return _from_code(_c_set(#str_ptr(key), #str_len(key),
+    return _from_code(_securestore_set(#str_ptr(key), #str_len(key),
                              #str_ptr(to), #str_len(to),
                              #str_ptr(service), #str_len(service)));
 }
@@ -126,7 +126,7 @@ fn get(key: str, ref into: text::Text, service: str = "") -> Outcome {
     let p: *u8 = { #addr_of(buf) as *u8 };
     // The backend answers _C_FAILED rather than a short count when the item does
     // not fit — see MAX_VALUE_BYTES. `cap` is the contract, not a hint.
-    let n: i64 = _c_get(#str_ptr(key), #str_len(key),
+    let n: i64 = _securestore_get(#str_ptr(key), #str_len(key),
                         #str_ptr(service), #str_len(service),
                         p, MAX_VALUE_BYTES);
     // Negative is a status code; zero or more is a byte count.
@@ -140,7 +140,7 @@ fn get(key: str, ref into: text::Text, service: str = "") -> Outcome {
 // to check first.
 fn remove(key: str, service: str = "") -> Outcome {
     if #str_len(key) == (0 as usize) { return Outcome::Failed; }
-    return _from_code(_c_remove(#str_ptr(key), #str_len(key),
+    return _from_code(_securestore_remove(#str_ptr(key), #str_len(key),
                                 #str_ptr(service), #str_len(service)));
 }
 
@@ -151,7 +151,7 @@ fn remove(key: str, service: str = "") -> Outcome {
 // and a caller that needs to tell them apart is calling `get`.
 fn contains(key: str, service: str = "") -> bool {
     if #str_len(key) == (0 as usize) { return false; }
-    return _c_contains(#str_ptr(key), #str_len(key),
+    return _securestore_contains(#str_ptr(key), #str_len(key),
                        #str_ptr(service), #str_len(service)) != (0 as i32);
 }
 
@@ -162,7 +162,7 @@ fn contains(key: str, service: str = "") -> bool {
 // items belonging to another application at all. `Ok` when there was nothing to
 // remove — an empty namespace is already in the state this asks for.
 fn clear(service: str = "") -> Outcome {
-    return _from_code(_c_clear(#str_ptr(service), #str_len(service)));
+    return _from_code(_securestore_clear(#str_ptr(service), #str_len(service)));
 }
 
 // ---- the seam ----------------------------------------------------------------
@@ -172,7 +172,7 @@ fn clear(service: str = "") -> Outcome {
 // side. The same shape `permissions` and `notifications` use.
 //
 // The integer answers are NEGATIVE for a status and non-negative for data, so
-// `_c_get` can report a byte count and a failure through one return.
+// `_securestore_get` can report a byte count and a failure through one return.
 
 const _C_OK: i32 = 0 as i32;
 const _C_NOT_FOUND: i32 = 0 - 1;
@@ -188,13 +188,13 @@ fn _from_code(c: i32) -> Outcome {
     return Outcome::Failed;
 }
 
-extern fn _c_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
+extern fn _securestore_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
                  service: *u8, service_len: usize) -> i32;
-extern fn _c_get(key: *u8, key_len: usize, service: *u8, service_len: usize,
+extern fn _securestore_get(key: *u8, key_len: usize, service: *u8, service_len: usize,
                  out: *u8, cap: usize) -> i64;
-extern fn _c_remove(key: *u8, key_len: usize, service: *u8, service_len: usize) -> i32;
-extern fn _c_contains(key: *u8, key_len: usize, service: *u8, service_len: usize) -> i32;
-extern fn _c_clear(service: *u8, service_len: usize) -> i32;
+extern fn _securestore_remove(key: *u8, key_len: usize, service: *u8, service_len: usize) -> i32;
+extern fn _securestore_contains(key: *u8, key_len: usize, service: *u8, service_len: usize) -> i32;
+extern fn _securestore_clear(service: *u8, service_len: usize) -> i32;
 
 // ---- tests -------------------------------------------------------------------
 //
@@ -233,7 +233,7 @@ fn the_codes_are_distinct_so_no_two_outcomes_collide() {
     assert _C_NOT_FOUND != _C_DENIED;
     assert _C_DENIED != _C_UNSUPPORTED;
     assert _C_UNSUPPORTED != _C_FAILED;
-    // Non-negative is DATA on the `_c_get` seam, so every status must be
+    // Non-negative is DATA on the `_securestore_get` seam, so every status must be
     // negative or a byte count would read as a failure.
     assert _C_NOT_FOUND < (0 as i32);
     assert _C_DENIED < (0 as i32);
@@ -270,7 +270,7 @@ fn a_value_over_the_limit_is_refused_at_the_write() {
         i = i +% (1 as usize);
     }
     assert #str_len(big.view()) > MAX_VALUE_BYTES;
-    // Safe to call: the guard returns before `_c_set`, so nothing reaches the
+    // Safe to call: the guard returns before `_securestore_set`, so nothing reaches the
     // keychain.
     assert set("k", big.view()) == Outcome::Failed;
 

@@ -33,7 +33,7 @@ flex_layout = "*"
 permissions = "*"
 
 # The preview surface is a GtkWidget, which is what facet's mount walk adopts
-# and what facet_gtk's own `insert` places — see `_c_preview_create`. A Linux
+# and what facet_gtk's own `insert` places — see `_camera_preview_create`. A Linux
 # facet application is already carrying all of this; a headless one that only
 # wants `count()` pays a link line it does not call into.
 [linux.dependencies]
