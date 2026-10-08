@@ -24,7 +24,11 @@ let _o: bio::Outcome = bio::authenticate("Unlock your notes", answered);
 
 **Not a permission** — a permission is asked once and remembered; this is asked
 every time and answered by a finger. There is nothing to grant in Settings,
-which is why it is not in `permissions`.
+which is why it is not in `permissions`. The app still DECLARES it: Android
+needs `<uses-permission android:name="android.permission.USE_BIOMETRIC"/>`
+(without it every check answers `Unavailable` and logcat says why), and iOS
+needs `NSFaceIDUsageDescription` in Info.plist (required on a device, not
+enforced by the simulator).
 
 **Not authentication.** A pass means *"the person holding this device is its
 owner"*, never *"this user is who they claim to be to your server"*. Anything

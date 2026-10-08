@@ -11,6 +11,20 @@ biometrics = "*"
 securestore = "*"
 ```
 
+Each platform needs one declaration from the app:
+
+- **Android**, in `AndroidManifest.xml`. Without it every check answers
+  `Unavailable`, and logcat names the missing line once (tag
+  `CplusBiometrics`):
+
+  ```xml
+  <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+  ```
+
+- **iOS**, in `Info.plist`: `NSFaceIDUsageDescription`, the sentence Face ID
+  shows. A device requires it; the simulator does not, so a simulator run will
+  not catch its absence.
+
 ## 2. Ask
 
 ```cplus

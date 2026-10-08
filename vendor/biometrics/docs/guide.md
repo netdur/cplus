@@ -93,6 +93,13 @@ Turn it off only when the biometric *itself* is the point. On Android this maps
 to `DEVICE_CREDENTIAL`, which is **API 30+**; below that the backend falls back
 to a negative button, because the Builder throws if given neither.
 
+It means the same on both platforms before the prompt as well. On API 30+ the
+pre-check asks whether `BIOMETRIC_STRONG | DEVICE_CREDENTIAL` can
+authenticate, which is the question the prompt will ask, so a phone with a PIN
+and no fingerprint gets the prompt, as an iPhone with only a passcode does. With
+`allow_passcode: false` it asks about biometrics alone, and that phone answers
+`NotEnrolled`.
+
 ## What was measured
 
 Nothing yet — **a finger cannot be asserted from a test**. The suite covers the

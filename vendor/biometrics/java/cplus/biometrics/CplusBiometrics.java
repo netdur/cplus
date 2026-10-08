@@ -45,16 +45,48 @@ public final class CplusBiometrics {
     }
 
     // 0 ok, 1 unsupported, 2 unavailable, 3 not enrolled.
-    public static int status(Context ctx) {
+    public static int status(Context ctx) { return statusFor(ctx, false); }
+
+    // THE SAME QUESTION `authenticate` WILL ASK (spendwise S51). With
+    // allowPasscode on API 30+ the prompt accepts BIOMETRIC_STRONG |
+    // DEVICE_CREDENTIAL, so the pre-check asks about that pair too: a phone
+    // with a PIN and no fingerprint gets the prompt, as an iPhone with only a
+    // passcode does (LAPolicyDeviceOwnerAuthentication). It answered
+    // NotEnrolled, from a question about biometrics alone.
+    //
+    // AND A MISSING PERMISSION SAYS SO. Without USE_BIOMETRIC,
+    // canAuthenticate throws, and the catch answered "unavailable" with
+    // nothing logged — a developer went looking for hardware that was there.
+    // The outcome stays Unavailable; logcat names the manifest line, once.
+    private static boolean permissionWarned = false;
+
+    public static int statusFor(Context ctx, boolean allowPasscode) {
         if (Build.VERSION.SDK_INT < 29) { return 1; }
+        if (ctx.checkSelfPermission("android.permission.USE_BIOMETRIC")
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (!permissionWarned) {
+                permissionWarned = true;
+                android.util.Log.w("CplusBiometrics", "no USE_BIOMETRIC permission - add "
+                    + "<uses-permission android:name=\"android.permission.USE_BIOMETRIC\"/> "
+                    + "to AndroidManifest.xml; biometrics answers Unavailable until then");
+            }
+            return 2;
+        }
         try {
             BiometricManager m = ctx.getSystemService(BiometricManager.class);
             if (m == null) { return 1; }
-            int r = m.canAuthenticate();
+            int r;
+            if (allowPasscode && Build.VERSION.SDK_INT >= 30) {
+                r = m.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG
+                                      | BiometricManager.Authenticators.DEVICE_CREDENTIAL);
+            } else {
+                r = m.canAuthenticate();
+            }
             if (r == BiometricManager.BIOMETRIC_SUCCESS) { return 0; }
             if (r == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED) { return 3; }
             return 2;
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            android.util.Log.w("CplusBiometrics", "canAuthenticate failed", t);
             return 2;
         }
     }
