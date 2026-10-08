@@ -1,0 +1,44 @@
+// app_dirs on Windows: %APPDATA%\<name> (roaming, the app's data) and
+// %LOCALAPPDATA%\<name>\Cache (machine-local), created. <name> is what the
+// app gave `App::new`. See app_dirs.cplus.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/env" as env;
+import "stdlib/fs" as fs;
+import "stdlib/result" as result;
+import "facet/application" as app;
+
+fn data_dir() -> option::Option[text::Text] {
+    return known("APPDATA", "");
+}
+
+fn cache_dir() -> option::Option[text::Text] {
+    return known("LOCALAPPDATA", "\\Cache");
+}
+
+fn known(var_name: str, tail: str) -> option::Option[text::Text] {
+    match env::var(var_name) {
+        option::Option[text::Text]::Some(base) => {
+            if base.view() == "" { return option::Option[text::Text]::None; }
+            let dir: text::Text = "${base.view()}\\${app_name().view()}${tail}";
+            match fs::create_dir_all(dir.view()) {
+                result::Result[bool, result::IoError]::Ok(_) => { return option::Option[text::Text]::Some(dir); }
+                result::Result[bool, result::IoError]::Err(_) => {
+                    if fs::is_dir(dir.view()) { return option::Option[text::Text]::Some(dir); }
+                    return option::Option[text::Text]::None;
+                }
+            }
+        }
+        option::Option[text::Text]::None => { return option::Option[text::Text]::None; }
+    }
+}
+
+fn app_name() -> text::Text {
+    let a: *app::Application = app::current();
+    if a.is_not_null() {
+        let n: str = { (*a).name.view() };
+        if n != "" { return text::from_str(n); }
+    }
+    return text::from_str("facet");
+}

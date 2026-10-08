@@ -1,0 +1,10 @@
+// app_dirs on Android: Context.getFilesDir() and Context.getCacheDir(), which
+// exist already and are the app's alone. See facet_android/app_dirs for why
+// nothing else will do.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet_android/app_dirs" as host_dirs;
+
+fn data_dir() -> option::Option[text::Text] { return host_dirs::data_dir(); }
+fn cache_dir() -> option::Option[text::Text] { return host_dirs::cache_dir(); }

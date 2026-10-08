@@ -1,5 +1,6 @@
 // Platform application facade: App owns windows; windows own navigation.
 
+import "./app_dirs" as app_dirs;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
@@ -511,3 +512,10 @@ fn owned_scene_gone(token: str) {
     let s = owned_scene_session(token);
     if s.is_not_null() { windows::closing(s as *u8); }
 }
+
+// ---- where this app keeps its files (spendwise S42) ----------------------------
+// MAUI's FileSystem.AppDataDirectory / CacheDirectory: the app's private data
+// directory and its cache, created on first ask; None when the platform gives
+// no answer. app_dirs.cplus has each platform's.
+fn app_data_dir() -> option::Option[text::Text] { return app_dirs::data_dir(); }
+fn cache_dir() -> option::Option[text::Text] { return app_dirs::cache_dir(); }
