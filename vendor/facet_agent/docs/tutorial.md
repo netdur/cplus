@@ -55,8 +55,15 @@ from the id and this process's pid:
 | macOS, Linux | `/tmp/mcp-myapp-<pid>.socket` (0600) **and** `http://127.0.0.1:<9000+pid%1000>/` |
 | Windows, iOS, Android | `http://127.0.0.1:<9000+pid%1000>/` |
 
-The app prints where it landed on stderr at startup, and writes the same thing
-to `/tmp/mcp-myapp-<pid>.json`.
+`9000 + pid % 1000` is the FIRST choice, not a promise. Two processes whose
+pids agree mod 1000 want the same port, and on Android and an iOS simulator
+every app shares one loopback, so when the port is taken the app binds the next
+free one (up to 64 on, within 9000–9999). The app prints where it landed at
+startup (stderr; on Android logcat, `adb logcat -s facet`: `agent: myapp serving
+on http://127.0.0.1:<port>/`), and writes the same thing to
+`/tmp/mcp-myapp-<pid>.json`. Read the port from there, and check that
+`initialize` answers `serverInfo.name` with the id you meant: a port is an
+address, not an identity.
 
 ## Connect
 

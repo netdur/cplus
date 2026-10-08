@@ -321,8 +321,10 @@ fn serve_once(id: str) {
     // One dispatch underneath both, so a verb cannot exist on one and not the
     // other. Failing to bind the port is NOT fatal: the socket is already up and
     // the app is already driveable, so this says so and carries on.
-    let port: u16 = mcp::loopback_port(mcp::current_pid());
-    let hfd: i32 = mcp::bind_tcp(port);
+    // The derived port, or the next free one when another app holds it (S52).
+    let bound: mcp::LoopbackBind = mcp::bind_loopback(mcp::current_pid());
+    let port: u16 = bound.port;
+    let hfd: i32 = bound.fd;
     if hfd < 0 {
         let hwhy: text::Text = "facet: no HTTP door on port ${port} — ${mcp::bind_reason(hfd)} (the socket above still serves)";
         io::eprintln(hwhy.view());

@@ -1980,6 +1980,36 @@ fn loopback_port(pid: i32) -> u16 {
     return n as u16;
 }
 
+// THE DERIVED PORT, OR THE NEXT FREE ONE (spendwise S52). `9000 + pid % 1000`
+// collides whenever two processes' pids agree mod 1000, and on Android (and an
+// iOS simulator) every app shares one loopback. Six apps on one emulator made
+// it routine: the second bind failed, that app was silently not served, and a
+// client that derived the port reached the FIRST app — the mistaken-identity
+// failure the derivation was meant to rule out. So a port that is TAKEN
+// (bind() failing) is followed by the next one, wrapping within 9000..9999, up
+// to 64 tries. Any other failure (no socket at all) is reported as it was.
+// The derivation is the first guess, not the address: a client reads the port
+// the app logged, and checks `initialize`'s serverInfo.name is the app it meant.
+struct LoopbackBind {
+    fd: i32,
+    port: u16,
+}
+
+fn bind_loopback(pid: i32) -> LoopbackBind {
+    var k: i32 = 0;
+    var last: i32 = 0 - 2;
+    while k < 64 {
+        let port: u16 = (9000 + { (pid + k) % 1000 }) as u16;
+        let fd: i32 = bind_tcp(port);
+        if fd >= 0 { return LoopbackBind { fd: fd, port: port }; }
+        last = fd;
+        // Only "address in use" is worth another port.
+        if fd != (0 - 2) { break; }
+        k = k + 1;
+    }
+    return LoopbackBind { fd: last, port: loopback_port(pid) };
+}
+
 // ---- the descriptor -------------------------------------------------------------
 //
 // Beside the socket, `/tmp/mcp-<id>-<pid>.json`, saying what this process
@@ -3091,6 +3121,29 @@ fn the_address_is_a_function_of_the_id_and_the_pid() {
     assert (loopback_port(8161) == loopback_port(8162)) == false;
     assert loopback_port(999999) >= 9000;
     assert loopback_port(999999) <= 9999;
+}
+
+#[link_name = "close"]
+extern fn s52_close(fd: i32) -> i32;
+
+// spendwise S52: another process holding the derived port does not leave this
+// one unserved — it binds the next free port and says which.
+#[test]
+fn a_taken_loopback_port_moves_to_the_next_free_one() {
+    let pid: i32 = 777;
+    let held: i32 = bind_tcp(loopback_port(pid));
+    // If something on this machine already holds 9777, the point stands anyway.
+    let b: LoopbackBind = bind_loopback(pid);
+    assert b.fd >= 0;
+    assert b.port != loopback_port(pid);
+    assert b.port >= (9000 as u16) && b.port <= (9999 as u16);
+    let _c: i32 = { s52_close(b.fd) };
+    if held >= 0 { let _h: i32 = { s52_close(held) }; }
+    // Nothing held: the derived port itself.
+    let free: LoopbackBind = bind_loopback(pid);
+    assert free.fd >= 0;
+    assert free.port == loopback_port(pid);
+    let _f: i32 = { s52_close(free.fd) };
 }
 
 // A derived path fits the socket budget, which is the constraint `valid_id`'s

@@ -191,8 +191,10 @@ fn serve_once(id: str) {
         alog::warn(#str_ptr("agent: not served - the id is a NAME, not a path\0"));
         return;
     }
-    let port: u16 = mcp::loopback_port(mcp::current_pid());
-    let fd: i32 = mcp::bind_tcp(port);
+    // The derived port, or the next free one when another app holds it (S52).
+    let bound: mcp::LoopbackBind = mcp::bind_loopback(mcp::current_pid());
+    let port: u16 = bound.port;
+    let fd: i32 = bound.fd;
     if fd < 0 {
         // logcat, not stderr: a device has nowhere to put stderr, and this is
         // the message that says why the Inspect tab is empty. `adb logcat -s facet`.
@@ -230,7 +232,9 @@ fn serve_once(id: str) {
         AgentServe { fd: fd },
         serve_main,
     );
-    let ok: text::Text = "agent: serving on http://127.0.0.1:${port}/ — ${mcp::verb_summary()}";
+    // THE APP AND ITS PORT, on one line a client can read with `adb logcat -s
+    // facet`: the port may not be the derived one (S52).
+    let ok: text::Text = "agent: ${id} serving on http://127.0.0.1:${port}/ — ${mcp::verb_summary()}";
     alog::info(#str_ptr(ok.view()));
 }
 

@@ -334,12 +334,14 @@ fn serve_once(id: str) {
     // THE PORT IS DERIVED FROM THE PID, not passed in. A fixed port is what
     // this replaces — two instances of the same app would fight over it, and
     // whichever bound first would answer for both.
-    let port: u16 = mcp::loopback_port(mcp::current_pid());
+    // The derived port, or the next free one when another app holds it (S52).
+    let bound: mcp::LoopbackBind = mcp::bind_loopback(mcp::current_pid());
+    let port: u16 = bound.port;
     // BOUND ON THIS THREAD so a failure is something a caller can hear. It used
     // to bind inside the spawned thread whose return value nobody reads, so
     // every setup failure was silent and looked exactly like an app nobody had
     // connected to yet.
-    let fd: i32 = mcp::bind_tcp(port);
+    let fd: i32 = bound.fd;
     if fd < 0 {
         let why: text::Text = "facet: agent surface not served on port ${port} — ${mcp::bind_reason(fd)}";
         io::eprintln(why.view());

@@ -197,8 +197,10 @@ fn serve_once(id: str) {
         io::eprintln(bad.view());
         return;
     }
-    let port: u16 = mcp::loopback_port(mcp::current_pid());
-    let fd: i32 = mcp::bind_tcp(port);
+    // The derived port, or the next free one when another app holds it (S52).
+    let bound: mcp::LoopbackBind = mcp::bind_loopback(mcp::current_pid());
+    let port: u16 = bound.port;
+    let fd: i32 = bound.fd;
     if fd < 0 {
         let why: text::Text = "facet: agent surface not served on port ${port} — ${mcp::bind_reason(fd)}";
         io::eprintln(why.view());
@@ -234,7 +236,7 @@ fn serve_once(id: str) {
         AgentServe { fd: fd },
         serve_main,
     );
-    let ok: text::Text = "facet: agent surface on http://127.0.0.1:${port}/ — ${mcp::verb_summary()}";
+    let ok: text::Text = "facet: agent surface for ${id} on http://127.0.0.1:${port}/ — ${mcp::verb_summary()}";
     io::eprintln(ok.view());
 }
 

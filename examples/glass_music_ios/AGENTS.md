@@ -67,8 +67,10 @@ cat /tmp/mcp-glass_music_ios-*.json
 ```
 
 A pid whose process is gone is a leftover — check with `kill -0 <pid>`.
-If you launched the app yourself you already know the pid, so you can
-skip the file: the port is `9000 + pid % 1000`.
+If you launched the app yourself you already know the pid, and the port is
+usually `9000 + pid % 1000` — but when another app holds that port it takes the
+next free one, so read the port the app printed at startup, and check that
+`initialize` answers `serverInfo.name` with this app's id.
 
 **Talk to it.** Plain JSON-RPC over POST, no bridge:
 
