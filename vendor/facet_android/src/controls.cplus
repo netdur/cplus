@@ -261,7 +261,11 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     let cp: u32 = { (*p).symbol };
     let glyph_bits: u64 = button::P_SYMBOL | button::P_IMAGE | button::P_CONTENT_LAYOUT
         | button::P_FONT_SIZE | button::P_NAMED_SIZE | button::P_FONT_SCALES;
-    if cp != 0u32 && (dirty & glyph_bits) != (0 as u64) {
+    // A TITLELESS glyph button is drawn below as its TEXT, so its slot is empty.
+    let titleless: bool = { (*p).title.view() } == "";
+    if cp != 0u32 && titleless && (dirty & (glyph_bits | button::P_TITLE)) != (0 as u64) {
+        apply_button_image(env, tv, "", { (*p).content_layout });
+    } else if cp != 0u32 && (dirty & (glyph_bits | button::P_TITLE)) != (0 as u64) {
         let d: jni::jobject = glyph_drawable(env, cp, tv.get_line_height());
         if d != (0 as jni::jobject) {
             set_compound(tv, d, { (*p).content_layout });
@@ -287,10 +291,12 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
                              { (*p).border_width }, { (*p).corner_radius },
                              flat_when_unbordered: true);
     }
+    // P_TITLE too: a button that gains a title after being glyph-only (below)
+    // has to get its own typeface back.
     let typography: u64 = button::P_FONT_FAMILY | button::P_FONT_WEIGHT
                         | button::P_IS_ITALIC | button::P_LINE_BREAK
                         | button::P_TEXT_TRANSFORM | button::P_CHARACTER_SPACING
-                        | button::P_FONT_SIZE | button::P_NAMED_SIZE;
+                        | button::P_FONT_SIZE | button::P_NAMED_SIZE | button::P_TITLE;
     if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
         var st: TextStyle = TextStyle::none();
         st.family = { (*p).font_family.view() };
@@ -313,6 +319,20 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // borrows facet's, so disarm that one.
     var bv: w::View = w::View::from_global(env, b.into_raw());
     paint::unwrap_keep(bv);
+    // A TITLELESS GLYPH BUTTON IS ITS GLYPH, CENTRED (spendwise S30). A
+    // compound drawable sits against the start padding with the empty title
+    // centred beside it, so the icon hugged the left of its tile. Drawn as the
+    // TEXT, in the icon font, it is centred by the gravity every title has and
+    // coloured by `text_color` like one. After typography, which would put
+    // the title's own typeface back.
+    if cp != 0u32 && titleless
+       && ((dirty & (glyph_bits | typography)) != (0 as u64) || dirty == paint::all_bits()) {
+        var gbuf: [u8; 8] = #zero::[[u8; 8]]();
+        let gbase: *u8 = { #addr_of(gbuf[0]) };
+        put_codepoint(gbase, cp);
+        tv.set_text_str(gbase);
+        apply_icon_font(env, tv, "", 0.0f64);
+    }
     return;
 }
 
@@ -1895,6 +1915,20 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
         }
     }
     if (dirty & icon_button::P_FIT) != (0 as u64) { set_fit(env, v, { (*p).fit }); }
+    // THE ICON'S TINT (spendwise S30): a colour filter over the drawable,
+    // SRC_ATOP, so a glyph or a symbol takes the colour where it is drawn and
+    // nowhere else. Clear hands it back to the drawable's own colour.
+    if (dirty & (icon_button::P_COLOR | icon_button::P_SOURCE | icon_button::P_SYMBOL)) != (0 as u64) {
+        let c: vocab::Color = { (*p).color };
+        if c.is_set() {
+            env.call_void_1(v, #str_ptr("android/widget/ImageView\0"), #str_ptr("setColorFilter\0"),
+                            #str_ptr("(I)V\0"), jni::arg_int(paint::argb_of(c)));
+        } else {
+            env.call_void_0(v, #str_ptr("android/widget/ImageView\0"), #str_ptr("clearColorFilter\0"),
+                            #str_ptr("()V\0"));
+        }
+        env.clear_exception();
+    }
     // ITS OWN CHROME, the same four a button has — and asking for any of them
     // is asking for a background, which is what takes this kind OUT of the
     // glyph-only posture it wears by default.

@@ -2835,6 +2835,18 @@ FRAMED_INPUT_FIELDS = [
      "false leaves the text on whatever the app draws around it"),
 ]
 
+# AN ICON BUTTON'S TINT (spendwise S30). Its icon is a template image, so it
+# takes the platform's default content tint — black on a light appearance,
+# dark on a camera screen that is dark in both. `symbol` names its colour
+# `color`, and an icon_button is the clickable form of the same thing, so the
+# word is the same. clear() leaves the platform's tint.
+TINTED_ICON = ("icon_button",)
+
+TINTED_ICON_FIELDS = [
+    ("color", "vocab::Color", "vocab::Color::clear()",
+     "facet — the icon's tint, as `symbol(color:)`; clear() keeps the platform's"),
+]
+
 SELECTABLE_TEXT_FIELDS = [
     ("selectable", "bool", "false",
      "facet — may the drawn text be picked up and copied? default false, "
@@ -2986,6 +2998,11 @@ def emit_props(rows_by_control, by_type):
                 inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
         if mod in FRAMED_INPUT:
             for f, t, zero, why in FRAMED_INPUT_FIELDS:
+                fields.append(f"    {f}: {t},"
+                              + (f"    // {why}\n" if why else "\n"))
+                inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
+        if mod in TINTED_ICON:
+            for f, t, zero, why in TINTED_ICON_FIELDS:
                 fields.append(f"    {f}: {t},"
                               + (f"    // {why}\n" if why else "\n"))
                 inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
@@ -3290,6 +3307,8 @@ def ctor_params(row_type, writes, reads, events, owned=()):
         params.append(("selectable", "bool", "false"))
     if MODULE.get(row_type) in FRAMED_INPUT:
         params.append(("bordered", "bool", "true"))
+    if MODULE.get(row_type) in TINTED_ICON:
+        params.append(("color", "vocab::Color", "vocab::Color::clear()"))
     if MODULE.get(row_type) in ROW_SOURCE:
         params.append(("count", "usize", "0 as usize"))
         params.append(("row", "fn(usize, *u8) -> core::Node", "props::no_row"))
@@ -3366,7 +3385,8 @@ def emit_control(row_type, merged):
             + (["STYLE_RUNS"] if mod in EDITOR_TIER else [])
             + (["TOGGLES", "ON", "BORDERED", "SYMBOL"] if mod in BUTTONS else [])
             + (["SELECTABLE"] if mod in SELECTABLE_TEXT else [])
-            + (["BORDERED"] if mod in FRAMED_INPUT else []))
+            + (["BORDERED"] if mod in FRAMED_INPUT else [])
+            + (["COLOR"] if mod in TINTED_ICON else []))
     for i, b in enumerate(bits):
         o.append(f"const P_{b}: u64 = {1 << i}u64;\n")
     o.append("\n")
@@ -3430,6 +3450,8 @@ def emit_control(row_type, merged):
         o.append("    p.selectable = selectable;\n")
     if mod in FRAMED_INPUT:
         o.append("    p.bordered = bordered;\n")
+    if mod in TINTED_ICON:
+        o.append("    p.color = color;\n")
     keep = "    var n: core::Node = match" if carries_param(row_type) else "    return match"
     o.append(f"{keep} box::new::[props::{props}](p) {{\n")
     o.append(f"        option::Option[box::Box[props::{props}]]::Some(b) =>\n")
@@ -3905,6 +3927,21 @@ def emit_control(row_type, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return 0u32; }}\n")
         o.append("        return { (*p).symbol };\n    }\n")
+
+    # ---- facet's own: an icon button's tint
+    if mod in TINTED_ICON:
+        o.append("\n    // The icon's tint, as `symbol(color:)` names it (spendwise S30).\n")
+        o.append("    // clear() hands the icon back to the platform's own tint.\n")
+        o.append(f"    fn set_color(this, v: vocab::Color) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).color = v };\n")
+        o.append("        core::touch(this._p, P_COLOR);\n")
+        o.append("        return this;\n    }\n")
+        o.append(f"\n    fn color(this) -> vocab::Color {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return vocab::Color::clear(); }}\n")
+        o.append("        return { (*p).color };\n    }\n")
 
     # ---- facet's own: an input without the platform's frame
     if mod in FRAMED_INPUT:
@@ -5369,6 +5406,8 @@ def inspect_props(row_type, merged):
         out.append(("bar_placement", "BarPlacement", "bar_placement", "set_bar_placement", "facet"))
     if mod in FRAMED_INPUT:
         out.append(("bordered", "bool", "is_bordered", "set_bordered", "facet"))
+    if mod in TINTED_ICON:
+        out.append(("color", "Color", "color", "set_color", "facet"))
     if mod in BUTTONS:
         out.append(("toggles", "bool", "toggles", "set_toggles", "facet"))
         out.append(("on", "bool", "is_on", "set_on", "facet"))

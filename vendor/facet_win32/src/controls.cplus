@@ -2756,7 +2756,7 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     }
     let repaint: u64 = icon_button::P_FIT | icon_button::P_BORDER_COLOR
                      | icon_button::P_BORDER_WIDTH | icon_button::P_CORNER_RADIUS
-                     | icon_button::P_BORDERED;
+                     | icon_button::P_BORDERED | icon_button::P_COLOR;
     if (dirty & repaint) != (0 as u64) {
         let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     }
@@ -2821,7 +2821,10 @@ fn draw_icon_button(di: *u8) -> bool {
     // `COLOR_BTNTEXT`, which `GetSysColor` answers BLACK on a dark system and
     // drew a black glyph on a dark card.
     var fg: u32 = paint::ink_over(paint::effective_bg(v));
-    let _unused: bool = has;
+    // ...UNLESS IT WAS GIVEN ONE: `color`, facet's tint for this kind
+    // (spendwise S30), wins over the ink. A picture source is drawn as itself.
+    let tint: u32 = paint::resolve({ (*p).color }, #addr_of(has));
+    if has { fg = tint; }
     if (state & ods_disabled()) != (0 as u32) { fg = { u::GetSysColor(17 as i32) }; }
     let _t: u32 = { gdi::SetTextColor(hdc, fg) };
     let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };

@@ -278,8 +278,16 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
             apply_control_image(b, { (*p).image.view() });
         }
     }
-    if (dirty & (button::P_CONTENT_LAYOUT | button::P_IMAGE | button::P_SYMBOL)) != (0 as u64) {
-        b.set_image_position(ns_image_position({ (*p).content_layout }));
+    // A TITLELESS button is its image, centred (spendwise S30). The layout's
+    // side assumes a title follows, so a glyph-only button drew its icon at
+    // the left of its frame, hugging the edge of a round tile.
+    if (dirty & (button::P_CONTENT_LAYOUT | button::P_IMAGE | button::P_SYMBOL
+                 | button::P_TITLE)) != (0 as u64) {
+        if { (*p).title.view() } == "" {
+            b.set_image_position(ak::CellImagePosition::NSImageOnly);
+        } else {
+            b.set_image_position(ns_image_position({ (*p).content_layout }));
+        }
     }
     // The glyph is a TEMPLATE, so it takes the button's content tint. A
     // `text_color` colours the title through its attributed string and
@@ -1614,6 +1622,18 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     }
     if (dirty & icon_button::P_FIT) != (0 as u64) {
         b.set_image_scaling(ns_image_scaling({ (*p).fit }));
+    }
+    // THE ICON'S TINT (spendwise S30). An SF Symbol and a bundled glyph are
+    // template images, which `contentTintColor` colours; nil gives the icon
+    // back to the appearance — black in light, white in dark, which is what a
+    // dark camera screen could not get past.
+    if (dirty & icon_button::P_COLOR) != (0 as u64) || dirty == paint::all_bits() {
+        let c: vocab::Color = { (*p).color };
+        if c.is_set() {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setContentTintColor:\0")), paint::ns_color(c).raw()) };
+        } else {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setContentTintColor:\0")), 0 as *u8) };
+        }
     }
     if (dirty & icon_button::P_IS_OPAQUE) != (0 as u64) { apply_is_opaque(v, { (*p).is_opaque }); }
     // icon_button is created borderless on purpose, so `bordered` here is the

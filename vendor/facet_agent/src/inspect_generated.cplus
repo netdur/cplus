@@ -712,7 +712,7 @@ fn descriptors() -> vec::Vec[insp::Descriptor] {
     let _d57: status::Status = v.append(insp::d("time", "duration", "seconds", "time_picker", "", "Time, written through the control's own setter."));
     let _d58: status::Status = v.append(insp::d("progress", "number", "", "progress", "", "Progress, written through the control's own setter."));
     let _d59: status::Status = v.append(insp::d("progress_color", "color", "", "progress", "", "ProgressColor, written through the control's own setter."));
-    let _d60: status::Status = v.append(insp::d("color", "color", "", "spinner checkbox box", "", "Color, written through the control's own setter."));
+    let _d60: status::Status = v.append(insp::d("color", "color", "", "spinner checkbox box icon_button", "", "Color, facet's own, written through the control's own setter."));
     let _d61: status::Status = v.append(insp::d("is_running", "bool", "", "spinner", "", "IsRunning, written through the control's own setter."));
     let _d62: status::Status = v.append(insp::d("fit", "enum", "", "image icon_button", "aspect_fill aspect_fit center fill", "Aspect, written through the control's own setter."));
     let _d63: status::Status = v.append(insp::d("is_animation_playing", "bool", "", "image", "", "IsAnimationPlaying, written through the control's own setter."));
@@ -1199,6 +1199,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "border_width" { return option::Option[insp::Value]::Some(insp::Value::Num(c.border_width())); }
                 if prop == "is_opaque" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_opaque())); }
                 if prop == "source" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.source()))); }
+                if prop == "color" { return option::Option[insp::Value]::Some(insp::Value::Color(to_color(c.color()))); }
                 if prop == "toggles" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.toggles())); }
                 if prop == "on" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_on())); }
                 if prop == "bordered" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_bordered())); }
@@ -3742,6 +3743,16 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                         _ => insp::Outcome::TypeMismatch,
                     };
                 }
+                if prop == "color" {
+                    let x: option::Option[vocab::Color] = match v {
+                        insp::Value::Color(c) => option::Option[vocab::Color]::Some(from_color(c)),
+                        _ => option::Option[vocab::Color]::None,
+                    };
+                    return match x {
+                        option::Option[vocab::Color]::Some(a) => { let _c: m_icon_button::IconButton = c.set_color(a); insp::Outcome::Ok },
+                        option::Option[vocab::Color]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
                 if prop == "toggles" {
                     let x: option::Option[bool] = match v {
                         insp::Value::Bool(b) => option::Option[bool]::Some(b),
@@ -6009,6 +6020,10 @@ fn every_icon_button_property_reads_and_writes_back() {
     }
     match get(p, "source") {
         option::Option[insp::Value]::Some(v) => { assert set(p, "source", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
+    match get(p, "color") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "color", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
     match get(p, "toggles") {

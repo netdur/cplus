@@ -1113,6 +1113,7 @@ fn icon_button(
     on: bool = false,
     bordered: bool = true,
     symbol: u32 = 0u32,
+    color: vocab::Color = vocab::Color::clear(),
     item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_icon_button::icon_button(
@@ -1133,6 +1134,7 @@ fn icon_button(
         on: on,
         bordered: bordered,
         symbol: symbol,
+        color: color,
         item: item,
     );
 }

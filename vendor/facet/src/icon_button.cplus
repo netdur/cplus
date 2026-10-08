@@ -27,6 +27,7 @@ const P_TOGGLES: u64 = 64u64;
 const P_ON: u64 = 128u64;
 const P_BORDERED: u64 = 256u64;
 const P_SYMBOL: u64 = 512u64;
+const P_COLOR: u64 = 1024u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -50,6 +51,7 @@ fn icon_button(
     on: bool = false,
     bordered: bool = true,
     symbol: u32 = 0u32,
+    color: vocab::Color = vocab::Color::clear(),
     item: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::IconButtonProps = props::IconButtonProps::new();
@@ -69,6 +71,7 @@ fn icon_button(
     p.on = on;
     p.bordered = bordered;
     p.symbol = symbol;
+    p.color = color;
     var n: core::Node = match box::new::[props::IconButtonProps](p) {
         option::Option[box::Box[props::IconButtonProps]]::Some(b) =>
             core::node_with(key, props::K_ICON_BUTTON, b.into_raw(), props::release_icon_button_props),
@@ -273,6 +276,22 @@ impl IconButton {
         let p: *props::IconButtonProps = this._props();
         if p == (0 as *props::IconButtonProps) { return 0u32; }
         return { (*p).symbol };
+    }
+
+    // The icon's tint, as `symbol(color:)` names it (spendwise S30).
+    // clear() hands the icon back to the platform's own tint.
+    fn set_color(this, v: vocab::Color) -> IconButton {
+        let p: *props::IconButtonProps = this._props();
+        if p == (0 as *props::IconButtonProps) { return this; }
+        { (*p).color = v };
+        core::touch(this._p, P_COLOR);
+        return this;
+    }
+
+    fn color(this) -> vocab::Color {
+        let p: *props::IconButtonProps = this._props();
+        if p == (0 as *props::IconButtonProps) { return vocab::Color::clear(); }
+        return { (*p).color };
     }
 
     // The flex node this cursor points at. The DOM division, and the

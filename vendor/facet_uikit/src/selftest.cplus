@@ -38,6 +38,7 @@ import "facet/tree" as tree;
 import "facet/vocabulary" as vocab;
 import "facet/tabs" as tabs;
 import "facet/popup" as fpopup;
+import "facet/icon_button" as ficon;
 import "facet/native_dialog" as native_dialog;
 import "facet/list" as flist;
 import "facet/elements" as ui;
@@ -1383,6 +1384,145 @@ fn each_popup_item_is_a_choice_an_agent_can_make() -> bool {
     app::reset_default_for_tests();
     { rt::release(win) };
     return ok;
+}
+
+// spendwise S33: the MENU a person opens holds every item, not the last one.
+// Every UIAction carried the identifier @"" and a UIMenu keeps one child per
+// identifier. Read from the UIMenu itself — the props always had all of them.
+fn a_popups_menu_holds_every_item() -> bool {
+    var items: vocab::TextList = vocab::TextList::new();
+    let _a: status::Status = items.add("Mango");
+    let _b: status::Status = items.add("Lychee");
+    let _c: status::Status = items.add("Fig");
+    let _d: status::Status = items.add("Kiwi");
+    var n: core::Node = ui::popup("Fruit", key: "st:fruit", items: items);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    views::apply(0 as *u8, p);
+    let menu: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("menu\0"))) };
+    if menu == (0 as *u8) { io::eprintln("  no menu"); return false; }
+    let kids: *u8 = { rt::msg_id(menu, rt::sel(#str_ptr("children\0"))) };
+    let count: u64 = { rt::msg_u64(kids, rt::sel(#str_ptr("count\0"))) };
+    // `children` lists all four EVEN WHEN they collapse: UIKit uniques them by
+    // identifier when it SHOWS the menu, not when it is built. So what is
+    // checked is the thing it uniques on — four distinct identifiers.
+    let ids: *u8 = { rt::alloc_init(#str_ptr("NSMutableSet\0")) };
+    var k: u64 = 0 as u64;
+    while k < count {
+        let e: *u8 = { rt::msg_id_u64(kids, rt::sel(#str_ptr("objectAtIndex:\0")), k) };
+        let id: *u8 = { rt::msg_id(e, rt::sel(#str_ptr("identifier\0"))) };
+        if id != (0 as *u8) { { rt::msg_void_id(ids, rt::sel(#str_ptr("addObject:\0")), id) }; }
+        k = k +% (1 as u64);
+    }
+    let distinct: u64 = { rt::msg_u64(ids, rt::sel(#str_ptr("count\0"))) };
+    { rt::release(ids) };
+    if count != (4 as u64) || distinct != (4 as u64) {
+        io::eprintln(text::from_str("  menu children ${count}, distinct identifiers ${distinct}"));
+    }
+    return count == (4 as u64) && distinct == (4 as u64);
+}
+
+// spendwise S32: a bordered button is the platform's bordered button — a
+// UIButtonConfiguration — and its title keeps the font and colour it was
+// given, which a configuration takes only through its attributed title.
+fn a_bordered_button_is_configured_and_keeps_its_font() -> bool {
+    var n: core::Node = ui::button("Big", key: "st:big", font_size: 22.0f64,
+                                   text_color: vocab::Color::rgba(0.9f64, 0.1f64, 0.1f64, 1.0f64));
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    views::apply(0 as *u8, p);
+    let cfg: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("configuration\0"))) };
+    if cfg == (0 as *u8) { io::eprintln("  no configuration"); return false; }
+    let at: *u8 = { rt::msg_id(cfg, rt::sel(#str_ptr("attributedTitle\0"))) };
+    if at == (0 as *u8) { io::eprintln("  no attributed title"); return false; }
+    let f: *u8 = { rt::msg_id_id_u64_u64(at, rt::sel(#str_ptr("attribute:atIndex:effectiveRange:\0")),
+                                        bridge::nsstring("NSFont"), 0 as u64, 0 as u64) };
+    if f == (0 as *u8) { io::eprintln("  no font on the title"); return false; }
+    let given: f64 = { rt::msg_f64(f, rt::sel(#str_ptr("pointSize\0"))) };
+    // What is DRAWN, which is the claim: the label the button lays out — in a
+    // window, where UIKit resolves the legacy title against the configuration.
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    if win != (0 as *u8) { { rt::msg_void_id(win, rt::sel(#str_ptr("addSubview:\0")), v) }; }
+    { rt::msg_void(v, rt::sel(#str_ptr("sizeToFit\0"))) };
+    { rt::msg_void(v, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    let tl: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("titleLabel\0"))) };
+    var pt: f64 = 0.0f64;
+    if tl != (0 as *u8) {
+        let lf: *u8 = { rt::msg_id(tl, rt::sel(#str_ptr("font\0"))) };
+        if lf != (0 as *u8) { pt = { rt::msg_f64(lf, rt::sel(#str_ptr("pointSize\0"))) }; }
+    }
+    // And the TEXT is drawn: a blank legacy title once outranked this one.
+    var drawn_text: bool = false;
+    if tl != (0 as *u8) {
+        let tt: *u8 = { rt::msg_id(tl, rt::sel(#str_ptr("text\0"))) };
+        drawn_text = tt != (0 as *u8) && bridge::to_text(tt).view() == "Big";
+    }
+    if pt != 22.0f64 || !drawn_text { io::eprintln(text::from_str("  given ${given}, drawn ${pt}, text ${drawn_text}")); }
+    { rt::msg_void(v, rt::sel(#str_ptr("removeFromSuperview\0"))) };
+    if win != (0 as *u8) { { rt::release(win) }; }
+    // And bordered: false stays the plain system button.
+    var m: core::Node = ui::button("Plain", key: "st:plain", bordered: false);
+    let mp: *core::Node = #addr_of(m);
+    let mv: *u8 = views::create(0 as *u8, mp);
+    if mv == (0 as *u8) { return false; }
+    core::set_view(mp, mv, views::view_release);
+    views::apply(0 as *u8, mp);
+    let plain: bool = { rt::msg_id(mv, rt::sel(#str_ptr("configuration\0"))) } == (0 as *u8);
+    if !plain { io::eprintln("  a plain button got a configuration"); }
+    // A popup is configured too, and keeps its font the same way (S31).
+    var items: vocab::TextList = vocab::TextList::new();
+    let _a: status::Status = items.add("Mango");
+    var q: core::Node = ui::popup("Fruit", key: "st:bigpop", font_size: 22.0f64, items: items);
+    let qp: *core::Node = #addr_of(q);
+    let qv: *u8 = views::create(0 as *u8, qp);
+    if qv == (0 as *u8) { return false; }
+    core::set_view(qp, qv, views::view_release);
+    views::apply(0 as *u8, qp);
+    { rt::msg_void(qv, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    var qpt: f64 = 0.0f64;
+    let qtl: *u8 = { rt::msg_id(qv, rt::sel(#str_ptr("titleLabel\0"))) };
+    if qtl != (0 as *u8) {
+        let qf: *u8 = { rt::msg_id(qtl, rt::sel(#str_ptr("font\0"))) };
+        if qf != (0 as *u8) { qpt = { rt::msg_f64(qf, rt::sel(#str_ptr("pointSize\0"))) }; }
+    }
+    let qtext: *u8 = if qtl != (0 as *u8) { rt::msg_id(qtl, rt::sel(#str_ptr("text\0"))) } else { 0 as *u8 };
+    let shows: bool = qtext != (0 as *u8) && bridge::to_text(qtext).view() == "Mango";
+    if qpt != 22.0f64 || !shows { io::eprintln(text::from_str("  popup drawn ${qpt}, shows Mango ${shows}")); }
+    return pt == 22.0f64 && drawn_text && plain && qpt == 22.0f64 && shows;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_i8_4ptr(o: *u8, s: *u8, a: *u8, b: *u8, c: *u8, d: *u8) -> i8;
+
+// spendwise S30: an icon button's `color` is its tint, and clear() gives the
+// icon back to the inherited tint.
+fn an_icon_buttons_color_is_its_tint() -> bool {
+    var n: core::Node = ui::icon_button("xmark", key: "st:tint",
+                                        color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64));
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    let tint: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("tintColor\0"))) };
+    let white: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIColor\0")), rt::sel(#str_ptr("whiteColor\0"))) };
+    var r: f64 = 0.0f64; var g: f64 = 0.0f64; var b: f64 = 0.0f64; var a: f64 = 0.0f64;
+    let _ok: i8 = { msg_i8_4ptr(tint, rt::sel(#str_ptr("getRed:green:blue:alpha:\0")),
+                                #addr_of(r) as *u8, #addr_of(g) as *u8, #addr_of(b) as *u8, #addr_of(a) as *u8) };
+    let is_white: bool = r > 0.99f64 && g > 0.99f64 && b > 0.99f64;
+    core::clear_dirty(p);
+    match ficon::find("st:tint", within: p) {
+        option::Option[ficon::IconButton]::Some(x) => { let _c: ficon::IconButton = x.set_color(vocab::Color::clear()); }
+        option::Option[ficon::IconButton]::None => { return false; }
+    }
+    views::apply(0 as *u8, p);
+    let after: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("tintColor\0"))) };
+    let back: bool = after != (0 as *u8) && { rt::msg_i8_id(after, rt::sel(#str_ptr("isEqual:\0")), white) } == (0 as i8);
+    if !is_white || !back { io::eprintln(text::from_str("  tint white ${is_white}, handed back ${back}")); }
+    return is_white && back;
 }
 
 // A LIST'S ROWS ARE DESCRIBED IN THE ORDER THE USER SEES. A table's subviews
@@ -4589,6 +4729,12 @@ fn run_all() -> i32 {
           a_tab_click_from_the_server_thread_lands_on_main());
     check("each popup item is a choice an agent can make",
           each_popup_item_is_a_choice_an_agent_can_make());
+    check("a popup's menu holds every item",
+          a_popups_menu_holds_every_item());
+    check("a bordered button is configured and keeps its font",
+          a_bordered_button_is_configured_and_keeps_its_font());
+    check("an icon button's color is its tint",
+          an_icon_buttons_color_is_its_tint());
     check("a list's rows are described top to bottom",
           a_lists_rows_are_described_top_to_bottom());
     check("an agent scroll reaches a view inside two scrollers",

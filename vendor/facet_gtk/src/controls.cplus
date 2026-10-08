@@ -427,6 +427,7 @@ fn css_bits(kind: u32) -> u64 {
     if kind == symbol::K_SYMBOL {
         return symbol::P_COLOR | symbol::P_SIZE | symbol::P_FONT | symbol::P_FILL;
     }
+    if kind == props::K_ICON_BUTTON { return icon_button::P_COLOR; }
     return 0 as u64;
 }
 
@@ -583,6 +584,13 @@ fn css_decls(kind: u32, n: *core::Node) -> text::Text {
         let p: *props::SpinnerProps = props_of(n, kind) as *props::SpinnerProps;
         if p == (0 as *props::SpinnerProps) { return text::from_str(""); }
         // A GtkSpinner draws itself in the FOREGROUND colour.
+        return color_decl("color", { (*p).color });
+    }
+    if kind == props::K_ICON_BUTTON {
+        let p: *props::IconButtonProps = props_of(n, kind) as *props::IconButtonProps;
+        if p == (0 as *props::IconButtonProps) { return text::from_str(""); }
+        // The icon's tint (spendwise S30): a symbolic icon recolours itself to
+        // the foreground, and the glyph label is text — both follow `color`.
         return color_decl("color", { (*p).color });
     }
     if kind == symbol::K_SYMBOL {

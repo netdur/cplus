@@ -625,6 +625,59 @@ fn an_icon_buttons_symbol_takes_the_image_slot_and_gives_it_back() {
     app::reset_default_for_tests();
 }
 
+// spendwise S30: an icon button can be TINTED — white on a camera screen that
+// is dark in both appearances — and clearing the tint gives the icon back to
+// the appearance.
+#[test]
+fn an_icon_buttons_color_tints_its_icon_and_clearing_it_gives_it_back() {
+    app::reset_default_for_tests();
+    var n: core::Node = ui::icon_button(symbol: icons::home, key: "ib:tint",
+                                        color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64));
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    let tint: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentTintColor\0"))) };
+    assert tint != (0 as *u8);
+    let white: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("whiteColor\0"))) };
+    let same: i8 = { rt::msg_i8_id(tint, rt::sel(#str_ptr("isEqual:\0")), white) };
+    // Compared in a common colour space: the stated one may be sRGB.
+    let a: *u8 = { rt::msg_id_id(tint, rt::sel(#str_ptr("colorUsingColorSpace:\0")),
+                                 rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("sRGBColorSpace\0")))) };
+    assert same != (0 as i8) || { rt::msg_f64(a, rt::sel(#str_ptr("redComponent\0"))) } > 0.99f64;
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match icon_button::find("ib:tint", within: p) {
+        option::Option[icon_button::IconButton]::Some(x) => {
+            assert x.color().is_set();
+            let _c: icon_button::IconButton = x.set_color(vocab::Color::clear());
+        }
+        option::Option[icon_button::IconButton]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert { rt::msg_id(v, rt::sel(#str_ptr("contentTintColor\0"))) } == (0 as *u8);
+    app::reset_default_for_tests();
+}
+
+// spendwise S30: a titleless button is its image, centred — not an image
+// placed to the left of a title that is not there.
+#[test]
+fn a_titleless_buttons_image_is_centred() {
+    app::reset_default_for_tests();
+    var n: core::Node = button::button("", key: "btn:glyph", symbol: icons::home);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    // NSCellImagePosition: NSImageOnly is 1, NSImageLeft 2.
+    assert { rt::msg_u64(v, rt::sel(#str_ptr("imagePosition\0"))) } == (1 as u64);
+    var t: core::Node = button::button("Home", key: "btn:titled", symbol: icons::home);
+    let tv: *u8 = views::create(0 as *u8, #addr_of(t));
+    assert tv.is_not_null();
+    assert { rt::msg_u64(tv, rt::sel(#str_ptr("imagePosition\0"))) } == (2 as u64);
+    views::view_release(v);
+    views::view_release(tv);
+    app::reset_default_for_tests();
+}
+
 // A red "Delete" with a black trash can reads as two controls. The title's
 // colour rides an attributed string; the glyph is told through the tint.
 #[test]

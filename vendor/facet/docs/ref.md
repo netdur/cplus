@@ -91,8 +91,10 @@ more than one, so it always holds them: to address the item, give it a key and
 
 ### The three buttons
 
-`button(title:)` draws the platform's own bezel. `icon_button(icon:)` is an
-image and no bezel. `text_button(title:)` is text and no bezel — the flat
+`button(title:)` draws the platform's own bordered button: AppKit's bezel,
+iOS 26's glass capsule (the bordered style before 26), Android's outlined
+button. `bordered: false` leaves the plain tinted title. `icon_button(icon:)`
+is an image and no bezel. `text_button(title:)` is text and no bezel — the flat
 posture, for a Cancel beside a Save or a link-shaped action.
 
 ```cplus
@@ -166,7 +168,20 @@ The glyph goes where the image goes: `content_layout` places it and `fit`
 scales it. When both `symbol` and `image` / `source` are set, the glyph
 takes the slot, and `set_symbol(0u32)` hands the slot back. On a `button`
 the glyph is one line of the title tall and takes the title's `text_color`;
-on an `icon_button` it is 24pt, the size the font is drawn for.
+on an `icon_button` it is 24pt, the size the font is drawn for. A `button`
+with an empty title is its glyph, centred.
+
+An `icon_button`'s icon takes the platform's tint unless it is given one.
+`color` is that tint, the same word `symbol(color:)` uses. A screen that is
+dark in both appearances needs it, because the default tint is dark in light
+mode:
+
+```cplus
+icon_button(symbol: icons::close, key: "cam:close", color: vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
+            on_clicked: this.on_close)
+```
+
+`set_color(vocab::Color::clear())` gives the icon back to the platform.
 
 The font is compiled into the binary (`facet/icon_font`), so an application
 ships nothing for it. A copy the application does ship (an app bundle's
