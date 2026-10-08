@@ -1,0 +1,250 @@
+// UTF-16 Win32 paths, including redirected profile/documents known folders.
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/bundle" as bundle;
+
+extern fn GetCurrentDirectoryW(size: u32, buf: *u8) -> u32;
+extern fn GetTempPathW(size: u32, buf: *u8) -> u32;
+extern fn SHGetKnownFolderPath(id: *u8, flags: u32, token: *u8, out: *u8) -> i32;
+extern fn CoTaskMemFree(buf: *u8);
+extern fn WideCharToMultiByte(codepage: u32, flags: u32, wide: *u8, wide_len: i32,
+out: *u8, out_len: i32, default_char: *u8, used_default: *u8) -> i32;
+extern fn malloc(size: usize) -> *u8;
+extern fn free(buf: *u8);
+
+#[repr(C)]
+struct _Guid { a: u32, b: u16, c: u16, d: [u8; 8] }
+
+fn _utf8(wide: *u8) -> option::Option[text::Text] {
+    if wide.is_null() { return option::Option[text::Text]::None; }
+    let need: i32 = { WideCharToMultiByte(65001 as u32, 128 as u32, wide, 0 - 1,
+    0 as *u8, 0, 0 as *u8, 0 as *u8) };
+    if need <= 0 { return option::Option[text::Text]::None; }
+    let buf: *u8 = { malloc(need as usize) };
+    if buf.is_null() { return option::Option[text::Text]::None; }
+    let got: i32 = { WideCharToMultiByte(65001 as u32, 128 as u32, wide, 0 - 1,
+    buf, need, 0 as *u8, 0 as *u8) };
+    var value: option::Option[text::Text] = option::Option[text::Text]::None;
+    if got > 0 { value = _nonempty({ #str_from_raw_parts(buf, (got - 1) as usize) }.to_text()); }
+    free(buf);
+    return value;
+}
+
+fn _known(kind: u32) -> option::Option[text::Text] {
+    var id: _Guid = _Guid { a: 0xF1B32785 as u32, b: 0x6FBA as u16, c: 0x4FCF as u16,
+    d: [0x9D as u8, 0x55 as u8, 0x7B as u8, 0x8E as u8, 0x7F as u8, 0x15 as u8, 0x70 as u8, 0x91 as u8] }; // LocalAppData
+    if kind == _HOME {
+        id = _Guid { a: 0x5E6C858F as u32, b: 0x0E22 as u16, c: 0x4760 as u16,
+        d: [0x9A as u8, 0xFE as u8, 0xEA as u8, 0x33 as u8, 0x17 as u8, 0xB6 as u8, 0x71 as u8, 0x73 as u8] };
+    }
+    if kind == _DOCUMENTS {
+        id = _Guid { a: 0xFDD39AD0 as u32, b: 0x238F as u16, c: 0x46AF as u16,
+        d: [0xAD as u8, 0xB4 as u8, 0x6C as u8, 0x85 as u8, 0x48 as u8, 0x03 as u8, 0x69 as u8, 0xC7 as u8] };
+    }
+    if kind == _DOWNLOADS {
+        id = _Guid { a: 0x374DE290 as u32, b: 0x123F as u16, c: 0x4565 as u16,
+        d: [0x91 as u8, 0x64 as u8, 0x39 as u8, 0xC4 as u8, 0x92 as u8, 0x5E as u8, 0x46 as u8, 0x7B as u8] };
+    }
+    var wide: *u8 = 0 as *u8;
+    // KF_FLAG_DONT_VERIFY: return the configured location without creating it.
+    let rc: i32 = { SHGetKnownFolderPath(#addr_of(id) as *u8, 16384 as u32,
+    0 as *u8, #addr_of(wide) as *u8) };
+    var value: option::Option[text::Text] = option::Option[text::Text]::None;
+    if rc >= 0 { value = _utf8(wide); }
+    // Required on both success and failure by the Shell allocation contract.
+    if wide.is_not_null() { CoTaskMemFree(wide); }
+    return value;
+}
+
+fn _read_path(kind: u32) -> option::Option[text::Text] {
+    if kind == _APP || kind == _RESOURCES { return _nonempty(bundle::dir()); }
+    // Cache shares the LocalAppData root; the facade appends app/Cache.
+    if kind == _HOME || kind == _DOCUMENTS || kind == _DOWNLOADS || kind == _DATA || kind == _CACHE { return _known(kind); }
+    if kind != _CURRENT && kind != _TEMP { return option::Option[text::Text]::None; }
+    let cap: u32 = 32768;
+    let wide: *u8 = { malloc((cap as usize) * (2 as usize)) };
+    if wide.is_null() { return option::Option[text::Text]::None; }
+    var n: u32 = 0;
+    if kind == _CURRENT { n = { GetCurrentDirectoryW(cap, wide) }; }
+    else { n = { GetTempPathW(cap, wide) }; }
+    var value: option::Option[text::Text] = option::Option[text::Text]::None;
+    if n > (0 as u32) && n < cap { value = _utf8(wide); }
+    free(wide);
+    return value;
+}
+
+// Package identity uses Win32 appmodel APIs; ordinary desktop apps may provide
+// an explicit AppUserModelID and executable VERSIONINFO resources.
+extern fn GetCurrentPackageId(size: *u32, buffer: *u8) -> i32;
+extern fn GetCurrentProcessExplicitAppUserModelID(value: *u8) -> i32;
+extern fn GetModuleFileNameW(module: *u8, filename: *u8, capacity: u32) -> u32;
+extern fn GetFileVersionInfoSizeW(filename: *u8, ignored: *u32) -> u32;
+extern fn GetFileVersionInfoW(filename: *u8, ignored: u32, size: u32, buffer: *u8) -> i32;
+extern fn VerQueryValueW(buffer: *u8, key: *u8, value: *u8, size: *u32) -> i32;
+extern fn MultiByteToWideChar(codepage: u32, flags: u32, bytes: *u8, count: i32, wide: *u8, capacity: i32) -> i32;
+
+#[repr(C)]
+struct _PackageId {
+    reserved: u32, architecture: u32, version: u64,
+    opaque name: *u8, opaque publisher: *u8, opaque resource_id: *u8, opaque publisher_id: *u8,
+}
+
+fn _version_text(version: u64) -> text::Text {
+    let major: u64 = version >> (48 as u64);
+    let minor: u64 = (version >> (32 as u64)) & (65535 as u64);
+    let build: u64 = (version >> (16 as u64)) & (65535 as u64);
+    let revision: u64 = version & (65535 as u64);
+    return "${major}.${minor}.${build}.${revision}";
+}
+
+fn _package_info(kind: u32) -> option::Option[text::Text] {
+    var size: u32 = 0;
+    if { GetCurrentPackageId(#addr_of(size), 0 as *u8) } != 122 || size < (#size_of::[_PackageId]() as u32) {
+        return option::Option[text::Text]::None;
+    }
+    let buf: *u8 = { malloc(size as usize) };
+    if buf.is_null() { return option::Option[text::Text]::None; }
+    var value: option::Option[text::Text] = option::Option[text::Text]::None;
+    if { GetCurrentPackageId(#addr_of(size), buf) } == 0 {
+        let package: *_PackageId = { buf as *_PackageId };
+        if kind == _ID { value = _utf8({ (*package).name }); }
+        if kind == _VERSION { value = option::Option[text::Text]::Some(_version_text({ (*package).version })); }
+        if kind == _BUILD {
+            let revision: u64 = { (*package).version } & (65535 as u64);
+            value = option::Option[text::Text]::Some(text::from_str("${revision}"));
+        }
+    }
+    free(buf);
+    return value;
+}
+
+fn _query(buffer: *u8, key: str, size: *u32) -> *u8 {
+    let cp: text::CString = match key.to_text().c_str() {
+        option::Option::Some(value) => value,
+        option::Option::None => { return 0 as *u8; }
+    };
+    let n: i32 = { MultiByteToWideChar(65001 as u32, 8 as u32, cp.as_ptr(), 0 - 1, 0 as *u8, 0) };
+    if n <= 0 { return 0 as *u8; }
+    let wide: *u8 = { malloc((n as usize) * (2 as usize)) };
+    if wide.is_null() { return 0 as *u8; }
+    var value: *u8 = 0 as *u8;
+    if { MultiByteToWideChar(65001 as u32, 8 as u32, cp.as_ptr(), 0 - 1, wide, n) } == n {
+        if { VerQueryValueW(buffer, wide, #addr_of(value) as *u8, size) } == 0 { value = 0 as *u8; }
+    }
+    free(wide);
+    return value;
+}
+
+fn _hex16(value: u16) -> text::Text {
+    let digits: *u8 = #str_ptr("0123456789abcdef");
+    var out: text::Text = text::from_str("");
+    var shift: u32 = 12;
+    loop {
+        let index: usize = ((value as u32 >> shift) & (15 as u32)) as usize;
+        let _added = out.append({ #str_from_raw_parts(digits + index, 1 as usize) });
+        if shift == (0 as u32) { break; }
+        shift = shift - (4 as u32);
+    }
+    return out;
+}
+
+fn _version_resource(buffer: *u8, kind: u32) -> option::Option[text::Text] {
+    if kind == _NAME {
+        var size: u32 = 0;
+        let languages: *u8 = _query(buffer, "\\VarFileInfo\\Translation", #addr_of(size));
+        if languages.is_null() { return option::Option[text::Text]::None; }
+        var offset: usize = 0;
+        while offset + (4 as usize) <= (size as usize) {
+            let language: text::Text = _hex16({ *((languages + offset) as *u16) });
+            let codepage: text::Text = _hex16({ *((languages + offset + (2 as usize)) as *u16) });
+            let key: text::Text = "\\StringFileInfo\\${language}${codepage}\\ProductName";
+            var length: u32 = 0;
+            match _utf8(_query(buffer, key.view(), #addr_of(length))) {
+                option::Option::Some(value) => { return option::Option[text::Text]::Some(value); }
+                option::Option::None => {}
+            }
+            offset = offset +% (4 as usize);
+        }
+        return option::Option[text::Text]::None;
+    }
+    var size: u32 = 0;
+    let fixed: *u8 = _query(buffer, "\\", #addr_of(size));
+    if fixed.is_null() || size < (52 as u32) || { *(fixed as *u32) } != (0xFEEF04BD as u32) { return option::Option[text::Text]::None; }
+    // VS_FIXEDFILEINFO.dwFileVersionMS / dwFileVersionLS at offsets 8 / 12.
+    let ms: u32 = { *((fixed + (8 as usize)) as *u32) };
+    let ls: u32 = { *((fixed + (12 as usize)) as *u32) };
+    if kind == _VERSION { return option::Option[text::Text]::Some(_version_text(((ms as u64) << (32 as u64)) | (ls as u64))); }
+    if kind == _BUILD {
+        let revision: u32 = ls & (65535 as u32);
+        return option::Option[text::Text]::Some(text::from_str("${revision}"));
+    }
+    return option::Option[text::Text]::None;
+}
+
+fn _executable_info(kind: u32) -> option::Option[text::Text] {
+    let filename: *u8 = { malloc(65536 as usize) };
+    if filename.is_null() { return option::Option[text::Text]::None; }
+    let n: u32 = { GetModuleFileNameW(0 as *u8, filename, 32768 as u32) };
+    var ignored: u32 = 0;
+    var size: u32 = 0;
+    if n > (0 as u32) && n < (32768 as u32) { size = { GetFileVersionInfoSizeW(filename, #addr_of(ignored)) }; }
+    if size == (0 as u32) { free(filename); return option::Option[text::Text]::None; }
+    let buf: *u8 = { malloc(size as usize) };
+    if buf.is_null() { free(filename); return option::Option[text::Text]::None; }
+    var value: option::Option[text::Text] = option::Option[text::Text]::None;
+    if { GetFileVersionInfoW(filename, 0 as u32, size, buf) } != 0 { value = _version_resource(buf, kind); }
+    free(buf);
+    free(filename);
+    return value;
+}
+
+fn _read_info(kind: u32) -> option::Option[text::Text] {
+    if kind != _NAME {
+        match _package_info(kind) {
+            option::Option::Some(value) => { return option::Option[text::Text]::Some(value); }
+            option::Option::None => {}
+        }
+    }
+    if kind == _ID {
+        var wide: *u8 = 0 as *u8;
+        let rc: i32 = { GetCurrentProcessExplicitAppUserModelID(#addr_of(wide) as *u8) };
+        var value: option::Option[text::Text] = option::Option[text::Text]::None;
+        if rc >= 0 { value = _utf8(wide); }
+        if wide.is_not_null() { CoTaskMemFree(wide); }
+        return value;
+    }
+    return _executable_info(kind);
+}
+
+const _CURRENT: u32 = 0;
+const _APP: u32 = 1;
+const _RESOURCES: u32 = 2;
+const _HOME: u32 = 3;
+const _TEMP: u32 = 4;
+const _DATA: u32 = 5;
+const _CACHE: u32 = 6;
+const _DOCUMENTS: u32 = 7;
+const _DOWNLOADS: u32 = 8;
+const _LIBRARY: u32 = 9;
+const _EXTERNAL_DATA: u32 = 10;
+const _EXTERNAL_CACHE: u32 = 11;
+const _ID: u32 = 0;
+const _NAME: u32 = 1;
+const _VERSION: u32 = 2;
+const _BUILD: u32 = 3;
+
+fn _nonempty(take value: text::Text) -> option::Option[text::Text] {
+    if value.is_empty() { return option::Option[text::Text]::None; }
+    return option::Option[text::Text]::Some(value);
+}
+
+// Internal C ABI: the facade supplies an empty owned Text and receives ownership
+// only on success. The underscore keeps this seam private to C+ importers.
+export extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text) -> bool {
+    if into.is_null() { return false; }
+    let value: option::Option[text::Text] = if metadata { _read_info(kind) } else { _read_path(kind) };
+    match value {
+        option::Option[text::Text]::Some(value) => { { *into = value }; return true; }
+        option::Option[text::Text]::None => { return false; }
+    }
+}

@@ -1,0 +1,50 @@
+// Bundle/executable-relative file assets. Android and Windows replace this
+// reader with APK and UTF-16 native implementations, respectively.
+import "./appenv" as appenv;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
+import "stdlib/fs_sys" as fsys;
+extern fn open(path: *u8, flags: i32) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn malloc(size: usize) -> *u8;
+extern fn free(buf: *u8);
+
+export extern fn _appenv_read_asset_v1(name: *u8, count: usize, into: *vec::Vec[u8]) -> u32 {
+    if into.is_null() { return 3 as u32; }
+    let root: text::Text = match appenv::resource_dir() {
+        result::Result::Ok(value) => value,
+        result::Result::Err(e) => { return 1 as u32; }
+    };
+    let child: str = { #str_from_raw_parts(name, count) };
+    let filename: text::Text = "${root}/${child}";
+    let cp: text::CString = match filename.c_str() {
+        option::Option::Some(value) => value,
+        option::Option::None => { return 4 as u32; }
+    };
+    let fd: i32 = { open(cp.as_ptr(), fsys::read_flags()) };
+    if fd < 0 {
+        let error: i32 = fsys::file_errno();
+        if error == 2 || error == 20 { return 2 as u32; }
+        return 3 as u32;
+    }
+    let chunk: *u8 = { malloc(4096 as usize) };
+    if chunk.is_null() { let _closed = { close(fd) }; return 4 as u32; }
+    var bytes: vec::Vec[u8] = vec::new::[u8]();
+    var code: u32 = 0;
+    loop {
+        let n: isize = fsys::read_fd(fd, chunk, 4096 as usize);
+        if n < (0 as isize) {
+            if fsys::file_errno() == 4 { continue; } // EINTR
+            code = 3 as u32; break;
+        }
+        if n == (0 as isize) { break; }
+        if bytes.extend_from_raw(chunk, n as usize) != status::Status::Ok { code = 4 as u32; break; }
+    }
+    free(chunk);
+    let _closed = { close(fd) };
+    if code == (0 as u32) { { *into = bytes }; }
+    return code;
+}

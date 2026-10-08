@@ -1,0 +1,76 @@
+// AAsset_read supports both compressed and uncompressed APK assets. The Java
+// AssetManager stays in a JNI local frame until its native asset is closed.
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "jni/jni" as jni;
+import "facet/app_events" as events;
+extern fn AAssetManager_fromJava(env: *jni::JNIEnv, manager: jni::jobject) -> *u8;
+extern fn AAssetManager_open(manager: *u8, name: *u8, mode: i32) -> *u8;
+extern fn AAsset_read(asset: *u8, buf: *u8, count: usize) -> i32;
+extern fn AAsset_close(asset: *u8);
+extern fn malloc(size: usize) -> *u8;
+extern fn free(buf: *u8);
+
+fn _pending(env: *jni::JNIEnv) -> bool { return { (*(*env)).ExceptionCheck(env) } != (0 as u8); }
+fn _assets(env: *jni::JNIEnv, name: str, into: *vec::Vec[u8]) -> u32 {
+    // The Application context (published before the app's entry) or the
+    // Activity: either answers getAssets(). S45.
+    var host: jni::jobject = 0 as jni::jobject;
+    if events::has_app_context() { host = { events::app_context() as jni::jobject }; }
+    else { host = events::host(); }
+    if host.is_null() { return 1 as u32; }
+    let cls: jni::jclass = { (*(*env)).GetObjectClass(env, host) };
+    if cls.is_null() || _pending(env) { return 1 as u32; }
+    let method: jni::jmethodID = { (*(*env)).GetMethodID(env, cls, #str_ptr("getAssets\0"), #str_ptr("()Landroid/content/res/AssetManager;\0")) };
+    if method.is_null() || _pending(env) { return 1 as u32; }
+    let java: jni::jobject = { (*(*env)).CallObjectMethodA(env, host, method, 0 as *jni::JValue) };
+    if java.is_null() || _pending(env) { return 1 as u32; }
+    let manager: *u8 = { AAssetManager_fromJava(env, java) };
+    if manager.is_null() || _pending(env) { return 1 as u32; }
+    let cp: text::CString = match name.to_text().c_str() {
+        option::Option::Some(value) => value,
+        option::Option::None => { return 4 as u32; }
+    };
+    let asset: *u8 = { AAssetManager_open(manager, cp.as_ptr(), 2) }; // STREAMING
+    if asset.is_null() { return 2 as u32; }
+    let chunk: *u8 = { malloc(4096 as usize) };
+    if chunk.is_null() { AAsset_close(asset); return 4 as u32; }
+    var bytes: vec::Vec[u8] = vec::new::[u8]();
+    var code: u32 = 0;
+    loop {
+        let n: i32 = { AAsset_read(asset, chunk, 4096 as usize) };
+        if n < 0 { code = 3 as u32; break; }
+        if n == 0 { break; }
+        if bytes.extend_from_raw(chunk, n as usize) != status::Status::Ok { code = 4 as u32; break; }
+    }
+    free(chunk);
+    AAsset_close(asset);
+    if code == (0 as u32) { { *into = bytes }; }
+    return code;
+}
+
+export extern fn _appenv_read_asset_v1(name: *u8, count: usize, into: *vec::Vec[u8]) -> u32 {
+    if into.is_null() || !(events::has_app_context() || events::has_host()) || !events::has_host_runtime() { return 1 as u32; }
+    let vm: *jni::JavaVM = { events::host_runtime() as *jni::JavaVM };
+    var env: *jni::JNIEnv = 0 as *jni::JNIEnv;
+    let got: i32 = { (*(*vm)).GetEnv(vm, #addr_of(env) as *u8, 65542) };
+    var attached: bool = false;
+    if got != 0 {
+        if got != (0 - 2) { return 1 as u32; }
+        if { (*(*vm)).AttachCurrentThreadAsDaemon(vm, #addr_of(env) as *u8, 0 as *u8) } != 0 { return 1 as u32; }
+        attached = true;
+    }
+    if _pending(env) {
+        if attached { let _rc = { (*(*vm)).DetachCurrentThread(vm) }; }
+        return 1 as u32;
+    }
+    let framed: i32 = { (*(*env)).PushLocalFrame(env, 8) };
+    var code: u32 = 1;
+    if framed == 0 { code = _assets(env, { #str_from_raw_parts(name, count) }, into); }
+    if _pending(env) { { (*(*env)).ExceptionClear(env); } code = 1 as u32; }
+    if framed == 0 { let _local = { (*(*env)).PopLocalFrame(env, 0 as jni::jobject) }; }
+    if attached { let _rc = { (*(*vm)).DetachCurrentThread(vm) }; }
+    return code;
+}

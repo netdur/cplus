@@ -1,0 +1,246 @@
+// Android Context paths and PackageManager metadata. facet publishes the
+// JavaVM and the Application context BEFORE the app's entry runs, so a lookup
+// answers from the first line of `run()`, on any thread — not only once a
+// window has attached (spendwise S45). The Activity (`host()`) is the fallback
+// for a host that publishes no Application context. Every lookup owns a JNI
+// local frame and detaches only threads it attached.
+import "stdlib/fs_sys" as fsys;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "jni/jni" as jni;
+import "facet/app_events" as events;
+
+extern fn malloc(size: usize) -> *u8;
+extern fn free(buf: *u8);
+
+fn _pending(env: *jni::JNIEnv) -> bool { return { (*(*env)).ExceptionCheck(env) } != (0 as u8); }
+
+fn _method(env: *jni::JNIEnv, obj: jni::jobject, name: *u8, sig: *u8) -> jni::jmethodID {
+    if obj.is_null() || _pending(env) { return 0 as jni::jmethodID; }
+    let cls: jni::jclass = { (*(*env)).GetObjectClass(env, obj) };
+    if cls.is_null() || _pending(env) { return 0 as jni::jmethodID; }
+    return { (*(*env)).GetMethodID(env, cls, name, sig) };
+}
+
+fn _object(env: *jni::JNIEnv, obj: jni::jobject, name: *u8, sig: *u8,
+args: *jni::JValue = 0 as *jni::JValue) -> jni::jobject {
+    let method: jni::jmethodID = _method(env, obj, name, sig);
+    if method.is_null() || _pending(env) { return 0 as jni::jobject; }
+    return { (*(*env)).CallObjectMethodA(env, obj, method, args) };
+}
+
+fn _field(env: *jni::JNIEnv, obj: jni::jobject, name: *u8, sig: *u8) -> jni::jfieldID {
+    if obj.is_null() || _pending(env) { return 0 as jni::jfieldID; }
+    let cls: jni::jclass = { (*(*env)).GetObjectClass(env, obj) };
+    if cls.is_null() || _pending(env) { return 0 as jni::jfieldID; }
+    return { (*(*env)).GetFieldID(env, cls, name, sig) };
+}
+
+// String.getBytes("UTF-8") produces standard UTF-8, including four-byte emoji.
+// GetStringUTFChars produces modified UTF-8 and would corrupt those labels.
+fn _text(env: *jni::JNIEnv, string: jni::jobject) -> option::Option[text::Text] {
+    if string.is_null() || _pending(env) { return option::Option[text::Text]::None; }
+    let charset: jni::jobject = { (*(*env)).NewStringUTF(env, #str_ptr("UTF-8\0")) };
+    if charset.is_null() || _pending(env) { return option::Option[text::Text]::None; }
+    var arg: jni::JValue = jni::JValue::of_object(charset);
+    let bytes: jni::jobject = _object(env, string, #str_ptr("getBytes\0"),
+    #str_ptr("(Ljava/lang/String;)[B\0"), #addr_of(arg));
+    if bytes.is_null() || _pending(env) { return option::Option[text::Text]::None; }
+    let n: i32 = { (*(*env)).GetArrayLength(env, bytes) };
+    if n <= 0 || _pending(env) { return option::Option[text::Text]::None; }
+    let buf: *u8 = { malloc(n as usize) };
+    if buf.is_null() { return option::Option[text::Text]::None; }
+    { (*(*env)).GetByteArrayRegion(env, bytes, 0, n, buf); }
+    var value: option::Option[text::Text] = option::Option[text::Text]::None;
+    if !_pending(env) { value = option::Option[text::Text]::Some({ #str_from_raw_parts(buf, n as usize) }.to_text()); }
+    free(buf);
+    return value;
+}
+
+fn _context(env: *jni::JNIEnv, host: jni::jobject) -> jni::jobject {
+    return _object(env, host, #str_ptr("getApplicationContext\0"), #str_ptr("()Landroid/content/Context;\0"));
+}
+
+// The Application context when the host published one (from process start),
+// else the Activity's. 0 when neither is there yet.
+fn _app_context(env: *jni::JNIEnv) -> jni::jobject {
+    if events::has_app_context() { return { events::app_context() as jni::jobject }; }
+    if events::has_host() { return _context(env, events::host()); }
+    return 0 as jni::jobject;
+}
+
+fn _has_context() -> bool { return events::has_app_context() || events::has_host(); }
+
+fn _file(env: *jni::JNIEnv, context: jni::jobject, method: *u8) -> option::Option[text::Text] {
+    let file: jni::jobject = _object(env, context, method, #str_ptr("()Ljava/io/File;\0"));
+    let string: jni::jobject = _object(env, file, #str_ptr("getAbsolutePath\0"), #str_ptr("()Ljava/lang/String;\0"));
+    return _text(env, string);
+}
+
+fn _path(env: *jni::JNIEnv, context: jni::jobject, kind: u32) -> option::Option[text::Text] {
+    if kind == _APP { return _text(env, _object(env, context, #str_ptr("getPackageCodePath\0"), #str_ptr("()Ljava/lang/String;\0"))); }
+    if kind == _HOME { return _file(env, context, #str_ptr("getDataDir\0")); } // API 24, the target's minimum
+    if kind == _DATA { return _file(env, context, #str_ptr("getFilesDir\0")); }
+    if kind == _CACHE || kind == _TEMP { return _file(env, context, #str_ptr("getCacheDir\0")); }
+    if kind == _EXTERNAL_CACHE { return _file(env, context, #str_ptr("getExternalCacheDir\0")); }
+    if kind == _EXTERNAL_DATA || kind == _DOWNLOADS {
+        var directory: jni::jobject = 0 as jni::jobject;
+        if kind == _DOWNLOADS { directory = { (*(*env)).NewStringUTF(env, #str_ptr("Download\0")) }; }
+        if _pending(env) { return option::Option[text::Text]::None; }
+        var arg: jni::JValue = jni::JValue::of_object(directory);
+        let file: jni::jobject = _object(env, context, #str_ptr("getExternalFilesDir\0"),
+        #str_ptr("(Ljava/lang/String;)Ljava/io/File;\0"), #addr_of(arg));
+        return _text(env, _object(env, file, #str_ptr("getAbsolutePath\0"), #str_ptr("()Ljava/lang/String;\0")));
+    }
+    if kind == _DOCUMENTS {
+        // Private app documents; shared user documents need a picker/content URI.
+        match _file(env, context, #str_ptr("getFilesDir\0")) {
+            option::Option[text::Text]::Some(root) => { return option::Option[text::Text]::Some(_join(root.view(), "Documents")); }
+            option::Option[text::Text]::None => {}
+        }
+    }
+    // RESOURCES: APK assets are streams, not filesystem directories.
+    return option::Option[text::Text]::None;
+}
+
+fn _sdk(env: *jni::JNIEnv) -> i32 {
+    let cls: jni::jclass = { (*(*env)).FindClass(env, #str_ptr("android/os/Build$VERSION\0")) };
+    if cls.is_null() || _pending(env) { return 0; }
+    let field: jni::jfieldID = { (*(*env)).GetStaticFieldID(env, cls, #str_ptr("SDK_INT\0"), #str_ptr("I\0")) };
+    if field.is_null() || _pending(env) { return 0; }
+    return { (*(*env)).GetStaticIntField(env, cls, field) };
+}
+
+fn _info(env: *jni::JNIEnv, context: jni::jobject, kind: u32) -> option::Option[text::Text] {
+    let package: jni::jobject = _object(env, context, #str_ptr("getPackageName\0"), #str_ptr("()Ljava/lang/String;\0"));
+    if kind == _ID { return _text(env, package); }
+    let manager: jni::jobject = _object(env, context, #str_ptr("getPackageManager\0"), #str_ptr("()Landroid/content/pm/PackageManager;\0"));
+    if kind == _NAME {
+        let info: jni::jobject = _object(env, context, #str_ptr("getApplicationInfo\0"), #str_ptr("()Landroid/content/pm/ApplicationInfo;\0"));
+        var arg: jni::JValue = jni::JValue::of_object(info);
+        let label: jni::jobject = _object(env, manager, #str_ptr("getApplicationLabel\0"),
+        #str_ptr("(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;\0"), #addr_of(arg));
+        return _text(env, _object(env, label, #str_ptr("toString\0"), #str_ptr("()Ljava/lang/String;\0")));
+    }
+    var args: [jni::JValue; 2] = [jni::JValue::of_object(package), jni::JValue::of_int(0)];
+    let info: jni::jobject = _object(env, manager, #str_ptr("getPackageInfo\0"),
+    #str_ptr("(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;\0"), { #addr_of(args) as *jni::JValue });
+    if kind == _VERSION {
+        let field: jni::jfieldID = _field(env, info, #str_ptr("versionName\0"), #str_ptr("Ljava/lang/String;\0"));
+        if field.is_null() || _pending(env) { return option::Option[text::Text]::None; }
+        return _text(env, { (*(*env)).GetObjectField(env, info, field) });
+    }
+    if kind == _BUILD {
+        var code: i64 = 0;
+        if _sdk(env) >= 28 {
+            let method: jni::jmethodID = _method(env, info, #str_ptr("getLongVersionCode\0"), #str_ptr("()J\0"));
+            if method.is_null() || _pending(env) { return option::Option[text::Text]::None; }
+            code = { (*(*env)).CallLongMethodA(env, info, method, 0 as *jni::JValue) };
+        } else {
+            let field: jni::jfieldID = _field(env, info, #str_ptr("versionCode\0"), #str_ptr("I\0"));
+            if field.is_null() || _pending(env) { return option::Option[text::Text]::None; }
+            code = { (*(*env)).GetIntField(env, info, field) } as u32 as i64;
+        }
+        if !_pending(env) { return option::Option[text::Text]::Some(text::from_str("${code}")); }
+    }
+    return option::Option[text::Text]::None;
+}
+
+fn _lookup(kind: u32, metadata: bool) -> option::Option[text::Text] {
+    if !_has_context() || !events::has_host_runtime() { return option::Option[text::Text]::None; }
+    let vm: *jni::JavaVM = { events::host_runtime() as *jni::JavaVM };
+    var env: *jni::JNIEnv = 0 as *jni::JNIEnv;
+    let got: i32 = { (*(*vm)).GetEnv(vm, #addr_of(env) as *u8, 65542) }; // JNI 1.6
+    var attached: bool = false;
+    if got != 0 {
+        if got != (0 - 2) { return option::Option[text::Text]::None; } // JNI_EDETACHED
+        let rc: i32 = { (*(*vm)).AttachCurrentThreadAsDaemon(vm, #addr_of(env) as *u8, 0 as *u8) };
+        if rc != 0 { return option::Option[text::Text]::None; }
+        attached = true;
+    }
+    // A pending exception owned by our caller is left untouched.
+    if _pending(env) {
+        if attached { let _rc = { (*(*vm)).DetachCurrentThread(vm) }; }
+        return option::Option[text::Text]::None;
+    }
+    let framed: i32 = { (*(*env)).PushLocalFrame(env, 64) };
+    var value: option::Option[text::Text] = option::Option[text::Text]::None;
+    if framed == 0 {
+        let context: jni::jobject = _app_context(env);
+        if metadata { value = _info(env, context, kind); }
+        else { value = _path(env, context, kind); }
+    }
+    if _pending(env) {
+        { (*(*env)).ExceptionClear(env); }
+        value = option::Option[text::Text]::None;
+    }
+    if framed == 0 { let _local = { (*(*env)).PopLocalFrame(env, 0 as jni::jobject) }; }
+    if attached { let _rc = { (*(*vm)).DetachCurrentThread(vm) }; }
+    return value;
+}
+
+fn _read_path(kind: u32) -> option::Option[text::Text] {
+    if kind == _CURRENT { return _current_dir(); }
+    return _lookup(kind, false);
+}
+fn _read_info(kind: u32) -> option::Option[text::Text] { return _lookup(kind, true); }
+
+const _CURRENT: u32 = 0;
+const _APP: u32 = 1;
+const _RESOURCES: u32 = 2;
+const _HOME: u32 = 3;
+const _TEMP: u32 = 4;
+const _DATA: u32 = 5;
+const _CACHE: u32 = 6;
+const _DOCUMENTS: u32 = 7;
+const _DOWNLOADS: u32 = 8;
+const _LIBRARY: u32 = 9;
+const _EXTERNAL_DATA: u32 = 10;
+const _EXTERNAL_CACHE: u32 = 11;
+const _ID: u32 = 0;
+const _NAME: u32 = 1;
+const _VERSION: u32 = 2;
+const _BUILD: u32 = 3;
+
+fn _join(base: str, child: str) -> text::Text {
+    let n: usize = #str_len(base);
+    if n == (0 as usize) { return child.to_text(); }
+    if #str_len(child) == (0 as usize) { return base.to_text(); }
+    let sep: str = fsys::separator_str();
+    if fsys::is_separator({ *(#str_ptr(base) + n - (1 as usize)) }) {
+        return "${base}${child}";
+    }
+    return "${base}${sep}${child}";
+}
+
+extern fn getcwd(buf: *u8, size: usize) -> *u8;
+extern fn strlen(s: *u8) -> usize;
+fn _current_dir() -> option::Option[text::Text] {
+    var cap: usize = 256;
+    while cap <= (1048576 as usize) {
+        let buf: *u8 = { malloc(cap) };
+        if buf.is_null() { return option::Option[text::Text]::None; }
+        let got: *u8 = { getcwd(buf, cap) };
+        if got.is_not_null() {
+            let value: text::Text = { #str_from_raw_parts(buf, strlen(buf)) }.to_text();
+            free(buf);
+            return option::Option[text::Text]::Some(value);
+        }
+        let err: i32 = fsys::file_errno();
+        free(buf);
+        if err != (34 as i32) { return option::Option[text::Text]::None; } // ERANGE
+        cap = cap * (2 as usize);
+    }
+    return option::Option[text::Text]::None;
+}
+
+// Internal C ABI: the facade supplies an empty owned Text and receives ownership
+// only on success. The underscore keeps this seam private to C+ importers.
+export extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text) -> bool {
+    if into.is_null() { return false; }
+    let value: option::Option[text::Text] = if metadata { _read_info(kind) } else { _read_path(kind) };
+    match value {
+        option::Option[text::Text]::Some(value) => { { *into = value }; return true; }
+        option::Option[text::Text]::None => { return false; }
+    }
+}

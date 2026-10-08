@@ -1,0 +1,252 @@
+import "stdlib/env" as env;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/fs" as fs;
+import "stdlib/fs_sys" as fsys;
+import "stdlib/bundle" as bundle;
+import "stdlib/str" as _;
+
+fn _home_child(child: str) -> option::Option[text::Text] {
+    match _absolute_env("HOME") {
+        option::Option[text::Text]::Some(home) => { return option::Option[text::Text]::Some(_join(home.view(), child)); }
+        option::Option[text::Text]::None => { return option::Option[text::Text]::None; }
+    }
+}
+
+fn _xdg(name: str, fallback: str) -> option::Option[text::Text] {
+    match _absolute_env(name) {
+        option::Option[text::Text]::Some(value) => { return option::Option[text::Text]::Some(value); }
+        option::Option[text::Text]::None => { return _home_child(fallback); }
+    }
+}
+
+// Parse xdg-user-dirs data, never execute it as shell code. Accept its quoted
+// absolute or $HOME-relative form and unescape literal shell-quoted bytes.
+fn _user_dir_from_config(config: str, home: str, key: str = "XDG_DOCUMENTS_DIR=") -> option::Option[text::Text] {
+    let lines = config.split("\n");
+    var i: usize = 0;
+    while i < lines.count() {
+        let line: str = match lines.at(i) {
+            option::Option[str]::Some(value) => value.trim(),
+            option::Option[str]::None => "",
+        };
+        i = i +% (1 as usize);
+        if !line.has_prefix(key) { continue; }
+        let rhs: str = line.drop_first(#str_len(key)).trim();
+        if !rhs.has_prefix("\"") || !rhs.has_suffix("\"") { continue; }
+        let body: str = rhs.drop_first().drop_last();
+        var value: text::Text = text::from_str("");
+        var offset: usize = 0;
+        if body == "$HOME" || body.has_prefix("$HOME/") {
+            let _added = value.append(home);
+            offset = 5 as usize;
+        }
+        let p: *u8 = #str_ptr(body);
+        let n: usize = #str_len(body);
+        var valid: bool = true;
+        while offset < n {
+            var c: u8 = { *(p + offset) };
+            offset = offset +% (1 as usize);
+            if c == (92 as u8) {
+                if offset == n { valid = false; break; }
+                c = { *(p + offset) };
+                offset = offset +% (1 as usize);
+                // Inside double quotes, shell data only escapes these four.
+                if c != (92 as u8) && c != (34 as u8) && c != (36 as u8) && c != (96 as u8) {
+                    let _added = value.append("\\");
+                }
+            } else if c == (36 as u8) || c == (96 as u8) || c == (34 as u8) {
+                valid = false; break;
+            }
+            if c == (0 as u8) { valid = false; break; }
+            let _added = value.append({ #str_from_raw_parts(#addr_of(c), 1 as usize) });
+        }
+        if valid && fsys::is_absolute(value.view()) { return option::Option[text::Text]::Some(value); }
+    }
+    return option::Option[text::Text]::None;
+}
+
+fn _user_dir(key: str, fallback: str) -> option::Option[text::Text] {
+    match _absolute_env("HOME") {
+        option::Option[text::Text]::Some(home) => {
+            match _xdg("XDG_CONFIG_HOME", ".config") {
+                option::Option[text::Text]::Some(config) => {
+                    let file: text::Text = _join(config.view(), "user-dirs.dirs");
+                    match fs::read_to_string(file.view()) {
+                        result::Result[text::Text, result::IoError]::Ok(content) => {
+                            match _user_dir_from_config(content.view(), home.view(), key) {
+                                option::Option[text::Text]::Some(value) => { return option::Option[text::Text]::Some(value); }
+                                option::Option[text::Text]::None => {}
+                            }
+                        }
+                        result::Result[text::Text, result::IoError]::Err(e) => {}
+                    }
+                }
+                option::Option[text::Text]::None => {}
+            }
+            return option::Option[text::Text]::Some(_join(home.view(), fallback));
+        }
+        option::Option[text::Text]::None => { return option::Option[text::Text]::None; }
+    }
+}
+
+fn _read_path(kind: u32) -> option::Option[text::Text] {
+    if kind == _CURRENT { return _current_dir(); }
+    if kind == _APP || kind == _RESOURCES { return _nonempty(bundle::dir()); }
+    if kind == _HOME { return _absolute_env("HOME"); }
+    if kind == _DATA { return _xdg("XDG_DATA_HOME", ".local/share"); }
+    if kind == _CACHE { return _xdg("XDG_CACHE_HOME", ".cache"); }
+    if kind == _DOCUMENTS { return _user_dir("XDG_DOCUMENTS_DIR=", "Documents"); }
+    if kind == _DOWNLOADS { return _user_dir("XDG_DOWNLOAD_DIR=", "Downloads"); }
+    if kind == _TEMP {
+        match _absolute_env("TMPDIR") {
+            option::Option[text::Text]::Some(value) => { return option::Option[text::Text]::Some(value); }
+            option::Option[text::Text]::None => { return option::Option[text::Text]::Some(text::from_str("/tmp")); }
+        }
+    }
+    return option::Option[text::Text]::None;
+}
+
+// Consult an existing GApplication without loading or initializing a UI stack.
+// RTLD_NOLOAD holds the already-loaded GIO library alive for this lookup.
+extern fn dlopen(name: *u8, flags: i32) -> *u8;
+extern fn dlsym(handle: *u8, name: *u8) -> *u8;
+extern fn dlclose(handle: *u8) -> i32;
+
+fn _gio_info(handle: *u8, kind: u32) -> option::Option[text::Text] {
+    if kind == _BUILD { return option::Option[text::Text]::None; }
+    let get_default: *u8 = { dlsym(handle, #str_ptr("g_application_get_default\0")) };
+    if get_default.is_null() { return option::Option[text::Text]::None; }
+    let default_fn: fn() -> *u8 = { get_default as fn() -> *u8 };
+    let app: *u8 = default_fn();
+    if app.is_null() { return option::Option[text::Text]::None; }
+    var key: str = "g_application_get_application_id\0";
+    if kind == _NAME { key = "g_get_application_name\0"; }
+    if kind == _VERSION { key = "g_application_get_version\0"; }
+    let symbol: *u8 = { dlsym(handle, #str_ptr(key)) };
+    if symbol.is_null() { return option::Option[text::Text]::None; }
+    var raw: *u8 = 0 as *u8;
+    if kind == _NAME {
+        let get_name: fn() -> *u8 = { symbol as fn() -> *u8 };
+        raw = get_name();
+    } else {
+        let get_value: fn(*u8) -> *u8 = { symbol as fn(*u8) -> *u8 };
+        raw = get_value(app);
+    }
+    if raw.is_null() { return option::Option[text::Text]::None; }
+    return _nonempty({ #str_from_raw_parts(raw, strlen(raw)) }.to_text());
+}
+
+fn _read_info(kind: u32) -> option::Option[text::Text] {
+    let handle: *u8 = { dlopen(#str_ptr("libgio-2.0.so.0\0"), 6) }; // RTLD_NOW | RTLD_NOLOAD
+    if handle.is_null() { return option::Option[text::Text]::None; }
+    let value: option::Option[text::Text] = _gio_info(handle, kind);
+    let _closed = { dlclose(handle) };
+    return value;
+}
+
+#[test]
+fn _appenv_linux_documents_respect_user_configuration() {
+    match _user_dir_from_config("XDG_DOCUMENTS_DIR=\"$HOME/Docs\"\nXDG_DOWNLOAD_DIR=\"$HOME/Incoming\"", "/home/test", "XDG_DOWNLOAD_DIR=") {
+        option::Option[text::Text]::Some(v) => { assert v.view() == "/home/test/Incoming"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    match _user_dir_from_config("# comment\nXDG_DOCUMENTS_DIR=\"$HOME/My Documents\"\n", "/home/test") {
+        option::Option[text::Text]::Some(v) => { assert v.view() == "/home/test/My Documents"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    match _user_dir_from_config("XDG_DOCUMENTS_DIR=\"/mnt/café\"", "/home/test") {
+        option::Option[text::Text]::Some(v) => { assert v.view() == "/mnt/café"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    match _user_dir_from_config("XDG_DOCUMENTS_DIR=\"$(bad)\"", "/home/test") {
+        option::Option[text::Text]::Some(v) => { assert false; }
+        option::Option[text::Text]::None => { assert true; }
+    }
+    match _user_dir_from_config("XDG_DOCUMENTS_DIR=\"$HOME\"", "/home/test") {
+        option::Option[text::Text]::Some(v) => { assert v.view() == "/home/test"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    match _user_dir_from_config("XDG_DOCUMENTS_DIR=\"/mnt/a\\\\b\"", "/home/test") {
+        option::Option[text::Text]::Some(v) => { assert v.view() == "/mnt/a\\b"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+}
+
+const _CURRENT: u32 = 0;
+const _APP: u32 = 1;
+const _RESOURCES: u32 = 2;
+const _HOME: u32 = 3;
+const _TEMP: u32 = 4;
+const _DATA: u32 = 5;
+const _CACHE: u32 = 6;
+const _DOCUMENTS: u32 = 7;
+const _DOWNLOADS: u32 = 8;
+const _LIBRARY: u32 = 9;
+const _EXTERNAL_DATA: u32 = 10;
+const _EXTERNAL_CACHE: u32 = 11;
+const _ID: u32 = 0;
+const _NAME: u32 = 1;
+const _VERSION: u32 = 2;
+const _BUILD: u32 = 3;
+
+fn _nonempty(take value: text::Text) -> option::Option[text::Text] {
+    if value.is_empty() { return option::Option[text::Text]::None; }
+    return option::Option[text::Text]::Some(value);
+}
+
+fn _join(base: str, child: str) -> text::Text {
+    let n: usize = #str_len(base);
+    if n == (0 as usize) { return child.to_text(); }
+    if #str_len(child) == (0 as usize) { return base.to_text(); }
+    let sep: str = fsys::separator_str();
+    if fsys::is_separator({ *(#str_ptr(base) + n - (1 as usize)) }) {
+        return "${base}${child}";
+    }
+    return "${base}${sep}${child}";
+}
+
+extern fn malloc(size: usize) -> *u8;
+extern fn free(buf: *u8);
+extern fn getcwd(buf: *u8, size: usize) -> *u8;
+extern fn strlen(s: *u8) -> usize;
+fn _current_dir() -> option::Option[text::Text] {
+    var cap: usize = 256;
+    while cap <= (1048576 as usize) {
+        let buf: *u8 = { malloc(cap) };
+        if buf.is_null() { return option::Option[text::Text]::None; }
+        let got: *u8 = { getcwd(buf, cap) };
+        if got.is_not_null() {
+            let value: text::Text = { #str_from_raw_parts(buf, strlen(buf)) }.to_text();
+            free(buf);
+            return option::Option[text::Text]::Some(value);
+        }
+        let err: i32 = fsys::file_errno();
+        free(buf);
+        if err != (34 as i32) { return option::Option[text::Text]::None; } // ERANGE
+        cap = cap * (2 as usize);
+    }
+    return option::Option[text::Text]::None;
+}
+
+fn _absolute_env(name: str) -> option::Option[text::Text] {
+    match env::var(name) {
+        option::Option[text::Text]::Some(value) => {
+            if fsys::is_absolute(value.view()) { return option::Option[text::Text]::Some(value); }
+        }
+        option::Option[text::Text]::None => {}
+    }
+    return option::Option[text::Text]::None;
+}
+
+// Internal C ABI: the facade supplies an empty owned Text and receives ownership
+// only on success. The underscore keeps this seam private to C+ importers.
+export extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text) -> bool {
+    if into.is_null() { return false; }
+    let value: option::Option[text::Text] = if metadata { _read_info(kind) } else { _read_path(kind) };
+    match value {
+        option::Option[text::Text]::Some(value) => { { *into = value }; return true; }
+        option::Option[text::Text]::None => { return false; }
+    }
+}

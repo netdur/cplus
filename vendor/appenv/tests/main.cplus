@@ -1,0 +1,2 @@
+import "./checks" as checks;
+fn main() -> i32 { return checks::run(); }

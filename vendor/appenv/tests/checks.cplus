@@ -1,0 +1,190 @@
+// A real consuming app: native identity, resources and filesystem round-trip.
+import "appenv/appenv" as appenv;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/fs" as fs;
+import "stdlib/fs_sys" as fsys;
+import "stdlib/io" as io;
+import "stdlib/str" as _;
+
+extern fn getpid() -> i32;
+
+fn _path(take value: result::Result[text::Text, appenv::Error]) -> text::Text {
+    return match value {
+        result::Result::Ok(v) => { io::eprintln("path: ${v}"); assert fsys::is_absolute(v.view()); v },
+        result::Result::Err(e) => { io::eprintln("Path lookup was unavailable"); assert false; text::from_str("") },
+    };
+}
+
+fn _metadata(take value: option::Option[text::Text], expected: str) {
+    match value {
+        option::Option::Some(v) => {
+            if v.view() != expected { io::eprintln("Expected '${expected}', got '${v}'"); }
+            assert v.view() == expected;
+        }
+        option::Option::None => { io::eprintln("Metadata '${expected}' was unavailable"); assert false; }
+    }
+}
+
+fn _write(path: str, content: str) {
+    match fs::write_string(path, content) {
+        result::Result::Ok(n) => { assert n == #str_len(content); }
+        result::Result::Err(e) => { io::eprintln("Could not write ${path}"); assert false; }
+    }
+}
+
+fn _read(path: str, expected: str) {
+    match fs::read_to_string(path) {
+        result::Result::Ok(v) => { assert v.view() == expected; }
+        result::Result::Err(e) => { io::eprintln("Could not read ${path}"); assert false; }
+    }
+}
+
+fn _unavailable(take value: result::Result[text::Text, appenv::Error]) {
+    match value {
+        result::Result::Err(e) => { assert e == appenv::Error::Unavailable; }
+        result::Result::Ok(v) => { assert false; }
+    }
+}
+
+fn _assets() {
+    io::eprintln("appenv probe: packaged assets");
+    match appenv::read_asset_text("nested/café 🧭.txt") {
+        result::Result::Ok(value) => { io::eprintln("asset text: ${value}"); assert value.view() == "café 🧭"; }
+        result::Result::Err(e) => { io::eprintln("asset text failed"); assert false; }
+    }
+    io::eprintln("asset: empty");
+    match appenv::read_asset_text("empty.txt") {
+        result::Result::Ok(value) => { io::eprintln("empty size: ${value.count()}"); assert value.is_empty(); }
+        result::Result::Err(e) => { assert false; }
+    }
+    io::eprintln("asset: embedded NUL");
+    match appenv::read_asset_text("embedded.txt") {
+        result::Result::Ok(value) => { io::eprintln("NUL size: ${value.count()}"); assert value.view() == "a\0b"; }
+        result::Result::Err(e) => { assert false; }
+    }
+    io::eprintln("asset: invalid UTF-8");
+    match appenv::read_asset_text("invalid.txt") {
+        result::Result::Err(e) => { assert e == appenv::Error::InvalidData; }
+        result::Result::Ok(v) => { assert false; }
+    }
+    match appenv::read_asset("missing.txt") {
+        result::Result::Err(e) => { assert e == appenv::Error::NotFound; }
+        result::Result::Ok(v) => { assert false; }
+    }
+    io::eprintln("asset: traversal");
+    match appenv::read_asset("../Info.plist") {
+        result::Result::Err(e) => { assert e == appenv::Error::InvalidInput; }
+        result::Result::Ok(v) => { assert false; }
+    }
+    var attempt: u32 = 0;
+    io::eprintln("asset: binary");
+    while attempt < (3 as u32) {
+        match appenv::read_asset("binary.txt") {
+            result::Result::Ok(bytes) => {
+                assert bytes.count() == (20000 as usize);
+                var i: usize = 0;
+                while i < bytes.count() {
+                    match bytes.at(i) {
+                        option::Option::Some(value) => { assert value == ((i % (256 as usize)) as u8); }
+                        option::Option::None => { assert false; }
+                    }
+                    i = i +% (1 as usize);
+                }
+            }
+            result::Result::Err(e) => { assert false; }
+        }
+        attempt = attempt +% (1 as u32);
+    }
+}
+
+fn run() -> i32 {
+    io::eprintln("appenv probe: identity");
+    _metadata(appenv::id(), "dev.cplus.appenvprobe");
+    _metadata(appenv::name(), "AppEnv 🧭");
+    _metadata(appenv::version(), "1.2.3");
+    if #platform() == "android" { _metadata(appenv::build(), "4294967338"); }
+    else { _metadata(appenv::build(), "42"); }
+
+    io::eprintln("appenv probe: paths");
+    let cwd: text::Text = _path(appenv::current_dir());
+    let exe: text::Text = _path(appenv::executable_path());
+    let _exedir: text::Text = _path(appenv::executable_dir());
+    let app: text::Text = _path(appenv::app_path());
+    let home: text::Text = _path(appenv::home_dir());
+    let temp: text::Text = _path(appenv::temp_dir());
+    let data: text::Text = _path(appenv::data_dir());
+    let cache: text::Text = _path(appenv::cache_dir());
+    let documents: text::Text = _path(appenv::documents_dir());
+    assert data.view() != cache.view();
+    assert app.view() != data.view();
+    if #platform() == "android" {
+        assert app.view().has_suffix(".apk");
+        assert data.view().has_suffix("/files");
+        assert cache.view().has_suffix("/cache");
+        assert documents.view() == "${data}/Documents";
+        assert temp.view() == cache.view();
+        match appenv::resource_dir() {
+            result::Result::Err(e) => { assert e == appenv::Error::Unavailable; }
+            result::Result::Ok(v) => { assert false; }
+        }
+    } else {
+        // dyld canonicalizes /var -> /private/var, while NSBundle can retain
+        // the original spelling. Both absolute paths name the same app.
+        assert app.view().has_suffix(".app");
+        assert fs::exists(app.view());
+        assert exe.view().has_suffix("AppEnvProbe");
+        let resources: text::Text = _path(appenv::resource_dir());
+        _read("${resources}/appenv-resource.txt", "resource fixture");
+    }
+    if #platform() == "ios" || #platform() == "android" {
+        assert data.view().has_prefix(home.view());
+        assert documents.view().has_prefix(home.view());
+        let child: text::Text = _path(appenv::data_dir(namespace: "nested"));
+        assert child.view() == "${data}/nested";
+    } else {
+        assert data.view().has_suffix("/dev.cplus.appenvprobe");
+        let alternate: text::Text = _path(appenv::data_dir(namespace: "dev.cplus.other"));
+        assert alternate.view().has_suffix("/dev.cplus.other");
+    }
+    io::eprintln("appenv probe: additional directories");
+    if #platform() == "ios" {
+        let library: text::Text = _path(appenv::library_dir());
+        assert library.view() == "${home}/Library";
+        let downloads: text::Text = _path(appenv::downloads_dir());
+        assert downloads.view().has_prefix(home.view());
+    } else if #platform() == "android" {
+        _unavailable(appenv::library_dir());
+        let external: text::Text = _path(appenv::external_data_dir());
+        let external_cache: text::Text = _path(appenv::external_cache_dir());
+        let downloads: text::Text = _path(appenv::downloads_dir());
+        assert external.view().has_suffix("/Android/data/dev.cplus.appenvprobe/files");
+        assert external_cache.view().has_suffix("/Android/data/dev.cplus.appenvprobe/cache");
+        assert downloads.view() == "${external}/Download";
+    } else {
+        let _library = _path(appenv::library_dir());
+        let _downloads = _path(appenv::downloads_dir());
+    }
+    if #platform() != "android" {
+        _unavailable(appenv::external_data_dir());
+        _unavailable(appenv::external_cache_dir());
+    }
+    _assets();
+    io::eprintln("appenv probe: file round-trip");
+    let pid: i32 = { getpid() };
+    let file: text::Text = "${temp}/cplus-appenv-${pid}.txt";
+    _write(file.view(), "café 🧭");
+    _read(file.view(), "café 🧭");
+    match fs::remove_file(file.view()) {
+        result::Result::Ok(removed) => { assert removed; }
+        result::Result::Err(e) => { assert false; }
+    }
+    let after: text::Text = _path(appenv::current_dir());
+    assert cwd.view() == after.view();
+    if #platform() == "ios" || #platform() == "android" {
+        _write("${home}/appenv-result.txt", "APPENV PASS\n");
+    }
+    io::println("APPENV PASS");
+    return 0;
+}

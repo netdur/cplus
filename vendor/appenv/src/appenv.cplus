@@ -1,0 +1,294 @@
+// App paths and installed identity. Getters return owned text, never change
+// CWD, and never create custom directories. Native APIs may initialize their
+// own storage roots. Missing native facts are explicit.
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/bundle" as bundle;
+import "stdlib/fs_sys" as fsys;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+
+enum Error {
+    Unavailable, // no host, unsupported lookup, or native query failed
+    InvalidInput, // invalid storage namespace or asset name
+    NotFound, // packaged asset could not be opened
+    ReadFailed, // packaged asset read failed
+    InvalidData, // asset is not valid UTF-8
+    OutOfMemory, // asset buffer could not grow
+}
+
+fn _require(take value: option::Option[text::Text]) -> result::Result[text::Text, Error] {
+    return match value {
+        option::Option[text::Text]::Some(v) => result::Result[text::Text, Error]::Ok(v),
+        option::Option[text::Text]::None => result::Result[text::Text, Error]::Err(Error::Unavailable),
+    };
+}
+
+fn current_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_CURRENT)); }
+fn executable_path() -> result::Result[text::Text, Error] { return _require(_nonempty(bundle::executable_path())); }
+fn executable_dir() -> result::Result[text::Text, Error] { return _require(_nonempty(bundle::dir())); }
+// Apple: .app bundle; Android: base APK; desktop: executable directory.
+fn app_path() -> result::Result[text::Text, Error] { return _require(_lookup(_APP)); }
+// Android assets live inside the APK, so this lookup is Unavailable there.
+fn resource_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_RESOURCES)); }
+fn home_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_HOME)); }
+fn temp_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_TEMP)); }
+fn documents_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_DOCUMENTS)); }
+fn downloads_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_DOWNLOADS)); }
+fn library_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_LIBRARY)); }
+fn external_data_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_EXTERNAL_DATA)); }
+fn external_cache_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_EXTERNAL_CACHE)); }
+
+// Names are relative to the packaged resource root, using forward slashes.
+// Android reads APK assets directly, including compressed assets.
+fn read_asset(name: str) -> result::Result[vec::Vec[u8], Error] {
+    if !_is_valid_asset_name(name) { return result::Result[vec::Vec[u8], Error]::Err(Error::InvalidInput); }
+    var bytes: vec::Vec[u8] = vec::new::[u8]();
+    let code: u32 = _appenv_read_asset_v1(#str_ptr(name), #str_len(name), #addr_of(bytes));
+    if code == (0 as u32) { return result::Result[vec::Vec[u8], Error]::Ok(bytes); }
+    let error: Error = match code {
+        1 => Error::Unavailable,
+        2 => Error::NotFound,
+        4 => Error::OutOfMemory,
+        _ => Error::ReadFailed,
+    };
+    return result::Result[vec::Vec[u8], Error]::Err(error);
+}
+
+fn read_asset_text(name: str) -> result::Result[text::Text, Error] {
+    match read_asset(name) {
+        result::Result::Ok(bytes) => {
+            let view: str = bytes.as_byte_view();
+            if !text::is_utf8(#str_ptr(view), #str_len(view)) { return result::Result[text::Text, Error]::Err(Error::InvalidData); }
+            var value: text::Text = text::new();
+            if value.append(view) != status::Status::Ok { return result::Result[text::Text, Error]::Err(Error::OutOfMemory); }
+            return result::Result[text::Text, Error]::Ok(value);
+        }
+        result::Result::Err(error) => { return result::Result[text::Text, Error]::Err(error); }
+    }
+}
+
+fn _storage(kind: u32, namespace: str) -> result::Result[text::Text, Error] {
+    if #str_len(namespace) > (0 as usize) && !_is_valid_namespace(namespace) {
+        return result::Result[text::Text, Error]::Err(Error::InvalidInput);
+    }
+    match _lookup(kind) {
+        option::Option[text::Text]::Some(root) => {
+            if #platform() == "ios" || #platform() == "android" {
+                return result::Result[text::Text, Error]::Ok(_join(root.view(), namespace));
+            }
+            // A desktop root is shared by all apps. Never silently return it
+            // as app-owned storage when a CLI has no installed identity.
+            if #str_len(namespace) > (0 as usize) {
+                return result::Result[text::Text, Error]::Ok(_desktop_storage(root.view(), namespace, kind));
+            }
+            match id() {
+                option::Option[text::Text]::Some(id) => {
+                    if !_is_valid_namespace(id.view()) { return result::Result[text::Text, Error]::Err(Error::InvalidInput); }
+                    return result::Result[text::Text, Error]::Ok(_desktop_storage(root.view(), id.view(), kind));
+                }
+                option::Option[text::Text]::None => {}
+            }
+        }
+        option::Option[text::Text]::None => {}
+    }
+    return result::Result[text::Text, Error]::Err(Error::Unavailable);
+}
+
+fn _desktop_storage(root: str, namespace: str, kind: u32) -> text::Text {
+    let app: text::Text = _join(root, namespace);
+    if #platform() == "windows" && kind == _CACHE { return _join(app.view(), "Cache"); }
+    return app;
+}
+
+// Desktop: namespace (or native app ID) names the app under a shared root.
+// Mobile: the root already belongs to this app; namespace adds a child.
+fn data_dir(namespace: str = "") -> result::Result[text::Text, Error] { return _storage(_DATA, namespace); }
+fn cache_dir(namespace: str = "") -> result::Result[text::Text, Error] { return _storage(_CACHE, namespace); }
+
+fn id() -> option::Option[text::Text] { return _metadata(_ID); }
+fn name() -> option::Option[text::Text] { return _metadata(_NAME); }
+fn version() -> option::Option[text::Text] { return _metadata(_VERSION); }
+fn build() -> option::Option[text::Text] { return _metadata(_BUILD); }
+
+#[test]
+fn _appenv_rejects_invalid_storage_names_before_native_lookup() {
+    match data_dir(namespace: "../escape") {
+        result::Result[text::Text, Error]::Err(e) => { assert e == Error::InvalidInput; }
+        result::Result[text::Text, Error]::Ok(v) => { assert false; }
+    }
+    match cache_dir(namespace: "CON.txt") {
+        result::Result[text::Text, Error]::Err(e) => { assert e == Error::InvalidInput; }
+        result::Result[text::Text, Error]::Ok(v) => { assert false; }
+    }
+}
+
+// Exported by the selected platform file. A C seam lets that file keep every
+// implementation function private without a source import cycle or raw API.
+extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text) -> bool;
+extern fn _appenv_read_asset_v1(name: *u8, count: usize, into: *vec::Vec[u8]) -> u32;
+
+fn _lookup(kind: u32, metadata: bool = false) -> option::Option[text::Text] {
+    var value: text::Text = text::from_str("");
+    if !_appenv_lookup_v1(kind, metadata, #addr_of(value)) { return option::Option[text::Text]::None; }
+    return option::Option[text::Text]::Some(value);
+}
+
+fn _metadata(kind: u32) -> option::Option[text::Text] { return _lookup(kind, metadata: true); }
+const _CURRENT: u32 = 0;
+const _APP: u32 = 1;
+const _RESOURCES: u32 = 2;
+const _HOME: u32 = 3;
+const _TEMP: u32 = 4;
+const _DATA: u32 = 5;
+const _CACHE: u32 = 6;
+const _DOCUMENTS: u32 = 7;
+const _DOWNLOADS: u32 = 8;
+const _LIBRARY: u32 = 9;
+const _EXTERNAL_DATA: u32 = 10;
+const _EXTERNAL_CACHE: u32 = 11;
+const _ID: u32 = 0;
+const _NAME: u32 = 1;
+const _VERSION: u32 = 2;
+const _BUILD: u32 = 3;
+
+fn _nonempty(take value: text::Text) -> option::Option[text::Text] {
+    if value.is_empty() { return option::Option[text::Text]::None; }
+    return option::Option[text::Text]::Some(value);
+}
+
+fn _join(base: str, child: str) -> text::Text {
+    let n: usize = #str_len(base);
+    if n == (0 as usize) { return child.to_text(); }
+    if #str_len(child) == (0 as usize) { return base.to_text(); }
+    let sep: str = fsys::separator_str();
+    if fsys::is_separator({ *(#str_ptr(base) + n - (1 as usize)) }) {
+        return "${base}${child}";
+    }
+    return "${base}${sep}${child}";
+}
+
+// One portable filename component, never a path. Keep the allowed alphabet
+// small so Windows device names and path separators cannot escape the root.
+fn _is_valid_namespace(value: str) -> bool {
+    let n: usize = #str_len(value);
+    if n == (0 as usize) || n > (255 as usize) { return false; }
+    let p: *u8 = #str_ptr(value);
+    if { *p } == (46 as u8) || { *(p + n - (1 as usize)) } == (46 as u8) { return false; }
+    var i: usize = 0;
+    while i < n {
+        let c: u8 = { *(p + i) };
+        if !((c >= (48 as u8) && c <= (57 as u8)) ||
+             (c >= (65 as u8) && c <= (90 as u8)) ||
+             (c >= (97 as u8) && c <= (122 as u8)) ||
+             c == (46 as u8) || c == (45 as u8) || c == (95 as u8)) { return false; }
+        i = i +% (1 as usize);
+    }
+    return !_is_reserved_basename(value);
+}
+
+fn _is_reserved_basename(value: str) -> bool {
+    let p: *u8 = #str_ptr(value);
+    let n: usize = #str_len(value);
+    // Windows reserves the basename even with an extension (CON.txt).
+    var end: usize = 0;
+    while end < n && { *(p + end) } != (46 as u8) { end = end +% (1 as usize); }
+    if end != (3 as usize) && end != (4 as usize) && end != (5 as usize) { return false; }
+    var a: u8 = { *p };
+    var b: u8 = { *(p + (1 as usize)) };
+    var c: u8 = { *(p + (2 as usize)) };
+    if a >= (97 as u8) && a <= (122 as u8) { a = a - (32 as u8); }
+    if b >= (97 as u8) && b <= (122 as u8) { b = b - (32 as u8); }
+    if c >= (97 as u8) && c <= (122 as u8) { c = c - (32 as u8); }
+    if end == (3 as usize) {
+        return (a == (67 as u8) && b == (79 as u8) && c == (78 as u8)) ||
+               (a == (80 as u8) && b == (82 as u8) && c == (78 as u8)) ||
+               (a == (65 as u8) && b == (85 as u8) && c == (88 as u8)) ||
+               (a == (78 as u8) && b == (85 as u8) && c == (76 as u8));
+    }
+    let numbered: bool = (a == (67 as u8) && b == (79 as u8) && c == (77 as u8)) ||
+                         (a == (76 as u8) && b == (80 as u8) && c == (84 as u8));
+    if !numbered { return false; }
+    let digit: u8 = { *(p + (3 as usize)) };
+    if end == (4 as usize) { return digit >= (49 as u8) && digit <= (57 as u8); }
+    let last: u8 = { *(p + (4 as usize)) };
+    return digit == (194 as u8) && (last == (185 as u8) || last == (178 as u8) || last == (179 as u8));
+}
+
+fn _is_valid_asset_name(value: str) -> bool {
+    let n: usize = #str_len(value);
+    if n == (0 as usize) { return false; }
+    let p: *u8 = #str_ptr(value);
+    var start: usize = 0;
+    var i: usize = 0;
+    while i <= n {
+        if i == n || { *(p + i) } == (47 as u8) {
+            let count: usize = i - start;
+            if count == (0 as usize) { return false; }
+            let part: str = { #str_from_raw_parts(p + start, count) };
+            if part == "." || part == ".." { return false; }
+            // Avoid Windows normalization/device aliases as well as traversal.
+            if { *(p + i - (1 as usize)) } == (46 as u8) || { *(p + i - (1 as usize)) } == (32 as u8) { return false; }
+            if _is_reserved_basename(part) { return false; }
+            start = i +% (1 as usize);
+        } else {
+            let c: u8 = { *(p + i) };
+            if c < (32 as u8) || c == (127 as u8) || c == (92 as u8) || c == (58 as u8) ||
+               c == (34 as u8) || c == (60 as u8) || c == (62 as u8) || c == (124 as u8) ||
+               c == (63 as u8) || c == (42 as u8) { return false; }
+        }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+#[test]
+fn _appenv_asset_names_are_relative_and_portable() {
+    assert _is_valid_asset_name("defaults/settings.json");
+    assert _is_valid_asset_name("café/🧭.txt");
+    assert _is_valid_asset_name("my settings.json");
+    assert !_is_valid_asset_name("");
+    assert !_is_valid_asset_name("/absolute");
+    assert !_is_valid_asset_name("../escape");
+    assert !_is_valid_asset_name("a/../escape");
+    assert !_is_valid_asset_name("a//b");
+    assert !_is_valid_asset_name("a/./b");
+    assert !_is_valid_asset_name("a/");
+    assert !_is_valid_asset_name("C:\\asset");
+    assert !_is_valid_asset_name("a\0b");
+    assert !_is_valid_asset_name("CON.txt");
+    assert !_is_valid_asset_name("NUL.🧭");
+    assert !_is_valid_asset_name("COM¹.txt");
+    assert _is_valid_asset_name("COM10.txt");
+    assert _is_valid_asset_name("+@-settings.json");
+    assert !_is_valid_asset_name("a.");
+    match read_asset("../escape") {
+        result::Result::Err(e) => { assert e == Error::InvalidInput; }
+        result::Result::Ok(v) => { assert false; }
+    }
+}
+
+#[test]
+fn _appenv_namespaces_cannot_escape_or_name_devices() {
+    assert _is_valid_namespace("com.example.notes");
+    assert _is_valid_namespace("my-app_2");
+    assert !_is_valid_namespace("");
+    assert !_is_valid_namespace("..");
+    assert !_is_valid_namespace("../notes");
+    assert !_is_valid_namespace("a\\b");
+    assert !_is_valid_namespace("a\0b");
+    assert !_is_valid_namespace("notes.");
+    assert !_is_valid_namespace("CON.txt");
+    assert !_is_valid_namespace("lpt9");
+    assert !_is_valid_namespace("NUL");
+}
+
+#[test]
+fn _appenv_join_preserves_roots_and_unicode() {
+    let sep: str = fsys::separator_str();
+    assert _join(sep, "notes").view() == "${sep}notes";
+    assert _join("", "notes").view() == "notes";
+    assert _join("base", "").view() == "base";
+    assert _join("base", "café").view() == "base${sep}café";
+}

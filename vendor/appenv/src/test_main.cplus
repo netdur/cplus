@@ -1,0 +1,65 @@
+import "./appenv_backend" as _;
+import "./asset_reader" as _;
+import "./appenv" as appenv;
+import "stdlib/text" as text;
+import "stdlib/result" as result;
+import "stdlib/option" as option;
+import "stdlib/fs_sys" as fsys;
+
+fn _absolute(take value: result::Result[text::Text, appenv::Error]) {
+    match value {
+        result::Result[text::Text, appenv::Error]::Ok(v) => { assert fsys::is_absolute(v.view()); }
+        result::Result[text::Text, appenv::Error]::Err(e) => { assert false; }
+    }
+}
+
+#[test]
+fn _appenv_host_paths_are_absolute() {
+    _absolute(appenv::current_dir());
+    _absolute(appenv::executable_path());
+    _absolute(appenv::executable_dir());
+    _absolute(appenv::app_path());
+    _absolute(appenv::resource_dir());
+    _absolute(appenv::home_dir());
+    if #platform() == "macos" {
+        _absolute(appenv::downloads_dir());
+        _absolute(appenv::library_dir());
+    }
+    _absolute(appenv::temp_dir());
+    _absolute(appenv::data_dir(namespace: "dev.cplus.appenvtests"));
+    _absolute(appenv::cache_dir(namespace: "dev.cplus.appenvtests"));
+}
+
+#[test]
+fn _appenv_path_getters_leave_cwd_unchanged() {
+    match appenv::current_dir() {
+        result::Result[text::Text, appenv::Error]::Ok(before) => {
+            let _app = appenv::app_path();
+            let _data = appenv::data_dir(namespace: "dev.cplus.appenvtests");
+            let _cache = appenv::cache_dir(namespace: "dev.cplus.appenvtests");
+            match appenv::current_dir() {
+                result::Result[text::Text, appenv::Error]::Ok(after) => { assert before.view() == after.view(); }
+                result::Result[text::Text, appenv::Error]::Err(e) => { assert false; }
+            }
+        }
+        result::Result[text::Text, appenv::Error]::Err(e) => { assert false; }
+    }
+}
+
+#[test]
+fn _appenv_desktop_storage_needs_identity_or_explicit_namespace() {
+    if #platform() == "ios" || #platform() == "android" { return; }
+    match appenv::id() {
+        option::Option[text::Text]::None => {
+            match appenv::data_dir() {
+                result::Result[text::Text, appenv::Error]::Err(e) => { assert e == appenv::Error::Unavailable; }
+                result::Result[text::Text, appenv::Error]::Ok(v) => { assert false; }
+            }
+            match appenv::cache_dir() {
+                result::Result[text::Text, appenv::Error]::Err(e) => { assert e == appenv::Error::Unavailable; }
+                result::Result[text::Text, appenv::Error]::Ok(v) => { assert false; }
+            }
+        }
+        option::Option[text::Text]::Some(id) => {}
+    }
+}

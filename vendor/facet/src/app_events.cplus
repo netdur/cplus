@@ -308,6 +308,22 @@ fn set_host_runtime(vm: *u8) { HOST_RUNTIME = vm; return; }
 fn host_runtime() -> *u8 { return HOST_RUNTIME; }
 fn has_host_runtime() -> bool { return HOST_RUNTIME.is_not_null(); }
 
+// THE APPLICATION'S CONTEXT, where the platform has one: Android's Application
+// context, as a process-lifetime global reference. Zero elsewhere.
+//
+// THE THIRD HANDLE, for a question that is about the APP rather than a window:
+// where its files go, what it is called, what is packaged in it. `host()` is
+// the Activity, which exists only once a window has attached — after the app's
+// entry has already run — so a services package that asked it from `run()`
+// found nothing (spendwise S45: storage opened at startup saved nowhere). This
+// one is published BEFORE the app's entry runs and is never replaced, so it is
+// safe to keep, like the VM. Use it with an env from `host_runtime()`.
+static APP_CONTEXT: *u8 = 0 as *u8;
+
+fn set_app_context(ctx: *u8) { APP_CONTEXT = ctx; return; }
+fn app_context() -> *u8 { return APP_CONTEXT; }
+fn has_app_context() -> bool { return APP_CONTEXT.is_not_null(); }
+
 // ---- the latch ---------------------------------------------------------------
 //
 // THREE KINDS ARE FACTS, NOT EDGES, and delivering them only forward loses them.

@@ -1,0 +1,36 @@
+import "./checks" as checks;
+import "facet/app_events" as events;
+import "appenv/appenv" as appenv;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+
+export extern fn _appenv_probe_main(host: *u8, vm: *u8, app_context: *u8) -> i32 {
+    // A source-built package must also link and behave before any UI exists.
+    match appenv::data_dir() {
+        result::Result::Err(e) => { assert e == appenv::Error::Unavailable; }
+        result::Result::Ok(v) => { assert false; }
+    }
+    match appenv::id() {
+        option::Option::None => { assert true; }
+        option::Option::Some(v) => { assert false; }
+    }
+    match appenv::read_asset("empty.txt") {
+        result::Result::Err(e) => { assert e == appenv::Error::Unavailable; }
+        result::Result::Ok(v) => { assert false; }
+    }
+    // BEFORE ANY WINDOW (spendwise S45): the VM and the Application context
+    // are published, the Activity is not. Every check must already answer.
+    events::set_host_runtime(vm);
+    events::set_app_context(app_context);
+    let early: i32 = checks::run();
+    events::set_app_context(0 as *u8);
+    if early != 0 { events::set_host_runtime(0 as *u8); return early; }
+    // ...and with only the Activity, the fallback for a host that publishes
+    // no Application context.
+    events::set_host(host);
+    let rc: i32 = checks::run();
+    events::set_host(0 as *u8);
+    events::set_host_runtime(0 as *u8);
+    return rc;
+}

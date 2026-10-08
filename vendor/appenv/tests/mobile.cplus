@@ -1,0 +1,2 @@
+import "./checks" as checks;
+export extern fn _appenv_probe_main() -> i32 { return checks::run(); }

@@ -1,0 +1,56 @@
+// Win32 file assets: UTF-16 filenames and unmodified binary bytes.
+import "./appenv" as appenv;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
+extern fn MultiByteToWideChar(codepage: u32, flags: u32, bytes: *u8, count: i32, wide: *u8, capacity: i32) -> i32;
+extern fn CreateFileW(name: *u8, access: u32, share: u32, security: *u8, disposition: u32, flags: u32, template_file: *u8) -> *u8;
+extern fn ReadFile(file: *u8, buf: *u8, count: u32, read: *u32, overlapped: *u8) -> i32;
+extern fn CloseHandle(file: *u8) -> i32;
+extern fn GetLastError() -> u32;
+extern fn malloc(size: usize) -> *u8;
+extern fn free(buf: *u8);
+
+export extern fn _appenv_read_asset_v1(name: *u8, count: usize, into: *vec::Vec[u8]) -> u32 {
+    if into.is_null() { return 3 as u32; }
+    let root: text::Text = match appenv::resource_dir() {
+        result::Result::Ok(value) => value,
+        result::Result::Err(e) => { return 1 as u32; }
+    };
+    let child: str = { #str_from_raw_parts(name, count) };
+    let filename: text::Text = "${root}\\${child}";
+    let cp: text::CString = match filename.c_str() {
+        option::Option::Some(value) => value,
+        option::Option::None => { return 4 as u32; }
+    };
+    let size: i32 = { MultiByteToWideChar(65001 as u32, 8 as u32, cp.as_ptr(), 0 - 1, 0 as *u8, 0) };
+    if size <= 0 { return 3 as u32; }
+    let wide: *u8 = { malloc((size as usize) * (2 as usize)) };
+    if wide.is_null() { return 4 as u32; }
+    if { MultiByteToWideChar(65001 as u32, 8 as u32, cp.as_ptr(), 0 - 1, wide, size) } != size {
+        free(wide); return 3 as u32;
+    }
+    let file: *u8 = { CreateFileW(wide, 0x80000000 as u32, 7 as u32, 0 as *u8, 3 as u32, 128 as u32, 0 as *u8) };
+    let error: u32 = { GetLastError() };
+    free(wide);
+    if file == (((0 as isize) - (1 as isize)) as *u8) {
+        if error == (2 as u32) || error == (3 as u32) { return 2 as u32; }
+        return 3 as u32;
+    }
+    let chunk: *u8 = { malloc(4096 as usize) };
+    if chunk.is_null() { let _closed = { CloseHandle(file) }; return 4 as u32; }
+    var bytes: vec::Vec[u8] = vec::new::[u8]();
+    var code: u32 = 0;
+    loop {
+        var n: u32 = 0;
+        if { ReadFile(file, chunk, 4096 as u32, #addr_of(n), 0 as *u8) } == 0 { code = 3 as u32; break; }
+        if n == (0 as u32) { break; }
+        if bytes.extend_from_raw(chunk, n as usize) != status::Status::Ok { code = 4 as u32; break; }
+    }
+    free(chunk);
+    let _closed = { CloseHandle(file) };
+    if code == (0 as u32) { { *into = bytes }; }
+    return code;
+}

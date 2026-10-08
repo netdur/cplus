@@ -1,0 +1,140 @@
+// Apple backend, shared by macOS and iOS. Foundation resolves sandbox paths;
+// no container UUID or home-relative mobile directory is hardcoded.
+import "stdlib/fs_sys" as fsys;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/bundle" as executable;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/bundle" as bundle;
+
+extern fn NSHomeDirectory() -> *u8;
+extern fn NSTemporaryDirectory() -> *u8;
+extern fn NSSearchPathForDirectoriesInDomains(directory: u64, domain: u64, expand: i8) -> *u8;
+extern fn objc_autoreleasePoolPush() -> *u8;
+extern fn objc_autoreleasePoolPop(pool: *u8);
+
+fn _string(ns: *u8) -> option::Option[text::Text] {
+    if ns.is_null() { return option::Option[text::Text]::None; }
+    return _nonempty(bridge::to_text(ns));
+}
+
+fn _directory(directory: u64) -> option::Option[text::Text] {
+    let list: *u8 = { NSSearchPathForDirectoriesInDomains(directory, 1 as u64, 1 as i8) };
+    if list.is_null() { return option::Option[text::Text]::None; }
+    if rt::msg_u64(list, rt::sel(#str_ptr("count\0"))) == (0 as u64) { return option::Option[text::Text]::None; }
+    return _string(rt::msg_id_u64(list, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64));
+}
+
+fn _read_path(kind: u32) -> option::Option[text::Text] {
+    if kind == _CURRENT { return _current_dir(); }
+    let pool: *u8 = { objc_autoreleasePoolPush() };
+    let value: option::Option[text::Text] = _path(kind);
+    objc_autoreleasePoolPop(pool);
+    return value;
+}
+
+fn _path(kind: u32) -> option::Option[text::Text] {
+    if kind == _HOME { return _string({ NSHomeDirectory() }); }
+    if kind == _TEMP { return _string({ NSTemporaryDirectory() }); }
+    if kind == _DATA { return _directory(14 as u64); } // NSApplicationSupportDirectory
+    if kind == _CACHE { return _directory(13 as u64); } // NSCachesDirectory
+    if kind == _DOCUMENTS { return _directory(9 as u64); }
+    if kind == _LIBRARY { return _directory(5 as u64); } // NSLibraryDirectory
+    if kind == _DOWNLOADS { return _directory(15 as u64); } // NSDownloadsDirectory
+    let main: *u8 = bundle::main_bundle();
+    if kind == _APP || kind == _RESOURCES {
+        // A CLI's mainBundle names its containing directory, without a real
+        // resource layout. Use the existing executable-relative convention.
+        let url: *u8 = rt::msg_id(main, rt::sel(#str_ptr("bundleURL\0")));
+        if #platform() == "macos" && !bundle::url_is_bundle(url) { return _nonempty(executable::dir()); }
+        if kind == _APP { return _string(rt::msg_id(main, rt::sel(#str_ptr("bundlePath\0")))); }
+        return _string(rt::msg_id(main, rt::sel(#str_ptr("resourcePath\0"))));
+    }
+    return option::Option[text::Text]::None;
+}
+
+fn _info_key(main: *u8, key: str) -> option::Option[text::Text] {
+    let value: *u8 = rt::msg_id_id(main, rt::sel(#str_ptr("objectForInfoDictionaryKey:\0")), bridge::nsstring(key));
+    // Malformed Info.plist values must not receive an NSString-only selector.
+    if value.is_null() { return option::Option[text::Text]::None; }
+    if rt::msg_i8_id(value, rt::sel(#str_ptr("isKindOfClass:\0")), rt::get_class(#str_ptr("NSString\0"))) == (0 as i8) { return option::Option[text::Text]::None; }
+    return _string(value);
+}
+
+fn _read_info(kind: u32) -> option::Option[text::Text] {
+    let pool: *u8 = { objc_autoreleasePoolPush() };
+    let main: *u8 = bundle::main_bundle();
+    let value: option::Option[text::Text] = _info(main, kind);
+    objc_autoreleasePoolPop(pool);
+    return value;
+}
+
+fn _info(main: *u8, kind: u32) -> option::Option[text::Text] {
+    if kind == _ID { return _string(rt::msg_id(main, rt::sel(#str_ptr("bundleIdentifier\0")))); }
+    if kind == _NAME {
+        match _info_key(main, "CFBundleDisplayName") {
+            option::Option[text::Text]::Some(value) => { return option::Option[text::Text]::Some(value); }
+            option::Option[text::Text]::None => { return _info_key(main, "CFBundleName"); }
+        }
+    }
+    if kind == _VERSION { return _info_key(main, "CFBundleShortVersionString"); }
+    if kind == _BUILD { return _info_key(main, "CFBundleVersion"); }
+    return option::Option[text::Text]::None;
+}
+
+const _CURRENT: u32 = 0;
+const _APP: u32 = 1;
+const _RESOURCES: u32 = 2;
+const _HOME: u32 = 3;
+const _TEMP: u32 = 4;
+const _DATA: u32 = 5;
+const _CACHE: u32 = 6;
+const _DOCUMENTS: u32 = 7;
+const _DOWNLOADS: u32 = 8;
+const _LIBRARY: u32 = 9;
+const _EXTERNAL_DATA: u32 = 10;
+const _EXTERNAL_CACHE: u32 = 11;
+const _ID: u32 = 0;
+const _NAME: u32 = 1;
+const _VERSION: u32 = 2;
+const _BUILD: u32 = 3;
+
+fn _nonempty(take value: text::Text) -> option::Option[text::Text] {
+    if value.is_empty() { return option::Option[text::Text]::None; }
+    return option::Option[text::Text]::Some(value);
+}
+
+extern fn malloc(size: usize) -> *u8;
+extern fn free(buf: *u8);
+extern fn getcwd(buf: *u8, size: usize) -> *u8;
+extern fn strlen(s: *u8) -> usize;
+fn _current_dir() -> option::Option[text::Text] {
+    var cap: usize = 256;
+    while cap <= (1048576 as usize) {
+        let buf: *u8 = { malloc(cap) };
+        if buf.is_null() { return option::Option[text::Text]::None; }
+        let got: *u8 = { getcwd(buf, cap) };
+        if got.is_not_null() {
+            let value: text::Text = { #str_from_raw_parts(buf, strlen(buf)) }.to_text();
+            free(buf);
+            return option::Option[text::Text]::Some(value);
+        }
+        let err: i32 = fsys::file_errno();
+        free(buf);
+        if err != (34 as i32) { return option::Option[text::Text]::None; } // ERANGE
+        cap = cap * (2 as usize);
+    }
+    return option::Option[text::Text]::None;
+}
+
+// Internal C ABI: the facade supplies an empty owned Text and receives ownership
+// only on success. The underscore keeps this seam private to C+ importers.
+export extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text) -> bool {
+    if into.is_null() { return false; }
+    let value: option::Option[text::Text] = if metadata { _read_info(kind) } else { _read_path(kind) };
+    match value {
+        option::Option[text::Text]::Some(value) => { { *into = value }; return true; }
+        option::Option[text::Text]::None => { return false; }
+    }
+}

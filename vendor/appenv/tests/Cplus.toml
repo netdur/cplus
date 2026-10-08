@@ -1,0 +1,30 @@
+[package]
+name = "appenv_probe"
+version = "0.0.1"
+edition = "2026"
+app_id = "dev.cplus.appenvprobe"
+
+[macos]
+entry = "main.cplus"
+
+[ios]
+entry = "mobile.cplus"
+
+[android]
+entry = "mobile.cplus"
+
+[dependencies]
+stdlib = "*"
+appenv = "*"
+
+[macos.dependencies]
+objc = "*"
+
+[ios.dependencies]
+objc = "*"
+
+[android.dependencies]
+jni = "*"
+facet = "*"
+flex_layout = "*"
+events = "*"

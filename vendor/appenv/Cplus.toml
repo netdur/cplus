@@ -1,0 +1,30 @@
+[package]
+name = "appenv"
+version = "0.0.1"
+edition = "2026"
+
+# Paths, packaged assets and app identity. Platform files select APIs at build
+# time; the portable facade owns validation and desktop storage namespacing.
+[dependencies]
+stdlib = "*"
+
+[macos.dependencies]
+objc = "*"
+
+[ios.dependencies]
+objc = "*"
+
+[android.dependencies]
+jni = "*"
+facet = "*"
+flex_layout = "*"
+events = "*"
+
+[android.link]
+libs = ["android"]
+
+[linux.link]
+libs = ["dl"]
+
+[windows.link]
+libs = ["shell32", "ole32", "version"]
