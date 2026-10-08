@@ -5048,6 +5048,40 @@ fn a_rows_content_stretches_with_the_cell_without_waiting_for_a_reload() {
     views::view_release(v);
 }
 
+// spendwise S43: in a window, a list's rows are the list's width — the full
+// width every other backend gives them — not inset 16pt a side by the style
+// Automatic resolves to.
+#[test]
+fn a_list_in_a_window_lays_its_rows_out_full_width() {
+    backend::install();
+    app::reset_default_for_tests();
+    var b: core::Builder = core::Builder::new();
+    var l: core::Node = rp_list(3 as usize, false);
+    l.set_grow(1.0f64);
+    b.add(l);
+    var root: core::Node = core::column(b, key: "s43:root");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "s43", width: 448.0f64, height: 300.0f64));
+    assert win.is_not_null();
+    let sv: *u8 = view_of_key(rp, "rp");
+    assert sv.is_not_null();
+    let tv: *u8 = { rt::msg_id(sv, rt::sel(#str_ptr("documentView\0"))) };
+    assert tv.is_not_null();
+    { rt::msg_void(tv, rt::sel(#str_ptr("layoutSubtreeIfNeeded\0"))) };
+    // Plain, named when the table joined the window.
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("style\0"))) } == (4 as i64);
+    let list_w: f64 = ak::View::from_raw(sv).frame().w;
+    let cols: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("tableColumns\0"))) };
+    let col: *u8 = { rt::msg_id(cols, rt::sel(#str_ptr("firstObject\0"))) };
+    let col_w: f64 = { rt::msg_f64(col, rt::sel(#str_ptr("width\0"))) };
+    let cell: rt::Rect = { rt::msg_rect_i64_i64(tv, rt::sel(#str_ptr("frameOfCellAtColumn:row:\0")), 0 as i64, 0 as i64) };
+    assert cell.x == 0.0f64;
+    assert cell.w >= list_w - 1.0f64;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
 #[test]
 fn a_list_table_keeps_the_automatic_style_and_a_zero_intercell_gap() {
     backend::install();

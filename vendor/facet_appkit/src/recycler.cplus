@@ -422,7 +422,41 @@ fn facet_table_class() -> *u8 {
     let cls: *u8 = row_menu_class(rt::get_class(#str_ptr("NSTableView\0")),
                                   #str_ptr("FacetTableView\0"));
     arm_agent_row_tap(cls);
+    arm_plain_on_window(cls);
     return cls;
+}
+
+// A LIST'S ROWS ARE THE LIST'S WIDTH, as on every other backend (spendwise
+// S43). Automatic resolves to the INSET style in a window: 16pt in from each
+// side on macOS, 0 on Android and iOS, so code laid out for one was off on
+// the other. Plain is the full-width style. It cannot be named at create —
+// any named style tiles the table there and builds every row (measured: the
+// lazy-row contract test goes red with Plain too) — so it is named when the
+// table joins a window, which is the moment Automatic would resolve anyway.
+// A style the app chose (a sidebar's SourceList) is left alone.
+static PLAIN_ON_WINDOW_ARMED: bool = false;
+
+fn arm_plain_on_window(cls: *u8) {
+    if { PLAIN_ON_WINDOW_ARMED } { return; }
+    let _a: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("viewDidMoveToWindow\0")),
+                                         imp_table_moved_to_window, #str_ptr("v@:\0"));
+    { PLAIN_ON_WINDOW_ARMED = true; }
+    return;
+}
+
+fn imp_table_moved_to_window(self_obj: *u8, cmd: *u8) {
+    let mine: fn(*u8, *u8) = imp_table_moved_to_window;
+    let up: *u8 = synth::super_imp_below(self_obj, cmd, mine as *u8);
+    if up.is_not_null() {
+        let f: fn(*u8, *u8) = up as fn(*u8, *u8);
+        f(self_obj, cmd);
+    }
+    if { rt::msg_id(self_obj, rt::sel(#str_ptr("window\0"))) }.is_null() { return; }
+    // NSTableViewStyle: Automatic 0, Plain 4.
+    if { rt::msg_i64(self_obj, rt::sel(#str_ptr("style\0"))) } == (0 as i64) {
+        { rt::msg_void_i64(self_obj, rt::sel(#str_ptr("setStyle:\0")), 4 as i64) };
+    }
+    return;
 }
 
 fn facet_outline_class() -> *u8 {
@@ -1913,7 +1947,9 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
     // of automatic — the resolved style insets the cells — is already paid
     // for where it matters: `column_width` reads the COLUMN, which AppKit
     // narrows by exactly those insets, so rows are laid out at the width the
-    // cell really gets.
+    // cell really gets. And a list's table is made Plain when it joins a
+    // window (`arm_plain_on_window`), so there are no insets to pay: rows are
+    // the list's width, as on every other backend (spendwise S43).
     { rt::msg_void_i64(tv, rt::sel(#str_ptr("setStyle:\0")), 0 as i64) };   // NSTableViewStyleAutomatic
     { rt::msg_void_i64(tv, rt::sel(#str_ptr("setSelectionHighlightStyle:\0")),
                        0 as i64 - (1 as i64)) };                            // None
