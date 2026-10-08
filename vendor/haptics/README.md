@@ -14,6 +14,10 @@ hap::play(hap::Feel::Selection);    // a value passed under the finger
 hap::play(hap::Feel::Success);      // an outcome
 ```
 
+On Android the app's manifest needs
+`<uses-permission android:name="android.permission.VIBRATE"/>`; without it
+every tap is refused, `play` answers false, and logcat says why once.
+
 ## Fire and forget
 
 Every verb answers whether the platform **accepted** the request — never

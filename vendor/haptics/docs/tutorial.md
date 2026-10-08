@@ -10,6 +10,16 @@ Quick path: play one portable feedback effect. Platform mappings and limits:
 haptics = "*"
 ```
 
+On Android, declare the permission in `AndroidManifest.xml`. Without it the
+system refuses every vibration: `play` answers `false`, `available()` answers
+`false`, and logcat says so once (tag `haptics`).
+
+```xml
+<uses-permission android:name="android.permission.VIBRATE"/>
+```
+
+Apple platforms need no declaration.
+
 ## 2. Tap
 
 ```cplus

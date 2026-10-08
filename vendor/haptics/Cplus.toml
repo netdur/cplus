@@ -35,3 +35,7 @@ facet        = "*"
 facet_android = "*"
 flex_layout  = "*"
 events       = "*"
+
+# __android_log_write, for the one warning a missing VIBRATE permission earns.
+[android.link]
+libs = ["log"]
