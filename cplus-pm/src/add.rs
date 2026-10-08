@@ -403,6 +403,28 @@ fn upsert(
     entries: &mut Vec<AddEntry>,
 ) {
     use toml_edit::{Item, Table};
+    // ALREADY IN [dependencies] IS ALREADY ON EVERY PLATFORM. A platform
+    // section naming it again is a manifest the build refuses ("declared in
+    // `[dependencies]` and again in `[android.dependencies]`"), so `add` wrote
+    // a line its own check then rejected: `cpc pm add . camera` added
+    // `events` to `[android.dependencies]` beside the base entry (spendwise
+    // S27). It is reported where it is, and not written.
+    if platform.is_some() {
+        let in_base = doc
+            .get("dependencies")
+            .and_then(|d| d.as_table())
+            .and_then(|t| t.get(name))
+            .is_some();
+        if in_base {
+            entries.push(AddEntry {
+                platform: None,
+                name: name.to_string(),
+                spec: spec.to_string(),
+                action: AddAction::Present,
+            });
+            return;
+        }
+    }
     let table: &mut Table = match platform {
         None => {
             if doc.get("dependencies").is_none() {
@@ -497,6 +519,24 @@ mod tests {
             AddAction::KeptDifferent { ref existing } if existing == "*"
         ));
         assert!(doc.to_string().contains("stdlib = \"*\""));
+    }
+
+    #[test]
+    fn a_platform_dependency_already_in_the_base_section_is_present_not_added() {
+        let text = "[package]\nname = \"app\"\n\n[dependencies]\nevents = \"*\"\n";
+        let mut doc: toml_edit::DocumentMut = text.parse().unwrap();
+        let mut entries = Vec::new();
+        upsert(&mut doc, Some("android"), "events", "*", &mut entries);
+        let out = doc.to_string();
+        assert!(!out.contains("[android.dependencies]"), "nothing written: {out}");
+        assert_eq!(entries[0].action, AddAction::Present);
+        // Reported where it actually is: the base section.
+        assert_eq!(entries[0].platform, None);
+        // NEGATIVE: one the base does not carry is still added to the platform.
+        let mut entries = Vec::new();
+        upsert(&mut doc, Some("android"), "jni", "*", &mut entries);
+        assert_eq!(entries[0].action, AddAction::Added);
+        assert!(doc.to_string().contains("[android.dependencies]"));
     }
 
     #[test]
