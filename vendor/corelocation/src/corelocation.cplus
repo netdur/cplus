@@ -1128,15 +1128,13 @@ impl LocationUpdater {
     }
 
     fn live_updater_with_queue(queue: *u8, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LocationUpdater_live_updater_with_queue_block = LocationUpdater_live_updater_with_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationUpdater_live_updater_with_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LocationUpdater_live_updater_with_queue_block = LocationUpdater_live_updater_with_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationUpdater_live_updater_with_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(rt::get_class(#str_ptr("CLLocationUpdater\0")), rt::sel(#str_ptr("liveUpdaterWithQueue:handler:\0")), queue, bp);
     }
 
     fn live_updater_with_configuration(configuration: LiveUpdateConfiguration, queue: *u8, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LocationUpdater_live_updater_with_configuration_block = LocationUpdater_live_updater_with_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationUpdater_live_updater_with_configuration_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LocationUpdater_live_updater_with_configuration_block = LocationUpdater_live_updater_with_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationUpdater_live_updater_with_configuration_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_id_i64_id_id(rt::get_class(#str_ptr("CLLocationUpdater\0")), rt::sel(#str_ptr("liveUpdaterWithConfiguration:queue:handler:\0")), live_update_configuration_raw(configuration), queue, bp);
     }
@@ -1318,8 +1316,7 @@ impl LocationManager {
     }
 
     fn request_temporary_full_accuracy_authorization_with_purpose_key_completion(this, purpose_key: str, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LocationManager_request_temporary_full_accuracy_authorization_with_purpose_key_completion_block = LocationManager_request_temporary_full_accuracy_authorization_with_purpose_key_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationManager_request_temporary_full_accuracy_authorization_with_purpose_key_completion_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LocationManager_request_temporary_full_accuracy_authorization_with_purpose_key_completion_block = LocationManager_request_temporary_full_accuracy_authorization_with_purpose_key_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationManager_request_temporary_full_accuracy_authorization_with_purpose_key_completion_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("requestTemporaryFullAccuracyAuthorizationWithPurposeKey:completion:\0")), bridge::nsstring(purpose_key), bp);
         return;
@@ -1362,8 +1359,7 @@ impl LocationManager {
     }
 
     fn start_monitoring_location_pushes_with_completion(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LocationManager_start_monitoring_location_pushes_with_completion_block = LocationManager_start_monitoring_location_pushes_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationManager_start_monitoring_location_pushes_with_completion_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LocationManager_start_monitoring_location_pushes_with_completion_block = LocationManager_start_monitoring_location_pushes_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationManager_start_monitoring_location_pushes_with_completion_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("startMonitoringLocationPushesWithCompletion:\0")), bp);
         return;
@@ -1418,8 +1414,7 @@ impl LocationManager {
     }
 
     fn request_historical_locations_with_purpose_key(this, purpose_key: str, sample_count: i64, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LocationManager_request_historical_locations_with_purpose_key_block = LocationManager_request_historical_locations_with_purpose_key_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationManager_request_historical_locations_with_purpose_key_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LocationManager_request_historical_locations_with_purpose_key_block = LocationManager_request_historical_locations_with_purpose_key_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationManager_request_historical_locations_with_purpose_key_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("requestHistoricalLocationsWithPurposeKey:sampleCount:completionHandler:\0")), bridge::nsstring(purpose_key), sample_count, bp);
         return;
@@ -1598,8 +1593,7 @@ impl Monitor {
     fn from_raw(ptr: *u8) -> Monitor { return Monitor { _obj: rt::retain(ptr) }; }
 
     fn request_monitor_with_configuration(config: MonitorConfiguration, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Monitor_request_monitor_with_configuration_block = Monitor_request_monitor_with_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Monitor_request_monitor_with_configuration_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Monitor_request_monitor_with_configuration_block = Monitor_request_monitor_with_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Monitor_request_monitor_with_configuration_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("CLMonitor\0")), rt::sel(#str_ptr("requestMonitorWithConfiguration:completion:\0")), config.raw(), bp);
         return;
@@ -1665,8 +1659,7 @@ impl MonitorConfiguration {
     fn from_raw(ptr: *u8) -> MonitorConfiguration { return MonitorConfiguration { _obj: ptr }; }
 
     fn config_with_monitor_name(name: str, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) -> MonitorConfiguration {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MonitorConfiguration_config_with_monitor_name_block = MonitorConfiguration_config_with_monitor_name_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MonitorConfiguration_config_with_monitor_name_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MonitorConfiguration_config_with_monitor_name_block = MonitorConfiguration_config_with_monitor_name_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MonitorConfiguration_config_with_monitor_name_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MonitorConfiguration::from_raw(rt::msg_id_id_id_id(rt::get_class(#str_ptr("CLMonitorConfiguration\0")), rt::sel(#str_ptr("configWithMonitorName:queue:eventHandler:\0")), bridge::nsstring(name), queue, bp));
     }
@@ -1707,8 +1700,7 @@ impl BackgroundActivitySession {
     }
 
     fn background_activity_session_with_queue(queue: *u8, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: BackgroundActivitySession_background_activity_session_with_queue_block = BackgroundActivitySession_background_activity_session_with_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BackgroundActivitySession_background_activity_session_with_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: BackgroundActivitySession_background_activity_session_with_queue_block = BackgroundActivitySession_background_activity_session_with_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BackgroundActivitySession_background_activity_session_with_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(rt::get_class(#str_ptr("CLBackgroundActivitySession\0")), rt::sel(#str_ptr("backgroundActivitySessionWithQueue:handler:\0")), queue, bp);
     }
@@ -1919,56 +1911,49 @@ impl Geocoder {
     fn from_raw(ptr: *u8) -> Geocoder { return Geocoder { _obj: ptr }; }
 
     fn reverse_geocode_location(this, location: Location, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Geocoder_reverse_geocode_location_block = Geocoder_reverse_geocode_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_reverse_geocode_location_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Geocoder_reverse_geocode_location_block = Geocoder_reverse_geocode_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_reverse_geocode_location_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("reverseGeocodeLocation:completionHandler:\0")), location.raw(), bp);
         return;
     }
 
     fn reverse_geocode_location_preferred_locale(this, location: Location, locale: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Geocoder_reverse_geocode_location_preferred_locale_block = Geocoder_reverse_geocode_location_preferred_locale_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_reverse_geocode_location_preferred_locale_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Geocoder_reverse_geocode_location_preferred_locale_block = Geocoder_reverse_geocode_location_preferred_locale_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_reverse_geocode_location_preferred_locale_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("reverseGeocodeLocation:preferredLocale:completionHandler:\0")), location.raw(), locale, bp);
         return;
     }
 
     fn geocode_address_dictionary(this, address_dictionary: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Geocoder_geocode_address_dictionary_block = Geocoder_geocode_address_dictionary_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_address_dictionary_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Geocoder_geocode_address_dictionary_block = Geocoder_geocode_address_dictionary_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_address_dictionary_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("geocodeAddressDictionary:completionHandler:\0")), address_dictionary, bp);
         return;
     }
 
     fn geocode_address_string_in_region(this, address_string: str, region: Region, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Geocoder_geocode_address_string_in_region_block = Geocoder_geocode_address_string_in_region_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_address_string_in_region_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Geocoder_geocode_address_string_in_region_block = Geocoder_geocode_address_string_in_region_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_address_string_in_region_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("geocodeAddressString:inRegion:completionHandler:\0")), bridge::nsstring(address_string), region.raw(), bp);
         return;
     }
 
     fn geocode_address_string_in_region_preferred_locale(this, address_string: str, region: Region, locale: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Geocoder_geocode_address_string_in_region_preferred_locale_block = Geocoder_geocode_address_string_in_region_preferred_locale_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_address_string_in_region_preferred_locale_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Geocoder_geocode_address_string_in_region_preferred_locale_block = Geocoder_geocode_address_string_in_region_preferred_locale_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_address_string_in_region_preferred_locale_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("geocodeAddressString:inRegion:preferredLocale:completionHandler:\0")), bridge::nsstring(address_string), region.raw(), locale, bp);
         return;
     }
 
     fn geocode_address_string_in_region_centered_at(this, address_string: str, centroid: LocationCoordinate2D, in_region_radius: f64, preferred_locale: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Geocoder_geocode_address_string_in_region_centered_at_block = Geocoder_geocode_address_string_in_region_centered_at_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_address_string_in_region_centered_at_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Geocoder_geocode_address_string_in_region_centered_at_block = Geocoder_geocode_address_string_in_region_centered_at_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_address_string_in_region_centered_at_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_LocationCoordinate2D_f64_id_id(this._obj, rt::sel(#str_ptr("geocodeAddressString:inRegionCenteredAt:inRegionRadius:preferredLocale:completionHandler:\0")), bridge::nsstring(address_string), centroid, in_region_radius, preferred_locale, bp);
         return;
     }
 
     fn geocode_address_string(this, address_string: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Geocoder_geocode_address_string_block = Geocoder_geocode_address_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_address_string_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Geocoder_geocode_address_string_block = Geocoder_geocode_address_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_address_string_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("geocodeAddressString:completionHandler:\0")), bridge::nsstring(address_string), bp);
         return;
@@ -1983,16 +1968,14 @@ impl Geocoder {
     }
 
     fn geocode_postal_address(this, postal_address: CNPostalAddress, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Geocoder_geocode_postal_address_block = Geocoder_geocode_postal_address_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_postal_address_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Geocoder_geocode_postal_address_block = Geocoder_geocode_postal_address_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_postal_address_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("geocodePostalAddress:completionHandler:\0")), postal_address.raw(), bp);
         return;
     }
 
     fn geocode_postal_address_preferred_locale(this, postal_address: CNPostalAddress, locale: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Geocoder_geocode_postal_address_preferred_locale_block = Geocoder_geocode_postal_address_preferred_locale_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_postal_address_preferred_locale_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Geocoder_geocode_postal_address_preferred_locale_block = Geocoder_geocode_postal_address_preferred_locale_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Geocoder_geocode_postal_address_preferred_locale_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("geocodePostalAddress:preferredLocale:completionHandler:\0")), postal_address.raw(), locale, bp);
         return;
@@ -2100,8 +2083,7 @@ impl ServiceSession {
     }
 
     fn session_requiring_authorization_queue(authorization_requirement: ServiceSessionAuthorizationRequirement, queue: *u8, cb: fn(*u8, *u8), ctx: *u8) -> ServiceSession {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ServiceSession_session_requiring_authorization_queue_block = ServiceSession_session_requiring_authorization_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ServiceSession_session_requiring_authorization_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ServiceSession_session_requiring_authorization_queue_block = ServiceSession_session_requiring_authorization_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ServiceSession_session_requiring_authorization_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return ServiceSession::from_raw(objc_msg_id_i64_id_id(rt::get_class(#str_ptr("CLServiceSession\0")), rt::sel(#str_ptr("sessionRequiringAuthorization:queue:handler:\0")), service_session_authorization_requirement_raw(authorization_requirement), queue, bp));
     }
@@ -2111,8 +2093,7 @@ impl ServiceSession {
     }
 
     fn session_requiring_authorization_full_accuracy_purpose_key_queue(authorization_requirement: ServiceSessionAuthorizationRequirement, purpose_key: str, queue: *u8, cb: fn(*u8, *u8), ctx: *u8) -> ServiceSession {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ServiceSession_session_requiring_authorization_full_accuracy_purpose_key_queue_block = ServiceSession_session_requiring_authorization_full_accuracy_purpose_key_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ServiceSession_session_requiring_authorization_full_accuracy_purpose_key_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ServiceSession_session_requiring_authorization_full_accuracy_purpose_key_queue_block = ServiceSession_session_requiring_authorization_full_accuracy_purpose_key_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ServiceSession_session_requiring_authorization_full_accuracy_purpose_key_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return ServiceSession::from_raw(objc_msg_id_i64_id_id_id(rt::get_class(#str_ptr("CLServiceSession\0")), rt::sel(#str_ptr("sessionRequiringAuthorization:fullAccuracyPurposeKey:queue:handler:\0")), service_session_authorization_requirement_raw(authorization_requirement), bridge::nsstring(purpose_key), queue, bp));
     }
@@ -2521,8 +2502,7 @@ impl LocationPushServiceExtension {
     fn from_raw(ptr: *u8) -> LocationPushServiceExtension { return LocationPushServiceExtension { _obj: ptr }; }
 
     fn did_receive_location_push_payload(this, payload: string_map::StringMap[AnyObject], cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LocationPushServiceExtension_did_receive_location_push_payload_block = LocationPushServiceExtension_did_receive_location_push_payload_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationPushServiceExtension_did_receive_location_push_payload_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LocationPushServiceExtension_did_receive_location_push_payload_block = LocationPushServiceExtension_did_receive_location_push_payload_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocationPushServiceExtension_did_receive_location_push_payload_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_payload: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_payload: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));

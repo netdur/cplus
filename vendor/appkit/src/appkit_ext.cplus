@@ -306,8 +306,7 @@ fn event_filter_invoke(block: *u8, event: *u8) -> *u8 {
 }
 
 fn add_local_event_filter(mask: u64, filter: fn(*u8, *u8) -> *u8, ctx: *u8) -> *u8 {
-    var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-    var blk: EventFilterBlock = EventFilterBlock { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: event_filter_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: filter, ctx: ctx };
+    var blk: EventFilterBlock = EventFilterBlock { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: event_filter_invoke, descriptor: rt::block_descriptor(), user_fn: filter, ctx: ctx };
     let obj: *u8 = rt::msg_id_u64_id(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("addLocalMonitorForEventsMatchingMask:handler:\0")), mask, { #addr_of(blk) as *u8 });
     if obj == { 0 as *u8 } { return 0 as *u8; }
     return rt::retain(obj);

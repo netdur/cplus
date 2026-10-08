@@ -20,6 +20,20 @@ struct BlockDescriptor {
     size: u64,
 }
 
+// THE DESCRIPTOR EVERY BRIDGED BLOCK POINTS AT, and it has to be a STATIC.
+// A block is built on the stack; an API that keeps it (an NSImage's drawing
+// handler, a completion handler) gets a heap COPY from `Block_copy`, and the
+// copy keeps the descriptor POINTER. Built as a local of the bridging function,
+// the descriptor died with that frame, and the copy's release read whatever
+// had been written over it since: `_Block_release` -> dispose helpers ->
+// SIGBUS/SIGSEGV. A button with `symbol:` crashed the first time AppKit let
+// its image go (spendwise S23). Every bridged block is the same 48 bytes —
+// isa, flags, reserved, invoke, descriptor, the user fn and its ctx — with no
+// helpers, so one descriptor serves them all.
+static BLOCK_DESCRIPTOR: BlockDescriptor = BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+
+fn block_descriptor() -> *u8 { return { #addr_of(BLOCK_DESCRIPTOR) as *u8 }; }
+
 // The isa for a stack block (`_NSConcreteStackBlock`), resolved at runtime via
 // dlsym(RTLD_DEFAULT, ...) so no extern global is needed.
 fn stack_block_isa() -> *u8 {

@@ -2959,8 +2959,7 @@ impl Request {
     }
 
     fn init_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Request_init_with_completion_handler_block = Request_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Request_init_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Request_init_with_completion_handler_block = Request_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Request_init_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithCompletionHandler:\0")), bp);
     }
@@ -3825,8 +3824,7 @@ impl CoreMLRequest {
     }
 
     fn init_with_model_completion_handler(this, model: CoreMLModel, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CoreMLRequest_init_with_model_completion_handler_block = CoreMLRequest_init_with_model_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CoreMLRequest_init_with_model_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CoreMLRequest_init_with_model_completion_handler_block = CoreMLRequest_init_with_model_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CoreMLRequest_init_with_model_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithModel:completionHandler:\0")), model.raw(), bp);
     }
@@ -4119,8 +4117,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_cv_pixel_buffer_options_completion_handler(this, pixel_buffer: *u8, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_cv_pixel_buffer_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cv_pixel_buffer_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cv_pixel_buffer_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_cv_pixel_buffer_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cv_pixel_buffer_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cv_pixel_buffer_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4170,8 +4167,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_cv_pixel_buffer_orientation_options_completion_handler(this, pixel_buffer: *u8, orientation: CGImagePropertyOrientation, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_cv_pixel_buffer_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cv_pixel_buffer_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cv_pixel_buffer_orientation_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_cv_pixel_buffer_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cv_pixel_buffer_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cv_pixel_buffer_orientation_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4221,8 +4217,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_cg_image_options_completion_handler(this, cg_image: *u8, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_cg_image_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cg_image_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cg_image_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_cg_image_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cg_image_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cg_image_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4272,8 +4267,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_cg_image_orientation_options_completion_handler(this, cg_image: *u8, orientation: CGImagePropertyOrientation, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_cg_image_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cg_image_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cg_image_orientation_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_cg_image_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cg_image_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cg_image_orientation_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4323,8 +4317,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_ci_image_options_completion_handler(this, ci_image: CIImage, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_ci_image_options_completion_handler_block = TargetedImageRequest_init_with_targeted_ci_image_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_ci_image_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_ci_image_options_completion_handler_block = TargetedImageRequest_init_with_targeted_ci_image_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_ci_image_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4374,8 +4367,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_ci_image_orientation_options_completion_handler(this, ci_image: CIImage, orientation: CGImagePropertyOrientation, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_ci_image_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_ci_image_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_ci_image_orientation_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_ci_image_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_ci_image_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_ci_image_orientation_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4425,8 +4417,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_image_url_options_completion_handler(this, image_url: foundation::URL, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_image_url_options_completion_handler_block = TargetedImageRequest_init_with_targeted_image_url_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_image_url_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_image_url_options_completion_handler_block = TargetedImageRequest_init_with_targeted_image_url_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_image_url_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4476,8 +4467,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_image_url_orientation_options_completion_handler(this, image_url: foundation::URL, orientation: CGImagePropertyOrientation, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_image_url_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_image_url_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_image_url_orientation_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_image_url_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_image_url_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_image_url_orientation_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4527,8 +4517,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_image_data_options_completion_handler(this, image_data: foundation::Data, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_image_data_options_completion_handler_block = TargetedImageRequest_init_with_targeted_image_data_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_image_data_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_image_data_options_completion_handler_block = TargetedImageRequest_init_with_targeted_image_data_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_image_data_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4578,8 +4567,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_image_data_orientation_options_completion_handler(this, image_data: foundation::Data, orientation: CGImagePropertyOrientation, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_image_data_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_image_data_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_image_data_orientation_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_image_data_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_image_data_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_image_data_orientation_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4629,8 +4617,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_cm_sample_buffer_options_completion_handler(this, sample_buffer: *u8, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_cm_sample_buffer_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cm_sample_buffer_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cm_sample_buffer_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_cm_sample_buffer_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cm_sample_buffer_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cm_sample_buffer_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4680,8 +4667,7 @@ impl TargetedImageRequest {
     }
 
     fn init_with_targeted_cm_sample_buffer_orientation_options_completion_handler(this, sample_buffer: *u8, orientation: CGImagePropertyOrientation, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TargetedImageRequest_init_with_targeted_cm_sample_buffer_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cm_sample_buffer_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cm_sample_buffer_orientation_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TargetedImageRequest_init_with_targeted_cm_sample_buffer_orientation_options_completion_handler_block = TargetedImageRequest_init_with_targeted_cm_sample_buffer_orientation_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TargetedImageRequest_init_with_targeted_cm_sample_buffer_orientation_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -4882,8 +4868,7 @@ impl TrackObjectRequest {
     }
 
     fn init_with_detected_object_observation_completion_handler(this, observation: DetectedObjectObservation, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TrackObjectRequest_init_with_detected_object_observation_completion_handler_block = TrackObjectRequest_init_with_detected_object_observation_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TrackObjectRequest_init_with_detected_object_observation_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TrackObjectRequest_init_with_detected_object_observation_completion_handler_block = TrackObjectRequest_init_with_detected_object_observation_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TrackObjectRequest_init_with_detected_object_observation_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithDetectedObjectObservation:completionHandler:\0")), observation.raw(), bp);
     }
@@ -4921,8 +4906,7 @@ impl TrackRectangleRequest {
     }
 
     fn init_with_rectangle_observation_completion_handler(this, observation: RectangleObservation, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TrackRectangleRequest_init_with_rectangle_observation_completion_handler_block = TrackRectangleRequest_init_with_rectangle_observation_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TrackRectangleRequest_init_with_rectangle_observation_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TrackRectangleRequest_init_with_rectangle_observation_completion_handler_block = TrackRectangleRequest_init_with_rectangle_observation_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TrackRectangleRequest_init_with_rectangle_observation_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithRectangleObservation:completionHandler:\0")), observation.raw(), bp);
     }
@@ -5760,8 +5744,7 @@ impl StatefulRequest {
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     // SKIPPED `initWithCompletionHandler:`: `NS_UNAVAILABLE` init, not a constructor
     fn init_with_frame_analysis_spacing_completion_handler(this, frame_analysis_spacing: CMTime, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: StatefulRequest_init_with_frame_analysis_spacing_completion_handler_block = StatefulRequest_init_with_frame_analysis_spacing_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StatefulRequest_init_with_frame_analysis_spacing_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: StatefulRequest_init_with_frame_analysis_spacing_completion_handler_block = StatefulRequest_init_with_frame_analysis_spacing_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StatefulRequest_init_with_frame_analysis_spacing_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_id_CMTime_id(this._obj, rt::sel(#str_ptr("initWithFrameAnalysisSpacing:completionHandler:\0")), frame_analysis_spacing, bp);
     }
@@ -5800,8 +5783,7 @@ impl DetectTrajectoriesRequest {
 
     // SKIPPED `initWithFrameAnalysisSpacing:completionHandler:`: `NS_UNAVAILABLE` init, not a constructor
     fn init_with_frame_analysis_spacing_trajectory_length_completion_handler(this, frame_analysis_spacing: CMTime, trajectory_length: i64, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: DetectTrajectoriesRequest_init_with_frame_analysis_spacing_trajectory_length_completion_handler_block = DetectTrajectoriesRequest_init_with_frame_analysis_spacing_trajectory_length_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DetectTrajectoriesRequest_init_with_frame_analysis_spacing_trajectory_length_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: DetectTrajectoriesRequest_init_with_frame_analysis_spacing_trajectory_length_completion_handler_block = DetectTrajectoriesRequest_init_with_frame_analysis_spacing_trajectory_length_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DetectTrajectoriesRequest_init_with_frame_analysis_spacing_trajectory_length_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_id_CMTime_i64_id(this._obj, rt::sel(#str_ptr("initWithFrameAnalysisSpacing:trajectoryLength:completionHandler:\0")), frame_analysis_spacing, trajectory_length, bp);
     }
@@ -5893,8 +5875,7 @@ impl GeneratePersonSegmentationRequest {
 
     // SKIPPED `init`: `new` already defined (extra constructor)
     fn init_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: GeneratePersonSegmentationRequest_init_with_completion_handler_block = GeneratePersonSegmentationRequest_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: GeneratePersonSegmentationRequest_init_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: GeneratePersonSegmentationRequest_init_with_completion_handler_block = GeneratePersonSegmentationRequest_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: GeneratePersonSegmentationRequest_init_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithCompletionHandler:\0")), bp);
     }
@@ -6086,8 +6067,7 @@ impl TrackTranslationalImageRegistrationRequest {
     }
 
     fn init_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TrackTranslationalImageRegistrationRequest_init_with_completion_handler_block = TrackTranslationalImageRegistrationRequest_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TrackTranslationalImageRegistrationRequest_init_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TrackTranslationalImageRegistrationRequest_init_with_completion_handler_block = TrackTranslationalImageRegistrationRequest_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TrackTranslationalImageRegistrationRequest_init_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithCompletionHandler:\0")), bp);
     }
@@ -6136,8 +6116,7 @@ impl TrackHomographicImageRegistrationRequest {
     }
 
     fn init_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TrackHomographicImageRegistrationRequest_init_with_completion_handler_block = TrackHomographicImageRegistrationRequest_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TrackHomographicImageRegistrationRequest_init_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TrackHomographicImageRegistrationRequest_init_with_completion_handler_block = TrackHomographicImageRegistrationRequest_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TrackHomographicImageRegistrationRequest_init_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithCompletionHandler:\0")), bp);
     }
@@ -6186,8 +6165,7 @@ impl TrackOpticalFlowRequest {
     }
 
     fn init_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TrackOpticalFlowRequest_init_with_completion_handler_block = TrackOpticalFlowRequest_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TrackOpticalFlowRequest_init_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TrackOpticalFlowRequest_init_with_completion_handler_block = TrackOpticalFlowRequest_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TrackOpticalFlowRequest_init_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithCompletionHandler:\0")), bp);
     }
@@ -6325,8 +6303,7 @@ impl DetectHumanBodyPose3DRequest {
     }
 
     fn init_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: DetectHumanBodyPose3DRequest_init_with_completion_handler_block = DetectHumanBodyPose3DRequest_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DetectHumanBodyPose3DRequest_init_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: DetectHumanBodyPose3DRequest_init_with_completion_handler_block = DetectHumanBodyPose3DRequest_init_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DetectHumanBodyPose3DRequest_init_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithCompletionHandler:\0")), bp);
     }
@@ -6442,8 +6419,7 @@ impl RequestProgressProviding {
 
     // SKIPPED `progressHandler`: return `VNRequestProgressHandler _Nonnull` — unmapped type `VNRequestProgressHandler`
     fn set_progress_handler(this, cb: fn(*u8, *u8, f64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: RequestProgressProviding_set_progress_handler_block = RequestProgressProviding_set_progress_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RequestProgressProviding_set_progress_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: RequestProgressProviding_set_progress_handler_block = RequestProgressProviding_set_progress_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RequestProgressProviding_set_progress_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setProgressHandler:\0")), bp);
         return;

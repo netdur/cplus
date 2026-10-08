@@ -812,8 +812,7 @@ impl Altimeter {
     }
 
     fn start_relative_altitude_updates_to_queue(this, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Altimeter_start_relative_altitude_updates_to_queue_block = Altimeter_start_relative_altitude_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Altimeter_start_relative_altitude_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Altimeter_start_relative_altitude_updates_to_queue_block = Altimeter_start_relative_altitude_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Altimeter_start_relative_altitude_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startRelativeAltitudeUpdatesToQueue:withHandler:\0")), queue, bp);
         return;
@@ -828,8 +827,7 @@ impl Altimeter {
     }
 
     fn start_absolute_altitude_updates_to_queue(this, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Altimeter_start_absolute_altitude_updates_to_queue_block = Altimeter_start_absolute_altitude_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Altimeter_start_absolute_altitude_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Altimeter_start_absolute_altitude_updates_to_queue_block = Altimeter_start_absolute_altitude_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Altimeter_start_absolute_altitude_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startAbsoluteAltitudeUpdatesToQueue:withHandler:\0")), queue, bp);
         return;
@@ -993,8 +991,7 @@ impl FallDetectionManager {
     fn from_raw(ptr: *u8) -> FallDetectionManager { return FallDetectionManager { _obj: ptr }; }
 
     fn request_authorization_with_handler(this, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FallDetectionManager_request_authorization_with_handler_block = FallDetectionManager_request_authorization_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FallDetectionManager_request_authorization_with_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FallDetectionManager_request_authorization_with_handler_block = FallDetectionManager_request_authorization_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FallDetectionManager_request_authorization_with_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("requestAuthorizationWithHandler:\0")), bp);
         return;
@@ -1085,16 +1082,14 @@ impl MotionActivityManager {
     }
 
     fn query_activity_starting_from_date(this, start: *u8, to_date: *u8, to_queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MotionActivityManager_query_activity_starting_from_date_block = MotionActivityManager_query_activity_starting_from_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionActivityManager_query_activity_starting_from_date_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MotionActivityManager_query_activity_starting_from_date_block = MotionActivityManager_query_activity_starting_from_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionActivityManager_query_activity_starting_from_date_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("queryActivityStartingFromDate:toDate:toQueue:withHandler:\0")), start, to_date, to_queue, bp);
         return;
     }
 
     fn start_activity_updates_to_queue(this, queue: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MotionActivityManager_start_activity_updates_to_queue_block = MotionActivityManager_start_activity_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionActivityManager_start_activity_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MotionActivityManager_start_activity_updates_to_queue_block = MotionActivityManager_start_activity_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionActivityManager_start_activity_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startActivityUpdatesToQueue:withHandler:\0")), queue, bp);
         return;
@@ -1121,8 +1116,7 @@ impl MotionManager {
     }
 
     fn start_accelerometer_updates_to_queue(this, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MotionManager_start_accelerometer_updates_to_queue_block = MotionManager_start_accelerometer_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionManager_start_accelerometer_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MotionManager_start_accelerometer_updates_to_queue_block = MotionManager_start_accelerometer_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionManager_start_accelerometer_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startAccelerometerUpdatesToQueue:withHandler:\0")), queue, bp);
         return;
@@ -1137,8 +1131,7 @@ impl MotionManager {
     }
 
     fn start_gyro_updates_to_queue(this, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MotionManager_start_gyro_updates_to_queue_block = MotionManager_start_gyro_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionManager_start_gyro_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MotionManager_start_gyro_updates_to_queue_block = MotionManager_start_gyro_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionManager_start_gyro_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startGyroUpdatesToQueue:withHandler:\0")), queue, bp);
         return;
@@ -1153,8 +1146,7 @@ impl MotionManager {
     }
 
     fn start_magnetometer_updates_to_queue(this, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MotionManager_start_magnetometer_updates_to_queue_block = MotionManager_start_magnetometer_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionManager_start_magnetometer_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MotionManager_start_magnetometer_updates_to_queue_block = MotionManager_start_magnetometer_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionManager_start_magnetometer_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startMagnetometerUpdatesToQueue:withHandler:\0")), queue, bp);
         return;
@@ -1173,8 +1165,7 @@ impl MotionManager {
     }
 
     fn start_device_motion_updates_to_queue(this, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MotionManager_start_device_motion_updates_to_queue_block = MotionManager_start_device_motion_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionManager_start_device_motion_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MotionManager_start_device_motion_updates_to_queue_block = MotionManager_start_device_motion_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionManager_start_device_motion_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startDeviceMotionUpdatesToQueue:withHandler:\0")), queue, bp);
         return;
@@ -1185,8 +1176,7 @@ impl MotionManager {
     }
 
     fn start_device_motion_updates_using_reference_frame_to_queue(this, reference_frame: u64, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MotionManager_start_device_motion_updates_using_reference_frame_to_queue_block = MotionManager_start_device_motion_updates_using_reference_frame_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionManager_start_device_motion_updates_using_reference_frame_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MotionManager_start_device_motion_updates_using_reference_frame_to_queue_block = MotionManager_start_device_motion_updates_using_reference_frame_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MotionManager_start_device_motion_updates_using_reference_frame_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_u64_id_id(this._obj, rt::sel(#str_ptr("startDeviceMotionUpdatesUsingReferenceFrame:toQueue:withHandler:\0")), reference_frame, queue, bp);
         return;
@@ -1309,8 +1299,7 @@ impl HeadphoneMotionManager {
     }
 
     fn start_device_motion_updates_to_queue(this, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: HeadphoneMotionManager_start_device_motion_updates_to_queue_block = HeadphoneMotionManager_start_device_motion_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HeadphoneMotionManager_start_device_motion_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: HeadphoneMotionManager_start_device_motion_updates_to_queue_block = HeadphoneMotionManager_start_device_motion_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HeadphoneMotionManager_start_device_motion_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startDeviceMotionUpdatesToQueue:withHandler:\0")), queue, bp);
         return;
@@ -1459,16 +1448,14 @@ impl MovementDisorderManager {
     }
 
     fn query_dyskinetic_symptom_from_date(this, from_date: *u8, to_date: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MovementDisorderManager_query_dyskinetic_symptom_from_date_block = MovementDisorderManager_query_dyskinetic_symptom_from_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MovementDisorderManager_query_dyskinetic_symptom_from_date_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MovementDisorderManager_query_dyskinetic_symptom_from_date_block = MovementDisorderManager_query_dyskinetic_symptom_from_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MovementDisorderManager_query_dyskinetic_symptom_from_date_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("queryDyskineticSymptomFromDate:toDate:withHandler:\0")), from_date, to_date, bp);
         return;
     }
 
     fn query_tremor_from_date(this, from_date: *u8, to_date: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MovementDisorderManager_query_tremor_from_date_block = MovementDisorderManager_query_tremor_from_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MovementDisorderManager_query_tremor_from_date_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MovementDisorderManager_query_tremor_from_date_block = MovementDisorderManager_query_tremor_from_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MovementDisorderManager_query_tremor_from_date_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("queryTremorFromDate:toDate:withHandler:\0")), from_date, to_date, bp);
         return;
@@ -1596,16 +1583,14 @@ impl Pedometer {
     }
 
     fn query_pedometer_data_from_date(this, start: *u8, to_date: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Pedometer_query_pedometer_data_from_date_block = Pedometer_query_pedometer_data_from_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pedometer_query_pedometer_data_from_date_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Pedometer_query_pedometer_data_from_date_block = Pedometer_query_pedometer_data_from_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pedometer_query_pedometer_data_from_date_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("queryPedometerDataFromDate:toDate:withHandler:\0")), start, to_date, bp);
         return;
     }
 
     fn start_pedometer_updates_from_date(this, start: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Pedometer_start_pedometer_updates_from_date_block = Pedometer_start_pedometer_updates_from_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pedometer_start_pedometer_updates_from_date_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Pedometer_start_pedometer_updates_from_date_block = Pedometer_start_pedometer_updates_from_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pedometer_start_pedometer_updates_from_date_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startPedometerUpdatesFromDate:withHandler:\0")), start, bp);
         return;
@@ -1616,8 +1601,7 @@ impl Pedometer {
     }
 
     fn start_pedometer_event_updates_with_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Pedometer_start_pedometer_event_updates_with_handler_block = Pedometer_start_pedometer_event_updates_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pedometer_start_pedometer_event_updates_with_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Pedometer_start_pedometer_event_updates_with_handler_block = Pedometer_start_pedometer_event_updates_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pedometer_start_pedometer_event_updates_with_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("startPedometerEventUpdatesWithHandler:\0")), bp);
         return;
@@ -1685,16 +1669,14 @@ impl StepCounter {
     }
 
     fn query_step_count_starting_from(this, start: *u8, to: *u8, to_queue: *u8, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: StepCounter_query_step_count_starting_from_block = StepCounter_query_step_count_starting_from_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StepCounter_query_step_count_starting_from_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: StepCounter_query_step_count_starting_from_block = StepCounter_query_step_count_starting_from_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StepCounter_query_step_count_starting_from_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("queryStepCountStartingFrom:to:toQueue:withHandler:\0")), start, to, to_queue, bp);
         return;
     }
 
     fn start_step_counting_updates_to_queue(this, queue: *u8, update_on: i64, cb: fn(*u8, i64, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: StepCounter_start_step_counting_updates_to_queue_block = StepCounter_start_step_counting_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StepCounter_start_step_counting_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: StepCounter_start_step_counting_updates_to_queue_block = StepCounter_start_step_counting_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StepCounter_start_step_counting_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("startStepCountingUpdatesToQueue:updateOn:withHandler:\0")), queue, update_on, bp);
         return;
@@ -2044,8 +2026,7 @@ impl BatchedSensorManager {
     }
 
     fn start_accelerometer_updates_with_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: BatchedSensorManager_start_accelerometer_updates_with_handler_block = BatchedSensorManager_start_accelerometer_updates_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BatchedSensorManager_start_accelerometer_updates_with_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: BatchedSensorManager_start_accelerometer_updates_with_handler_block = BatchedSensorManager_start_accelerometer_updates_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BatchedSensorManager_start_accelerometer_updates_with_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("startAccelerometerUpdatesWithHandler:\0")), bp);
         return;
@@ -2060,8 +2041,7 @@ impl BatchedSensorManager {
     }
 
     fn start_device_motion_updates_with_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: BatchedSensorManager_start_device_motion_updates_with_handler_block = BatchedSensorManager_start_device_motion_updates_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BatchedSensorManager_start_device_motion_updates_with_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: BatchedSensorManager_start_device_motion_updates_with_handler_block = BatchedSensorManager_start_device_motion_updates_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BatchedSensorManager_start_device_motion_updates_with_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("startDeviceMotionUpdatesWithHandler:\0")), bp);
         return;
@@ -2142,8 +2122,7 @@ impl HeadphoneActivityManager {
     }
 
     fn start_activity_updates_to_queue(this, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: HeadphoneActivityManager_start_activity_updates_to_queue_block = HeadphoneActivityManager_start_activity_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HeadphoneActivityManager_start_activity_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: HeadphoneActivityManager_start_activity_updates_to_queue_block = HeadphoneActivityManager_start_activity_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HeadphoneActivityManager_start_activity_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startActivityUpdatesToQueue:withHandler:\0")), queue, bp);
         return;
@@ -2154,8 +2133,7 @@ impl HeadphoneActivityManager {
     }
 
     fn start_status_updates_to_queue(this, queue: *u8, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: HeadphoneActivityManager_start_status_updates_to_queue_block = HeadphoneActivityManager_start_status_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HeadphoneActivityManager_start_status_updates_to_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: HeadphoneActivityManager_start_status_updates_to_queue_block = HeadphoneActivityManager_start_status_updates_to_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HeadphoneActivityManager_start_status_updates_to_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startStatusUpdatesToQueue:withHandler:\0")), queue, bp);
         return;

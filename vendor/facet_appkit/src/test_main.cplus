@@ -19758,3 +19758,48 @@ fn a_presented_screen_is_a_sheet_and_a_second_attaches_to_the_first() {
     let _b = box::from_raw::[core::Node](second as *u8);
     app::reset_default_for_tests();
 }
+
+// ---- a generated block bridge survives its maker's frame (spendwise S23) -------
+// `image_with_size` built its block's DESCRIPTOR as a local. NSImage keeps the
+// drawing handler, so the runtime copies the stack block to the heap — and the
+// copy still pointed at the dead local. Releasing the image read whatever had
+// been written over that stack since: a button with `symbol:` crashed the
+// first time AppKit let its image go.
+
+#[link_name = "objc_autoreleasePoolPush"]
+extern fn s23_pool_push() -> *u8;
+#[link_name = "objc_autoreleasePoolPop"]
+extern fn s23_pool_pop(p: *u8);
+
+fn s23_draw(ctx: *u8, r: rt::Rect) -> i8 { return 1 as i8; }
+
+// Overwrites the stack below the caller with a non-zero pattern, so a pointer
+// into a dead frame reads garbage rather than the zeros it happened to keep.
+fn s23_scribble(depth: i32) -> i64 {
+    var junk: [i64; 128] = [0 as i64; 128];
+    var i: usize = 0 as usize;
+    while i < (128 as usize) {
+        junk[i] = 9218868437227405312 as i64;
+        i = i +% (1 as usize);
+    }
+    if depth <= 0 { return junk[7]; }
+    return s23_scribble(depth - 1) +% junk[3];
+}
+
+fn s23_make() -> *u8 {
+    let img: *u8 = ak::Image::image_with_size(rt::Size { w: 16.0f64, h: 16.0f64 }, false,
+                                             s23_draw, 0 as *u8);
+    return rt::retain(img);
+}
+
+#[test]
+fn a_drawn_image_can_be_released_after_its_maker_returned() {
+    let pool: *u8 = s23_pool_push();
+    let img: *u8 = s23_make();
+    s23_pool_pop(pool);
+    let _s: i64 = s23_scribble(8);
+    // The last release: NSCustomImageRep's dealloc releases the handler's heap
+    // copy, which reads the descriptor the copy points at.
+    rt::release(img);
+    assert true;
+}

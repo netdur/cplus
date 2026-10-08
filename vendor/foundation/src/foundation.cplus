@@ -6390,16 +6390,14 @@ impl String {
     }
 
     fn enumerate_substrings_in_range(this, range: rt::Range, options: u64, cb: fn(*u8, *u8, rt::Range, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: String_enumerate_substrings_in_range_block = String_enumerate_substrings_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: String_enumerate_substrings_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: String_enumerate_substrings_in_range_block = String_enumerate_substrings_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: String_enumerate_substrings_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateSubstringsInRange:options:usingBlock:\0")), range, options, bp);
         return;
     }
 
     fn enumerate_lines_using_block(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: String_enumerate_lines_using_block_block = String_enumerate_lines_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: String_enumerate_lines_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: String_enumerate_lines_using_block_block = String_enumerate_lines_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: String_enumerate_lines_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("enumerateLinesUsingBlock:\0")), bp);
         return;
@@ -6529,8 +6527,7 @@ impl String {
     }
 
     fn init_with_characters_no_copy_length_deallocator(this, chars: *u8, len: u64, cb: fn(*u8, *u8, u64), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: String_init_with_characters_no_copy_length_deallocator_block = String_init_with_characters_no_copy_length_deallocator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: String_init_with_characters_no_copy_length_deallocator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: String_init_with_characters_no_copy_length_deallocator_block = String_init_with_characters_no_copy_length_deallocator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: String_init_with_characters_no_copy_length_deallocator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("initWithCharactersNoCopy:length:deallocator:\0")), chars, len, bp);
     }
@@ -6620,8 +6617,7 @@ impl String {
     }
 
     fn init_with_bytes_no_copy_length_encoding_deallocator(this, bytes: *u8, len: u64, encoding: u64, cb: fn(*u8, *u8, u64), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: String_init_with_bytes_no_copy_length_encoding_deallocator_block = String_init_with_bytes_no_copy_length_encoding_deallocator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: String_init_with_bytes_no_copy_length_encoding_deallocator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: String_init_with_bytes_no_copy_length_encoding_deallocator_block = String_init_with_bytes_no_copy_length_encoding_deallocator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: String_init_with_bytes_no_copy_length_encoding_deallocator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_u64_u64_id(this._obj, rt::sel(#str_ptr("initWithBytesNoCopy:length:encoding:deallocator:\0")), bytes, len, encoding, bp);
     }
@@ -7105,8 +7101,7 @@ impl String {
     }
 
     fn enumerate_linguistic_tags_in_range(this, range: rt::Range, scheme: str, options: u64, orthography: Orthography, cb: fn(*u8, *u8, rt::Range, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: String_enumerate_linguistic_tags_in_range_block = String_enumerate_linguistic_tags_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: String_enumerate_linguistic_tags_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: String_enumerate_linguistic_tags_in_range_block = String_enumerate_linguistic_tags_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: String_enumerate_linguistic_tags_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_id_u64_id_id(this._obj, rt::sel(#str_ptr("enumerateLinguisticTagsInRange:scheme:options:orthography:usingBlock:\0")), range, bridge::nsstring(scheme), options, orthography.raw(), bp);
         return;
@@ -8652,67 +8647,58 @@ impl Array {
     }
 
     fn enumerate_objects_using_block(this, cb: fn(*u8, *u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_enumerate_objects_using_block_block = Array_enumerate_objects_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_enumerate_objects_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_enumerate_objects_using_block_block = Array_enumerate_objects_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_enumerate_objects_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("enumerateObjectsUsingBlock:\0")), bp);
         return;
     }
 
     fn enumerate_objects_with_options(this, opts: u64, cb: fn(*u8, *u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_enumerate_objects_with_options_block = Array_enumerate_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_enumerate_objects_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_enumerate_objects_with_options_block = Array_enumerate_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_enumerate_objects_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("enumerateObjectsWithOptions:usingBlock:\0")), opts, bp);
         return;
     }
 
     fn enumerate_objects_at_indexes(this, s: IndexSet, options: u64, cb: fn(*u8, *u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_enumerate_objects_at_indexes_block = Array_enumerate_objects_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_enumerate_objects_at_indexes_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_enumerate_objects_at_indexes_block = Array_enumerate_objects_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_enumerate_objects_at_indexes_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("enumerateObjectsAtIndexes:options:usingBlock:\0")), s.raw(), options, bp);
         return;
     }
 
     fn index_of_object_passing_test(this, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_index_of_object_passing_test_block = Array_index_of_object_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_index_of_object_passing_test_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_index_of_object_passing_test_block = Array_index_of_object_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_index_of_object_passing_test_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("indexOfObjectPassingTest:\0")), bp);
     }
 
     fn index_of_object_with_options(this, opts: u64, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_index_of_object_with_options_block = Array_index_of_object_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_index_of_object_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_index_of_object_with_options_block = Array_index_of_object_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_index_of_object_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_u64_u64_id(this._obj, rt::sel(#str_ptr("indexOfObjectWithOptions:passingTest:\0")), opts, bp);
     }
 
     fn index_of_object_at_indexes(this, s: IndexSet, options: u64, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_index_of_object_at_indexes_block = Array_index_of_object_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_index_of_object_at_indexes_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_index_of_object_at_indexes_block = Array_index_of_object_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_index_of_object_at_indexes_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_u64_id_u64_id(this._obj, rt::sel(#str_ptr("indexOfObjectAtIndexes:options:passingTest:\0")), s.raw(), options, bp);
     }
 
     fn indexes_of_objects_passing_test(this, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> IndexSet {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_indexes_of_objects_passing_test_block = Array_indexes_of_objects_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_indexes_of_objects_passing_test_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_indexes_of_objects_passing_test_block = Array_indexes_of_objects_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_indexes_of_objects_passing_test_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return IndexSet::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexesOfObjectsPassingTest:\0")), bp));
     }
 
     fn indexes_of_objects_with_options(this, opts: u64, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> IndexSet {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_indexes_of_objects_with_options_block = Array_indexes_of_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_indexes_of_objects_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_indexes_of_objects_with_options_block = Array_indexes_of_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_indexes_of_objects_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return IndexSet::from_raw(rt::msg_id_u64_id(this._obj, rt::sel(#str_ptr("indexesOfObjectsWithOptions:passingTest:\0")), opts, bp));
     }
 
     fn indexes_of_objects_at_indexes(this, s: IndexSet, options: u64, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> IndexSet {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_indexes_of_objects_at_indexes_block = Array_indexes_of_objects_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_indexes_of_objects_at_indexes_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_indexes_of_objects_at_indexes_block = Array_indexes_of_objects_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_indexes_of_objects_at_indexes_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return IndexSet::from_raw(rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("indexesOfObjectsAtIndexes:options:passingTest:\0")), s.raw(), options, bp));
     }
@@ -8720,8 +8706,7 @@ impl Array {
     // SKIPPED `sortedArrayUsingComparator:`: block method with a collection return not modelled
     // SKIPPED `sortedArrayWithOptions:usingComparator:`: block method with a collection return not modelled
     fn index_of_object_in_sorted_range(this, obj: *u8, r: rt::Range, options: u64, cb: fn(*u8, *u8, *u8) -> i64, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_index_of_object_in_sorted_range_block = Array_index_of_object_in_sorted_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_index_of_object_in_sorted_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_index_of_object_in_sorted_range_block = Array_index_of_object_in_sorted_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_index_of_object_in_sorted_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_u64_id_range_u64_id(this._obj, rt::sel(#str_ptr("indexOfObject:inSortedRange:options:usingComparator:\0")), obj, r, options, bp);
     }
@@ -8836,8 +8821,7 @@ impl Array {
     }
 
     fn difference_from_array_with_options_using_equivalence_test(this, other: vec::Vec[AnyObject], options: u64, cb: fn(*u8, *u8, *u8) -> i8, ctx: *u8) -> OrderedCollectionDifference {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Array_difference_from_array_with_options_using_equivalence_test_block = Array_difference_from_array_with_options_using_equivalence_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_difference_from_array_with_options_using_equivalence_test_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Array_difference_from_array_with_options_using_equivalence_test_block = Array_difference_from_array_with_options_using_equivalence_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Array_difference_from_array_with_options_using_equivalence_test_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_other: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_other: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -9157,16 +9141,14 @@ impl Dictionary {
     }
 
     fn enumerate_keys_and_objects_using_block(this, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Dictionary_enumerate_keys_and_objects_using_block_block = Dictionary_enumerate_keys_and_objects_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Dictionary_enumerate_keys_and_objects_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Dictionary_enumerate_keys_and_objects_using_block_block = Dictionary_enumerate_keys_and_objects_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Dictionary_enumerate_keys_and_objects_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("enumerateKeysAndObjectsUsingBlock:\0")), bp);
         return;
     }
 
     fn enumerate_keys_and_objects_with_options(this, opts: u64, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Dictionary_enumerate_keys_and_objects_with_options_block = Dictionary_enumerate_keys_and_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Dictionary_enumerate_keys_and_objects_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Dictionary_enumerate_keys_and_objects_with_options_block = Dictionary_enumerate_keys_and_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Dictionary_enumerate_keys_and_objects_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("enumerateKeysAndObjectsWithOptions:usingBlock:\0")), opts, bp);
         return;
@@ -9937,90 +9919,78 @@ impl IndexSet {
     }
 
     fn enumerate_indexes_using_block(this, cb: fn(*u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_enumerate_indexes_using_block_block = IndexSet_enumerate_indexes_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_indexes_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_enumerate_indexes_using_block_block = IndexSet_enumerate_indexes_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_indexes_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("enumerateIndexesUsingBlock:\0")), bp);
         return;
     }
 
     fn enumerate_indexes_with_options(this, opts: u64, cb: fn(*u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_enumerate_indexes_with_options_block = IndexSet_enumerate_indexes_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_indexes_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_enumerate_indexes_with_options_block = IndexSet_enumerate_indexes_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_indexes_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("enumerateIndexesWithOptions:usingBlock:\0")), opts, bp);
         return;
     }
 
     fn enumerate_indexes_in_range(this, range: rt::Range, options: u64, cb: fn(*u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_enumerate_indexes_in_range_block = IndexSet_enumerate_indexes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_indexes_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_enumerate_indexes_in_range_block = IndexSet_enumerate_indexes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_indexes_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateIndexesInRange:options:usingBlock:\0")), range, options, bp);
         return;
     }
 
     fn index_passing_test(this, cb: fn(*u8, u64, *u8) -> i8, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_index_passing_test_block = IndexSet_index_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_index_passing_test_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_index_passing_test_block = IndexSet_index_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_index_passing_test_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("indexPassingTest:\0")), bp);
     }
 
     fn index_with_options(this, opts: u64, cb: fn(*u8, u64, *u8) -> i8, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_index_with_options_block = IndexSet_index_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_index_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_index_with_options_block = IndexSet_index_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_index_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_u64_u64_id(this._obj, rt::sel(#str_ptr("indexWithOptions:passingTest:\0")), opts, bp);
     }
 
     fn index_in_range(this, range: rt::Range, options: u64, cb: fn(*u8, u64, *u8) -> i8, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_index_in_range_block = IndexSet_index_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_index_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_index_in_range_block = IndexSet_index_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_index_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_u64_range_u64_id(this._obj, rt::sel(#str_ptr("indexInRange:options:passingTest:\0")), range, options, bp);
     }
 
     fn indexes_passing_test(this, cb: fn(*u8, u64, *u8) -> i8, ctx: *u8) -> IndexSet {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_indexes_passing_test_block = IndexSet_indexes_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_indexes_passing_test_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_indexes_passing_test_block = IndexSet_indexes_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_indexes_passing_test_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return IndexSet::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexesPassingTest:\0")), bp));
     }
 
     fn indexes_with_options(this, opts: u64, cb: fn(*u8, u64, *u8) -> i8, ctx: *u8) -> IndexSet {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_indexes_with_options_block = IndexSet_indexes_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_indexes_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_indexes_with_options_block = IndexSet_indexes_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_indexes_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return IndexSet::from_raw(rt::msg_id_u64_id(this._obj, rt::sel(#str_ptr("indexesWithOptions:passingTest:\0")), opts, bp));
     }
 
     fn indexes_in_range(this, range: rt::Range, options: u64, cb: fn(*u8, u64, *u8) -> i8, ctx: *u8) -> IndexSet {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_indexes_in_range_block = IndexSet_indexes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_indexes_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_indexes_in_range_block = IndexSet_indexes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_indexes_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return IndexSet::from_raw(objc_msg_id_range_u64_id(this._obj, rt::sel(#str_ptr("indexesInRange:options:passingTest:\0")), range, options, bp));
     }
 
     fn enumerate_ranges_using_block(this, cb: fn(*u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_enumerate_ranges_using_block_block = IndexSet_enumerate_ranges_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_ranges_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_enumerate_ranges_using_block_block = IndexSet_enumerate_ranges_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_ranges_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("enumerateRangesUsingBlock:\0")), bp);
         return;
     }
 
     fn enumerate_ranges_with_options(this, opts: u64, cb: fn(*u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_enumerate_ranges_with_options_block = IndexSet_enumerate_ranges_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_ranges_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_enumerate_ranges_with_options_block = IndexSet_enumerate_ranges_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_ranges_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("enumerateRangesWithOptions:usingBlock:\0")), opts, bp);
         return;
     }
 
     fn enumerate_ranges_in_range(this, range: rt::Range, options: u64, cb: fn(*u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IndexSet_enumerate_ranges_in_range_block = IndexSet_enumerate_ranges_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_ranges_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IndexSet_enumerate_ranges_in_range_block = IndexSet_enumerate_ranges_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IndexSet_enumerate_ranges_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateRangesInRange:options:usingBlock:\0")), range, options, bp);
         return;
@@ -10197,8 +10167,7 @@ impl OrderedCollectionDifference {
     }
 
     fn difference_by_transforming_changes_with_block(this, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> OrderedCollectionDifference {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedCollectionDifference_difference_by_transforming_changes_with_block_block = OrderedCollectionDifference_difference_by_transforming_changes_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedCollectionDifference_difference_by_transforming_changes_with_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedCollectionDifference_difference_by_transforming_changes_with_block_block = OrderedCollectionDifference_difference_by_transforming_changes_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedCollectionDifference_difference_by_transforming_changes_with_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return OrderedCollectionDifference::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("differenceByTransformingChangesWithBlock:\0")), bp));
     }
@@ -10300,8 +10269,7 @@ impl Data {
     }
 
     fn enumerate_byte_ranges_using_block(this, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Data_enumerate_byte_ranges_using_block_block = Data_enumerate_byte_ranges_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Data_enumerate_byte_ranges_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Data_enumerate_byte_ranges_using_block_block = Data_enumerate_byte_ranges_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Data_enumerate_byte_ranges_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("enumerateByteRangesUsingBlock:\0")), bp);
         return;
@@ -10379,8 +10347,7 @@ impl Data {
     }
 
     fn init_with_bytes_no_copy_length_deallocator(this, bytes: *u8, length: u64, cb: fn(*u8, *u8, u64), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Data_init_with_bytes_no_copy_length_deallocator_block = Data_init_with_bytes_no_copy_length_deallocator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Data_init_with_bytes_no_copy_length_deallocator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Data_init_with_bytes_no_copy_length_deallocator_block = Data_init_with_bytes_no_copy_length_deallocator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Data_init_with_bytes_no_copy_length_deallocator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("initWithBytesNoCopy:length:deallocator:\0")), bytes, length, bp);
     }
@@ -11215,16 +11182,14 @@ impl MutableArray {
     }
 
     fn sort_using_comparator(this, cb: fn(*u8, *u8, *u8) -> i64, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableArray_sort_using_comparator_block = MutableArray_sort_using_comparator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableArray_sort_using_comparator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableArray_sort_using_comparator_block = MutableArray_sort_using_comparator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableArray_sort_using_comparator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("sortUsingComparator:\0")), bp);
         return;
     }
 
     fn sort_with_options(this, opts: u64, cb: fn(*u8, *u8, *u8) -> i64, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableArray_sort_with_options_block = MutableArray_sort_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableArray_sort_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableArray_sort_with_options_block = MutableArray_sort_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableArray_sort_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("sortWithOptions:usingComparator:\0")), opts, bp);
         return;
@@ -11329,16 +11294,14 @@ impl ItemProvider {
     }
 
     fn register_data_representation_for_type_identifier(this, type_identifier: str, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, *u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_register_data_representation_for_type_identifier_block = ItemProvider_register_data_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_data_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_register_data_representation_for_type_identifier_block = ItemProvider_register_data_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_data_representation_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("registerDataRepresentationForTypeIdentifier:visibility:loadHandler:\0")), bridge::nsstring(type_identifier), item_provider_representation_visibility_raw(visibility), bp);
         return;
     }
 
     fn register_file_representation_for_type_identifier(this, type_identifier: str, file_options: u64, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, *u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_register_file_representation_for_type_identifier_block = ItemProvider_register_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_file_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_register_file_representation_for_type_identifier_block = ItemProvider_register_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_file_representation_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_u64_i64_id(this._obj, rt::sel(#str_ptr("registerFileRepresentationForTypeIdentifier:fileOptions:visibility:loadHandler:\0")), bridge::nsstring(type_identifier), file_options, item_provider_representation_visibility_raw(visibility), bp);
         return;
@@ -11367,22 +11330,19 @@ impl ItemProvider {
     }
 
     fn load_data_representation_for_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, *u8), ctx: *u8) -> Progress {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_data_representation_for_type_identifier_block = ItemProvider_load_data_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_data_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_data_representation_for_type_identifier_block = ItemProvider_load_data_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_data_representation_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Progress::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadDataRepresentationForTypeIdentifier:completionHandler:\0")), bridge::nsstring(type_identifier), bp));
     }
 
     fn load_file_representation_for_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, *u8), ctx: *u8) -> Progress {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_file_representation_for_type_identifier_block = ItemProvider_load_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_file_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_file_representation_for_type_identifier_block = ItemProvider_load_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_file_representation_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Progress::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadFileRepresentationForTypeIdentifier:completionHandler:\0")), bridge::nsstring(type_identifier), bp));
     }
 
     fn load_in_place_file_representation_for_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, i8, *u8), ctx: *u8) -> Progress {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_in_place_file_representation_for_type_identifier_block = ItemProvider_load_in_place_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_in_place_file_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_in_place_file_representation_for_type_identifier_block = ItemProvider_load_in_place_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_in_place_file_representation_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Progress::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadInPlaceFileRepresentationForTypeIdentifier:completionHandler:\0")), bridge::nsstring(type_identifier), bp));
     }
@@ -11398,8 +11358,7 @@ impl ItemProvider {
     }
 
     fn register_object_of_class(this, a_class: *u8, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, *u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_register_object_of_class_block = ItemProvider_register_object_of_class_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_object_of_class_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_register_object_of_class_block = ItemProvider_register_object_of_class_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_object_of_class_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("registerObjectOfClass:visibility:loadHandler:\0")), a_class, item_provider_representation_visibility_raw(visibility), bp);
         return;
@@ -11410,8 +11369,7 @@ impl ItemProvider {
     }
 
     fn load_object_of_class(this, a_class: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) -> Progress {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_object_of_class_block = ItemProvider_load_object_of_class_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_object_of_class_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_object_of_class_block = ItemProvider_load_object_of_class_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_object_of_class_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Progress::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadObjectOfClass:completionHandler:\0")), a_class, bp));
     }
@@ -11429,16 +11387,14 @@ impl ItemProvider {
     }
 
     fn register_item_for_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_register_item_for_type_identifier_block = ItemProvider_register_item_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_item_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_register_item_for_type_identifier_block = ItemProvider_register_item_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_item_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerItemForTypeIdentifier:loadHandler:\0")), bridge::nsstring(type_identifier), bp);
         return;
     }
 
     fn load_item_for_type_identifier(this, type_identifier: str, options: Dictionary, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_item_for_type_identifier_block = ItemProvider_load_item_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_item_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_item_for_type_identifier_block = ItemProvider_load_item_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_item_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("loadItemForTypeIdentifier:options:completionHandler:\0")), bridge::nsstring(type_identifier), options.raw(), bp);
         return;
@@ -11468,8 +11424,7 @@ impl ItemProvider {
     }
 
     fn load_preview_image_with_options(this, options: Dictionary, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_preview_image_with_options_block = ItemProvider_load_preview_image_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_preview_image_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_preview_image_with_options_block = ItemProvider_load_preview_image_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_preview_image_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadPreviewImageWithOptions:completionHandler:\0")), options.raw(), bp);
         return;
@@ -11477,8 +11432,7 @@ impl ItemProvider {
 
     // SKIPPED `previewImageHandler`: return `NSItemProviderLoadHandler _Nullable` — unmapped type `NSItemProviderLoadHandler`
     fn set_preview_image_handler(this, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_set_preview_image_handler_block = ItemProvider_set_preview_image_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_set_preview_image_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_set_preview_image_handler_block = ItemProvider_set_preview_image_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_set_preview_image_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPreviewImageHandler:\0")), bp);
         return;
@@ -11552,8 +11506,7 @@ impl Progress {
     }
 
     fn perform_as_current_with_pending_unit_count(this, unit_count: i64, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Progress_perform_as_current_with_pending_unit_count_block = Progress_perform_as_current_with_pending_unit_count_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Progress_perform_as_current_with_pending_unit_count_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Progress_perform_as_current_with_pending_unit_count_block = Progress_perform_as_current_with_pending_unit_count_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Progress_perform_as_current_with_pending_unit_count_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i64_id(this._obj, rt::sel(#str_ptr("performAsCurrentWithPendingUnitCount:usingBlock:\0")), unit_count, bp);
         return;
@@ -11592,8 +11545,7 @@ impl Progress {
     }
 
     fn add_subscriber_for_file_url(url: URL, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Progress_add_subscriber_for_file_url_block = Progress_add_subscriber_for_file_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Progress_add_subscriber_for_file_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Progress_add_subscriber_for_file_url_block = Progress_add_subscriber_for_file_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Progress_add_subscriber_for_file_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(rt::get_class(#str_ptr("NSProgress\0")), rt::sel(#str_ptr("addSubscriberForFileURL:withPublishingHandler:\0")), url.raw(), bp);
     }
@@ -11662,8 +11614,7 @@ impl Progress {
 
     // SKIPPED `cancellationHandler`: return `void (^ _Nullable)(void)` — block
     fn set_cancellation_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Progress_set_cancellation_handler_block = Progress_set_cancellation_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Progress_set_cancellation_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Progress_set_cancellation_handler_block = Progress_set_cancellation_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Progress_set_cancellation_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCancellationHandler:\0")), bp);
         return;
@@ -11671,8 +11622,7 @@ impl Progress {
 
     // SKIPPED `pausingHandler`: return `void (^ _Nullable)(void)` — block
     fn set_pausing_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Progress_set_pausing_handler_block = Progress_set_pausing_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Progress_set_pausing_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Progress_set_pausing_handler_block = Progress_set_pausing_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Progress_set_pausing_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPausingHandler:\0")), bp);
         return;
@@ -11680,8 +11630,7 @@ impl Progress {
 
     // SKIPPED `resumingHandler`: return `void (^ _Nullable)(void)` — block
     fn set_resuming_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Progress_set_resuming_handler_block = Progress_set_resuming_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Progress_set_resuming_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Progress_set_resuming_handler_block = Progress_set_resuming_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Progress_set_resuming_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setResumingHandler:\0")), bp);
         return;
@@ -12001,8 +11950,7 @@ impl Error {
     }
 
     fn set_user_info_value_provider_for_domain(error_domain: str, cb: fn(*u8, *u8, *u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Error_set_user_info_value_provider_for_domain_block = Error_set_user_info_value_provider_for_domain_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Error_set_user_info_value_provider_for_domain_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Error_set_user_info_value_provider_for_domain_block = Error_set_user_info_value_provider_for_domain_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Error_set_user_info_value_provider_for_domain_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("NSError\0")), rt::sel(#str_ptr("setUserInfoValueProviderForDomain:provider:\0")), bridge::nsstring(error_domain), bp);
         return;
@@ -12631,16 +12579,14 @@ impl Set {
     // SKIPPED `setByAddingObjectsFromSet:`: param `NSSet<ObjectType> * _Nonnull` — generic collection
     // SKIPPED `setByAddingObjectsFromArray:`: return `NSSet<ObjectType> * _Nonnull` — generic collection
     fn enumerate_objects_using_block(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Set_enumerate_objects_using_block_block = Set_enumerate_objects_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Set_enumerate_objects_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Set_enumerate_objects_using_block_block = Set_enumerate_objects_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Set_enumerate_objects_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("enumerateObjectsUsingBlock:\0")), bp);
         return;
     }
 
     fn enumerate_objects_with_options(this, opts: u64, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Set_enumerate_objects_with_options_block = Set_enumerate_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Set_enumerate_objects_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Set_enumerate_objects_with_options_block = Set_enumerate_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Set_enumerate_objects_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("enumerateObjectsWithOptions:usingBlock:\0")), opts, bp);
         return;
@@ -13095,15 +13041,13 @@ impl XPCConnection {
     }
 
     fn remote_object_proxy_with_error_handler(this, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: XPCConnection_remote_object_proxy_with_error_handler_block = XPCConnection_remote_object_proxy_with_error_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCConnection_remote_object_proxy_with_error_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: XPCConnection_remote_object_proxy_with_error_handler_block = XPCConnection_remote_object_proxy_with_error_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCConnection_remote_object_proxy_with_error_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("remoteObjectProxyWithErrorHandler:\0")), bp);
     }
 
     fn synchronous_remote_object_proxy_with_error_handler(this, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: XPCConnection_synchronous_remote_object_proxy_with_error_handler_block = XPCConnection_synchronous_remote_object_proxy_with_error_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCConnection_synchronous_remote_object_proxy_with_error_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: XPCConnection_synchronous_remote_object_proxy_with_error_handler_block = XPCConnection_synchronous_remote_object_proxy_with_error_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCConnection_synchronous_remote_object_proxy_with_error_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("synchronousRemoteObjectProxyWithErrorHandler:\0")), bp);
     }
@@ -13133,8 +13077,7 @@ impl XPCConnection {
     }
 
     fn schedule_send_barrier_block(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: XPCConnection_schedule_send_barrier_block_block = XPCConnection_schedule_send_barrier_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCConnection_schedule_send_barrier_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: XPCConnection_schedule_send_barrier_block_block = XPCConnection_schedule_send_barrier_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCConnection_schedule_send_barrier_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("scheduleSendBarrierBlock:\0")), bp);
         return;
@@ -13192,8 +13135,7 @@ impl XPCConnection {
 
     // SKIPPED `interruptionHandler`: return `void (^ _Nullable)(void)` — block
     fn set_interruption_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: XPCConnection_set_interruption_handler_block = XPCConnection_set_interruption_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCConnection_set_interruption_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: XPCConnection_set_interruption_handler_block = XPCConnection_set_interruption_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCConnection_set_interruption_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInterruptionHandler:\0")), bp);
         return;
@@ -13201,8 +13143,7 @@ impl XPCConnection {
 
     // SKIPPED `invalidationHandler`: return `void (^ _Nullable)(void)` — block
     fn set_invalidation_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: XPCConnection_set_invalidation_handler_block = XPCConnection_set_invalidation_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCConnection_set_invalidation_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: XPCConnection_set_invalidation_handler_block = XPCConnection_set_invalidation_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCConnection_set_invalidation_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInvalidationHandler:\0")), bp);
         return;
@@ -13300,16 +13241,14 @@ impl OperationQueue {
     }
 
     fn add_operation_with_block(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OperationQueue_add_operation_with_block_block = OperationQueue_add_operation_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OperationQueue_add_operation_with_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OperationQueue_add_operation_with_block_block = OperationQueue_add_operation_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OperationQueue_add_operation_with_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addOperationWithBlock:\0")), bp);
         return;
     }
 
     fn add_barrier_block(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OperationQueue_add_barrier_block_block = OperationQueue_add_barrier_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OperationQueue_add_barrier_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OperationQueue_add_barrier_block_block = OperationQueue_add_barrier_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OperationQueue_add_barrier_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addBarrierBlock:\0")), bp);
         return;
@@ -13506,8 +13445,7 @@ impl NotificationCenter {
     }
 
     fn add_observer_for_name(this, name: str, object: *u8, queue: OperationQueue, cb: fn(*u8, *u8), ctx: *u8) -> Object {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: NotificationCenter_add_observer_for_name_block = NotificationCenter_add_observer_for_name_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NotificationCenter_add_observer_for_name_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: NotificationCenter_add_observer_for_name_block = NotificationCenter_add_observer_for_name_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NotificationCenter_add_observer_for_name_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Object::from_raw(rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("addObserverForName:object:queue:usingBlock:\0")), bridge::nsstring(name), object, queue.raw(), bp));
     }
@@ -14067,16 +14005,14 @@ impl BundleResourceRequest {
     }
 
     fn begin_accessing_resources_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: BundleResourceRequest_begin_accessing_resources_with_completion_handler_block = BundleResourceRequest_begin_accessing_resources_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BundleResourceRequest_begin_accessing_resources_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: BundleResourceRequest_begin_accessing_resources_with_completion_handler_block = BundleResourceRequest_begin_accessing_resources_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BundleResourceRequest_begin_accessing_resources_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("beginAccessingResourcesWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn conditionally_begin_accessing_resources_with_completion_handler(this, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: BundleResourceRequest_conditionally_begin_accessing_resources_with_completion_handler_block = BundleResourceRequest_conditionally_begin_accessing_resources_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BundleResourceRequest_conditionally_begin_accessing_resources_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: BundleResourceRequest_conditionally_begin_accessing_resources_with_completion_handler_block = BundleResourceRequest_conditionally_begin_accessing_resources_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BundleResourceRequest_conditionally_begin_accessing_resources_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("conditionallyBeginAccessingResourcesWithCompletionHandler:\0")), bp);
         return;
@@ -14871,8 +14807,7 @@ impl Calendar {
     }
 
     fn enumerate_dates_starting_after_date(this, start: Date, matching_components: DateComponents, options: u64, cb: fn(*u8, *u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Calendar_enumerate_dates_starting_after_date_block = Calendar_enumerate_dates_starting_after_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Calendar_enumerate_dates_starting_after_date_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Calendar_enumerate_dates_starting_after_date_block = Calendar_enumerate_dates_starting_after_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Calendar_enumerate_dates_starting_after_date_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_id_u64_id(this._obj, rt::sel(#str_ptr("enumerateDatesStartingAfterDate:matchingComponents:options:usingBlock:\0")), start.raw(), matching_components.raw(), options, bp);
         return;
@@ -15680,16 +15615,14 @@ impl AttributedString {
     }
 
     fn enumerate_attributes_in_range(this, enumeration_range: rt::Range, options: u64, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AttributedString_enumerate_attributes_in_range_block = AttributedString_enumerate_attributes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AttributedString_enumerate_attributes_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AttributedString_enumerate_attributes_in_range_block = AttributedString_enumerate_attributes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AttributedString_enumerate_attributes_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateAttributesInRange:options:usingBlock:\0")), enumeration_range, options, bp);
         return;
     }
 
     fn enumerate_attribute(this, attr_name: str, in_range: rt::Range, options: u64, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AttributedString_enumerate_attribute_block = AttributedString_enumerate_attribute_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AttributedString_enumerate_attribute_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AttributedString_enumerate_attribute_block = AttributedString_enumerate_attribute_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AttributedString_enumerate_attribute_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateAttribute:inRange:options:usingBlock:\0")), bridge::nsstring(attr_name), in_range, options, bp);
         return;
@@ -20451,22 +20384,19 @@ impl Timer {
     }
 
     fn timer_with_time_interval_repeats(interval: f64, repeats: bool, cb: fn(*u8, *u8), ctx: *u8) -> Timer {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Timer_timer_with_time_interval_repeats_block = Timer_timer_with_time_interval_repeats_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Timer_timer_with_time_interval_repeats_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Timer_timer_with_time_interval_repeats_block = Timer_timer_with_time_interval_repeats_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Timer_timer_with_time_interval_repeats_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Timer::from_raw(objc_msg_id_f64_i8_id(rt::get_class(#str_ptr("NSTimer\0")), rt::sel(#str_ptr("timerWithTimeInterval:repeats:block:\0")), interval, repeats as i8, bp));
     }
 
     fn scheduled_timer_with_time_interval_repeats(interval: f64, repeats: bool, cb: fn(*u8, *u8), ctx: *u8) -> Timer {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Timer_scheduled_timer_with_time_interval_repeats_block = Timer_scheduled_timer_with_time_interval_repeats_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Timer_scheduled_timer_with_time_interval_repeats_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Timer_scheduled_timer_with_time_interval_repeats_block = Timer_scheduled_timer_with_time_interval_repeats_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Timer_scheduled_timer_with_time_interval_repeats_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Timer::from_raw(objc_msg_id_f64_i8_id(rt::get_class(#str_ptr("NSTimer\0")), rt::sel(#str_ptr("scheduledTimerWithTimeInterval:repeats:block:\0")), interval, repeats as i8, bp));
     }
 
     fn init_with_fire_date_interval_repeats_block(this, date: Date, interval: f64, repeats: bool, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Timer_init_with_fire_date_interval_repeats_block_block = Timer_init_with_fire_date_interval_repeats_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Timer_init_with_fire_date_interval_repeats_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Timer_init_with_fire_date_interval_repeats_block_block = Timer_init_with_fire_date_interval_repeats_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Timer_init_with_fire_date_interval_repeats_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_id_id_f64_i8_id(this._obj, rt::sel(#str_ptr("initWithFireDate:interval:repeats:block:\0")), date.raw(), interval, repeats as i8, bp);
     }
@@ -20660,16 +20590,14 @@ impl RunLoop {
     }
 
     fn perform_in_modes(this, modes: vec::Vec[text::Text], cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: RunLoop_perform_in_modes_block = RunLoop_perform_in_modes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RunLoop_perform_in_modes_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: RunLoop_perform_in_modes_block = RunLoop_perform_in_modes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RunLoop_perform_in_modes_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("performInModes:block:\0")), bridge::nsarray_of_text(modes), bp);
         return;
     }
 
     fn perform_block(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: RunLoop_perform_block_block = RunLoop_perform_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RunLoop_perform_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: RunLoop_perform_block_block = RunLoop_perform_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RunLoop_perform_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performBlock:\0")), bp);
         return;
@@ -20866,8 +20794,7 @@ impl FileHandle {
 
     // SKIPPED `readabilityHandler`: return `void (^ _Nullable)(NSFileHandle * _Nonnull)` — block
     fn set_readability_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileHandle_set_readability_handler_block = FileHandle_set_readability_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileHandle_set_readability_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileHandle_set_readability_handler_block = FileHandle_set_readability_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileHandle_set_readability_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setReadabilityHandler:\0")), bp);
         return;
@@ -20875,8 +20802,7 @@ impl FileHandle {
 
     // SKIPPED `writeabilityHandler`: return `void (^ _Nullable)(NSFileHandle * _Nonnull)` — block
     fn set_writeability_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileHandle_set_writeability_handler_block = FileHandle_set_writeability_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileHandle_set_writeability_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileHandle_set_writeability_handler_block = FileHandle_set_writeability_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileHandle_set_writeability_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWriteabilityHandler:\0")), bp);
         return;
@@ -21546,8 +21472,7 @@ impl FileProviderService {
     fn as_object(this) -> Object { return Object::from_raw(this._obj); }
 
     fn get_file_provider_connection_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileProviderService_get_file_provider_connection_with_completion_handler_block = FileProviderService_get_file_provider_connection_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileProviderService_get_file_provider_connection_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileProviderService_get_file_provider_connection_with_completion_handler_block = FileProviderService_get_file_provider_connection_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileProviderService_get_file_provider_connection_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getFileProviderConnectionWithCompletionHandler:\0")), bp);
         return;
@@ -21614,8 +21539,7 @@ impl FileVersion {
     }
 
     fn get_nonlocal_versions_of_item_at_url(url: URL, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileVersion_get_nonlocal_versions_of_item_at_url_block = FileVersion_get_nonlocal_versions_of_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileVersion_get_nonlocal_versions_of_item_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileVersion_get_nonlocal_versions_of_item_at_url_block = FileVersion_get_nonlocal_versions_of_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileVersion_get_nonlocal_versions_of_item_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("NSFileVersion\0")), rt::sel(#str_ptr("getNonlocalVersionsOfItemAtURL:completionHandler:\0")), url.raw(), bp);
         return;
@@ -21754,8 +21678,7 @@ impl FileManager {
     }
 
     fn unmount_volume_at_url(this, url: URL, options: u64, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileManager_unmount_volume_at_url_block = FileManager_unmount_volume_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_unmount_volume_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileManager_unmount_volume_at_url_block = FileManager_unmount_volume_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_unmount_volume_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("unmountVolumeAtURL:options:completionHandler:\0")), url.raw(), options, bp);
         return;
@@ -22100,8 +22023,7 @@ impl FileManager {
     }
 
     fn enumerator_at_url(this, url: URL, including_properties_for_keys: vec::Vec[text::Text], options: u64, cb: fn(*u8, *u8, *u8) -> i8, ctx: *u8) -> option::Option[DirectoryEnumerator] {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileManager_enumerator_at_url_block = FileManager_enumerator_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_enumerator_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileManager_enumerator_at_url_block = FileManager_enumerator_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_enumerator_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = objc_msg_id_id_id_u64_id(this._obj, rt::sel(#str_ptr("enumeratorAtURL:includingPropertiesForKeys:options:errorHandler:\0")), url.raw(), bridge::nsarray_of_text(including_properties_for_keys), options, bp);
         if obj == { 0 as *u8 } {
@@ -22201,40 +22123,35 @@ impl FileManager {
     }
 
     fn pause_sync_for_ubiquitous_item_at_url(this, url: URL, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileManager_pause_sync_for_ubiquitous_item_at_url_block = FileManager_pause_sync_for_ubiquitous_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_pause_sync_for_ubiquitous_item_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileManager_pause_sync_for_ubiquitous_item_at_url_block = FileManager_pause_sync_for_ubiquitous_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_pause_sync_for_ubiquitous_item_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("pauseSyncForUbiquitousItemAtURL:completionHandler:\0")), url.raw(), bp);
         return;
     }
 
     fn resume_sync_for_ubiquitous_item_at_url(this, url: URL, with_behavior: FileManagerResumeSyncBehavior, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileManager_resume_sync_for_ubiquitous_item_at_url_block = FileManager_resume_sync_for_ubiquitous_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_resume_sync_for_ubiquitous_item_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileManager_resume_sync_for_ubiquitous_item_at_url_block = FileManager_resume_sync_for_ubiquitous_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_resume_sync_for_ubiquitous_item_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("resumeSyncForUbiquitousItemAtURL:withBehavior:completionHandler:\0")), url.raw(), file_manager_resume_sync_behavior_raw(with_behavior), bp);
         return;
     }
 
     fn fetch_latest_remote_version_of_item_at_url(this, url: URL, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileManager_fetch_latest_remote_version_of_item_at_url_block = FileManager_fetch_latest_remote_version_of_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_fetch_latest_remote_version_of_item_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileManager_fetch_latest_remote_version_of_item_at_url_block = FileManager_fetch_latest_remote_version_of_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_fetch_latest_remote_version_of_item_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("fetchLatestRemoteVersionOfItemAtURL:completionHandler:\0")), url.raw(), bp);
         return;
     }
 
     fn upload_local_version_of_ubiquitous_item_at_url(this, url: URL, with_conflict_resolution_policy: FileManagerUploadLocalVersionConflictPolicy, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileManager_upload_local_version_of_ubiquitous_item_at_url_block = FileManager_upload_local_version_of_ubiquitous_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_upload_local_version_of_ubiquitous_item_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileManager_upload_local_version_of_ubiquitous_item_at_url_block = FileManager_upload_local_version_of_ubiquitous_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_upload_local_version_of_ubiquitous_item_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("uploadLocalVersionOfUbiquitousItemAtURL:withConflictResolutionPolicy:completionHandler:\0")), url.raw(), file_manager_upload_local_version_conflict_policy_raw(with_conflict_resolution_policy), bp);
         return;
     }
 
     fn get_file_provider_services_for_item_at_url(this, url: URL, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileManager_get_file_provider_services_for_item_at_url_block = FileManager_get_file_provider_services_for_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_get_file_provider_services_for_item_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileManager_get_file_provider_services_for_item_at_url_block = FileManager_get_file_provider_services_for_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileManager_get_file_provider_services_for_item_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getFileProviderServicesForItemAtURL:completionHandler:\0")), url.raw(), bp);
         return;
@@ -22908,15 +22825,13 @@ impl SortDescriptor {
     }
 
     fn sort_descriptor_with_key_ascending_comparator(key: str, ascending: bool, cb: fn(*u8, *u8, *u8) -> i64, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SortDescriptor_sort_descriptor_with_key_ascending_comparator_block = SortDescriptor_sort_descriptor_with_key_ascending_comparator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SortDescriptor_sort_descriptor_with_key_ascending_comparator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SortDescriptor_sort_descriptor_with_key_ascending_comparator_block = SortDescriptor_sort_descriptor_with_key_ascending_comparator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SortDescriptor_sort_descriptor_with_key_ascending_comparator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_i8_id(rt::get_class(#str_ptr("NSSortDescriptor\0")), rt::sel(#str_ptr("sortDescriptorWithKey:ascending:comparator:\0")), bridge::nsstring(key), ascending as i8, bp);
     }
 
     fn init_with_key_ascending_comparator(this, key: str, ascending: bool, cb: fn(*u8, *u8, *u8) -> i64, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SortDescriptor_init_with_key_ascending_comparator_block = SortDescriptor_init_with_key_ascending_comparator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SortDescriptor_init_with_key_ascending_comparator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SortDescriptor_init_with_key_ascending_comparator_block = SortDescriptor_init_with_key_ascending_comparator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SortDescriptor_init_with_key_ascending_comparator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_i8_id(this._obj, rt::sel(#str_ptr("initWithKey:ascending:comparator:\0")), bridge::nsstring(key), ascending as i8, bp);
     }
@@ -23082,8 +22997,7 @@ impl HTTPCookieStorage {
     }
 
     fn get_cookies_for_task(this, task: URLSessionTask, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: HTTPCookieStorage_get_cookies_for_task_block = HTTPCookieStorage_get_cookies_for_task_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStorage_get_cookies_for_task_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: HTTPCookieStorage_get_cookies_for_task_block = HTTPCookieStorage_get_cookies_for_task_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStorage_get_cookies_for_task_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getCookiesForTask:completionHandler:\0")), task.raw(), bp);
         return;
@@ -23604,74 +23518,64 @@ impl OrderedSet {
     }
 
     fn enumerate_objects_using_block(this, cb: fn(*u8, *u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_enumerate_objects_using_block_block = OrderedSet_enumerate_objects_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_enumerate_objects_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_enumerate_objects_using_block_block = OrderedSet_enumerate_objects_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_enumerate_objects_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("enumerateObjectsUsingBlock:\0")), bp);
         return;
     }
 
     fn enumerate_objects_with_options(this, opts: u64, cb: fn(*u8, *u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_enumerate_objects_with_options_block = OrderedSet_enumerate_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_enumerate_objects_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_enumerate_objects_with_options_block = OrderedSet_enumerate_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_enumerate_objects_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("enumerateObjectsWithOptions:usingBlock:\0")), opts, bp);
         return;
     }
 
     fn enumerate_objects_at_indexes(this, s: IndexSet, options: u64, cb: fn(*u8, *u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_enumerate_objects_at_indexes_block = OrderedSet_enumerate_objects_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_enumerate_objects_at_indexes_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_enumerate_objects_at_indexes_block = OrderedSet_enumerate_objects_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_enumerate_objects_at_indexes_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("enumerateObjectsAtIndexes:options:usingBlock:\0")), s.raw(), options, bp);
         return;
     }
 
     fn index_of_object_passing_test(this, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_index_of_object_passing_test_block = OrderedSet_index_of_object_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_index_of_object_passing_test_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_index_of_object_passing_test_block = OrderedSet_index_of_object_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_index_of_object_passing_test_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("indexOfObjectPassingTest:\0")), bp);
     }
 
     fn index_of_object_with_options(this, opts: u64, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_index_of_object_with_options_block = OrderedSet_index_of_object_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_index_of_object_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_index_of_object_with_options_block = OrderedSet_index_of_object_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_index_of_object_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_u64_u64_id(this._obj, rt::sel(#str_ptr("indexOfObjectWithOptions:passingTest:\0")), opts, bp);
     }
 
     fn index_of_object_at_indexes(this, s: IndexSet, options: u64, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_index_of_object_at_indexes_block = OrderedSet_index_of_object_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_index_of_object_at_indexes_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_index_of_object_at_indexes_block = OrderedSet_index_of_object_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_index_of_object_at_indexes_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_u64_id_u64_id(this._obj, rt::sel(#str_ptr("indexOfObjectAtIndexes:options:passingTest:\0")), s.raw(), options, bp);
     }
 
     fn indexes_of_objects_passing_test(this, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> IndexSet {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_indexes_of_objects_passing_test_block = OrderedSet_indexes_of_objects_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_indexes_of_objects_passing_test_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_indexes_of_objects_passing_test_block = OrderedSet_indexes_of_objects_passing_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_indexes_of_objects_passing_test_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return IndexSet::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexesOfObjectsPassingTest:\0")), bp));
     }
 
     fn indexes_of_objects_with_options(this, opts: u64, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> IndexSet {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_indexes_of_objects_with_options_block = OrderedSet_indexes_of_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_indexes_of_objects_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_indexes_of_objects_with_options_block = OrderedSet_indexes_of_objects_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_indexes_of_objects_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return IndexSet::from_raw(rt::msg_id_u64_id(this._obj, rt::sel(#str_ptr("indexesOfObjectsWithOptions:passingTest:\0")), opts, bp));
     }
 
     fn indexes_of_objects_at_indexes(this, s: IndexSet, options: u64, cb: fn(*u8, *u8, u64, *u8) -> i8, ctx: *u8) -> IndexSet {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_indexes_of_objects_at_indexes_block = OrderedSet_indexes_of_objects_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_indexes_of_objects_at_indexes_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_indexes_of_objects_at_indexes_block = OrderedSet_indexes_of_objects_at_indexes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_indexes_of_objects_at_indexes_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return IndexSet::from_raw(rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("indexesOfObjectsAtIndexes:options:passingTest:\0")), s.raw(), options, bp));
     }
 
     fn index_of_object_in_sorted_range(this, object: *u8, range: rt::Range, options: u64, cb: fn(*u8, *u8, *u8) -> i64, ctx: *u8) -> u64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_index_of_object_in_sorted_range_block = OrderedSet_index_of_object_in_sorted_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_index_of_object_in_sorted_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_index_of_object_in_sorted_range_block = OrderedSet_index_of_object_in_sorted_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_index_of_object_in_sorted_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_u64_id_range_u64_id(this._obj, rt::sel(#str_ptr("indexOfObject:inSortedRange:options:usingComparator:\0")), object, range, options, bp);
     }
@@ -23861,8 +23765,7 @@ impl OrderedSet {
     // SKIPPED `initWithSet:`: param `NSSet<ObjectType> * _Nonnull` — generic collection
     // SKIPPED `initWithSet:copyItems:`: param `NSSet<ObjectType> * _Nonnull` — generic collection
     fn difference_from_ordered_set_with_options_using_equivalence_test(this, other: OrderedSet, options: u64, cb: fn(*u8, *u8, *u8) -> i8, ctx: *u8) -> OrderedCollectionDifference {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: OrderedSet_difference_from_ordered_set_with_options_using_equivalence_test_block = OrderedSet_difference_from_ordered_set_with_options_using_equivalence_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_difference_from_ordered_set_with_options_using_equivalence_test_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: OrderedSet_difference_from_ordered_set_with_options_using_equivalence_test_block = OrderedSet_difference_from_ordered_set_with_options_using_equivalence_test_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: OrderedSet_difference_from_ordered_set_with_options_using_equivalence_test_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return OrderedCollectionDifference::from_raw(rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("differenceFromOrderedSet:withOptions:usingEquivalenceTest:\0")), other.raw(), options, bp));
     }
@@ -24102,24 +24005,21 @@ impl MutableOrderedSet {
     // SKIPPED `minusSet:`: param `NSSet<ObjectType> * _Nonnull` — generic collection
     // SKIPPED `unionSet:`: param `NSSet<ObjectType> * _Nonnull` — generic collection
     fn sort_using_comparator(this, cb: fn(*u8, *u8, *u8) -> i64, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableOrderedSet_sort_using_comparator_block = MutableOrderedSet_sort_using_comparator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableOrderedSet_sort_using_comparator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableOrderedSet_sort_using_comparator_block = MutableOrderedSet_sort_using_comparator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableOrderedSet_sort_using_comparator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("sortUsingComparator:\0")), bp);
         return;
     }
 
     fn sort_with_options(this, opts: u64, cb: fn(*u8, *u8, *u8) -> i64, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableOrderedSet_sort_with_options_block = MutableOrderedSet_sort_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableOrderedSet_sort_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableOrderedSet_sort_with_options_block = MutableOrderedSet_sort_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableOrderedSet_sort_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("sortWithOptions:usingComparator:\0")), opts, bp);
         return;
     }
 
     fn sort_range(this, range: rt::Range, options: u64, cb: fn(*u8, *u8, *u8) -> i64, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableOrderedSet_sort_range_block = MutableOrderedSet_sort_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableOrderedSet_sort_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableOrderedSet_sort_range_block = MutableOrderedSet_sort_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableOrderedSet_sort_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_u64_id(this._obj, rt::sel(#str_ptr("sortRange:options:usingComparator:\0")), range, options, bp);
         return;
@@ -25144,8 +25044,7 @@ impl Operation {
 
     // SKIPPED `completionBlock`: return `void (^ _Nullable)(void)` — block
     fn set_completion_block(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Operation_set_completion_block_block = Operation_set_completion_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Operation_set_completion_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Operation_set_completion_block_block = Operation_set_completion_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Operation_set_completion_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCompletionBlock:\0")), bp);
         return;
@@ -25201,15 +25100,13 @@ impl BlockOperation {
     fn as_object(this) -> Object { return Object::from_raw(this._obj); }
 
     fn block_operation_with_block(cb: fn(*u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: BlockOperation_block_operation_with_block_block = BlockOperation_block_operation_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BlockOperation_block_operation_with_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: BlockOperation_block_operation_with_block_block = BlockOperation_block_operation_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BlockOperation_block_operation_with_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(rt::get_class(#str_ptr("NSBlockOperation\0")), rt::sel(#str_ptr("blockOperationWithBlock:\0")), bp);
     }
 
     fn add_execution_block(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: BlockOperation_add_execution_block_block = BlockOperation_add_execution_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BlockOperation_add_execution_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: BlockOperation_add_execution_block_block = BlockOperation_add_execution_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BlockOperation_add_execution_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addExecutionBlock:\0")), bp);
         return;
@@ -26053,16 +25950,14 @@ impl ProcessInfo {
     }
 
     fn perform_activity_with_options(this, options: u64, reason: str, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ProcessInfo_perform_activity_with_options_block = ProcessInfo_perform_activity_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ProcessInfo_perform_activity_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ProcessInfo_perform_activity_with_options_block = ProcessInfo_perform_activity_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ProcessInfo_perform_activity_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_u64_id_id(this._obj, rt::sel(#str_ptr("performActivityWithOptions:reason:usingBlock:\0")), options, bridge::nsstring(reason), bp);
         return;
     }
 
     fn perform_expiring_activity_with_reason(this, reason: str, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ProcessInfo_perform_expiring_activity_with_reason_block = ProcessInfo_perform_expiring_activity_with_reason_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ProcessInfo_perform_expiring_activity_with_reason_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ProcessInfo_perform_expiring_activity_with_reason_block = ProcessInfo_perform_expiring_activity_with_reason_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ProcessInfo_perform_expiring_activity_with_reason_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("performExpiringActivityWithReason:usingBlock:\0")), bridge::nsstring(reason), bp);
         return;
@@ -26218,8 +26113,7 @@ impl RegularExpression {
     }
 
     fn enumerate_matches_in_string(this, string: str, options: u64, range: rt::Range, cb: fn(*u8, *u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: RegularExpression_enumerate_matches_in_string_block = RegularExpression_enumerate_matches_in_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RegularExpression_enumerate_matches_in_string_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: RegularExpression_enumerate_matches_in_string_block = RegularExpression_enumerate_matches_in_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RegularExpression_enumerate_matches_in_string_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_range_id(this._obj, rt::sel(#str_ptr("enumerateMatchesInString:options:range:usingBlock:\0")), bridge::nsstring(string), options, range, bp);
         return;
@@ -26745,8 +26639,7 @@ impl Thread {
     fn as_object(this) -> Object { return Object::from_raw(this._obj); }
 
     fn detach_new_thread_with_block(cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Thread_detach_new_thread_with_block_block = Thread_detach_new_thread_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Thread_detach_new_thread_with_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Thread_detach_new_thread_with_block_block = Thread_detach_new_thread_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Thread_detach_new_thread_with_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(rt::get_class(#str_ptr("NSThread\0")), rt::sel(#str_ptr("detachNewThreadWithBlock:\0")), bp);
         return;
@@ -26793,8 +26686,7 @@ impl Thread {
     }
 
     fn init_with_block(this, cb: fn(*u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Thread_init_with_block_block = Thread_init_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Thread_init_with_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Thread_init_with_block_block = Thread_init_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Thread_init_with_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithBlock:\0")), bp);
     }
@@ -27537,8 +27429,7 @@ impl URLCache {
     }
 
     fn get_cached_response_for_data_task(this, data_task: URLSessionDataTask, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLCache_get_cached_response_for_data_task_block = URLCache_get_cached_response_for_data_task_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLCache_get_cached_response_for_data_task_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLCache_get_cached_response_for_data_task_block = URLCache_get_cached_response_for_data_task_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLCache_get_cached_response_for_data_task_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getCachedResponseForDataTask:completionHandler:\0")), data_task.raw(), bp);
         return;
@@ -27639,8 +27530,7 @@ impl URLConnection {
     }
 
     fn send_asynchronous_request(request: URLRequest, queue: OperationQueue, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLConnection_send_asynchronous_request_block = URLConnection_send_asynchronous_request_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLConnection_send_asynchronous_request_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLConnection_send_asynchronous_request_block = URLConnection_send_asynchronous_request_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLConnection_send_asynchronous_request_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSURLConnection\0")), rt::sel(#str_ptr("sendAsynchronousRequest:queue:completionHandler:\0")), request.raw(), queue.raw(), bp);
         return;
@@ -27766,8 +27656,7 @@ impl URLCredentialStorage {
 
     // SKIPPED `allCredentials`: return `NSDictionary<NSURLProtectionSpace *,NSDictionary<NSString *,NSURLCredential *> *> * _Nonnull` — NSDictionary with non-string key `NSURLProtectionSpace *`
     fn get_credentials_for_protection_space(this, protection_space: URLProtectionSpace, task: URLSessionTask, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLCredentialStorage_get_credentials_for_protection_space_block = URLCredentialStorage_get_credentials_for_protection_space_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLCredentialStorage_get_credentials_for_protection_space_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLCredentialStorage_get_credentials_for_protection_space_block = URLCredentialStorage_get_credentials_for_protection_space_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLCredentialStorage_get_credentials_for_protection_space_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("getCredentialsForProtectionSpace:task:completionHandler:\0")), protection_space.raw(), task.raw(), bp);
         return;
@@ -27801,8 +27690,7 @@ impl URLCredentialStorage {
     }
 
     fn get_default_credential_for_protection_space(this, space: URLProtectionSpace, task: URLSessionTask, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLCredentialStorage_get_default_credential_for_protection_space_block = URLCredentialStorage_get_default_credential_for_protection_space_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLCredentialStorage_get_default_credential_for_protection_space_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLCredentialStorage_get_default_credential_for_protection_space_block = URLCredentialStorage_get_default_credential_for_protection_space_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLCredentialStorage_get_default_credential_for_protection_space_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("getDefaultCredentialForProtectionSpace:task:completionHandler:\0")), space.raw(), task.raw(), bp);
         return;
@@ -29187,8 +29075,7 @@ impl Predicate {
     }
 
     fn predicate_with_block(cb: fn(*u8, *u8, *u8) -> i8, ctx: *u8) -> Predicate {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Predicate_predicate_with_block_block = Predicate_predicate_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Predicate_predicate_with_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Predicate_predicate_with_block_block = Predicate_predicate_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Predicate_predicate_with_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Predicate::from_raw(rt::msg_id_id(rt::get_class(#str_ptr("NSPredicate\0")), rt::sel(#str_ptr("predicateWithBlock:\0")), bp));
     }
@@ -29777,8 +29664,7 @@ impl ExtensionContext {
     fn as_object(this) -> Object { return Object::from_raw(this._obj); }
 
     fn complete_request_returning_items(this, items: Array, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ExtensionContext_complete_request_returning_items_block = ExtensionContext_complete_request_returning_items_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ExtensionContext_complete_request_returning_items_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ExtensionContext_complete_request_returning_items_block = ExtensionContext_complete_request_returning_items_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ExtensionContext_complete_request_returning_items_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("completeRequestReturningItems:completionHandler:\0")), items.raw(), bp);
         return;
@@ -29789,8 +29675,7 @@ impl ExtensionContext {
     }
 
     fn open_url(this, url: URL, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ExtensionContext_open_url_block = ExtensionContext_open_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ExtensionContext_open_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ExtensionContext_open_url_block = ExtensionContext_open_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ExtensionContext_open_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("openURL:completionHandler:\0")), url.raw(), bp);
         return;
@@ -29954,8 +29839,7 @@ impl FileCoordinator {
     }
 
     fn coordinate_access_with_intents(this, intents: vec::Vec[FileAccessIntent], queue: OperationQueue, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileCoordinator_coordinate_access_with_intents_block = FileCoordinator_coordinate_access_with_intents_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_coordinate_access_with_intents_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileCoordinator_coordinate_access_with_intents_block = FileCoordinator_coordinate_access_with_intents_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_coordinate_access_with_intents_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_intents: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_intents: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -29973,40 +29857,35 @@ impl FileCoordinator {
     }
 
     fn coordinate_reading_item_at_url(this, url: URL, options: u64, error: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileCoordinator_coordinate_reading_item_at_url_block = FileCoordinator_coordinate_reading_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_coordinate_reading_item_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileCoordinator_coordinate_reading_item_at_url_block = FileCoordinator_coordinate_reading_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_coordinate_reading_item_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id_id(this._obj, rt::sel(#str_ptr("coordinateReadingItemAtURL:options:error:byAccessor:\0")), url.raw(), options, error, bp);
         return;
     }
 
     fn coordinate_writing_item_at_url(this, url: URL, options: u64, error: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileCoordinator_coordinate_writing_item_at_url_block = FileCoordinator_coordinate_writing_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_coordinate_writing_item_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileCoordinator_coordinate_writing_item_at_url_block = FileCoordinator_coordinate_writing_item_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_coordinate_writing_item_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id_id(this._obj, rt::sel(#str_ptr("coordinateWritingItemAtURL:options:error:byAccessor:\0")), url.raw(), options, error, bp);
         return;
     }
 
     fn coordinate_reading_item_at_url_options(this, reading_url: URL, reading_options: u64, writing_item_at_url: URL, options: u64, error: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileCoordinator_coordinate_reading_item_at_url_options_block = FileCoordinator_coordinate_reading_item_at_url_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_coordinate_reading_item_at_url_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileCoordinator_coordinate_reading_item_at_url_options_block = FileCoordinator_coordinate_reading_item_at_url_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_coordinate_reading_item_at_url_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_u64_id_u64_id_id(this._obj, rt::sel(#str_ptr("coordinateReadingItemAtURL:options:writingItemAtURL:options:error:byAccessor:\0")), reading_url.raw(), reading_options, writing_item_at_url.raw(), options, error, bp);
         return;
     }
 
     fn coordinate_writing_item_at_url_options(this, url1: URL, options1: u64, writing_item_at_url: URL, options: u64, error: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileCoordinator_coordinate_writing_item_at_url_options_block = FileCoordinator_coordinate_writing_item_at_url_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_coordinate_writing_item_at_url_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileCoordinator_coordinate_writing_item_at_url_options_block = FileCoordinator_coordinate_writing_item_at_url_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_coordinate_writing_item_at_url_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_u64_id_u64_id_id(this._obj, rt::sel(#str_ptr("coordinateWritingItemAtURL:options:writingItemAtURL:options:error:byAccessor:\0")), url1.raw(), options1, writing_item_at_url.raw(), options, error, bp);
         return;
     }
 
     fn prepare_for_reading_items_at_urls(this, reading_urls: vec::Vec[URL], options: u64, writing_items_at_urls: vec::Vec[URL], options: u64, error: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FileCoordinator_prepare_for_reading_items_at_urls_block = FileCoordinator_prepare_for_reading_items_at_urls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_prepare_for_reading_items_at_urls_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FileCoordinator_prepare_for_reading_items_at_urls_block = FileCoordinator_prepare_for_reading_items_at_urls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FileCoordinator_prepare_for_reading_items_at_urls_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_reading_urls: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_reading_urls: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -30407,8 +30286,7 @@ impl LinguisticTagger {
     }
 
     fn enumerate_tags_in_range_unit(this, range: rt::Range, unit: LinguisticTaggerUnit, scheme: str, options: u64, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LinguisticTagger_enumerate_tags_in_range_unit_block = LinguisticTagger_enumerate_tags_in_range_unit_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LinguisticTagger_enumerate_tags_in_range_unit_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LinguisticTagger_enumerate_tags_in_range_unit_block = LinguisticTagger_enumerate_tags_in_range_unit_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LinguisticTagger_enumerate_tags_in_range_unit_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_i64_id_u64_id(this._obj, rt::sel(#str_ptr("enumerateTagsInRange:unit:scheme:options:usingBlock:\0")), range, linguistic_tagger_unit_raw(unit), bridge::nsstring(scheme), options, bp);
         return;
@@ -30434,8 +30312,7 @@ impl LinguisticTagger {
     }
 
     fn enumerate_tags_in_range(this, range: rt::Range, scheme: str, options: u64, cb: fn(*u8, *u8, rt::Range, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LinguisticTagger_enumerate_tags_in_range_block = LinguisticTagger_enumerate_tags_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LinguisticTagger_enumerate_tags_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LinguisticTagger_enumerate_tags_in_range_block = LinguisticTagger_enumerate_tags_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LinguisticTagger_enumerate_tags_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_id_u64_id(this._obj, rt::sel(#str_ptr("enumerateTagsInRange:scheme:options:usingBlock:\0")), range, bridge::nsstring(scheme), options, bp);
         return;
@@ -30485,8 +30362,7 @@ impl LinguisticTagger {
     }
 
     fn enumerate_tags_for_string(string: str, range: rt::Range, unit: LinguisticTaggerUnit, scheme: str, options: u64, orthography: Orthography, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LinguisticTagger_enumerate_tags_for_string_block = LinguisticTagger_enumerate_tags_for_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LinguisticTagger_enumerate_tags_for_string_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LinguisticTagger_enumerate_tags_for_string_block = LinguisticTagger_enumerate_tags_for_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LinguisticTagger_enumerate_tags_for_string_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_range_i64_id_u64_id_id(rt::get_class(#str_ptr("NSLinguisticTagger\0")), rt::sel(#str_ptr("enumerateTagsForString:range:unit:scheme:options:orthography:usingBlock:\0")), bridge::nsstring(string), range, linguistic_tagger_unit_raw(unit), bridge::nsstring(scheme), options, orthography.raw(), bp);
         return;
@@ -30723,16 +30599,14 @@ impl MetadataQuery {
     }
 
     fn enumerate_results_using_block(this, cb: fn(*u8, *u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MetadataQuery_enumerate_results_using_block_block = MetadataQuery_enumerate_results_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MetadataQuery_enumerate_results_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MetadataQuery_enumerate_results_using_block_block = MetadataQuery_enumerate_results_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MetadataQuery_enumerate_results_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("enumerateResultsUsingBlock:\0")), bp);
         return;
     }
 
     fn enumerate_results_with_options(this, opts: u64, cb: fn(*u8, *u8, u64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MetadataQuery_enumerate_results_with_options_block = MetadataQuery_enumerate_results_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MetadataQuery_enumerate_results_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MetadataQuery_enumerate_results_with_options_block = MetadataQuery_enumerate_results_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MetadataQuery_enumerate_results_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("enumerateResultsWithOptions:usingBlock:\0")), opts, bp);
         return;
@@ -31392,8 +31266,7 @@ impl UndoManager {
     }
 
     fn register_undo_with_target(this, target: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UndoManager_register_undo_with_target_block = UndoManager_register_undo_with_target_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UndoManager_register_undo_with_target_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UndoManager_register_undo_with_target_block = UndoManager_register_undo_with_target_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UndoManager_register_undo_with_target_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerUndoWithTarget:handler:\0")), target, bp);
         return;
@@ -31560,8 +31433,7 @@ impl URLSessionUploadTask {
 
     // SKIPPED `new`: method `new` already defined
     fn cancel_by_producing_resume_data(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSessionUploadTask_cancel_by_producing_resume_data_block = URLSessionUploadTask_cancel_by_producing_resume_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionUploadTask_cancel_by_producing_resume_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSessionUploadTask_cancel_by_producing_resume_data_block = URLSessionUploadTask_cancel_by_producing_resume_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionUploadTask_cancel_by_producing_resume_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("cancelByProducingResumeData:\0")), bp);
         return;
@@ -31589,8 +31461,7 @@ impl URLSessionDownloadTask {
     fn as_object(this) -> Object { return Object::from_raw(this._obj); }
 
     fn cancel_by_producing_resume_data(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSessionDownloadTask_cancel_by_producing_resume_data_block = URLSessionDownloadTask_cancel_by_producing_resume_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionDownloadTask_cancel_by_producing_resume_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSessionDownloadTask_cancel_by_producing_resume_data_block = URLSessionDownloadTask_cancel_by_producing_resume_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionDownloadTask_cancel_by_producing_resume_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("cancelByProducingResumeData:\0")), bp);
         return;
@@ -31638,32 +31509,28 @@ impl URLSession {
     }
 
     fn reset_with_completion_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_reset_with_completion_handler_block = URLSession_reset_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_reset_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_reset_with_completion_handler_block = URLSession_reset_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_reset_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("resetWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn flush_with_completion_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_flush_with_completion_handler_block = URLSession_flush_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_flush_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_flush_with_completion_handler_block = URLSession_flush_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_flush_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("flushWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn get_tasks_with_completion_handler(this, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_get_tasks_with_completion_handler_block = URLSession_get_tasks_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_get_tasks_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_get_tasks_with_completion_handler_block = URLSession_get_tasks_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_get_tasks_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getTasksWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn get_all_tasks_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_get_all_tasks_with_completion_handler_block = URLSession_get_all_tasks_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_get_all_tasks_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_get_all_tasks_with_completion_handler_block = URLSession_get_all_tasks_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_get_all_tasks_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getAllTasksWithCompletionHandler:\0")), bp);
         return;
@@ -31759,57 +31626,49 @@ impl URLSession {
     }
 
     fn data_task_with_request_completion_handler(this, request: URLRequest, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> URLSessionDataTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_data_task_with_request_completion_handler_block = URLSession_data_task_with_request_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_data_task_with_request_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_data_task_with_request_completion_handler_block = URLSession_data_task_with_request_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_data_task_with_request_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return URLSessionDataTask::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("dataTaskWithRequest:completionHandler:\0")), request.raw(), bp));
     }
 
     fn data_task_with_url_completion_handler(this, url: URL, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> URLSessionDataTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_data_task_with_url_completion_handler_block = URLSession_data_task_with_url_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_data_task_with_url_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_data_task_with_url_completion_handler_block = URLSession_data_task_with_url_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_data_task_with_url_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return URLSessionDataTask::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("dataTaskWithURL:completionHandler:\0")), url.raw(), bp));
     }
 
     fn upload_task_with_request_from_file(this, request: URLRequest, file_url: URL, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> URLSessionUploadTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_upload_task_with_request_from_file_block = URLSession_upload_task_with_request_from_file_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_upload_task_with_request_from_file_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_upload_task_with_request_from_file_block = URLSession_upload_task_with_request_from_file_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_upload_task_with_request_from_file_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return URLSessionUploadTask::from_raw(rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("uploadTaskWithRequest:fromFile:completionHandler:\0")), request.raw(), file_url.raw(), bp));
     }
 
     fn upload_task_with_request_from_data_completion_handler(this, request: URLRequest, body_data: Data, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> URLSessionUploadTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_upload_task_with_request_from_data_completion_handler_block = URLSession_upload_task_with_request_from_data_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_upload_task_with_request_from_data_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_upload_task_with_request_from_data_completion_handler_block = URLSession_upload_task_with_request_from_data_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_upload_task_with_request_from_data_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return URLSessionUploadTask::from_raw(rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("uploadTaskWithRequest:fromData:completionHandler:\0")), request.raw(), body_data.raw(), bp));
     }
 
     fn upload_task_with_resume_data_completion_handler(this, resume_data: Data, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> URLSessionUploadTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_upload_task_with_resume_data_completion_handler_block = URLSession_upload_task_with_resume_data_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_upload_task_with_resume_data_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_upload_task_with_resume_data_completion_handler_block = URLSession_upload_task_with_resume_data_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_upload_task_with_resume_data_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return URLSessionUploadTask::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("uploadTaskWithResumeData:completionHandler:\0")), resume_data.raw(), bp));
     }
 
     fn download_task_with_request_completion_handler(this, request: URLRequest, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> URLSessionDownloadTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_download_task_with_request_completion_handler_block = URLSession_download_task_with_request_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_download_task_with_request_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_download_task_with_request_completion_handler_block = URLSession_download_task_with_request_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_download_task_with_request_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return URLSessionDownloadTask::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("downloadTaskWithRequest:completionHandler:\0")), request.raw(), bp));
     }
 
     fn download_task_with_url_completion_handler(this, url: URL, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> URLSessionDownloadTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_download_task_with_url_completion_handler_block = URLSession_download_task_with_url_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_download_task_with_url_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_download_task_with_url_completion_handler_block = URLSession_download_task_with_url_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_download_task_with_url_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return URLSessionDownloadTask::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("downloadTaskWithURL:completionHandler:\0")), url.raw(), bp));
     }
 
     fn download_task_with_resume_data_completion_handler(this, resume_data: Data, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> URLSessionDownloadTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSession_download_task_with_resume_data_completion_handler_block = URLSession_download_task_with_resume_data_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_download_task_with_resume_data_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSession_download_task_with_resume_data_completion_handler_block = URLSession_download_task_with_resume_data_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSession_download_task_with_resume_data_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return URLSessionDownloadTask::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("downloadTaskWithResumeData:completionHandler:\0")), resume_data.raw(), bp));
     }
@@ -31836,16 +31695,14 @@ impl URLSessionStreamTask {
     fn as_object(this) -> Object { return Object::from_raw(this._obj); }
 
     fn read_data_of_min_length(this, min_bytes: u64, max_length: u64, timeout: f64, cb: fn(*u8, *u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSessionStreamTask_read_data_of_min_length_block = URLSessionStreamTask_read_data_of_min_length_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionStreamTask_read_data_of_min_length_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSessionStreamTask_read_data_of_min_length_block = URLSessionStreamTask_read_data_of_min_length_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionStreamTask_read_data_of_min_length_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_u64_u64_f64_id(this._obj, rt::sel(#str_ptr("readDataOfMinLength:maxLength:timeout:completionHandler:\0")), min_bytes, max_length, timeout, bp);
         return;
     }
 
     fn write_data(this, data: Data, timeout: f64, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSessionStreamTask_write_data_block = URLSessionStreamTask_write_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionStreamTask_write_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSessionStreamTask_write_data_block = URLSessionStreamTask_write_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionStreamTask_write_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_f64_id(this._obj, rt::sel(#str_ptr("writeData:timeout:completionHandler:\0")), data.raw(), timeout, bp);
         return;
@@ -31900,24 +31757,21 @@ impl URLSessionWebSocketTask {
     fn as_object(this) -> Object { return Object::from_raw(this._obj); }
 
     fn send_message(this, message: URLSessionWebSocketMessage, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSessionWebSocketTask_send_message_block = URLSessionWebSocketTask_send_message_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionWebSocketTask_send_message_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSessionWebSocketTask_send_message_block = URLSessionWebSocketTask_send_message_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionWebSocketTask_send_message_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("sendMessage:completionHandler:\0")), message.raw(), bp);
         return;
     }
 
     fn receive_message_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSessionWebSocketTask_receive_message_with_completion_handler_block = URLSessionWebSocketTask_receive_message_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionWebSocketTask_receive_message_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSessionWebSocketTask_receive_message_with_completion_handler_block = URLSessionWebSocketTask_receive_message_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionWebSocketTask_receive_message_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("receiveMessageWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn send_ping_with_pong_receive_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLSessionWebSocketTask_send_ping_with_pong_receive_handler_block = URLSessionWebSocketTask_send_ping_with_pong_receive_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionWebSocketTask_send_ping_with_pong_receive_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLSessionWebSocketTask_send_ping_with_pong_receive_handler_block = URLSessionWebSocketTask_send_ping_with_pong_receive_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLSessionWebSocketTask_send_ping_with_pong_receive_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("sendPingWithPongReceiveHandler:\0")), bp);
         return;
@@ -32657,24 +32511,21 @@ impl UserActivity {
     }
 
     fn get_continuation_streams_with_completion_handler(this, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserActivity_get_continuation_streams_with_completion_handler_block = UserActivity_get_continuation_streams_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_get_continuation_streams_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserActivity_get_continuation_streams_with_completion_handler_block = UserActivity_get_continuation_streams_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_get_continuation_streams_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getContinuationStreamsWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn delete_saved_user_activities_with_persistent_identifiers(persistent_identifiers: vec::Vec[text::Text], cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserActivity_delete_saved_user_activities_with_persistent_identifiers_block = UserActivity_delete_saved_user_activities_with_persistent_identifiers_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_delete_saved_user_activities_with_persistent_identifiers_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserActivity_delete_saved_user_activities_with_persistent_identifiers_block = UserActivity_delete_saved_user_activities_with_persistent_identifiers_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_delete_saved_user_activities_with_persistent_identifiers_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("NSUserActivity\0")), rt::sel(#str_ptr("deleteSavedUserActivitiesWithPersistentIdentifiers:completionHandler:\0")), bridge::nsarray_of_text(persistent_identifiers), bp);
         return;
     }
 
     fn delete_all_saved_user_activities_with_completion_handler(cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserActivity_delete_all_saved_user_activities_with_completion_handler_block = UserActivity_delete_all_saved_user_activities_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_delete_all_saved_user_activities_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserActivity_delete_all_saved_user_activities_with_completion_handler_block = UserActivity_delete_all_saved_user_activities_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_delete_all_saved_user_activities_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(rt::get_class(#str_ptr("NSUserActivity\0")), rt::sel(#str_ptr("deleteAllSavedUserActivitiesWithCompletionHandler:\0")), bp);
         return;
@@ -33439,8 +33290,7 @@ impl BackgroundActivityScheduler {
     }
 
     fn schedule_with_block(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: BackgroundActivityScheduler_schedule_with_block_block = BackgroundActivityScheduler_schedule_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BackgroundActivityScheduler_schedule_with_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: BackgroundActivityScheduler_schedule_with_block_block = BackgroundActivityScheduler_schedule_with_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: BackgroundActivityScheduler_schedule_with_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("scheduleWithBlock:\0")), bp);
         return;
@@ -34273,8 +34123,7 @@ impl Task {
 
     // SKIPPED `terminationHandler`: return `API_AVAILABLE void (^)(NSTask * _Nonnull)` — block
     fn set_termination_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Task_set_termination_handler_block = Task_set_termination_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Task_set_termination_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Task_set_termination_handler_block = Task_set_termination_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Task_set_termination_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTerminationHandler:\0")), bp);
         return;
@@ -34289,8 +34138,7 @@ impl Task {
     }
 
     fn launched_task_with_executable_url(url: URL, arguments: vec::Vec[text::Text], error: *u8, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[Task] {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Task_launched_task_with_executable_url_block = Task_launched_task_with_executable_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Task_launched_task_with_executable_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Task_launched_task_with_executable_url_block = Task_launched_task_with_executable_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Task_launched_task_with_executable_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSTask\0")), rt::sel(#str_ptr("launchedTaskWithExecutableURL:arguments:error:terminationHandler:\0")), url.raw(), bridge::nsarray_of_text(arguments), error, bp);
         if obj == { 0 as *u8 } {
@@ -37828,8 +37676,7 @@ impl UserScriptTask {
     }
 
     fn execute_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserScriptTask_execute_with_completion_handler_block = UserScriptTask_execute_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserScriptTask_execute_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserScriptTask_execute_with_completion_handler_block = UserScriptTask_execute_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserScriptTask_execute_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("executeWithCompletionHandler:\0")), bp);
         return;
@@ -37861,8 +37708,7 @@ impl UserUnixTask {
     fn as_object(this) -> Object { return Object::from_raw(this._obj); }
 
     fn execute_with_arguments(this, arguments: vec::Vec[text::Text], cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserUnixTask_execute_with_arguments_block = UserUnixTask_execute_with_arguments_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserUnixTask_execute_with_arguments_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserUnixTask_execute_with_arguments_block = UserUnixTask_execute_with_arguments_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserUnixTask_execute_with_arguments_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("executeWithArguments:completionHandler:\0")), bridge::nsarray_of_text(arguments), bp);
         return;
@@ -37929,8 +37775,7 @@ impl UserAppleScriptTask {
     fn as_object(this) -> Object { return Object::from_raw(this._obj); }
 
     fn execute_with_apple_event(this, event: AppleEventDescriptor, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserAppleScriptTask_execute_with_apple_event_block = UserAppleScriptTask_execute_with_apple_event_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserAppleScriptTask_execute_with_apple_event_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserAppleScriptTask_execute_with_apple_event_block = UserAppleScriptTask_execute_with_apple_event_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserAppleScriptTask_execute_with_apple_event_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("executeWithAppleEvent:completionHandler:\0")), event.raw(), bp);
         return;
@@ -37961,8 +37806,7 @@ impl UserAutomatorTask {
     fn as_object(this) -> Object { return Object::from_raw(this._obj); }
 
     fn execute_with_input(this, input: SecureCoding, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserAutomatorTask_execute_with_input_block = UserAutomatorTask_execute_with_input_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserAutomatorTask_execute_with_input_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserAutomatorTask_execute_with_input_block = UserAutomatorTask_execute_with_input_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserAutomatorTask_execute_with_input_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("executeWithInput:completionHandler:\0")), input.raw(), bp);
         return;
@@ -38237,8 +38081,7 @@ impl ItemProviderWriting {
     }
 
     fn load_data_with_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, *u8), ctx: *u8) -> option::Option[Progress] {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProviderWriting_load_data_with_type_identifier_block = ItemProviderWriting_load_data_with_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProviderWriting_load_data_with_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProviderWriting_load_data_with_type_identifier_block = ItemProviderWriting_load_data_with_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProviderWriting_load_data_with_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadDataWithTypeIdentifier:forItemProviderCompletionHandler:\0")), bridge::nsstring(type_identifier), bp);
         if obj == { 0 as *u8 } {
@@ -39904,15 +39747,13 @@ impl XPCProxyCreating {
     }
 
     fn remote_object_proxy_with_error_handler(this, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: XPCProxyCreating_remote_object_proxy_with_error_handler_block = XPCProxyCreating_remote_object_proxy_with_error_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCProxyCreating_remote_object_proxy_with_error_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: XPCProxyCreating_remote_object_proxy_with_error_handler_block = XPCProxyCreating_remote_object_proxy_with_error_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCProxyCreating_remote_object_proxy_with_error_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("remoteObjectProxyWithErrorHandler:\0")), bp);
     }
 
     fn synchronous_remote_object_proxy_with_error_handler(this, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: XPCProxyCreating_synchronous_remote_object_proxy_with_error_handler_block = XPCProxyCreating_synchronous_remote_object_proxy_with_error_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCProxyCreating_synchronous_remote_object_proxy_with_error_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: XPCProxyCreating_synchronous_remote_object_proxy_with_error_handler_block = XPCProxyCreating_synchronous_remote_object_proxy_with_error_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: XPCProxyCreating_synchronous_remote_object_proxy_with_error_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("synchronousRemoteObjectProxyWithErrorHandler:\0")), bp);
     }
@@ -40026,40 +39867,35 @@ impl FilePresenter {
     fn from_raw(ptr: *u8) -> FilePresenter { return FilePresenter { _obj: ptr }; }
 
     fn relinquish_presented_item_to_reader(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FilePresenter_relinquish_presented_item_to_reader_block = FilePresenter_relinquish_presented_item_to_reader_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_relinquish_presented_item_to_reader_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FilePresenter_relinquish_presented_item_to_reader_block = FilePresenter_relinquish_presented_item_to_reader_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_relinquish_presented_item_to_reader_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("relinquishPresentedItemToReader:\0")), bp);
         return;
     }
 
     fn relinquish_presented_item_to_writer(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FilePresenter_relinquish_presented_item_to_writer_block = FilePresenter_relinquish_presented_item_to_writer_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_relinquish_presented_item_to_writer_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FilePresenter_relinquish_presented_item_to_writer_block = FilePresenter_relinquish_presented_item_to_writer_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_relinquish_presented_item_to_writer_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("relinquishPresentedItemToWriter:\0")), bp);
         return;
     }
 
     fn save_presented_item_changes_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FilePresenter_save_presented_item_changes_with_completion_handler_block = FilePresenter_save_presented_item_changes_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_save_presented_item_changes_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FilePresenter_save_presented_item_changes_with_completion_handler_block = FilePresenter_save_presented_item_changes_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_save_presented_item_changes_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("savePresentedItemChangesWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn accommodate_presented_item_deletion_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FilePresenter_accommodate_presented_item_deletion_with_completion_handler_block = FilePresenter_accommodate_presented_item_deletion_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_accommodate_presented_item_deletion_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FilePresenter_accommodate_presented_item_deletion_with_completion_handler_block = FilePresenter_accommodate_presented_item_deletion_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_accommodate_presented_item_deletion_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("accommodatePresentedItemDeletionWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn accommodate_presented_item_eviction_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FilePresenter_accommodate_presented_item_eviction_with_completion_handler_block = FilePresenter_accommodate_presented_item_eviction_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_accommodate_presented_item_eviction_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FilePresenter_accommodate_presented_item_eviction_with_completion_handler_block = FilePresenter_accommodate_presented_item_eviction_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_accommodate_presented_item_eviction_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("accommodatePresentedItemEvictionWithCompletionHandler:\0")), bp);
         return;
@@ -40102,8 +39938,7 @@ impl FilePresenter {
     }
 
     fn accommodate_presented_subitem_deletion_at_url(this, url: URL, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FilePresenter_accommodate_presented_subitem_deletion_at_url_block = FilePresenter_accommodate_presented_subitem_deletion_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_accommodate_presented_subitem_deletion_at_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FilePresenter_accommodate_presented_subitem_deletion_at_url_block = FilePresenter_accommodate_presented_subitem_deletion_at_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePresenter_accommodate_presented_subitem_deletion_at_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("accommodatePresentedSubitemDeletionAtURL:completionHandler:\0")), url.raw(), bp);
         return;

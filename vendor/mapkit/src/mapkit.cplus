@@ -1300,16 +1300,14 @@ impl Directions {
     }
 
     fn calculate_directions_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Directions_calculate_directions_with_completion_handler_block = Directions_calculate_directions_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Directions_calculate_directions_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Directions_calculate_directions_with_completion_handler_block = Directions_calculate_directions_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Directions_calculate_directions_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("calculateDirectionsWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn calculate_e_t_a_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Directions_calculate_e_t_a_with_completion_handler_block = Directions_calculate_e_t_a_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Directions_calculate_e_t_a_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Directions_calculate_e_t_a_with_completion_handler_block = Directions_calculate_e_t_a_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Directions_calculate_e_t_a_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("calculateETAWithCompletionHandler:\0")), bp);
         return;
@@ -1506,8 +1504,7 @@ impl MapItem {
     }
 
     fn open_in_maps_with_launch_options_completion_handler(this, launch_options: string_map::StringMap[AnyObject], cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MapItem_open_in_maps_with_launch_options_completion_handler_block = MapItem_open_in_maps_with_launch_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MapItem_open_in_maps_with_launch_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MapItem_open_in_maps_with_launch_options_completion_handler_block = MapItem_open_in_maps_with_launch_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MapItem_open_in_maps_with_launch_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_launch_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_launch_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -1533,8 +1530,7 @@ impl MapItem {
     }
 
     fn open_maps_with_items_launch_options(map_items: vec::Vec[MapItem], launch_options: string_map::StringMap[AnyObject], cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MapItem_open_maps_with_items_launch_options_block = MapItem_open_maps_with_items_launch_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MapItem_open_maps_with_items_launch_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MapItem_open_maps_with_items_launch_options_block = MapItem_open_maps_with_items_launch_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MapItem_open_maps_with_items_launch_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_map_items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_map_items: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -1859,8 +1855,7 @@ impl GeocodingRequest {
 
     // SKIPPED `initWithAddressString:`: `new` already defined (extra constructor)
     fn get_map_items_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: GeocodingRequest_get_map_items_with_completion_handler_block = GeocodingRequest_get_map_items_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: GeocodingRequest_get_map_items_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: GeocodingRequest_get_map_items_with_completion_handler_block = GeocodingRequest_get_map_items_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: GeocodingRequest_get_map_items_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getMapItemsWithCompletionHandler:\0")), bp);
         return;
@@ -2485,8 +2480,7 @@ impl LocalSearch {
     }
 
     fn start_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LocalSearch_start_with_completion_handler_block = LocalSearch_start_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocalSearch_start_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LocalSearch_start_with_completion_handler_block = LocalSearch_start_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LocalSearch_start_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("startWithCompletionHandler:\0")), bp);
         return;
@@ -2767,8 +2761,7 @@ impl MapItemRequest {
     }
 
     fn get_map_item_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MapItemRequest_get_map_item_with_completion_handler_block = MapItemRequest_get_map_item_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MapItemRequest_get_map_item_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MapItemRequest_get_map_item_with_completion_handler_block = MapItemRequest_get_map_item_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MapItemRequest_get_map_item_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getMapItemWithCompletionHandler:\0")), bp);
         return;
@@ -4049,16 +4042,14 @@ impl MapSnapshotter {
     }
 
     fn start_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MapSnapshotter_start_with_completion_handler_block = MapSnapshotter_start_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MapSnapshotter_start_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MapSnapshotter_start_with_completion_handler_block = MapSnapshotter_start_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MapSnapshotter_start_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("startWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn start_with_queue(this, queue: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MapSnapshotter_start_with_queue_block = MapSnapshotter_start_with_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MapSnapshotter_start_with_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MapSnapshotter_start_with_queue_block = MapSnapshotter_start_with_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MapSnapshotter_start_with_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startWithQueue:completionHandler:\0")), queue, bp);
         return;
@@ -4094,8 +4085,7 @@ impl ReverseGeocodingRequest {
 
     // SKIPPED `initWithLocation:`: `new` already defined (extra constructor)
     fn get_map_items_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ReverseGeocodingRequest_get_map_items_with_completion_handler_block = ReverseGeocodingRequest_get_map_items_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ReverseGeocodingRequest_get_map_items_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ReverseGeocodingRequest_get_map_items_with_completion_handler_block = ReverseGeocodingRequest_get_map_items_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ReverseGeocodingRequest_get_map_items_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getMapItemsWithCompletionHandler:\0")), bp);
         return;
@@ -4918,8 +4908,7 @@ impl TileOverlay {
     }
 
     fn load_tile_at_path(this, path: TileOverlayPath, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TileOverlay_load_tile_at_path_block = TileOverlay_load_tile_at_path_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TileOverlay_load_tile_at_path_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TileOverlay_load_tile_at_path_block = TileOverlay_load_tile_at_path_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TileOverlay_load_tile_at_path_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_TileOverlayPath_id(this._obj, rt::sel(#str_ptr("loadTileAtPath:result:\0")), path, bp);
         return;
@@ -5137,8 +5126,7 @@ impl LookAroundSceneRequest {
     }
 
     fn get_scene_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LookAroundSceneRequest_get_scene_with_completion_handler_block = LookAroundSceneRequest_get_scene_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LookAroundSceneRequest_get_scene_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LookAroundSceneRequest_get_scene_with_completion_handler_block = LookAroundSceneRequest_get_scene_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LookAroundSceneRequest_get_scene_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getSceneWithCompletionHandler:\0")), bp);
         return;
@@ -5238,8 +5226,7 @@ impl LookAroundSnapshotter {
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     // SKIPPED `initWithScene:options:`: `new` already defined (extra constructor)
     fn get_snapshot_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LookAroundSnapshotter_get_snapshot_with_completion_handler_block = LookAroundSnapshotter_get_snapshot_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LookAroundSnapshotter_get_snapshot_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LookAroundSnapshotter_get_snapshot_with_completion_handler_block = LookAroundSnapshotter_get_snapshot_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LookAroundSnapshotter_get_snapshot_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getSnapshotWithCompletionHandler:\0")), bp);
         return;

@@ -8912,16 +8912,14 @@ impl ItemProvider {
     }
 
     fn register_data_representation_for_type_identifier(this, type_identifier: str, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, *u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_register_data_representation_for_type_identifier_block = ItemProvider_register_data_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_data_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_register_data_representation_for_type_identifier_block = ItemProvider_register_data_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_data_representation_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("registerDataRepresentationForTypeIdentifier:visibility:loadHandler:\0")), bridge::nsstring(type_identifier), item_provider_representation_visibility_raw(visibility), bp);
         return;
     }
 
     fn register_file_representation_for_type_identifier(this, type_identifier: str, file_options: u64, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, *u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_register_file_representation_for_type_identifier_block = ItemProvider_register_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_file_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_register_file_representation_for_type_identifier_block = ItemProvider_register_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_file_representation_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_u64_i64_id(this._obj, rt::sel(#str_ptr("registerFileRepresentationForTypeIdentifier:fileOptions:visibility:loadHandler:\0")), bridge::nsstring(type_identifier), file_options, item_provider_representation_visibility_raw(visibility), bp);
         return;
@@ -8950,22 +8948,19 @@ impl ItemProvider {
     }
 
     fn load_data_representation_for_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, *u8), ctx: *u8) -> Progress {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_data_representation_for_type_identifier_block = ItemProvider_load_data_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_data_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_data_representation_for_type_identifier_block = ItemProvider_load_data_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_data_representation_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Progress::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadDataRepresentationForTypeIdentifier:completionHandler:\0")), bridge::nsstring(type_identifier), bp));
     }
 
     fn load_file_representation_for_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, *u8), ctx: *u8) -> Progress {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_file_representation_for_type_identifier_block = ItemProvider_load_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_file_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_file_representation_for_type_identifier_block = ItemProvider_load_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_file_representation_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Progress::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadFileRepresentationForTypeIdentifier:completionHandler:\0")), bridge::nsstring(type_identifier), bp));
     }
 
     fn load_in_place_file_representation_for_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, i8, *u8), ctx: *u8) -> Progress {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_in_place_file_representation_for_type_identifier_block = ItemProvider_load_in_place_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_in_place_file_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_in_place_file_representation_for_type_identifier_block = ItemProvider_load_in_place_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_in_place_file_representation_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Progress::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadInPlaceFileRepresentationForTypeIdentifier:completionHandler:\0")), bridge::nsstring(type_identifier), bp));
     }
@@ -8981,8 +8976,7 @@ impl ItemProvider {
     }
 
     fn register_object_of_class(this, a_class: *u8, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, *u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_register_object_of_class_block = ItemProvider_register_object_of_class_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_object_of_class_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_register_object_of_class_block = ItemProvider_register_object_of_class_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_object_of_class_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("registerObjectOfClass:visibility:loadHandler:\0")), a_class, item_provider_representation_visibility_raw(visibility), bp);
         return;
@@ -8993,8 +8987,7 @@ impl ItemProvider {
     }
 
     fn load_object_of_class(this, a_class: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) -> Progress {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_object_of_class_block = ItemProvider_load_object_of_class_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_object_of_class_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_object_of_class_block = ItemProvider_load_object_of_class_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_object_of_class_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Progress::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadObjectOfClass:completionHandler:\0")), a_class, bp));
     }
@@ -9012,16 +9005,14 @@ impl ItemProvider {
     }
 
     fn register_item_for_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_register_item_for_type_identifier_block = ItemProvider_register_item_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_item_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_register_item_for_type_identifier_block = ItemProvider_register_item_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_item_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerItemForTypeIdentifier:loadHandler:\0")), bridge::nsstring(type_identifier), bp);
         return;
     }
 
     fn load_item_for_type_identifier(this, type_identifier: str, options: Dictionary, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_item_for_type_identifier_block = ItemProvider_load_item_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_item_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_item_for_type_identifier_block = ItemProvider_load_item_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_item_for_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("loadItemForTypeIdentifier:options:completionHandler:\0")), bridge::nsstring(type_identifier), options.raw(), bp);
         return;
@@ -9051,8 +9042,7 @@ impl ItemProvider {
     }
 
     fn load_preview_image_with_options(this, options: Dictionary, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_load_preview_image_with_options_block = ItemProvider_load_preview_image_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_preview_image_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_load_preview_image_with_options_block = ItemProvider_load_preview_image_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_preview_image_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadPreviewImageWithOptions:completionHandler:\0")), options.raw(), bp);
         return;
@@ -9060,16 +9050,14 @@ impl ItemProvider {
 
     // SKIPPED `previewImageHandler`: return `NSItemProviderLoadHandler _Nullable` — unmapped type `NSItemProviderLoadHandler`
     fn set_preview_image_handler(this, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_set_preview_image_handler_block = ItemProvider_set_preview_image_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_set_preview_image_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_set_preview_image_handler_block = ItemProvider_set_preview_image_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_set_preview_image_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPreviewImageHandler:\0")), bp);
         return;
     }
 
     fn register_cloud_kit_share_with_preparation_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProvider_register_cloud_kit_share_with_preparation_handler_block = ItemProvider_register_cloud_kit_share_with_preparation_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_cloud_kit_share_with_preparation_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProvider_register_cloud_kit_share_with_preparation_handler_block = ItemProvider_register_cloud_kit_share_with_preparation_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_cloud_kit_share_with_preparation_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("registerCloudKitShareWithPreparationHandler:\0")), bp);
         return;
@@ -9213,16 +9201,14 @@ impl AttributedString {
     }
 
     fn enumerate_attributes_in_range(this, enumeration_range: rt::Range, options: u64, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AttributedString_enumerate_attributes_in_range_block = AttributedString_enumerate_attributes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AttributedString_enumerate_attributes_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AttributedString_enumerate_attributes_in_range_block = AttributedString_enumerate_attributes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AttributedString_enumerate_attributes_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateAttributesInRange:options:usingBlock:\0")), enumeration_range, options, bp);
         return;
     }
 
     fn enumerate_attribute(this, attr_name: str, in_range: rt::Range, options: u64, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AttributedString_enumerate_attribute_block = AttributedString_enumerate_attribute_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AttributedString_enumerate_attribute_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AttributedString_enumerate_attribute_block = AttributedString_enumerate_attribute_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AttributedString_enumerate_attribute_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateAttribute:inRange:options:usingBlock:\0")), bridge::nsstring(attr_name), in_range, options, bp);
         return;
@@ -10855,8 +10841,7 @@ impl Set {
     }
 
     fn enumerate_index_paths_with_options(this, opts: u64, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Set_enumerate_index_paths_with_options_block = Set_enumerate_index_paths_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Set_enumerate_index_paths_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Set_enumerate_index_paths_with_options_block = Set_enumerate_index_paths_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Set_enumerate_index_paths_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("enumerateIndexPathsWithOptions:usingBlock:\0")), opts, bp);
         return;
@@ -10922,24 +10907,21 @@ impl UserActivity {
     }
 
     fn get_continuation_streams_with_completion_handler(this, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserActivity_get_continuation_streams_with_completion_handler_block = UserActivity_get_continuation_streams_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_get_continuation_streams_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserActivity_get_continuation_streams_with_completion_handler_block = UserActivity_get_continuation_streams_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_get_continuation_streams_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getContinuationStreamsWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn delete_saved_user_activities_with_persistent_identifiers(persistent_identifiers: vec::Vec[text::Text], cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserActivity_delete_saved_user_activities_with_persistent_identifiers_block = UserActivity_delete_saved_user_activities_with_persistent_identifiers_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_delete_saved_user_activities_with_persistent_identifiers_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserActivity_delete_saved_user_activities_with_persistent_identifiers_block = UserActivity_delete_saved_user_activities_with_persistent_identifiers_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_delete_saved_user_activities_with_persistent_identifiers_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("NSUserActivity\0")), rt::sel(#str_ptr("deleteSavedUserActivitiesWithPersistentIdentifiers:completionHandler:\0")), bridge::nsarray_of_text(persistent_identifiers), bp);
         return;
     }
 
     fn delete_all_saved_user_activities_with_completion_handler(cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserActivity_delete_all_saved_user_activities_with_completion_handler_block = UserActivity_delete_all_saved_user_activities_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_delete_all_saved_user_activities_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserActivity_delete_all_saved_user_activities_with_completion_handler_block = UserActivity_delete_all_saved_user_activities_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserActivity_delete_all_saved_user_activities_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(rt::get_class(#str_ptr("NSUserActivity\0")), rt::sel(#str_ptr("deleteAllSavedUserActivitiesWithCompletionHandler:\0")), bp);
         return;
@@ -11364,8 +11346,7 @@ impl Color {
     }
 
     fn color_with_name(color_name: str, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> Color {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Color_color_with_name_block = Color_color_with_name_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Color_color_with_name_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Color_color_with_name_block = Color_color_with_name_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Color_color_with_name_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Color::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithName:dynamicProvider:\0")), bridge::nsstring(color_name), bp));
     }
@@ -13121,8 +13102,7 @@ impl View {
     }
 
     fn show_definition_for_attributed_string_range(this, attr_string: AttributedString, target_range: rt::Range, options: string_map::StringMap[AnyObject], cb: fn(*u8, rt::Range) -> rt::Point, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: View_show_definition_for_attributed_string_range_block = View_show_definition_for_attributed_string_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: View_show_definition_for_attributed_string_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: View_show_definition_for_attributed_string_range_block = View_show_definition_for_attributed_string_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: View_show_definition_for_attributed_string_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -14010,16 +13990,14 @@ impl Window {
     }
 
     fn begin_sheet(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_begin_sheet_block = Window_begin_sheet_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_begin_sheet_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_begin_sheet_block = Window_begin_sheet_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_begin_sheet_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginSheet:completionHandler:\0")), sheet_window.raw(), bp);
         return;
     }
 
     fn begin_critical_sheet(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_begin_critical_sheet_block = Window_begin_critical_sheet_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_begin_critical_sheet_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_begin_critical_sheet_block = Window_begin_critical_sheet_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_begin_critical_sheet_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginCriticalSheet:completionHandler:\0")), sheet_window.raw(), bp);
         return;
@@ -14153,24 +14131,21 @@ impl Window {
     }
 
     fn transfer_window_sharing_to_window(this, window: Window, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_transfer_window_sharing_to_window_block = Window_transfer_window_sharing_to_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_transfer_window_sharing_to_window_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_transfer_window_sharing_to_window_block = Window_transfer_window_sharing_to_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_transfer_window_sharing_to_window_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("transferWindowSharingToWindow:completionHandler:\0")), window.raw(), bp);
         return;
     }
 
     fn request_sharing_of_window(this, window: Window, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_request_sharing_of_window_block = Window_request_sharing_of_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_request_sharing_of_window_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_request_sharing_of_window_block = Window_request_sharing_of_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_request_sharing_of_window_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("requestSharingOfWindow:completionHandler:\0")), window.raw(), bp);
         return;
     }
 
     fn request_sharing_of_window_using_preview(this, image: Image, title: str, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_request_sharing_of_window_using_preview_block = Window_request_sharing_of_window_using_preview_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_request_sharing_of_window_using_preview_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_request_sharing_of_window_using_preview_block = Window_request_sharing_of_window_using_preview_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_request_sharing_of_window_using_preview_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("requestSharingOfWindowUsingPreview:title:completionHandler:\0")), image.raw(), bridge::nsstring(title), bp);
         return;
@@ -14933,8 +14908,7 @@ impl Window {
     }
 
     fn track_events_matching_mask(this, mask: u64, timeout: f64, mode: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_track_events_matching_mask_block = Window_track_events_matching_mask_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_track_events_matching_mask_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_track_events_matching_mask_block = Window_track_events_matching_mask_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_track_events_matching_mask_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_u64_f64_id_id(this._obj, rt::sel(#str_ptr("trackEventsMatchingMask:timeout:mode:handler:\0")), mask, timeout, bridge::nsstring(mode), bp);
         return;
@@ -15821,8 +15795,7 @@ impl AccessibilityCustomAction {
     fn from_raw(ptr: *u8) -> AccessibilityCustomAction { return AccessibilityCustomAction { _obj: rt::retain(ptr) }; }
 
     fn init_with_name_handler(this, name: str, cb: fn(*u8) -> i8, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AccessibilityCustomAction_init_with_name_handler_block = AccessibilityCustomAction_init_with_name_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AccessibilityCustomAction_init_with_name_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AccessibilityCustomAction_init_with_name_handler_block = AccessibilityCustomAction_init_with_name_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AccessibilityCustomAction_init_with_name_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithName:handler:\0")), bridge::nsstring(name), bp);
     }
@@ -15844,8 +15817,7 @@ impl AccessibilityCustomAction {
 
     // SKIPPED `handler`: return `BOOL (^ _Nullable)(void)` — block
     fn set_handler(this, cb: fn(*u8) -> i8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AccessibilityCustomAction_set_handler_block = AccessibilityCustomAction_set_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AccessibilityCustomAction_set_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AccessibilityCustomAction_set_handler_block = AccessibilityCustomAction_set_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AccessibilityCustomAction_set_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHandler:\0")), bp);
         return;
@@ -16165,8 +16137,7 @@ impl Image {
     }
 
     fn image_with_size(size: rt::Size, flipped: bool, cb: fn(*u8, rt::Rect) -> i8, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Image_image_with_size_block = Image_image_with_size_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Image_image_with_size_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Image_image_with_size_block = Image_image_with_size_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Image_image_with_size_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_id_size_i8_id(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("imageWithSize:flipped:drawingHandler:\0")), size, flipped as i8, bp);
     }
@@ -17203,16 +17174,14 @@ impl Workspace {
     }
 
     fn open_u_r_l_configuration(this, url: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_open_u_r_l_configuration_block = Workspace_open_u_r_l_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_u_r_l_configuration_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_open_u_r_l_configuration_block = Workspace_open_u_r_l_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_u_r_l_configuration_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("openURL:configuration:completionHandler:\0")), url.raw(), configuration.raw(), bp);
         return;
     }
 
     fn open_u_r_ls(this, urls: vec::Vec[URL], with_application_at_u_r_l: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_open_u_r_ls_block = Workspace_open_u_r_ls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_u_r_ls_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_open_u_r_ls_block = Workspace_open_u_r_ls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_u_r_ls_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_urls: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_urls: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -17230,8 +17199,7 @@ impl Workspace {
     }
 
     fn open_application_at_u_r_l(this, application_u_r_l: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_open_application_at_u_r_l_block = Workspace_open_application_at_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_application_at_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_open_application_at_u_r_l_block = Workspace_open_application_at_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_application_at_u_r_l_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("openApplicationAtURL:configuration:completionHandler:\0")), application_u_r_l.raw(), configuration.raw(), bp);
         return;
@@ -17289,8 +17257,7 @@ impl Workspace {
     }
 
     fn recycle_u_r_ls(this, u_r_ls: vec::Vec[URL], cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_recycle_u_r_ls_block = Workspace_recycle_u_r_ls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_recycle_u_r_ls_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_recycle_u_r_ls_block = Workspace_recycle_u_r_ls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_recycle_u_r_ls_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_u_r_ls: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_u_r_ls: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -17308,8 +17275,7 @@ impl Workspace {
     }
 
     fn duplicate_u_r_ls(this, u_r_ls: vec::Vec[URL], cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_duplicate_u_r_ls_block = Workspace_duplicate_u_r_ls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_duplicate_u_r_ls_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_duplicate_u_r_ls_block = Workspace_duplicate_u_r_ls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_duplicate_u_r_ls_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_u_r_ls: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_u_r_ls: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -17389,24 +17355,21 @@ impl Workspace {
     }
 
     fn set_default_application_at_u_r_l(this, application_u_r_l: URL, to_open_content_type_of_file_at_u_r_l: URL, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_set_default_application_at_u_r_l_block = Workspace_set_default_application_at_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_set_default_application_at_u_r_l_block = Workspace_set_default_application_at_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenContentTypeOfFileAtURL:completionHandler:\0")), application_u_r_l.raw(), to_open_content_type_of_file_at_u_r_l.raw(), bp);
         return;
     }
 
     fn set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme(this, application_u_r_l: URL, url_scheme: str, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_block = Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_block = Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenURLsWithScheme:completionHandler:\0")), application_u_r_l.raw(), bridge::nsstring(url_scheme), bp);
         return;
     }
 
     fn set_default_application_at_u_r_l_to_open_file_at_u_r_l(this, application_u_r_l: URL, url: URL, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_block = Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_block = Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenFileAtURL:completionHandler:\0")), application_u_r_l.raw(), url.raw(), bp);
         return;
@@ -17434,8 +17397,7 @@ impl Workspace {
     }
 
     fn set_default_application_at_u_r_l_to_open_content_type(this, application_u_r_l: URL, content_type: UTType, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_set_default_application_at_u_r_l_to_open_content_type_block = Workspace_set_default_application_at_u_r_l_to_open_content_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_content_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_set_default_application_at_u_r_l_to_open_content_type_block = Workspace_set_default_application_at_u_r_l_to_open_content_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_content_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenContentType:completionHandler:\0")), application_u_r_l.raw(), content_type.raw(), bp);
         return;
@@ -17533,8 +17495,7 @@ impl Workspace {
     }
 
     fn request_authorization_of_type(this, type_: WorkspaceAuthorizationType, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_request_authorization_of_type_block = Workspace_request_authorization_of_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_request_authorization_of_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_request_authorization_of_type_block = Workspace_request_authorization_of_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_request_authorization_of_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i64_id(this._obj, rt::sel(#str_ptr("requestAuthorizationOfType:completionHandler:\0")), workspace_authorization_type_raw(type_), bp);
         return;
@@ -18010,8 +17971,7 @@ impl Event {
     }
 
     fn track_swipe_event_with_options(this, options: u64, dampen_amount_threshold_min: f64, max: f64, cb: fn(*u8, f64, u64, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Event_track_swipe_event_with_options_block = Event_track_swipe_event_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Event_track_swipe_event_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Event_track_swipe_event_with_options_block = Event_track_swipe_event_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Event_track_swipe_event_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_u64_f64_f64_id(this._obj, rt::sel(#str_ptr("trackSwipeEventWithOptions:dampenAmountThresholdMin:max:usingHandler:\0")), options, dampen_amount_threshold_min, max, bp);
         return;
@@ -18058,16 +18018,14 @@ impl Event {
     }
 
     fn add_global_monitor_for_events_matching_mask(mask: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[*u8] {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Event_add_global_monitor_for_events_matching_mask_block = Event_add_global_monitor_for_events_matching_mask_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Event_add_global_monitor_for_events_matching_mask_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Event_add_global_monitor_for_events_matching_mask_block = Event_add_global_monitor_for_events_matching_mask_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Event_add_global_monitor_for_events_matching_mask_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_u64_id(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("addGlobalMonitorForEventsMatchingMask:handler:\0")), mask, bp);
         return bridge::obj_option(obj);
     }
 
     fn add_local_monitor_for_events_matching_mask(mask: u64, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> option::Option[*u8] {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Event_add_local_monitor_for_events_matching_mask_block = Event_add_local_monitor_for_events_matching_mask_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Event_add_local_monitor_for_events_matching_mask_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Event_add_local_monitor_for_events_matching_mask_block = Event_add_local_monitor_for_events_matching_mask_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Event_add_local_monitor_for_events_matching_mask_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_u64_id(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("addLocalMonitorForEventsMatchingMask:handler:\0")), mask, bp);
         return bridge::obj_option(obj);
@@ -18525,8 +18483,7 @@ impl Pasteboard {
     }
 
     fn detect_patterns_for_patterns(this, patterns: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Pasteboard_detect_patterns_for_patterns_block = Pasteboard_detect_patterns_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pasteboard_detect_patterns_for_patterns_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Pasteboard_detect_patterns_for_patterns_block = Pasteboard_detect_patterns_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pasteboard_detect_patterns_for_patterns_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_patterns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_patterns: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -18545,8 +18502,7 @@ impl Pasteboard {
     }
 
     fn detect_values_for_patterns(this, patterns: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Pasteboard_detect_values_for_patterns_block = Pasteboard_detect_values_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pasteboard_detect_values_for_patterns_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Pasteboard_detect_values_for_patterns_block = Pasteboard_detect_values_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pasteboard_detect_values_for_patterns_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_patterns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_patterns: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -18565,8 +18521,7 @@ impl Pasteboard {
     }
 
     fn detect_metadata_for_types(this, types: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Pasteboard_detect_metadata_for_types_block = Pasteboard_detect_metadata_for_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pasteboard_detect_metadata_for_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Pasteboard_detect_metadata_for_types_block = Pasteboard_detect_metadata_for_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pasteboard_detect_metadata_for_types_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -18727,8 +18682,7 @@ impl PasteboardItem {
     }
 
     fn detect_patterns_for_patterns(this, patterns: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PasteboardItem_detect_patterns_for_patterns_block = PasteboardItem_detect_patterns_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PasteboardItem_detect_patterns_for_patterns_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PasteboardItem_detect_patterns_for_patterns_block = PasteboardItem_detect_patterns_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PasteboardItem_detect_patterns_for_patterns_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_patterns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_patterns: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -18747,8 +18701,7 @@ impl PasteboardItem {
     }
 
     fn detect_values_for_patterns(this, patterns: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PasteboardItem_detect_values_for_patterns_block = PasteboardItem_detect_values_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PasteboardItem_detect_values_for_patterns_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PasteboardItem_detect_values_for_patterns_block = PasteboardItem_detect_values_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PasteboardItem_detect_values_for_patterns_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_patterns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_patterns: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -18767,8 +18720,7 @@ impl PasteboardItem {
     }
 
     fn detect_metadata_for_types(this, types: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PasteboardItem_detect_metadata_for_types_block = PasteboardItem_detect_metadata_for_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PasteboardItem_detect_metadata_for_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PasteboardItem_detect_metadata_for_types_block = PasteboardItem_detect_metadata_for_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PasteboardItem_detect_metadata_for_types_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -19079,8 +19031,7 @@ impl Menu {
     }
 
     fn palette_menu_with_colors(colors: vec::Vec[Color], titles: vec::Vec[text::Text], cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Menu_palette_menu_with_colors_block = Menu_palette_menu_with_colors_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Menu_palette_menu_with_colors_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Menu_palette_menu_with_colors_block = Menu_palette_menu_with_colors_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Menu_palette_menu_with_colors_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_colors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_colors: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -19097,8 +19048,7 @@ impl Menu {
     }
 
     fn palette_menu_with_colors_titles(colors: vec::Vec[Color], item_titles: vec::Vec[text::Text], template_image: Image, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Menu_palette_menu_with_colors_titles_block = Menu_palette_menu_with_colors_titles_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Menu_palette_menu_with_colors_titles_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Menu_palette_menu_with_colors_titles_block = Menu_palette_menu_with_colors_titles_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Menu_palette_menu_with_colors_titles_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_colors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_colors: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -19955,8 +19905,7 @@ impl Appearance {
     fn from_raw(ptr: *u8) -> Appearance { return Appearance { _obj: rt::retain(ptr) }; }
 
     fn perform_as_current_drawing_appearance(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Appearance_perform_as_current_drawing_appearance_block = Appearance_perform_as_current_drawing_appearance_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Appearance_perform_as_current_drawing_appearance_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Appearance_perform_as_current_drawing_appearance_block = Appearance_perform_as_current_drawing_appearance_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Appearance_perform_as_current_drawing_appearance_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performAsCurrentDrawingAppearance:\0")), bp);
         return;
@@ -20048,8 +19997,7 @@ impl DraggingItem {
 
     // SKIPPED `imageComponentsProvider`: return `NSArray<NSDraggingImageComponent *> * _Nonnull (^ _Nullable)(void)` — generic collection
     fn set_image_components_provider(this, cb: fn(*u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: DraggingItem_set_image_components_provider_block = DraggingItem_set_image_components_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DraggingItem_set_image_components_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: DraggingItem_set_image_components_provider_block = DraggingItem_set_image_components_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DraggingItem_set_image_components_provider_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImageComponentsProvider:\0")), bp);
         return;
@@ -20084,8 +20032,7 @@ impl DraggingSession {
     fn from_raw(ptr: *u8) -> DraggingSession { return DraggingSession { _obj: ptr }; }
 
     fn enumerate_dragging_items_with_options(this, enum_opts: u64, for_view: View, classes: vec::Vec[AnyObject], search_options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: DraggingSession_enumerate_dragging_items_with_options_block = DraggingSession_enumerate_dragging_items_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DraggingSession_enumerate_dragging_items_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: DraggingSession_enumerate_dragging_items_with_options_block = DraggingSession_enumerate_dragging_items_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DraggingSession_enumerate_dragging_items_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_classes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_classes: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -25831,8 +25778,7 @@ impl PageLayout {
     }
 
     fn begin_sheet_using_print_info(this, print_info: PrintInfo, on_window: Window, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PageLayout_begin_sheet_using_print_info_block = PageLayout_begin_sheet_using_print_info_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PageLayout_begin_sheet_using_print_info_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PageLayout_begin_sheet_using_print_info_block = PageLayout_begin_sheet_using_print_info_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PageLayout_begin_sheet_using_print_info_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetUsingPrintInfo:onWindow:completionHandler:\0")), print_info.raw(), on_window.raw(), bp);
         return;
@@ -26139,16 +26085,14 @@ impl SavePanel {
     }
 
     fn begin_sheet_modal_for_window(this, window: Window, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SavePanel_begin_sheet_modal_for_window_block = SavePanel_begin_sheet_modal_for_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SavePanel_begin_sheet_modal_for_window_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SavePanel_begin_sheet_modal_for_window_block = SavePanel_begin_sheet_modal_for_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SavePanel_begin_sheet_modal_for_window_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginSheetModalForWindow:completionHandler:\0")), window.raw(), bp);
         return;
     }
 
     fn begin_with_completion_handler(this, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SavePanel_begin_with_completion_handler_block = SavePanel_begin_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SavePanel_begin_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SavePanel_begin_with_completion_handler_block = SavePanel_begin_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SavePanel_begin_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("beginWithCompletionHandler:\0")), bp);
         return;
@@ -26464,8 +26408,7 @@ impl SharingService {
     }
 
     fn init_with_title_image_alternate_image_handler(this, title: str, image: Image, alternate_image: Image, cb: fn(*u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SharingService_init_with_title_image_alternate_image_handler_block = SharingService_init_with_title_image_alternate_image_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SharingService_init_with_title_image_alternate_image_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SharingService_init_with_title_image_alternate_image_handler_block = SharingService_init_with_title_image_alternate_image_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SharingService_init_with_title_image_alternate_image_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("initWithTitle:image:alternateImage:handler:\0")), bridge::nsstring(title), image.raw(), alternate_image.raw(), bp);
     }
@@ -26843,40 +26786,35 @@ impl Document {
     }
 
     fn perform_activity_with_synchronous_waiting(this, wait_synchronously: bool, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_perform_activity_with_synchronous_waiting_block = Document_perform_activity_with_synchronous_waiting_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_perform_activity_with_synchronous_waiting_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_perform_activity_with_synchronous_waiting_block = Document_perform_activity_with_synchronous_waiting_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_perform_activity_with_synchronous_waiting_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_i8_id(this._obj, rt::sel(#str_ptr("performActivityWithSynchronousWaiting:usingBlock:\0")), wait_synchronously as i8, bp);
         return;
     }
 
     fn continue_activity_using_block(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_continue_activity_using_block_block = Document_continue_activity_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_continue_activity_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_continue_activity_using_block_block = Document_continue_activity_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_continue_activity_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("continueActivityUsingBlock:\0")), bp);
         return;
     }
 
     fn continue_asynchronous_work_on_main_thread_using_block(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_continue_asynchronous_work_on_main_thread_using_block_block = Document_continue_asynchronous_work_on_main_thread_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_continue_asynchronous_work_on_main_thread_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_continue_asynchronous_work_on_main_thread_using_block_block = Document_continue_asynchronous_work_on_main_thread_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_continue_asynchronous_work_on_main_thread_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("continueAsynchronousWorkOnMainThreadUsingBlock:\0")), bp);
         return;
     }
 
     fn perform_synchronous_file_access_using_block(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_perform_synchronous_file_access_using_block_block = Document_perform_synchronous_file_access_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_perform_synchronous_file_access_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_perform_synchronous_file_access_using_block_block = Document_perform_synchronous_file_access_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_perform_synchronous_file_access_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performSynchronousFileAccessUsingBlock:\0")), bp);
         return;
     }
 
     fn perform_asynchronous_file_access_using_block(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_perform_asynchronous_file_access_using_block_block = Document_perform_asynchronous_file_access_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_perform_asynchronous_file_access_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_perform_asynchronous_file_access_using_block_block = Document_perform_asynchronous_file_access_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_perform_asynchronous_file_access_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performAsynchronousFileAccessUsingBlock:\0")), bp);
         return;
@@ -26980,8 +26918,7 @@ impl Document {
     }
 
     fn save_to_u_r_l(this, url: URL, of_type: str, for_save_operation: SaveOperationType, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_save_to_u_r_l_block = Document_save_to_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_save_to_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_save_to_u_r_l_block = Document_save_to_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_save_to_u_r_l_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_id_i64_id(this._obj, rt::sel(#str_ptr("saveToURL:ofType:forSaveOperation:completionHandler:\0")), url.raw(), bridge::nsstring(of_type), save_operation_type_raw(for_save_operation), bp);
         return;
@@ -27004,8 +26941,7 @@ impl Document {
     }
 
     fn autosave_with_implicit_cancellability(this, autosaving_is_implicitly_cancellable: bool, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_autosave_with_implicit_cancellability_block = Document_autosave_with_implicit_cancellability_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_autosave_with_implicit_cancellability_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_autosave_with_implicit_cancellability_block = Document_autosave_with_implicit_cancellability_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_autosave_with_implicit_cancellability_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_i8_id(this._obj, rt::sel(#str_ptr("autosaveWithImplicitCancellability:completionHandler:\0")), autosaving_is_implicitly_cancellable as i8, bp);
         return;
@@ -27016,8 +26952,7 @@ impl Document {
     }
 
     fn stop_browsing_versions_with_completion_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_stop_browsing_versions_with_completion_handler_block = Document_stop_browsing_versions_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_stop_browsing_versions_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_stop_browsing_versions_with_completion_handler_block = Document_stop_browsing_versions_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_stop_browsing_versions_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("stopBrowsingVersionsWithCompletionHandler:\0")), bp);
         return;
@@ -27060,16 +26995,14 @@ impl Document {
     }
 
     fn move_document_with_completion_handler(this, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_move_document_with_completion_handler_block = Document_move_document_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_move_document_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_move_document_with_completion_handler_block = Document_move_document_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_move_document_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveDocumentWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn move_to_u_r_l(this, url: URL, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_move_to_u_r_l_block = Document_move_to_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_move_to_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_move_to_u_r_l_block = Document_move_to_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_move_to_u_r_l_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveToURL:completionHandler:\0")), url.raw(), bp);
         return;
@@ -27084,32 +27017,28 @@ impl Document {
     }
 
     fn lock_document_with_completion_handler(this, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_lock_document_with_completion_handler_block = Document_lock_document_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_lock_document_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_lock_document_with_completion_handler_block = Document_lock_document_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_lock_document_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("lockDocumentWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn lock_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_lock_with_completion_handler_block = Document_lock_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_lock_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_lock_with_completion_handler_block = Document_lock_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_lock_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("lockWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn unlock_document_with_completion_handler(this, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_unlock_document_with_completion_handler_block = Document_unlock_document_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_unlock_document_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_unlock_document_with_completion_handler_block = Document_unlock_document_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_unlock_document_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("unlockDocumentWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn unlock_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_unlock_with_completion_handler_block = Document_unlock_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_unlock_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_unlock_with_completion_handler_block = Document_unlock_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_unlock_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("unlockWithCompletionHandler:\0")), bp);
         return;
@@ -27194,8 +27123,7 @@ impl Document {
     }
 
     fn share_document_with_sharing_service(this, sharing_service: SharingService, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_share_document_with_sharing_service_block = Document_share_document_with_sharing_service_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_share_document_with_sharing_service_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_share_document_with_sharing_service_block = Document_share_document_with_sharing_service_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_share_document_with_sharing_service_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("shareDocumentWithSharingService:completionHandler:\0")), sharing_service.raw(), bp);
         return;
@@ -27302,32 +27230,28 @@ impl Document {
     }
 
     fn relinquish_presented_item_to_reader(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_relinquish_presented_item_to_reader_block = Document_relinquish_presented_item_to_reader_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_relinquish_presented_item_to_reader_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_relinquish_presented_item_to_reader_block = Document_relinquish_presented_item_to_reader_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_relinquish_presented_item_to_reader_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("relinquishPresentedItemToReader:\0")), bp);
         return;
     }
 
     fn relinquish_presented_item_to_writer(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_relinquish_presented_item_to_writer_block = Document_relinquish_presented_item_to_writer_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_relinquish_presented_item_to_writer_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_relinquish_presented_item_to_writer_block = Document_relinquish_presented_item_to_writer_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_relinquish_presented_item_to_writer_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("relinquishPresentedItemToWriter:\0")), bp);
         return;
     }
 
     fn save_presented_item_changes_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_save_presented_item_changes_with_completion_handler_block = Document_save_presented_item_changes_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_save_presented_item_changes_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_save_presented_item_changes_with_completion_handler_block = Document_save_presented_item_changes_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_save_presented_item_changes_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("savePresentedItemChangesWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn accommodate_presented_item_deletion_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_accommodate_presented_item_deletion_with_completion_handler_block = Document_accommodate_presented_item_deletion_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_accommodate_presented_item_deletion_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_accommodate_presented_item_deletion_with_completion_handler_block = Document_accommodate_presented_item_deletion_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_accommodate_presented_item_deletion_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("accommodatePresentedItemDeletionWithCompletionHandler:\0")), bp);
         return;
@@ -27780,8 +27704,7 @@ impl Document {
     }
 
     fn restore_document_window_with_identifier(this, identifier: str, state: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Document_restore_document_window_with_identifier_block = Document_restore_document_window_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_restore_document_window_with_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Document_restore_document_window_with_identifier_block = Document_restore_document_window_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_restore_document_window_with_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("restoreDocumentWindowWithIdentifier:state:completionHandler:\0")), bridge::nsstring(identifier), state, bp);
         return;
@@ -28039,8 +27962,7 @@ impl Application {
     }
 
     fn enumerate_windows_with_options(this, options: u64, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Application_enumerate_windows_with_options_block = Application_enumerate_windows_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Application_enumerate_windows_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Application_enumerate_windows_with_options_block = Application_enumerate_windows_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Application_enumerate_windows_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("enumerateWindowsWithOptions:usingBlock:\0")), options, bp);
         return;
@@ -28494,8 +28416,7 @@ impl Application {
     }
 
     fn restore_window_with_identifier(this, identifier: str, state: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) -> bool {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Application_restore_window_with_identifier_block = Application_restore_window_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Application_restore_window_with_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Application_restore_window_with_identifier_block = Application_restore_window_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Application_restore_window_with_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("restoreWindowWithIdentifier:state:completionHandler:\0")), bridge::nsstring(identifier), state, bp) != (0 as i8);
     }
@@ -29574,8 +29495,7 @@ impl Alert {
     }
 
     fn begin_sheet_modal_for_window(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Alert_begin_sheet_modal_for_window_block = Alert_begin_sheet_modal_for_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Alert_begin_sheet_modal_for_window_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Alert_begin_sheet_modal_for_window_block = Alert_begin_sheet_modal_for_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Alert_begin_sheet_modal_for_window_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginSheetModalForWindow:completionHandler:\0")), sheet_window.raw(), bp);
         return;
@@ -29700,8 +29620,7 @@ impl AnimationContext {
 
     // SKIPPED `runAnimationGroup:completionHandler:`: params after the block not modelled
     fn run_animation_group(cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AnimationContext_run_animation_group_block = AnimationContext_run_animation_group_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AnimationContext_run_animation_group_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AnimationContext_run_animation_group_block = AnimationContext_run_animation_group_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AnimationContext_run_animation_group_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(rt::get_class(#str_ptr("NSAnimationContext\0")), rt::sel(#str_ptr("runAnimationGroup:\0")), bp);
         return;
@@ -29737,8 +29656,7 @@ impl AnimationContext {
 
     // SKIPPED `completionHandler`: return `API_AVAILABLE void (^)(void)` — block
     fn set_completion_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AnimationContext_set_completion_handler_block = AnimationContext_set_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AnimationContext_set_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AnimationContext_set_completion_handler_block = AnimationContext_set_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AnimationContext_set_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCompletionHandler:\0")), bp);
         return;
@@ -31309,8 +31227,7 @@ impl ViewController {
     }
 
     fn transition_from_view_controller(this, from_view_controller: ViewController, to_view_controller: ViewController, options: u64, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ViewController_transition_from_view_controller_block = ViewController_transition_from_view_controller_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ViewController_transition_from_view_controller_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ViewController_transition_from_view_controller_block = ViewController_transition_from_view_controller_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ViewController_transition_from_view_controller_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_id_u64_id(this._obj, rt::sel(#str_ptr("transitionFromViewController:toViewController:options:completionHandler:\0")), from_view_controller.raw(), to_view_controller.raw(), options, bp);
         return;
@@ -31557,8 +31474,7 @@ impl CandidateListTouchBarItem {
 
     // SKIPPED `attributedStringForCandidate`: return `API_UNAVAILABLE NSAttributedString * _Nonnull (^)(CandidateType _Nonnull, NSInteger)` — block
     fn set_attributed_string_for_candidate(this, cb: fn(*u8, *u8, i64) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CandidateListTouchBarItem_set_attributed_string_for_candidate_block = CandidateListTouchBarItem_set_attributed_string_for_candidate_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CandidateListTouchBarItem_set_attributed_string_for_candidate_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CandidateListTouchBarItem_set_attributed_string_for_candidate_block = CandidateListTouchBarItem_set_attributed_string_for_candidate_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CandidateListTouchBarItem_set_attributed_string_for_candidate_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributedStringForCandidate:\0")), bp);
         return;
@@ -32125,8 +32041,7 @@ impl Storyboard {
     }
 
     fn instantiate_initial_controller_with_creator(this, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> option::Option[*u8] {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Storyboard_instantiate_initial_controller_with_creator_block = Storyboard_instantiate_initial_controller_with_creator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Storyboard_instantiate_initial_controller_with_creator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Storyboard_instantiate_initial_controller_with_creator_block = Storyboard_instantiate_initial_controller_with_creator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Storyboard_instantiate_initial_controller_with_creator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("instantiateInitialControllerWithCreator:\0")), bp);
         return bridge::obj_option(obj);
@@ -32137,8 +32052,7 @@ impl Storyboard {
     }
 
     fn instantiate_controller_with_identifier_creator(this, identifier: str, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Storyboard_instantiate_controller_with_identifier_creator_block = Storyboard_instantiate_controller_with_identifier_creator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Storyboard_instantiate_controller_with_identifier_creator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Storyboard_instantiate_controller_with_identifier_creator_block = Storyboard_instantiate_controller_with_identifier_creator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Storyboard_instantiate_controller_with_identifier_creator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("instantiateControllerWithIdentifier:creator:\0")), bridge::nsstring(identifier), bp);
     }
@@ -32160,8 +32074,7 @@ impl StoryboardSegue {
     fn from_raw(ptr: *u8) -> StoryboardSegue { return StoryboardSegue { _obj: rt::retain(ptr) }; }
 
     fn segue_with_identifier(identifier: str, source: *u8, destination: *u8, cb: fn(*u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: StoryboardSegue_segue_with_identifier_block = StoryboardSegue_segue_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StoryboardSegue_segue_with_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: StoryboardSegue_segue_with_identifier_block = StoryboardSegue_segue_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StoryboardSegue_segue_with_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSStoryboardSegue\0")), rt::sel(#str_ptr("segueWithIdentifier:source:destination:performHandler:\0")), bridge::nsstring(identifier), source, destination, bp);
     }
@@ -33823,8 +33736,7 @@ impl CollectionLayoutSection {
 
     // SKIPPED `visibleItemsInvalidationHandler`: return `NSCollectionLayoutSectionVisibleItemsInvalidationHandler _Nullable` — unmapped type `NSCollectionLayoutSectionVisibleItemsInvalidationHandler`
     fn set_visible_items_invalidation_handler(this, cb: fn(*u8, *u8, rt::Point, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CollectionLayoutSection_set_visible_items_invalidation_handler_block = CollectionLayoutSection_set_visible_items_invalidation_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionLayoutSection_set_visible_items_invalidation_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CollectionLayoutSection_set_visible_items_invalidation_handler_block = CollectionLayoutSection_set_visible_items_invalidation_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionLayoutSection_set_visible_items_invalidation_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVisibleItemsInvalidationHandler:\0")), bp);
         return;
@@ -33915,8 +33827,7 @@ impl CollectionLayoutGroup {
     }
 
     fn custom_group_with_layout_size(layout_size: CollectionLayoutSize, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CollectionLayoutGroup_custom_group_with_layout_size_block = CollectionLayoutGroup_custom_group_with_layout_size_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionLayoutGroup_custom_group_with_layout_size_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CollectionLayoutGroup_custom_group_with_layout_size_block = CollectionLayoutGroup_custom_group_with_layout_size_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionLayoutGroup_custom_group_with_layout_size_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("customGroupWithLayoutSize:itemProvider:\0")), layout_size.raw(), bp);
     }
@@ -34533,8 +34444,7 @@ impl CollectionViewCompositionalLayout {
     }
 
     fn init_with_section_provider(this, cb: fn(*u8, i64, *u8) -> *u8, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CollectionViewCompositionalLayout_init_with_section_provider_block = CollectionViewCompositionalLayout_init_with_section_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionViewCompositionalLayout_init_with_section_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CollectionViewCompositionalLayout_init_with_section_provider_block = CollectionViewCompositionalLayout_init_with_section_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionViewCompositionalLayout_init_with_section_provider_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithSectionProvider:\0")), bp);
     }
@@ -34701,8 +34611,7 @@ impl ColorSampler {
     fn from_raw(ptr: *u8) -> ColorSampler { return ColorSampler { _obj: ptr }; }
 
     fn show_sampler_with_selection_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ColorSampler_show_sampler_with_selection_handler_block = ColorSampler_show_sampler_with_selection_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ColorSampler_show_sampler_with_selection_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ColorSampler_show_sampler_with_selection_handler_block = ColorSampler_show_sampler_with_selection_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ColorSampler_show_sampler_with_selection_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("showSamplerWithSelectionHandler:\0")), bp);
         return;
@@ -34982,8 +34891,7 @@ impl CollectionViewDiffableDataSource {
     fn from_raw(ptr: *u8) -> CollectionViewDiffableDataSource { return CollectionViewDiffableDataSource { _obj: rt::retain(ptr) }; }
 
     fn init_with_collection_view_item_provider(this, collection_view: CollectionView, cb: fn(*u8, *u8, *u8, *u8) -> *u8, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CollectionViewDiffableDataSource_init_with_collection_view_item_provider_block = CollectionViewDiffableDataSource_init_with_collection_view_item_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionViewDiffableDataSource_init_with_collection_view_item_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CollectionViewDiffableDataSource_init_with_collection_view_item_provider_block = CollectionViewDiffableDataSource_init_with_collection_view_item_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionViewDiffableDataSource_init_with_collection_view_item_provider_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithCollectionView:itemProvider:\0")), collection_view.raw(), bp);
     }
@@ -35016,8 +34924,7 @@ impl CollectionViewDiffableDataSource {
 
     // SKIPPED `supplementaryViewProvider`: return `NSCollectionViewDiffableDataSourceSupplementaryViewProvider _Nullable` — unmapped type `NSCollectionViewDiffableDataSourceSupplementaryViewProvider`
     fn set_supplementary_view_provider(this, cb: fn(*u8, *u8, *u8, *u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CollectionViewDiffableDataSource_set_supplementary_view_provider_block = CollectionViewDiffableDataSource_set_supplementary_view_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionViewDiffableDataSource_set_supplementary_view_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CollectionViewDiffableDataSource_set_supplementary_view_provider_block = CollectionViewDiffableDataSource_set_supplementary_view_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionViewDiffableDataSource_set_supplementary_view_provider_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSupplementaryViewProvider:\0")), bp);
         return;
@@ -35290,8 +35197,7 @@ impl FontAssetRequest {
     }
 
     fn download_font_assets_with_completion_handler(this, cb: fn(*u8, *u8) -> i8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FontAssetRequest_download_font_assets_with_completion_handler_block = FontAssetRequest_download_font_assets_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FontAssetRequest_download_font_assets_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FontAssetRequest_download_font_assets_with_completion_handler_block = FontAssetRequest_download_font_assets_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FontAssetRequest_download_font_assets_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("downloadFontAssetsWithCompletionHandler:\0")), bp);
         return;
@@ -36825,8 +36731,7 @@ impl TableView {
     }
 
     fn enumerate_available_row_views_using_block(this, cb: fn(*u8, *u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TableView_enumerate_available_row_views_using_block_block = TableView_enumerate_available_row_views_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableView_enumerate_available_row_views_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TableView_enumerate_available_row_views_using_block_block = TableView_enumerate_available_row_views_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableView_enumerate_available_row_views_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("enumerateAvailableRowViewsUsingBlock:\0")), bp);
         return;
@@ -39928,8 +39833,7 @@ impl CustomImageRep {
     fn as_image_rep(this) -> ImageRep { return ImageRep::from_raw(this._obj); }
 
     fn init_with_size_flipped_drawing_handler(this, size: rt::Size, drawing_handler_should_be_called_with_flipped_context: bool, cb: fn(*u8, rt::Rect) -> i8, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CustomImageRep_init_with_size_flipped_drawing_handler_block = CustomImageRep_init_with_size_flipped_drawing_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CustomImageRep_init_with_size_flipped_drawing_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CustomImageRep_init_with_size_flipped_drawing_handler_block = CustomImageRep_init_with_size_flipped_drawing_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CustomImageRep_init_with_size_flipped_drawing_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_id_size_i8_id(this._obj, rt::sel(#str_ptr("initWithSize:flipped:drawingHandler:\0")), size, drawing_handler_should_be_called_with_flipped_context as i8, bp);
     }
@@ -40218,24 +40122,21 @@ impl DocumentController {
     }
 
     fn begin_open_panel_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: DocumentController_begin_open_panel_with_completion_handler_block = DocumentController_begin_open_panel_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_begin_open_panel_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: DocumentController_begin_open_panel_with_completion_handler_block = DocumentController_begin_open_panel_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_begin_open_panel_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("beginOpenPanelWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn begin_open_panel(this, open_panel: OpenPanel, for_types: vec::Vec[text::Text], cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: DocumentController_begin_open_panel_block = DocumentController_begin_open_panel_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_begin_open_panel_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: DocumentController_begin_open_panel_block = DocumentController_begin_open_panel_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_begin_open_panel_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("beginOpenPanel:forTypes:completionHandler:\0")), open_panel.raw(), bridge::nsarray_of_text(for_types), bp);
         return;
     }
 
     fn open_document_with_contents_of_u_r_l_display(this, url: URL, display_document: bool, cb: fn(*u8, *u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: DocumentController_open_document_with_contents_of_u_r_l_display_block = DocumentController_open_document_with_contents_of_u_r_l_display_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_open_document_with_contents_of_u_r_l_display_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: DocumentController_open_document_with_contents_of_u_r_l_display_block = DocumentController_open_document_with_contents_of_u_r_l_display_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_open_document_with_contents_of_u_r_l_display_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_i8_id(this._obj, rt::sel(#str_ptr("openDocumentWithContentsOfURL:display:completionHandler:\0")), url.raw(), display_document as i8, bp);
         return;
@@ -40250,8 +40151,7 @@ impl DocumentController {
     }
 
     fn reopen_document_for_u_r_l_with_contents_of_u_r_l(this, url_or_nil: URL, contents_u_r_l: URL, display: bool, cb: fn(*u8, *u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_block = DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_block = DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_id_i8_id(this._obj, rt::sel(#str_ptr("reopenDocumentForURL:withContentsOfURL:display:completionHandler:\0")), url_or_nil.raw(), contents_u_r_l.raw(), display as i8, bp);
         return;
@@ -40568,8 +40468,7 @@ impl FilePromiseReceiver {
     fn from_raw(ptr: *u8) -> FilePromiseReceiver { return FilePromiseReceiver { _obj: ptr }; }
 
     fn receive_promised_files_at_destination(this, destination_dir: URL, options: Dictionary, operation_queue: OperationQueue, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FilePromiseReceiver_receive_promised_files_at_destination_block = FilePromiseReceiver_receive_promised_files_at_destination_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePromiseReceiver_receive_promised_files_at_destination_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FilePromiseReceiver_receive_promised_files_at_destination_block = FilePromiseReceiver_receive_promised_files_at_destination_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePromiseReceiver_receive_promised_files_at_destination_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("receivePromisedFilesAtDestination:options:operationQueue:reader:\0")), destination_dir.raw(), options.raw(), operation_queue.raw(), bp);
         return;
@@ -41891,8 +41790,7 @@ impl Scrubber {
     }
 
     fn perform_sequential_batch_updates(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Scrubber_perform_sequential_batch_updates_block = Scrubber_perform_sequential_batch_updates_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Scrubber_perform_sequential_batch_updates_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Scrubber_perform_sequential_batch_updates_block = Scrubber_perform_sequential_batch_updates_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Scrubber_perform_sequential_batch_updates_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performSequentialBatchUpdates:\0")), bp);
         return;
@@ -42937,8 +42835,7 @@ impl SliderAccessoryBehavior {
     }
 
     fn behavior_with_handler(cb: fn(*u8, *u8), ctx: *u8) -> SliderAccessoryBehavior {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SliderAccessoryBehavior_behavior_with_handler_block = SliderAccessoryBehavior_behavior_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SliderAccessoryBehavior_behavior_with_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SliderAccessoryBehavior_behavior_with_handler_block = SliderAccessoryBehavior_behavior_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SliderAccessoryBehavior_behavior_with_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return SliderAccessoryBehavior::from_raw(rt::msg_id_id(rt::get_class(#str_ptr("NSSliderAccessoryBehavior\0")), rt::sel(#str_ptr("behaviorWithHandler:\0")), bp));
     }
@@ -43402,8 +43299,7 @@ impl SpellChecker {
 
     // SKIPPED `checkString:range:types:options:inSpellDocumentWithTag:orthography:wordCount:`: return `NSArray<NSTextCheckingResult *> * _Nonnull` — generic collection
     fn request_checking_of_string(this, string_to_check: str, range: rt::Range, types: u64, options: string_map::StringMap[AnyObject], in_spell_document_with_tag: i64, cb: fn(*u8, i64, *u8, *u8, i64), ctx: *u8) -> i64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SpellChecker_request_checking_of_string_block = SpellChecker_request_checking_of_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpellChecker_request_checking_of_string_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SpellChecker_request_checking_of_string_block = SpellChecker_request_checking_of_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpellChecker_request_checking_of_string_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -43428,8 +43324,7 @@ impl SpellChecker {
     }
 
     fn request_candidates_for_selected_range(this, selected_range: rt::Range, in_string: str, types: u64, options: string_map::StringMap[AnyObject], in_spell_document_with_tag: i64, cb: fn(*u8, i64, *u8), ctx: *u8) -> i64 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SpellChecker_request_candidates_for_selected_range_block = SpellChecker_request_candidates_for_selected_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpellChecker_request_candidates_for_selected_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SpellChecker_request_candidates_for_selected_range_block = SpellChecker_request_candidates_for_selected_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpellChecker_request_candidates_for_selected_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -43594,8 +43489,7 @@ impl SpellChecker {
     }
 
     fn show_correction_indicator_of_type(this, type_: CorrectionIndicatorType, primary_string: str, alternative_strings: vec::Vec[text::Text], for_string_in_rect: rt::Rect, view: View, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SpellChecker_show_correction_indicator_of_type_block = SpellChecker_show_correction_indicator_of_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpellChecker_show_correction_indicator_of_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SpellChecker_show_correction_indicator_of_type_block = SpellChecker_show_correction_indicator_of_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpellChecker_show_correction_indicator_of_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i64_id_id_rect_id_id(this._obj, rt::sel(#str_ptr("showCorrectionIndicatorOfType:primaryString:alternativeStrings:forStringInRect:view:completionHandler:\0")), correction_indicator_type_raw(type_), bridge::nsstring(primary_string), bridge::nsarray_of_text(alternative_strings), for_string_in_rect, view.raw(), bp);
         return;
@@ -45262,8 +45156,7 @@ impl PDFPanel {
     }
 
     fn begin_sheet_with_p_d_f_info(this, pdf_info: PDFInfo, modal_for_window: Window, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PDFPanel_begin_sheet_with_p_d_f_info_block = PDFPanel_begin_sheet_with_p_d_f_info_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PDFPanel_begin_sheet_with_p_d_f_info_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PDFPanel_begin_sheet_with_p_d_f_info_block = PDFPanel_begin_sheet_with_p_d_f_info_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PDFPanel_begin_sheet_with_p_d_f_info_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetWithPDFInfo:modalForWindow:completionHandler:\0")), pdf_info.raw(), modal_for_window.raw(), bp);
         return;
@@ -45332,8 +45225,7 @@ impl PrintPanel {
     }
 
     fn begin_sheet_using_print_info(this, print_info: PrintInfo, on_window: Window, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PrintPanel_begin_sheet_using_print_info_block = PrintPanel_begin_sheet_using_print_info_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PrintPanel_begin_sheet_using_print_info_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PrintPanel_begin_sheet_using_print_info_block = PrintPanel_begin_sheet_using_print_info_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PrintPanel_begin_sheet_using_print_info_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetUsingPrintInfo:onWindow:completionHandler:\0")), print_info.raw(), on_window.raw(), bp);
         return;
@@ -47442,8 +47334,7 @@ impl TextInsertionIndicator {
 
     // SKIPPED `effectsViewInserter`: return `void (^ _Nullable)(NSView * _Nonnull)` — block
     fn set_effects_view_inserter(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextInsertionIndicator_set_effects_view_inserter_block = TextInsertionIndicator_set_effects_view_inserter_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextInsertionIndicator_set_effects_view_inserter_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextInsertionIndicator_set_effects_view_inserter_block = TextInsertionIndicator_set_effects_view_inserter_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextInsertionIndicator_set_effects_view_inserter_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setEffectsViewInserter:\0")), bp);
         return;
@@ -47518,8 +47409,7 @@ impl TextLayoutManager {
     }
 
     fn enumerate_text_layout_fragments_from_location(this, location: TextLocation, options: u64, cb: fn(*u8, *u8) -> i8, ctx: *u8) -> option::Option[TextLocation] {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextLayoutManager_enumerate_text_layout_fragments_from_location_block = TextLayoutManager_enumerate_text_layout_fragments_from_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_text_layout_fragments_from_location_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextLayoutManager_enumerate_text_layout_fragments_from_location_block = TextLayoutManager_enumerate_text_layout_fragments_from_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_text_layout_fragments_from_location_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("enumerateTextLayoutFragmentsFromLocation:options:usingBlock:\0")), location.raw(), options, bp);
         if obj == { 0 as *u8 } {
@@ -47529,8 +47419,7 @@ impl TextLayoutManager {
     }
 
     fn enumerate_rendering_attributes_from_location(this, location: TextLocation, reverse: bool, cb: fn(*u8, *u8, *u8, *u8) -> i8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextLayoutManager_enumerate_rendering_attributes_from_location_block = TextLayoutManager_enumerate_rendering_attributes_from_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_rendering_attributes_from_location_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextLayoutManager_enumerate_rendering_attributes_from_location_block = TextLayoutManager_enumerate_rendering_attributes_from_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_rendering_attributes_from_location_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_i8_id(this._obj, rt::sel(#str_ptr("enumerateRenderingAttributesFromLocation:reverse:usingBlock:\0")), location.raw(), reverse as i8, bp);
         return;
@@ -47589,8 +47478,7 @@ impl TextLayoutManager {
     }
 
     fn enumerate_text_segments_in_range(this, text_range: TextRange, type_: TextLayoutManagerSegmentType, options: u64, cb: fn(*u8, *u8, rt::Rect, f64, *u8) -> i8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextLayoutManager_enumerate_text_segments_in_range_block = TextLayoutManager_enumerate_text_segments_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_text_segments_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextLayoutManager_enumerate_text_segments_in_range_block = TextLayoutManager_enumerate_text_segments_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_text_segments_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_i64_u64_id(this._obj, rt::sel(#str_ptr("enumerateTextSegmentsInRange:type:options:usingBlock:\0")), text_range.raw(), text_layout_manager_segment_type_raw(type_), options, bp);
         return;
@@ -47734,8 +47622,7 @@ impl TextLayoutManager {
 
     // SKIPPED `renderingAttributesValidator`: return `void (^ _Nullable)(NSTextLayoutManager * _Nonnull, NSTextLayoutFragment * _Nonnull)` — block
     fn set_rendering_attributes_validator(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextLayoutManager_set_rendering_attributes_validator_block = TextLayoutManager_set_rendering_attributes_validator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_set_rendering_attributes_validator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextLayoutManager_set_rendering_attributes_validator_block = TextLayoutManager_set_rendering_attributes_validator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_set_rendering_attributes_validator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRenderingAttributesValidator:\0")), bp);
         return;
@@ -48256,16 +48143,14 @@ impl LayoutManager {
     }
 
     fn enumerate_line_fragments_for_glyph_range(this, glyph_range: rt::Range, cb: fn(*u8, rt::Rect, rt::Rect, *u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LayoutManager_enumerate_line_fragments_for_glyph_range_block = LayoutManager_enumerate_line_fragments_for_glyph_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LayoutManager_enumerate_line_fragments_for_glyph_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LayoutManager_enumerate_line_fragments_for_glyph_range_block = LayoutManager_enumerate_line_fragments_for_glyph_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LayoutManager_enumerate_line_fragments_for_glyph_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("enumerateLineFragmentsForGlyphRange:usingBlock:\0")), glyph_range, bp);
         return;
     }
 
     fn enumerate_enclosing_rects_for_glyph_range(this, glyph_range: rt::Range, within_selected_glyph_range: rt::Range, in_text_container: TextContainer, cb: fn(*u8, rt::Rect, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LayoutManager_enumerate_enclosing_rects_for_glyph_range_block = LayoutManager_enumerate_enclosing_rects_for_glyph_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LayoutManager_enumerate_enclosing_rects_for_glyph_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LayoutManager_enumerate_enclosing_rects_for_glyph_range_block = LayoutManager_enumerate_enclosing_rects_for_glyph_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LayoutManager_enumerate_enclosing_rects_for_glyph_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_range_id_id(this._obj, rt::sel(#str_ptr("enumerateEnclosingRectsForGlyphRange:withinSelectedGlyphRange:inTextContainer:usingBlock:\0")), glyph_range, within_selected_glyph_range, in_text_container.raw(), bp);
         return;
@@ -50992,8 +50877,7 @@ impl TableViewRowAction {
     fn from_raw(ptr: *u8) -> TableViewRowAction { return TableViewRowAction { _obj: ptr }; }
 
     fn row_action_with_style(style: TableViewRowActionStyle, title: str, cb: fn(*u8, *u8, i64), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TableViewRowAction_row_action_with_style_block = TableViewRowAction_row_action_with_style_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewRowAction_row_action_with_style_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TableViewRowAction_row_action_with_style_block = TableViewRowAction_row_action_with_style_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewRowAction_row_action_with_style_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_id_i64_id_id(rt::get_class(#str_ptr("NSTableViewRowAction\0")), rt::sel(#str_ptr("rowActionWithStyle:title:handler:\0")), table_view_row_action_style_raw(style), bridge::nsstring(title), bp);
     }
@@ -51181,8 +51065,7 @@ impl TableViewDiffableDataSource {
     fn from_raw(ptr: *u8) -> TableViewDiffableDataSource { return TableViewDiffableDataSource { _obj: rt::retain(ptr) }; }
 
     fn init_with_table_view_cell_provider(this, table_view: TableView, cb: fn(*u8, *u8, *u8, i64, *u8) -> *u8, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TableViewDiffableDataSource_init_with_table_view_cell_provider_block = TableViewDiffableDataSource_init_with_table_view_cell_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_init_with_table_view_cell_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TableViewDiffableDataSource_init_with_table_view_cell_provider_block = TableViewDiffableDataSource_init_with_table_view_cell_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_init_with_table_view_cell_provider_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithTableView:cellProvider:\0")), table_view.raw(), bp);
     }
@@ -51201,8 +51084,7 @@ impl TableViewDiffableDataSource {
     }
 
     fn apply_snapshot_animating_differences(this, snapshot: DiffableDataSourceSnapshot, animating_differences: bool, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TableViewDiffableDataSource_apply_snapshot_animating_differences_block = TableViewDiffableDataSource_apply_snapshot_animating_differences_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_apply_snapshot_animating_differences_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TableViewDiffableDataSource_apply_snapshot_animating_differences_block = TableViewDiffableDataSource_apply_snapshot_animating_differences_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_apply_snapshot_animating_differences_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_i8_id(this._obj, rt::sel(#str_ptr("applySnapshot:animatingDifferences:completion:\0")), snapshot.raw(), animating_differences as i8, bp);
         return;
@@ -51228,8 +51110,7 @@ impl TableViewDiffableDataSource {
 
     // SKIPPED `rowViewProvider`: return `NSTableViewDiffableDataSourceRowProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceRowProvider`
     fn set_row_view_provider(this, cb: fn(*u8, *u8, i64, *u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TableViewDiffableDataSource_set_row_view_provider_block = TableViewDiffableDataSource_set_row_view_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_set_row_view_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TableViewDiffableDataSource_set_row_view_provider_block = TableViewDiffableDataSource_set_row_view_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_set_row_view_provider_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRowViewProvider:\0")), bp);
         return;
@@ -51237,8 +51118,7 @@ impl TableViewDiffableDataSource {
 
     // SKIPPED `sectionHeaderViewProvider`: return `NSTableViewDiffableDataSourceSectionHeaderViewProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceSectionHeaderViewProvider`
     fn set_section_header_view_provider(this, cb: fn(*u8, *u8, i64, *u8) -> *u8, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TableViewDiffableDataSource_set_section_header_view_provider_block = TableViewDiffableDataSource_set_section_header_view_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_set_section_header_view_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TableViewDiffableDataSource_set_section_header_view_provider_block = TableViewDiffableDataSource_set_section_header_view_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_set_section_header_view_provider_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSectionHeaderViewProvider:\0")), bp);
         return;
@@ -57521,8 +57401,7 @@ impl StepperTouchBarItem {
     }
 
     fn stepper_touch_bar_item_with_identifier_drawing_handler(identifier: str, cb: fn(*u8, rt::Rect, f64), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_block = StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_block = StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(rt::get_class(#str_ptr("NSStepperTouchBarItem\0")), rt::sel(#str_ptr("stepperTouchBarItemWithIdentifier:drawingHandler:\0")), bridge::nsstring(identifier), bp);
     }
@@ -58156,8 +58035,7 @@ impl TextContentManager {
     }
 
     fn synchronize_text_layout_managers(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextContentManager_synchronize_text_layout_managers_block = TextContentManager_synchronize_text_layout_managers_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextContentManager_synchronize_text_layout_managers_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextContentManager_synchronize_text_layout_managers_block = TextContentManager_synchronize_text_layout_managers_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextContentManager_synchronize_text_layout_managers_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("synchronizeTextLayoutManagers:\0")), bp);
         return;
@@ -58177,8 +58055,7 @@ impl TextContentManager {
     }
 
     fn perform_editing_transaction_using_block(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextContentManager_perform_editing_transaction_using_block_block = TextContentManager_perform_editing_transaction_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextContentManager_perform_editing_transaction_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextContentManager_perform_editing_transaction_using_block_block = TextContentManager_perform_editing_transaction_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextContentManager_perform_editing_transaction_using_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performEditingTransactionUsingBlock:\0")), bp);
         return;
@@ -58651,8 +58528,7 @@ impl WritingToolsCoordinatorAnimationParameters {
 
     // SKIPPED `progressHandler`: return `void (^ _Nullable)(float)` — block
     fn set_progress_handler(this, cb: fn(*u8, f32), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WritingToolsCoordinatorAnimationParameters_set_progress_handler_block = WritingToolsCoordinatorAnimationParameters_set_progress_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WritingToolsCoordinatorAnimationParameters_set_progress_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WritingToolsCoordinatorAnimationParameters_set_progress_handler_block = WritingToolsCoordinatorAnimationParameters_set_progress_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WritingToolsCoordinatorAnimationParameters_set_progress_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setProgressHandler:\0")), bp);
         return;
@@ -58660,8 +58536,7 @@ impl WritingToolsCoordinatorAnimationParameters {
 
     // SKIPPED `completionHandler`: return `void (^ _Nullable)(void)` — block
     fn set_completion_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WritingToolsCoordinatorAnimationParameters_set_completion_handler_block = WritingToolsCoordinatorAnimationParameters_set_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WritingToolsCoordinatorAnimationParameters_set_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WritingToolsCoordinatorAnimationParameters_set_completion_handler_block = WritingToolsCoordinatorAnimationParameters_set_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WritingToolsCoordinatorAnimationParameters_set_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCompletionHandler:\0")), bp);
         return;
@@ -58858,8 +58733,7 @@ impl ItemProviderWriting {
     }
 
     fn load_data_with_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, *u8), ctx: *u8) -> option::Option[Progress] {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ItemProviderWriting_load_data_with_type_identifier_block = ItemProviderWriting_load_data_with_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProviderWriting_load_data_with_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ItemProviderWriting_load_data_with_type_identifier_block = ItemProviderWriting_load_data_with_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProviderWriting_load_data_with_type_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadDataWithTypeIdentifier:forItemProviderCompletionHandler:\0")), bridge::nsstring(type_identifier), bp);
         if obj == { 0 as *u8 } {
@@ -61784,8 +61658,7 @@ impl DraggingInfo {
     }
 
     fn enumerate_dragging_items_with_options(this, enum_opts: u64, for_view: View, classes: vec::Vec[AnyObject], search_options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: DraggingInfo_enumerate_dragging_items_with_options_block = DraggingInfo_enumerate_dragging_items_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DraggingInfo_enumerate_dragging_items_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: DraggingInfo_enumerate_dragging_items_with_options_block = DraggingInfo_enumerate_dragging_items_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DraggingInfo_enumerate_dragging_items_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_classes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_classes: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -68664,8 +68537,7 @@ impl TextStorageObserving {
     }
 
     fn perform_editing_transaction_for_text_storage(this, text_storage: TextStorage, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextStorageObserving_perform_editing_transaction_for_text_storage_block = TextStorageObserving_perform_editing_transaction_for_text_storage_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextStorageObserving_perform_editing_transaction_for_text_storage_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextStorageObserving_perform_editing_transaction_for_text_storage_block = TextStorageObserving_perform_editing_transaction_for_text_storage_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextStorageObserving_perform_editing_transaction_for_text_storage_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("performEditingTransactionForTextStorage:usingBlock:\0")), text_storage.raw(), bp);
         return;
@@ -73256,8 +73128,7 @@ impl UserInterfaceItemSearching {
     fn from_raw(ptr: *u8) -> UserInterfaceItemSearching { return UserInterfaceItemSearching { _obj: ptr }; }
 
     fn search_for_items_with_search_string(this, search_string: str, result_limit: i64, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserInterfaceItemSearching_search_for_items_with_search_string_block = UserInterfaceItemSearching_search_for_items_with_search_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserInterfaceItemSearching_search_for_items_with_search_string_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserInterfaceItemSearching_search_for_items_with_search_string_block = UserInterfaceItemSearching_search_for_items_with_search_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserInterfaceItemSearching_search_for_items_with_search_string_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("searchForItemsWithSearchString:resultLimit:matchedItemHandler:\0")), bridge::nsstring(search_string), result_limit, bp);
         return;
@@ -73298,8 +73169,7 @@ impl WindowRestoration {
     fn from_raw(ptr: *u8) -> WindowRestoration { return WindowRestoration { _obj: ptr }; }
 
     fn restore_window_with_identifier(identifier: str, state: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WindowRestoration_restore_window_with_identifier_block = WindowRestoration_restore_window_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WindowRestoration_restore_window_with_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WindowRestoration_restore_window_with_identifier_block = WindowRestoration_restore_window_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WindowRestoration_restore_window_with_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSWindowRestoration\0")), rt::sel(#str_ptr("restoreWindowWithIdentifier:state:completionHandler:\0")), bridge::nsstring(identifier), state, bp);
         return;
@@ -73561,8 +73431,7 @@ impl TextElementProvider {
     fn from_raw(ptr: *u8) -> TextElementProvider { return TextElementProvider { _obj: ptr }; }
 
     fn enumerate_text_elements_from_location(this, text_location: TextLocation, options: u64, cb: fn(*u8, *u8) -> i8, ctx: *u8) -> option::Option[TextLocation] {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextElementProvider_enumerate_text_elements_from_location_block = TextElementProvider_enumerate_text_elements_from_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextElementProvider_enumerate_text_elements_from_location_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextElementProvider_enumerate_text_elements_from_location_block = TextElementProvider_enumerate_text_elements_from_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextElementProvider_enumerate_text_elements_from_location_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("enumerateTextElementsFromLocation:options:usingBlock:\0")), text_location.raw(), options, bp);
         if obj == { 0 as *u8 } {
@@ -73587,8 +73456,7 @@ impl TextElementProvider {
     }
 
     fn synchronize_to_backing_store(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextElementProvider_synchronize_to_backing_store_block = TextElementProvider_synchronize_to_backing_store_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextElementProvider_synchronize_to_backing_store_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextElementProvider_synchronize_to_backing_store_block = TextElementProvider_synchronize_to_backing_store_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextElementProvider_synchronize_to_backing_store_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("synchronizeToBackingStore:\0")), bp);
         return;

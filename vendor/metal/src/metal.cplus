@@ -11521,8 +11521,7 @@ impl MTL4CommitOptions {
     fn from_raw(ptr: *u8) -> MTL4CommitOptions { return MTL4CommitOptions { _obj: ptr }; }
 
     fn add_feedback_handler(this, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4CommitOptions_add_feedback_handler_block = MTL4CommitOptions_add_feedback_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4CommitOptions_add_feedback_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4CommitOptions_add_feedback_handler_block = MTL4CommitOptions_add_feedback_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4CommitOptions_add_feedback_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addFeedbackHandler:\0")), bp);
         return;
@@ -13712,8 +13711,7 @@ impl Device {
     }
 
     fn new_buffer_with_bytes_no_copy(this, pointer: *u8, length: u64, options: u64, cb: fn(*u8, *u8, u64), ctx: *u8) -> option::Option[Buffer] {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Device_new_buffer_with_bytes_no_copy_block = Device_new_buffer_with_bytes_no_copy_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_buffer_with_bytes_no_copy_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Device_new_buffer_with_bytes_no_copy_block = Device_new_buffer_with_bytes_no_copy_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_buffer_with_bytes_no_copy_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_id_u64_u64_id(this._obj, rt::sel(#str_ptr("newBufferWithBytesNoCopy:length:options:deallocator:\0")), pointer, length, options, bp);
         if obj == { 0 as *u8 } {
@@ -13819,8 +13817,7 @@ impl Device {
     }
 
     fn new_library_with_source_options(this, source: str, options: CompileOptions, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Device_new_library_with_source_options_block = Device_new_library_with_source_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_library_with_source_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Device_new_library_with_source_options_block = Device_new_library_with_source_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_library_with_source_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("newLibraryWithSource:options:completionHandler:\0")), bridge::nsstring(source), options.raw(), bp);
         return;
@@ -13835,8 +13832,7 @@ impl Device {
     }
 
     fn new_library_with_stitched_descriptor_completion_handler(this, descriptor: StitchedLibraryDescriptor, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Device_new_library_with_stitched_descriptor_completion_handler_block = Device_new_library_with_stitched_descriptor_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_library_with_stitched_descriptor_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Device_new_library_with_stitched_descriptor_completion_handler_block = Device_new_library_with_stitched_descriptor_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_library_with_stitched_descriptor_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("newLibraryWithStitchedDescriptor:completionHandler:\0")), descriptor.raw(), bp);
         return;
@@ -13859,16 +13855,14 @@ impl Device {
     }
 
     fn new_render_pipeline_state_with_descriptor_completion_handler(this, descriptor: RenderPipelineDescriptor, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Device_new_render_pipeline_state_with_descriptor_completion_handler_block = Device_new_render_pipeline_state_with_descriptor_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_descriptor_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Device_new_render_pipeline_state_with_descriptor_completion_handler_block = Device_new_render_pipeline_state_with_descriptor_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_descriptor_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithDescriptor:completionHandler:\0")), descriptor.raw(), bp);
         return;
     }
 
     fn new_render_pipeline_state_with_descriptor_options(this, descriptor: RenderPipelineDescriptor, options: u64, cb: fn(*u8, i64, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Device_new_render_pipeline_state_with_descriptor_options_block = Device_new_render_pipeline_state_with_descriptor_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_descriptor_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Device_new_render_pipeline_state_with_descriptor_options_block = Device_new_render_pipeline_state_with_descriptor_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_descriptor_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithDescriptor:options:completionHandler:\0")), descriptor.raw(), options, bp);
         return;
@@ -13891,16 +13885,14 @@ impl Device {
     }
 
     fn new_compute_pipeline_state_with_function_completion_handler(this, compute_function: Function, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Device_new_compute_pipeline_state_with_function_completion_handler_block = Device_new_compute_pipeline_state_with_function_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_compute_pipeline_state_with_function_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Device_new_compute_pipeline_state_with_function_completion_handler_block = Device_new_compute_pipeline_state_with_function_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_compute_pipeline_state_with_function_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithFunction:completionHandler:\0")), compute_function.raw(), bp);
         return;
     }
 
     fn new_compute_pipeline_state_with_function_options(this, compute_function: Function, options: u64, cb: fn(*u8, i64, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Device_new_compute_pipeline_state_with_function_options_block = Device_new_compute_pipeline_state_with_function_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_compute_pipeline_state_with_function_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Device_new_compute_pipeline_state_with_function_options_block = Device_new_compute_pipeline_state_with_function_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_compute_pipeline_state_with_function_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithFunction:options:completionHandler:\0")), compute_function.raw(), options, bp);
         return;
@@ -13915,8 +13907,7 @@ impl Device {
     }
 
     fn new_compute_pipeline_state_with_descriptor(this, descriptor: ComputePipelineDescriptor, options: u64, cb: fn(*u8, i64, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Device_new_compute_pipeline_state_with_descriptor_block = Device_new_compute_pipeline_state_with_descriptor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_compute_pipeline_state_with_descriptor_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Device_new_compute_pipeline_state_with_descriptor_block = Device_new_compute_pipeline_state_with_descriptor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_compute_pipeline_state_with_descriptor_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithDescriptor:options:completionHandler:\0")), descriptor.raw(), options, bp);
         return;
@@ -13959,8 +13950,7 @@ impl Device {
     }
 
     fn new_render_pipeline_state_with_tile_descriptor(this, descriptor: TileRenderPipelineDescriptor, options: u64, cb: fn(*u8, i64, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Device_new_render_pipeline_state_with_tile_descriptor_block = Device_new_render_pipeline_state_with_tile_descriptor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_tile_descriptor_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Device_new_render_pipeline_state_with_tile_descriptor_block = Device_new_render_pipeline_state_with_tile_descriptor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_tile_descriptor_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithTileDescriptor:options:completionHandler:\0")), descriptor.raw(), options, bp);
         return;
@@ -13975,8 +13965,7 @@ impl Device {
     }
 
     fn new_render_pipeline_state_with_mesh_descriptor(this, descriptor: MeshRenderPipelineDescriptor, options: u64, cb: fn(*u8, i64, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Device_new_render_pipeline_state_with_mesh_descriptor_block = Device_new_render_pipeline_state_with_mesh_descriptor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_mesh_descriptor_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Device_new_render_pipeline_state_with_mesh_descriptor_block = Device_new_render_pipeline_state_with_mesh_descriptor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_mesh_descriptor_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithMeshDescriptor:options:completionHandler:\0")), descriptor.raw(), options, bp);
         return;
@@ -15451,8 +15440,7 @@ impl Library {
     }
 
     fn new_function_with_name_constant_values_completion_handler(this, name: str, constant_values: FunctionConstantValues, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Library_new_function_with_name_constant_values_completion_handler_block = Library_new_function_with_name_constant_values_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Library_new_function_with_name_constant_values_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Library_new_function_with_name_constant_values_completion_handler_block = Library_new_function_with_name_constant_values_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Library_new_function_with_name_constant_values_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("newFunctionWithName:constantValues:completionHandler:\0")), bridge::nsstring(name), constant_values.raw(), bp);
         return;
@@ -15467,8 +15455,7 @@ impl Library {
     }
 
     fn new_function_with_descriptor(this, descriptor: FunctionDescriptor, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Library_new_function_with_descriptor_block = Library_new_function_with_descriptor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Library_new_function_with_descriptor_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Library_new_function_with_descriptor_block = Library_new_function_with_descriptor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Library_new_function_with_descriptor_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("newFunctionWithDescriptor:completionHandler:\0")), descriptor.raw(), bp);
         return;
@@ -15483,8 +15470,7 @@ impl Library {
     }
 
     fn new_intersection_function_with_descriptor(this, descriptor: IntersectionFunctionDescriptor, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Library_new_intersection_function_with_descriptor_block = Library_new_intersection_function_with_descriptor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Library_new_intersection_function_with_descriptor_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Library_new_intersection_function_with_descriptor_block = Library_new_intersection_function_with_descriptor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Library_new_intersection_function_with_descriptor_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("newIntersectionFunctionWithDescriptor:completionHandler:\0")), descriptor.raw(), bp);
         return;
@@ -16147,64 +16133,55 @@ impl MTL4Compiler {
     }
 
     fn new_library_with_descriptor_completion_handler(this, descriptor: MTL4LibraryDescriptor, cb: fn(*u8, i64, *u8), ctx: *u8) -> MTL4CompilerTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4Compiler_new_library_with_descriptor_completion_handler_block = MTL4Compiler_new_library_with_descriptor_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_library_with_descriptor_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4Compiler_new_library_with_descriptor_completion_handler_block = MTL4Compiler_new_library_with_descriptor_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_library_with_descriptor_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MTL4CompilerTask::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newLibraryWithDescriptor:completionHandler:\0")), descriptor.raw(), bp));
     }
 
     fn new_dynamic_library_completion_handler(this, library: Library, cb: fn(*u8, i64, *u8), ctx: *u8) -> MTL4CompilerTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4Compiler_new_dynamic_library_completion_handler_block = MTL4Compiler_new_dynamic_library_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_dynamic_library_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4Compiler_new_dynamic_library_completion_handler_block = MTL4Compiler_new_dynamic_library_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_dynamic_library_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MTL4CompilerTask::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newDynamicLibrary:completionHandler:\0")), library.raw(), bp));
     }
 
     fn new_dynamic_library_with_u_r_l_completion_handler(this, url: *u8, cb: fn(*u8, i64, *u8), ctx: *u8) -> MTL4CompilerTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4Compiler_new_dynamic_library_with_u_r_l_completion_handler_block = MTL4Compiler_new_dynamic_library_with_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_dynamic_library_with_u_r_l_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4Compiler_new_dynamic_library_with_u_r_l_completion_handler_block = MTL4Compiler_new_dynamic_library_with_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_dynamic_library_with_u_r_l_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MTL4CompilerTask::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newDynamicLibraryWithURL:completionHandler:\0")), url, bp));
     }
 
     fn new_compute_pipeline_state_with_descriptor_compiler_task_options(this, descriptor: MTL4ComputePipelineDescriptor, compiler_task_options: MTL4CompilerTaskOptions, cb: fn(*u8, i64, *u8), ctx: *u8) -> MTL4CompilerTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4Compiler_new_compute_pipeline_state_with_descriptor_compiler_task_options_block = MTL4Compiler_new_compute_pipeline_state_with_descriptor_compiler_task_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_compute_pipeline_state_with_descriptor_compiler_task_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4Compiler_new_compute_pipeline_state_with_descriptor_compiler_task_options_block = MTL4Compiler_new_compute_pipeline_state_with_descriptor_compiler_task_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_compute_pipeline_state_with_descriptor_compiler_task_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MTL4CompilerTask::from_raw(rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithDescriptor:compilerTaskOptions:completionHandler:\0")), descriptor.raw(), compiler_task_options.raw(), bp));
     }
 
     fn new_compute_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options(this, descriptor: MTL4ComputePipelineDescriptor, dynamic_linking_descriptor: MTL4PipelineStageDynamicLinkingDescriptor, compiler_task_options: MTL4CompilerTaskOptions, cb: fn(*u8, i64, *u8), ctx: *u8) -> MTL4CompilerTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4Compiler_new_compute_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_block = MTL4Compiler_new_compute_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_compute_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4Compiler_new_compute_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_block = MTL4Compiler_new_compute_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_compute_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MTL4CompilerTask::from_raw(rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithDescriptor:dynamicLinkingDescriptor:compilerTaskOptions:completionHandler:\0")), descriptor.raw(), dynamic_linking_descriptor.raw(), compiler_task_options.raw(), bp));
     }
 
     fn new_render_pipeline_state_with_descriptor_compiler_task_options(this, descriptor: MTL4PipelineDescriptor, compiler_task_options: MTL4CompilerTaskOptions, cb: fn(*u8, i64, *u8), ctx: *u8) -> MTL4CompilerTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4Compiler_new_render_pipeline_state_with_descriptor_compiler_task_options_block = MTL4Compiler_new_render_pipeline_state_with_descriptor_compiler_task_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_render_pipeline_state_with_descriptor_compiler_task_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4Compiler_new_render_pipeline_state_with_descriptor_compiler_task_options_block = MTL4Compiler_new_render_pipeline_state_with_descriptor_compiler_task_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_render_pipeline_state_with_descriptor_compiler_task_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MTL4CompilerTask::from_raw(rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithDescriptor:compilerTaskOptions:completionHandler:\0")), descriptor.raw(), compiler_task_options.raw(), bp));
     }
 
     fn new_render_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options(this, descriptor: MTL4PipelineDescriptor, dynamic_linking_descriptor: MTL4RenderPipelineDynamicLinkingDescriptor, compiler_task_options: MTL4CompilerTaskOptions, cb: fn(*u8, i64, *u8), ctx: *u8) -> MTL4CompilerTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4Compiler_new_render_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_block = MTL4Compiler_new_render_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_render_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4Compiler_new_render_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_block = MTL4Compiler_new_render_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_render_pipeline_state_with_descriptor_dynamic_linking_descriptor_compiler_task_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MTL4CompilerTask::from_raw(rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithDescriptor:dynamicLinkingDescriptor:compilerTaskOptions:completionHandler:\0")), descriptor.raw(), dynamic_linking_descriptor.raw(), compiler_task_options.raw(), bp));
     }
 
     fn new_render_pipeline_state_by_specialization_with_descriptor_pipeline(this, descriptor: MTL4PipelineDescriptor, pipeline: RenderPipelineState, cb: fn(*u8, i64, *u8), ctx: *u8) -> MTL4CompilerTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4Compiler_new_render_pipeline_state_by_specialization_with_descriptor_pipeline_block = MTL4Compiler_new_render_pipeline_state_by_specialization_with_descriptor_pipeline_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_render_pipeline_state_by_specialization_with_descriptor_pipeline_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4Compiler_new_render_pipeline_state_by_specialization_with_descriptor_pipeline_block = MTL4Compiler_new_render_pipeline_state_by_specialization_with_descriptor_pipeline_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_render_pipeline_state_by_specialization_with_descriptor_pipeline_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MTL4CompilerTask::from_raw(rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateBySpecializationWithDescriptor:pipeline:completionHandler:\0")), descriptor.raw(), pipeline.raw(), bp));
     }
 
     fn new_binary_function_with_descriptor_compiler_task_options(this, descriptor: MTL4BinaryFunctionDescriptor, compiler_task_options: MTL4CompilerTaskOptions, cb: fn(*u8, i64, *u8), ctx: *u8) -> MTL4CompilerTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4Compiler_new_binary_function_with_descriptor_compiler_task_options_block = MTL4Compiler_new_binary_function_with_descriptor_compiler_task_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_binary_function_with_descriptor_compiler_task_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4Compiler_new_binary_function_with_descriptor_compiler_task_options_block = MTL4Compiler_new_binary_function_with_descriptor_compiler_task_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_binary_function_with_descriptor_compiler_task_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MTL4CompilerTask::from_raw(rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("newBinaryFunctionWithDescriptor:compilerTaskOptions:completionHandler:\0")), descriptor.raw(), compiler_task_options.raw(), bp));
     }
@@ -16218,8 +16195,7 @@ impl MTL4Compiler {
     }
 
     fn new_machine_learning_pipeline_state_with_descriptor_completion_handler(this, descriptor: MTL4MachineLearningPipelineDescriptor, cb: fn(*u8, i64, *u8), ctx: *u8) -> MTL4CompilerTask {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MTL4Compiler_new_machine_learning_pipeline_state_with_descriptor_completion_handler_block = MTL4Compiler_new_machine_learning_pipeline_state_with_descriptor_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_machine_learning_pipeline_state_with_descriptor_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MTL4Compiler_new_machine_learning_pipeline_state_with_descriptor_completion_handler_block = MTL4Compiler_new_machine_learning_pipeline_state_with_descriptor_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4Compiler_new_machine_learning_pipeline_state_with_descriptor_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MTL4CompilerTask::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newMachineLearningPipelineStateWithDescriptor:completionHandler:\0")), descriptor.raw(), bp));
     }
@@ -16734,8 +16710,7 @@ impl SharedEvent {
     fn from_raw(ptr: *u8) -> SharedEvent { return SharedEvent { _obj: ptr }; }
 
     fn notify_listener(this, listener: SharedEventListener, at_value: u64, cb: fn(*u8, i64, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SharedEvent_notify_listener_block = SharedEvent_notify_listener_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SharedEvent_notify_listener_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SharedEvent_notify_listener_block = SharedEvent_notify_listener_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SharedEvent_notify_listener_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("notifyListener:atValue:block:\0")), listener.raw(), at_value, bp);
         return;
@@ -16899,8 +16874,7 @@ impl LogState {
     fn from_raw(ptr: *u8) -> LogState { return LogState { _obj: ptr }; }
 
     fn add_log_handler(this, cb: fn(*u8, *u8, *u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: LogState_add_log_handler_block = LogState_add_log_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LogState_add_log_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: LogState_add_log_handler_block = LogState_add_log_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LogState_add_log_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addLogHandler:\0")), bp);
         return;
@@ -18227,8 +18201,7 @@ impl Drawable {
     }
 
     fn add_presented_handler(this, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Drawable_add_presented_handler_block = Drawable_add_presented_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Drawable_add_presented_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Drawable_add_presented_handler_block = Drawable_add_presented_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Drawable_add_presented_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addPresentedHandler:\0")), bp);
         return;
@@ -18263,8 +18236,7 @@ impl CommandBuffer {
     }
 
     fn add_scheduled_handler(this, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CommandBuffer_add_scheduled_handler_block = CommandBuffer_add_scheduled_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CommandBuffer_add_scheduled_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CommandBuffer_add_scheduled_handler_block = CommandBuffer_add_scheduled_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CommandBuffer_add_scheduled_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addScheduledHandler:\0")), bp);
         return;
@@ -18287,8 +18259,7 @@ impl CommandBuffer {
     }
 
     fn add_completed_handler(this, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CommandBuffer_add_completed_handler_block = CommandBuffer_add_completed_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CommandBuffer_add_completed_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CommandBuffer_add_completed_handler_block = CommandBuffer_add_completed_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CommandBuffer_add_completed_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addCompletedHandler:\0")), bp);
         return;
@@ -19330,8 +19301,7 @@ impl IOCommandBuffer {
     fn from_raw(ptr: *u8) -> IOCommandBuffer { return IOCommandBuffer { _obj: ptr }; }
 
     fn add_completed_handler(this, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: IOCommandBuffer_add_completed_handler_block = IOCommandBuffer_add_completed_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IOCommandBuffer_add_completed_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: IOCommandBuffer_add_completed_handler_block = IOCommandBuffer_add_completed_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IOCommandBuffer_add_completed_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addCompletedHandler:\0")), bp);
         return;

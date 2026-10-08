@@ -617,8 +617,7 @@ impl Context {
     }
 
     fn evaluate_policy(this, policy: Policy, localized_reason: str, cb: fn(*u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Context_evaluate_policy_block = Context_evaluate_policy_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Context_evaluate_policy_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Context_evaluate_policy_block = Context_evaluate_policy_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Context_evaluate_policy_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i64_id_id(this._obj, rt::sel(#str_ptr("evaluatePolicy:localizedReason:reply:\0")), policy_raw(policy), bridge::nsstring(localized_reason), bp);
         return;
@@ -637,8 +636,7 @@ impl Context {
     }
 
     fn evaluate_access_control(this, access_control: *u8, operation: AccessControlOperation, localized_reason: str, cb: fn(*u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Context_evaluate_access_control_block = Context_evaluate_access_control_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Context_evaluate_access_control_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Context_evaluate_access_control_block = Context_evaluate_access_control_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Context_evaluate_access_control_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_i64_id_id(this._obj, rt::sel(#str_ptr("evaluateAccessControl:operation:localizedReason:reply:\0")), access_control, access_control_operation_raw(operation), bridge::nsstring(localized_reason), bp);
         return;
@@ -972,24 +970,21 @@ impl Right {
     }
 
     fn authorize_with_localized_reason(this, localized_reason: str, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Right_authorize_with_localized_reason_block = Right_authorize_with_localized_reason_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Right_authorize_with_localized_reason_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Right_authorize_with_localized_reason_block = Right_authorize_with_localized_reason_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Right_authorize_with_localized_reason_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("authorizeWithLocalizedReason:completion:\0")), bridge::nsstring(localized_reason), bp);
         return;
     }
 
     fn check_can_authorize_with_completion(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Right_check_can_authorize_with_completion_block = Right_check_can_authorize_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Right_check_can_authorize_with_completion_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Right_check_can_authorize_with_completion_block = Right_check_can_authorize_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Right_check_can_authorize_with_completion_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("checkCanAuthorizeWithCompletion:\0")), bp);
         return;
     }
 
     fn deauthorize_with_completion(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Right_deauthorize_with_completion_block = Right_deauthorize_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Right_deauthorize_with_completion_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Right_deauthorize_with_completion_block = Right_deauthorize_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Right_deauthorize_with_completion_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("deauthorizeWithCompletion:\0")), bp);
         return;
@@ -1023,8 +1018,7 @@ impl Secret {
     fn from_raw(ptr: *u8) -> Secret { return Secret { _obj: rt::retain(ptr) }; }
 
     fn load_data_with_completion(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Secret_load_data_with_completion_block = Secret_load_data_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Secret_load_data_with_completion_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Secret_load_data_with_completion_block = Secret_load_data_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Secret_load_data_with_completion_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("loadDataWithCompletion:\0")), bp);
         return;
@@ -1051,8 +1045,7 @@ impl PrivateKey {
     fn from_raw(ptr: *u8) -> PrivateKey { return PrivateKey { _obj: rt::retain(ptr) }; }
 
     fn sign_data(this, data: *u8, sec_key_algorithm: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PrivateKey_sign_data_block = PrivateKey_sign_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PrivateKey_sign_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PrivateKey_sign_data_block = PrivateKey_sign_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PrivateKey_sign_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("signData:secKeyAlgorithm:completion:\0")), data, sec_key_algorithm, bp);
         return;
@@ -1063,8 +1056,7 @@ impl PrivateKey {
     }
 
     fn decrypt_data(this, data: *u8, sec_key_algorithm: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PrivateKey_decrypt_data_block = PrivateKey_decrypt_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PrivateKey_decrypt_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PrivateKey_decrypt_data_block = PrivateKey_decrypt_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PrivateKey_decrypt_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("decryptData:secKeyAlgorithm:completion:\0")), data, sec_key_algorithm, bp);
         return;
@@ -1075,8 +1067,7 @@ impl PrivateKey {
     }
 
     fn exchange_keys_with_public_key(this, public_key: *u8, sec_key_algorithm: *u8, sec_key_parameters: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PrivateKey_exchange_keys_with_public_key_block = PrivateKey_exchange_keys_with_public_key_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PrivateKey_exchange_keys_with_public_key_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PrivateKey_exchange_keys_with_public_key_block = PrivateKey_exchange_keys_with_public_key_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PrivateKey_exchange_keys_with_public_key_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("exchangeKeysWithPublicKey:secKeyAlgorithm:secKeyParameters:completion:\0")), public_key, sec_key_algorithm, sec_key_parameters, bp);
         return;
@@ -1142,16 +1133,14 @@ impl PublicKey {
     fn from_raw(ptr: *u8) -> PublicKey { return PublicKey { _obj: rt::retain(ptr) }; }
 
     fn export_bytes_with_completion(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PublicKey_export_bytes_with_completion_block = PublicKey_export_bytes_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PublicKey_export_bytes_with_completion_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PublicKey_export_bytes_with_completion_block = PublicKey_export_bytes_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PublicKey_export_bytes_with_completion_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("exportBytesWithCompletion:\0")), bp);
         return;
     }
 
     fn encrypt_data(this, data: *u8, sec_key_algorithm: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PublicKey_encrypt_data_block = PublicKey_encrypt_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PublicKey_encrypt_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PublicKey_encrypt_data_block = PublicKey_encrypt_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PublicKey_encrypt_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("encryptData:secKeyAlgorithm:completion:\0")), data, sec_key_algorithm, bp);
         return;
@@ -1162,8 +1151,7 @@ impl PublicKey {
     }
 
     fn verify_data(this, signed_data: *u8, signature: *u8, sec_key_algorithm: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PublicKey_verify_data_block = PublicKey_verify_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PublicKey_verify_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PublicKey_verify_data_block = PublicKey_verify_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PublicKey_verify_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("verifyData:signature:secKeyAlgorithm:completion:\0")), signed_data, signature, sec_key_algorithm, bp);
         return;
@@ -1226,48 +1214,42 @@ impl RightStore {
     fn from_raw(ptr: *u8) -> RightStore { return RightStore { _obj: rt::retain(ptr) }; }
 
     fn right_for_identifier(this, identifier: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: RightStore_right_for_identifier_block = RightStore_right_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_right_for_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: RightStore_right_for_identifier_block = RightStore_right_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_right_for_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("rightForIdentifier:completion:\0")), bridge::nsstring(identifier), bp);
         return;
     }
 
     fn save_right(this, right: Right, identifier: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: RightStore_save_right_block = RightStore_save_right_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_save_right_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: RightStore_save_right_block = RightStore_save_right_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_save_right_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("saveRight:identifier:completion:\0")), right.raw(), bridge::nsstring(identifier), bp);
         return;
     }
 
     fn save_right_identifier(this, right: Right, identifier: str, secret: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: RightStore_save_right_identifier_block = RightStore_save_right_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_save_right_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: RightStore_save_right_identifier_block = RightStore_save_right_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_save_right_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("saveRight:identifier:secret:completion:\0")), right.raw(), bridge::nsstring(identifier), secret, bp);
         return;
     }
 
     fn remove_right(this, right: PersistedRight, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: RightStore_remove_right_block = RightStore_remove_right_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_remove_right_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: RightStore_remove_right_block = RightStore_remove_right_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_remove_right_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("removeRight:completion:\0")), right.raw(), bp);
         return;
     }
 
     fn remove_right_for_identifier(this, identifier: str, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: RightStore_remove_right_for_identifier_block = RightStore_remove_right_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_remove_right_for_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: RightStore_remove_right_for_identifier_block = RightStore_remove_right_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_remove_right_for_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("removeRightForIdentifier:completion:\0")), bridge::nsstring(identifier), bp);
         return;
     }
 
     fn remove_all_rights_with_completion(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: RightStore_remove_all_rights_with_completion_block = RightStore_remove_all_rights_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_remove_all_rights_with_completion_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: RightStore_remove_all_rights_with_completion_block = RightStore_remove_all_rights_with_completion_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: RightStore_remove_all_rights_with_completion_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeAllRightsWithCompletion:\0")), bp);
         return;

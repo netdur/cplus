@@ -5685,8 +5685,7 @@ impl ContentKeyRequest {
     fn from_raw(ptr: *u8) -> ContentKeyRequest { return ContentKeyRequest { _obj: ptr }; }
 
     fn make_streaming_content_key_request_data_for_app(this, app_identifier: NSData, content_identifier: NSData, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ContentKeyRequest_make_streaming_content_key_request_data_for_app_block = ContentKeyRequest_make_streaming_content_key_request_data_for_app_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentKeyRequest_make_streaming_content_key_request_data_for_app_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ContentKeyRequest_make_streaming_content_key_request_data_for_app_block = ContentKeyRequest_make_streaming_content_key_request_data_for_app_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentKeyRequest_make_streaming_content_key_request_data_for_app_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -6036,16 +6035,14 @@ impl ContentKeySession {
     }
 
     fn make_secure_token_for_expiration_date_of_persistable_content_key(this, persistable_content_key_data: NSData, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ContentKeySession_make_secure_token_for_expiration_date_of_persistable_content_key_block = ContentKeySession_make_secure_token_for_expiration_date_of_persistable_content_key_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentKeySession_make_secure_token_for_expiration_date_of_persistable_content_key_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ContentKeySession_make_secure_token_for_expiration_date_of_persistable_content_key_block = ContentKeySession_make_secure_token_for_expiration_date_of_persistable_content_key_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentKeySession_make_secure_token_for_expiration_date_of_persistable_content_key_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("makeSecureTokenForExpirationDateOfPersistableContentKey:completionHandler:\0")), persistable_content_key_data.raw(), bp);
         return;
     }
 
     fn invalidate_persistable_content_key(this, persistable_content_key_data: NSData, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ContentKeySession_invalidate_persistable_content_key_block = ContentKeySession_invalidate_persistable_content_key_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentKeySession_invalidate_persistable_content_key_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ContentKeySession_invalidate_persistable_content_key_block = ContentKeySession_invalidate_persistable_content_key_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentKeySession_invalidate_persistable_content_key_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -6071,8 +6068,7 @@ impl ContentKeySession {
     }
 
     fn invalidate_all_persistable_content_keys_for_app(this, app_identifier: NSData, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ContentKeySession_invalidate_all_persistable_content_keys_for_app_block = ContentKeySession_invalidate_all_persistable_content_keys_for_app_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentKeySession_invalidate_all_persistable_content_keys_for_app_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ContentKeySession_invalidate_all_persistable_content_keys_for_app_block = ContentKeySession_invalidate_all_persistable_content_keys_for_app_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentKeySession_invalidate_all_persistable_content_keys_for_app_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -6737,8 +6733,7 @@ impl AssetTrack {
     }
 
     fn load_segment_for_track_time(this, track_time: CMTime, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetTrack_load_segment_for_track_time_block = AssetTrack_load_segment_for_track_time_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetTrack_load_segment_for_track_time_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetTrack_load_segment_for_track_time_block = AssetTrack_load_segment_for_track_time_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetTrack_load_segment_for_track_time_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_CMTime_id(this._obj, rt::sel(#str_ptr("loadSegmentForTrackTime:completionHandler:\0")), track_time, bp);
         return;
@@ -6776,8 +6771,7 @@ impl AssetTrack {
     }
 
     fn load_metadata_for_format(this, format: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetTrack_load_metadata_for_format_block = AssetTrack_load_metadata_for_format_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetTrack_load_metadata_for_format_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetTrack_load_metadata_for_format_block = AssetTrack_load_metadata_for_format_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetTrack_load_metadata_for_format_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadMetadataForFormat:completionHandler:\0")), bridge::nsstring(format), bp);
         return;
@@ -6837,8 +6831,7 @@ impl AssetTrack {
     }
 
     fn load_associated_tracks_of_type(this, track_association_type: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetTrack_load_associated_tracks_of_type_block = AssetTrack_load_associated_tracks_of_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetTrack_load_associated_tracks_of_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetTrack_load_associated_tracks_of_type_block = AssetTrack_load_associated_tracks_of_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetTrack_load_associated_tracks_of_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadAssociatedTracksOfType:completionHandler:\0")), bridge::nsstring(track_association_type), bp);
         return;
@@ -7002,8 +6995,7 @@ impl MetadataItem {
     }
 
     fn load_values_asynchronously_for_keys(this, keys: vec::Vec[text::Text], cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MetadataItem_load_values_asynchronously_for_keys_block = MetadataItem_load_values_asynchronously_for_keys_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MetadataItem_load_values_asynchronously_for_keys_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MetadataItem_load_values_asynchronously_for_keys_block = MetadataItem_load_values_asynchronously_for_keys_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MetadataItem_load_values_asynchronously_for_keys_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadValuesAsynchronouslyForKeys:completionHandler:\0")), bridge::nsarray_of_text(keys), bp);
         return;
@@ -7112,8 +7104,7 @@ impl MetadataItem {
     }
 
     fn metadata_item_with_properties_of_metadata_item(metadata_item: MetadataItem, cb: fn(*u8, *u8), ctx: *u8) -> MetadataItem {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MetadataItem_metadata_item_with_properties_of_metadata_item_block = MetadataItem_metadata_item_with_properties_of_metadata_item_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MetadataItem_metadata_item_with_properties_of_metadata_item_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MetadataItem_metadata_item_with_properties_of_metadata_item_block = MetadataItem_metadata_item_with_properties_of_metadata_item_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MetadataItem_metadata_item_with_properties_of_metadata_item_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MetadataItem::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("AVMetadataItem\0")), rt::sel(#str_ptr("metadataItemWithPropertiesOfMetadataItem:valueLoadingHandler:\0")), metadata_item.raw(), bp));
     }
@@ -7370,8 +7361,7 @@ impl Asset {
     }
 
     fn load_track_with_track_i_d(this, track_i_d: i32, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Asset_load_track_with_track_i_d_block = Asset_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_track_with_track_i_d_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Asset_load_track_with_track_i_d_block = Asset_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_track_with_track_i_d_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i32_id(this._obj, rt::sel(#str_ptr("loadTrackWithTrackID:completionHandler:\0")), track_i_d, bp);
         return;
@@ -7391,8 +7381,7 @@ impl Asset {
     }
 
     fn load_tracks_with_media_type(this, media_type: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Asset_load_tracks_with_media_type_block = Asset_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_tracks_with_media_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Asset_load_tracks_with_media_type_block = Asset_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_tracks_with_media_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaType:completionHandler:\0")), bridge::nsstring(media_type), bp);
         return;
@@ -7412,8 +7401,7 @@ impl Asset {
     }
 
     fn load_tracks_with_media_characteristic(this, media_characteristic: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Asset_load_tracks_with_media_characteristic_block = Asset_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_tracks_with_media_characteristic_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Asset_load_tracks_with_media_characteristic_block = Asset_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_tracks_with_media_characteristic_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaCharacteristic:completionHandler:\0")), bridge::nsstring(media_characteristic), bp);
         return;
@@ -7459,8 +7447,7 @@ impl Asset {
     }
 
     fn load_metadata_for_format(this, format: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Asset_load_metadata_for_format_block = Asset_load_metadata_for_format_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_metadata_for_format_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Asset_load_metadata_for_format_block = Asset_load_metadata_for_format_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_metadata_for_format_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadMetadataForFormat:completionHandler:\0")), bridge::nsstring(format), bp);
         return;
@@ -7533,8 +7520,7 @@ impl Asset {
     }
 
     fn load_chapter_metadata_groups_with_title_locale(this, locale: *u8, containing_items_with_common_keys: vec::Vec[text::Text], cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Asset_load_chapter_metadata_groups_with_title_locale_block = Asset_load_chapter_metadata_groups_with_title_locale_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_chapter_metadata_groups_with_title_locale_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Asset_load_chapter_metadata_groups_with_title_locale_block = Asset_load_chapter_metadata_groups_with_title_locale_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_chapter_metadata_groups_with_title_locale_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("loadChapterMetadataGroupsWithTitleLocale:containingItemsWithCommonKeys:completionHandler:\0")), locale, bridge::nsarray_of_text(containing_items_with_common_keys), bp);
         return;
@@ -7554,8 +7540,7 @@ impl Asset {
     }
 
     fn load_chapter_metadata_groups_best_matching_preferred_languages(this, preferred_languages: vec::Vec[text::Text], cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Asset_load_chapter_metadata_groups_best_matching_preferred_languages_block = Asset_load_chapter_metadata_groups_best_matching_preferred_languages_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_chapter_metadata_groups_best_matching_preferred_languages_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Asset_load_chapter_metadata_groups_best_matching_preferred_languages_block = Asset_load_chapter_metadata_groups_best_matching_preferred_languages_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_chapter_metadata_groups_best_matching_preferred_languages_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadChapterMetadataGroupsBestMatchingPreferredLanguages:completionHandler:\0")), bridge::nsarray_of_text(preferred_languages), bp);
         return;
@@ -7571,8 +7556,7 @@ impl Asset {
     }
 
     fn load_media_selection_group_for_media_characteristic(this, media_characteristic: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Asset_load_media_selection_group_for_media_characteristic_block = Asset_load_media_selection_group_for_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_media_selection_group_for_media_characteristic_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Asset_load_media_selection_group_for_media_characteristic_block = Asset_load_media_selection_group_for_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_load_media_selection_group_for_media_characteristic_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadMediaSelectionGroupForMediaCharacteristic:completionHandler:\0")), bridge::nsstring(media_characteristic), bp);
         return;
@@ -7654,8 +7638,7 @@ impl Asset {
     }
 
     fn find_unused_track_i_d_with_completion_handler(this, cb: fn(*u8, i32, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Asset_find_unused_track_i_d_with_completion_handler_block = Asset_find_unused_track_i_d_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_find_unused_track_i_d_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Asset_find_unused_track_i_d_with_completion_handler_block = Asset_find_unused_track_i_d_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Asset_find_unused_track_i_d_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("findUnusedTrackIDWithCompletionHandler:\0")), bp);
         return;
@@ -8038,8 +8021,7 @@ impl URLAsset {
     }
 
     fn find_compatible_track_for_composition_track(this, composition_track: CompositionTrack, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: URLAsset_find_compatible_track_for_composition_track_block = URLAsset_find_compatible_track_for_composition_track_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLAsset_find_compatible_track_for_composition_track_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: URLAsset_find_compatible_track_for_composition_track_block = URLAsset_find_compatible_track_for_composition_track_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: URLAsset_find_compatible_track_for_composition_track_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("findCompatibleTrackForCompositionTrack:completionHandler:\0")), composition_track.raw(), bp);
         return;
@@ -8297,8 +8279,7 @@ impl FragmentedAsset {
     }
 
     fn load_track_with_track_i_d(this, track_i_d: i32, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FragmentedAsset_load_track_with_track_i_d_block = FragmentedAsset_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedAsset_load_track_with_track_i_d_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FragmentedAsset_load_track_with_track_i_d_block = FragmentedAsset_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedAsset_load_track_with_track_i_d_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i32_id(this._obj, rt::sel(#str_ptr("loadTrackWithTrackID:completionHandler:\0")), track_i_d, bp);
         return;
@@ -8318,8 +8299,7 @@ impl FragmentedAsset {
     }
 
     fn load_tracks_with_media_type(this, media_type: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FragmentedAsset_load_tracks_with_media_type_block = FragmentedAsset_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedAsset_load_tracks_with_media_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FragmentedAsset_load_tracks_with_media_type_block = FragmentedAsset_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedAsset_load_tracks_with_media_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaType:completionHandler:\0")), bridge::nsstring(media_type), bp);
         return;
@@ -8339,8 +8319,7 @@ impl FragmentedAsset {
     }
 
     fn load_tracks_with_media_characteristic(this, media_characteristic: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FragmentedAsset_load_tracks_with_media_characteristic_block = FragmentedAsset_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedAsset_load_tracks_with_media_characteristic_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FragmentedAsset_load_tracks_with_media_characteristic_block = FragmentedAsset_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedAsset_load_tracks_with_media_characteristic_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaCharacteristic:completionHandler:\0")), bridge::nsstring(media_characteristic), bp);
         return;
@@ -8523,8 +8502,7 @@ impl VideoComposition {
     }
 
     fn video_composition_with_properties_of_asset_completion_handler(asset: Asset, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: VideoComposition_video_composition_with_properties_of_asset_completion_handler_block = VideoComposition_video_composition_with_properties_of_asset_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: VideoComposition_video_composition_with_properties_of_asset_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: VideoComposition_video_composition_with_properties_of_asset_completion_handler_block = VideoComposition_video_composition_with_properties_of_asset_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: VideoComposition_video_composition_with_properties_of_asset_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("AVVideoComposition\0")), rt::sel(#str_ptr("videoCompositionWithPropertiesOfAsset:completionHandler:\0")), asset.raw(), bp);
         return;
@@ -8628,8 +8606,7 @@ impl VideoComposition {
     }
 
     fn video_composition_with_asset(asset: Asset, cb: fn(*u8, *u8), ctx: *u8) -> VideoComposition {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: VideoComposition_video_composition_with_asset_block = VideoComposition_video_composition_with_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: VideoComposition_video_composition_with_asset_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: VideoComposition_video_composition_with_asset_block = VideoComposition_video_composition_with_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: VideoComposition_video_composition_with_asset_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return VideoComposition::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("AVVideoComposition\0")), rt::sel(#str_ptr("videoCompositionWithAsset:applyingCIFiltersWithHandler:\0")), asset.raw(), bp));
     }
@@ -8640,8 +8617,7 @@ impl VideoComposition {
     }
 
     fn determine_validity_for_asset(this, asset: Asset, time_range: CMTimeRange, validation_delegate: VideoCompositionValidationHandling, cb: fn(*u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: VideoComposition_determine_validity_for_asset_block = VideoComposition_determine_validity_for_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: VideoComposition_determine_validity_for_asset_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: VideoComposition_determine_validity_for_asset_block = VideoComposition_determine_validity_for_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: VideoComposition_determine_validity_for_asset_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_CMTimeRange_id_id(this._obj, rt::sel(#str_ptr("determineValidityForAsset:timeRange:validationDelegate:completionHandler:\0")), asset.raw(), time_range, validation_delegate.raw(), bp);
         return;
@@ -8705,8 +8681,7 @@ impl AssetExportSession {
 
     // SKIPPED `initWithAsset:presetName:`: `new` already defined (extra constructor)
     fn export_asynchronously_with_completion_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetExportSession_export_asynchronously_with_completion_handler_block = AssetExportSession_export_asynchronously_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetExportSession_export_asynchronously_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetExportSession_export_asynchronously_with_completion_handler_block = AssetExportSession_export_asynchronously_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetExportSession_export_asynchronously_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("exportAsynchronouslyWithCompletionHandler:\0")), bp);
         return;
@@ -8807,16 +8782,14 @@ impl AssetExportSession {
     }
 
     fn determine_compatibility_of_export_preset(preset_name: str, with_asset: Asset, output_file_type: str, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetExportSession_determine_compatibility_of_export_preset_block = AssetExportSession_determine_compatibility_of_export_preset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetExportSession_determine_compatibility_of_export_preset_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetExportSession_determine_compatibility_of_export_preset_block = AssetExportSession_determine_compatibility_of_export_preset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetExportSession_determine_compatibility_of_export_preset_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(rt::get_class(#str_ptr("AVAssetExportSession\0")), rt::sel(#str_ptr("determineCompatibilityOfExportPreset:withAsset:outputFileType:completionHandler:\0")), bridge::nsstring(preset_name), with_asset.raw(), bridge::nsstring(output_file_type), bp);
         return;
     }
 
     fn determine_compatible_file_types_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetExportSession_determine_compatible_file_types_with_completion_handler_block = AssetExportSession_determine_compatible_file_types_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetExportSession_determine_compatible_file_types_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetExportSession_determine_compatible_file_types_with_completion_handler_block = AssetExportSession_determine_compatible_file_types_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetExportSession_determine_compatible_file_types_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("determineCompatibleFileTypesWithCompletionHandler:\0")), bp);
         return;
@@ -8838,8 +8811,7 @@ impl AssetExportSession {
 
     // SKIPPED `estimateMaximumDurationWithCompletionHandler:`: block argument type `CMTime` has no C+ wire type
     fn estimate_output_file_length_with_completion_handler(this, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetExportSession_estimate_output_file_length_with_completion_handler_block = AssetExportSession_estimate_output_file_length_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetExportSession_estimate_output_file_length_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetExportSession_estimate_output_file_length_with_completion_handler_block = AssetExportSession_estimate_output_file_length_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetExportSession_estimate_output_file_length_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("estimateOutputFileLengthWithCompletionHandler:\0")), bp);
         return;
@@ -9977,8 +9949,7 @@ impl MutableVideoComposition {
     }
 
     fn video_composition_with_properties_of_asset_completion_handler(asset: Asset, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableVideoComposition_video_composition_with_properties_of_asset_completion_handler_block = MutableVideoComposition_video_composition_with_properties_of_asset_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableVideoComposition_video_composition_with_properties_of_asset_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableVideoComposition_video_composition_with_properties_of_asset_completion_handler_block = MutableVideoComposition_video_composition_with_properties_of_asset_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableVideoComposition_video_composition_with_properties_of_asset_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("AVMutableVideoComposition\0")), rt::sel(#str_ptr("videoCompositionWithPropertiesOfAsset:completionHandler:\0")), asset.raw(), bp);
         return;
@@ -9989,8 +9960,7 @@ impl MutableVideoComposition {
     }
 
     fn video_composition_with_properties_of_asset_prototype_instruction_completion_handler(asset: Asset, prototype_instruction: VideoCompositionInstruction, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableVideoComposition_video_composition_with_properties_of_asset_prototype_instruction_completion_handler_block = MutableVideoComposition_video_composition_with_properties_of_asset_prototype_instruction_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableVideoComposition_video_composition_with_properties_of_asset_prototype_instruction_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableVideoComposition_video_composition_with_properties_of_asset_prototype_instruction_completion_handler_block = MutableVideoComposition_video_composition_with_properties_of_asset_prototype_instruction_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableVideoComposition_video_composition_with_properties_of_asset_prototype_instruction_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(rt::get_class(#str_ptr("AVMutableVideoComposition\0")), rt::sel(#str_ptr("videoCompositionWithPropertiesOfAsset:prototypeInstruction:completionHandler:\0")), asset.raw(), prototype_instruction.raw(), bp);
         return;
@@ -10153,8 +10123,7 @@ impl MutableVideoComposition {
     }
 
     fn video_composition_with_asset(asset: Asset, cb: fn(*u8, *u8), ctx: *u8) -> MutableVideoComposition {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableVideoComposition_video_composition_with_asset_block = MutableVideoComposition_video_composition_with_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableVideoComposition_video_composition_with_asset_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableVideoComposition_video_composition_with_asset_block = MutableVideoComposition_video_composition_with_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableVideoComposition_video_composition_with_asset_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return MutableVideoComposition::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("AVMutableVideoComposition\0")), rt::sel(#str_ptr("videoCompositionWithAsset:applyingCIFiltersWithHandler:\0")), asset.raw(), bp));
     }
@@ -11884,8 +11853,7 @@ impl AssetWriterInput {
     }
 
     fn request_media_data_when_ready_on_queue(this, queue: *u8, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetWriterInput_request_media_data_when_ready_on_queue_block = AssetWriterInput_request_media_data_when_ready_on_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetWriterInput_request_media_data_when_ready_on_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetWriterInput_request_media_data_when_ready_on_queue_block = AssetWriterInput_request_media_data_when_ready_on_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetWriterInput_request_media_data_when_ready_on_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("requestMediaDataWhenReadyOnQueue:usingBlock:\0")), queue, bp);
         return;
@@ -12065,8 +12033,7 @@ impl AssetWriterInput {
     }
 
     fn respond_to_each_pass_description_on_queue(this, queue: *u8, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetWriterInput_respond_to_each_pass_description_on_queue_block = AssetWriterInput_respond_to_each_pass_description_on_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetWriterInput_respond_to_each_pass_description_on_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetWriterInput_respond_to_each_pass_description_on_queue_block = AssetWriterInput_respond_to_each_pass_description_on_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetWriterInput_respond_to_each_pass_description_on_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("respondToEachPassDescriptionOnQueue:usingBlock:\0")), queue, bp);
         return;
@@ -12191,8 +12158,7 @@ impl AssetWriter {
     }
 
     fn finish_writing_with_completion_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetWriter_finish_writing_with_completion_handler_block = AssetWriter_finish_writing_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetWriter_finish_writing_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetWriter_finish_writing_with_completion_handler_block = AssetWriter_finish_writing_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetWriter_finish_writing_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("finishWritingWithCompletionHandler:\0")), bp);
         return;
@@ -12792,8 +12758,7 @@ impl AssetPlaybackAssistant {
     }
 
     fn load_playback_configuration_options_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetPlaybackAssistant_load_playback_configuration_options_with_completion_handler_block = AssetPlaybackAssistant_load_playback_configuration_options_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetPlaybackAssistant_load_playback_configuration_options_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetPlaybackAssistant_load_playback_configuration_options_with_completion_handler_block = AssetPlaybackAssistant_load_playback_configuration_options_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetPlaybackAssistant_load_playback_configuration_options_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("loadPlaybackConfigurationOptionsWithCompletionHandler:\0")), bp);
         return;
@@ -14355,50 +14320,43 @@ impl AssetDownloadURLSession {
     }
 
     fn data_task_with_request_completion_handler(this, request: *u8, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetDownloadURLSession_data_task_with_request_completion_handler_block = AssetDownloadURLSession_data_task_with_request_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_data_task_with_request_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetDownloadURLSession_data_task_with_request_completion_handler_block = AssetDownloadURLSession_data_task_with_request_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_data_task_with_request_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("dataTaskWithRequest:completionHandler:\0")), request, bp);
     }
 
     fn data_task_with_u_r_l_completion_handler(this, url: NSURL, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetDownloadURLSession_data_task_with_u_r_l_completion_handler_block = AssetDownloadURLSession_data_task_with_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_data_task_with_u_r_l_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetDownloadURLSession_data_task_with_u_r_l_completion_handler_block = AssetDownloadURLSession_data_task_with_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_data_task_with_u_r_l_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("dataTaskWithURL:completionHandler:\0")), url.raw(), bp);
     }
 
     fn upload_task_with_request_from_file(this, request: *u8, file_u_r_l: NSURL, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetDownloadURLSession_upload_task_with_request_from_file_block = AssetDownloadURLSession_upload_task_with_request_from_file_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_upload_task_with_request_from_file_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetDownloadURLSession_upload_task_with_request_from_file_block = AssetDownloadURLSession_upload_task_with_request_from_file_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_upload_task_with_request_from_file_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("uploadTaskWithRequest:fromFile:completionHandler:\0")), request, file_u_r_l.raw(), bp);
     }
 
     fn upload_task_with_request_from_data_completion_handler(this, request: *u8, body_data: NSData, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetDownloadURLSession_upload_task_with_request_from_data_completion_handler_block = AssetDownloadURLSession_upload_task_with_request_from_data_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_upload_task_with_request_from_data_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetDownloadURLSession_upload_task_with_request_from_data_completion_handler_block = AssetDownloadURLSession_upload_task_with_request_from_data_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_upload_task_with_request_from_data_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("uploadTaskWithRequest:fromData:completionHandler:\0")), request, body_data.raw(), bp);
     }
 
     fn download_task_with_request_completion_handler(this, request: *u8, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetDownloadURLSession_download_task_with_request_completion_handler_block = AssetDownloadURLSession_download_task_with_request_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_download_task_with_request_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetDownloadURLSession_download_task_with_request_completion_handler_block = AssetDownloadURLSession_download_task_with_request_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_download_task_with_request_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("downloadTaskWithRequest:completionHandler:\0")), request, bp);
     }
 
     fn download_task_with_u_r_l_completion_handler(this, url: NSURL, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetDownloadURLSession_download_task_with_u_r_l_completion_handler_block = AssetDownloadURLSession_download_task_with_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_download_task_with_u_r_l_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetDownloadURLSession_download_task_with_u_r_l_completion_handler_block = AssetDownloadURLSession_download_task_with_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_download_task_with_u_r_l_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("downloadTaskWithURL:completionHandler:\0")), url.raw(), bp);
     }
 
     fn download_task_with_resume_data_completion_handler(this, resume_data: NSData, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AssetDownloadURLSession_download_task_with_resume_data_completion_handler_block = AssetDownloadURLSession_download_task_with_resume_data_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_download_task_with_resume_data_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AssetDownloadURLSession_download_task_with_resume_data_completion_handler_block = AssetDownloadURLSession_download_task_with_resume_data_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AssetDownloadURLSession_download_task_with_resume_data_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("downloadTaskWithResumeData:completionHandler:\0")), resume_data.raw(), bp);
     }
@@ -14921,8 +14879,7 @@ impl CaptionConversionValidator {
 
     // SKIPPED `initWithCaptions:timeRange:conversionSettings:`: `new` already defined (extra constructor)
     fn validate_caption_conversion_with_warning_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptionConversionValidator_validate_caption_conversion_with_warning_handler_block = CaptionConversionValidator_validate_caption_conversion_with_warning_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptionConversionValidator_validate_caption_conversion_with_warning_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptionConversionValidator_validate_caption_conversion_with_warning_handler_block = CaptionConversionValidator_validate_caption_conversion_with_warning_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptionConversionValidator_validate_caption_conversion_with_warning_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("validateCaptionConversionWithWarningHandler:\0")), bp);
         return;
@@ -15439,8 +15396,7 @@ impl Composition {
     }
 
     fn load_track_with_track_i_d(this, track_i_d: i32, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Composition_load_track_with_track_i_d_block = Composition_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Composition_load_track_with_track_i_d_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Composition_load_track_with_track_i_d_block = Composition_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Composition_load_track_with_track_i_d_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i32_id(this._obj, rt::sel(#str_ptr("loadTrackWithTrackID:completionHandler:\0")), track_i_d, bp);
         return;
@@ -15460,8 +15416,7 @@ impl Composition {
     }
 
     fn load_tracks_with_media_type(this, media_type: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Composition_load_tracks_with_media_type_block = Composition_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Composition_load_tracks_with_media_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Composition_load_tracks_with_media_type_block = Composition_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Composition_load_tracks_with_media_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaType:completionHandler:\0")), bridge::nsstring(media_type), bp);
         return;
@@ -15481,8 +15436,7 @@ impl Composition {
     }
 
     fn load_tracks_with_media_characteristic(this, media_characteristic: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Composition_load_tracks_with_media_characteristic_block = Composition_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Composition_load_tracks_with_media_characteristic_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Composition_load_tracks_with_media_characteristic_block = Composition_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Composition_load_tracks_with_media_characteristic_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaCharacteristic:completionHandler:\0")), bridge::nsstring(media_characteristic), bp);
         return;
@@ -15872,8 +15826,7 @@ impl MutableComposition {
     }
 
     fn insert_time_range_of_asset(this, time_range: CMTimeRange, asset: Asset, at_time: CMTime, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableComposition_insert_time_range_of_asset_block = MutableComposition_insert_time_range_of_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableComposition_insert_time_range_of_asset_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableComposition_insert_time_range_of_asset_block = MutableComposition_insert_time_range_of_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableComposition_insert_time_range_of_asset_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_CMTimeRange_id_CMTime_id(this._obj, rt::sel(#str_ptr("insertTimeRange:ofAsset:atTime:completionHandler:\0")), time_range, asset.raw(), at_time, bp);
         return;
@@ -15920,8 +15873,7 @@ impl MutableComposition {
     }
 
     fn load_track_with_track_i_d(this, track_i_d: i32, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableComposition_load_track_with_track_i_d_block = MutableComposition_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableComposition_load_track_with_track_i_d_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableComposition_load_track_with_track_i_d_block = MutableComposition_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableComposition_load_track_with_track_i_d_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i32_id(this._obj, rt::sel(#str_ptr("loadTrackWithTrackID:completionHandler:\0")), track_i_d, bp);
         return;
@@ -15941,8 +15893,7 @@ impl MutableComposition {
     }
 
     fn load_tracks_with_media_type(this, media_type: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableComposition_load_tracks_with_media_type_block = MutableComposition_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableComposition_load_tracks_with_media_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableComposition_load_tracks_with_media_type_block = MutableComposition_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableComposition_load_tracks_with_media_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaType:completionHandler:\0")), bridge::nsstring(media_type), bp);
         return;
@@ -15962,8 +15913,7 @@ impl MutableComposition {
     }
 
     fn load_tracks_with_media_characteristic(this, media_characteristic: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableComposition_load_tracks_with_media_characteristic_block = MutableComposition_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableComposition_load_tracks_with_media_characteristic_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableComposition_load_tracks_with_media_characteristic_block = MutableComposition_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableComposition_load_tracks_with_media_characteristic_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaCharacteristic:completionHandler:\0")), bridge::nsstring(media_characteristic), bp);
         return;
@@ -16799,8 +16749,7 @@ impl Movie {
     }
 
     fn load_track_with_track_i_d(this, track_i_d: i32, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Movie_load_track_with_track_i_d_block = Movie_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Movie_load_track_with_track_i_d_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Movie_load_track_with_track_i_d_block = Movie_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Movie_load_track_with_track_i_d_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i32_id(this._obj, rt::sel(#str_ptr("loadTrackWithTrackID:completionHandler:\0")), track_i_d, bp);
         return;
@@ -16820,8 +16769,7 @@ impl Movie {
     }
 
     fn load_tracks_with_media_type(this, media_type: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Movie_load_tracks_with_media_type_block = Movie_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Movie_load_tracks_with_media_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Movie_load_tracks_with_media_type_block = Movie_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Movie_load_tracks_with_media_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaType:completionHandler:\0")), bridge::nsstring(media_type), bp);
         return;
@@ -16841,8 +16789,7 @@ impl Movie {
     }
 
     fn load_tracks_with_media_characteristic(this, media_characteristic: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Movie_load_tracks_with_media_characteristic_block = Movie_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Movie_load_tracks_with_media_characteristic_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Movie_load_tracks_with_media_characteristic_block = Movie_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Movie_load_tracks_with_media_characteristic_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaCharacteristic:completionHandler:\0")), bridge::nsstring(media_characteristic), bp);
         return;
@@ -17245,8 +17192,7 @@ impl MutableMovie {
     }
 
     fn load_track_with_track_i_d(this, track_i_d: i32, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableMovie_load_track_with_track_i_d_block = MutableMovie_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableMovie_load_track_with_track_i_d_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableMovie_load_track_with_track_i_d_block = MutableMovie_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableMovie_load_track_with_track_i_d_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i32_id(this._obj, rt::sel(#str_ptr("loadTrackWithTrackID:completionHandler:\0")), track_i_d, bp);
         return;
@@ -17266,8 +17212,7 @@ impl MutableMovie {
     }
 
     fn load_tracks_with_media_type(this, media_type: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableMovie_load_tracks_with_media_type_block = MutableMovie_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableMovie_load_tracks_with_media_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableMovie_load_tracks_with_media_type_block = MutableMovie_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableMovie_load_tracks_with_media_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaType:completionHandler:\0")), bridge::nsstring(media_type), bp);
         return;
@@ -17287,8 +17232,7 @@ impl MutableMovie {
     }
 
     fn load_tracks_with_media_characteristic(this, media_characteristic: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MutableMovie_load_tracks_with_media_characteristic_block = MutableMovie_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableMovie_load_tracks_with_media_characteristic_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MutableMovie_load_tracks_with_media_characteristic_block = MutableMovie_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MutableMovie_load_tracks_with_media_characteristic_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaCharacteristic:completionHandler:\0")), bridge::nsstring(media_characteristic), bp);
         return;
@@ -17412,8 +17356,7 @@ impl FragmentedMovie {
     }
 
     fn load_track_with_track_i_d(this, track_i_d: i32, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FragmentedMovie_load_track_with_track_i_d_block = FragmentedMovie_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedMovie_load_track_with_track_i_d_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FragmentedMovie_load_track_with_track_i_d_block = FragmentedMovie_load_track_with_track_i_d_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedMovie_load_track_with_track_i_d_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i32_id(this._obj, rt::sel(#str_ptr("loadTrackWithTrackID:completionHandler:\0")), track_i_d, bp);
         return;
@@ -17433,8 +17376,7 @@ impl FragmentedMovie {
     }
 
     fn load_tracks_with_media_type(this, media_type: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FragmentedMovie_load_tracks_with_media_type_block = FragmentedMovie_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedMovie_load_tracks_with_media_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FragmentedMovie_load_tracks_with_media_type_block = FragmentedMovie_load_tracks_with_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedMovie_load_tracks_with_media_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaType:completionHandler:\0")), bridge::nsstring(media_type), bp);
         return;
@@ -17454,8 +17396,7 @@ impl FragmentedMovie {
     }
 
     fn load_tracks_with_media_characteristic(this, media_characteristic: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: FragmentedMovie_load_tracks_with_media_characteristic_block = FragmentedMovie_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedMovie_load_tracks_with_media_characteristic_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: FragmentedMovie_load_tracks_with_media_characteristic_block = FragmentedMovie_load_tracks_with_media_characteristic_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FragmentedMovie_load_tracks_with_media_characteristic_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadTracksWithMediaCharacteristic:completionHandler:\0")), bridge::nsstring(media_characteristic), bp);
         return;
@@ -17818,16 +17759,14 @@ impl PlayerItem {
     }
 
     fn seek_to_time_completion_handler(this, time: CMTime, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PlayerItem_seek_to_time_completion_handler_block = PlayerItem_seek_to_time_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItem_seek_to_time_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PlayerItem_seek_to_time_completion_handler_block = PlayerItem_seek_to_time_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItem_seek_to_time_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_CMTime_id(this._obj, rt::sel(#str_ptr("seekToTime:completionHandler:\0")), time, bp);
         return;
     }
 
     fn seek_to_time_tolerance_before_tolerance_after(this, time: CMTime, tolerance_before: CMTime, tolerance_after: CMTime, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PlayerItem_seek_to_time_tolerance_before_tolerance_after_block = PlayerItem_seek_to_time_tolerance_before_tolerance_after_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItem_seek_to_time_tolerance_before_tolerance_after_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PlayerItem_seek_to_time_tolerance_before_tolerance_after_block = PlayerItem_seek_to_time_tolerance_before_tolerance_after_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItem_seek_to_time_tolerance_before_tolerance_after_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_CMTime_CMTime_CMTime_id(this._obj, rt::sel(#str_ptr("seekToTime:toleranceBefore:toleranceAfter:completionHandler:\0")), time, tolerance_before, tolerance_after, bp);
         return;
@@ -17843,8 +17782,7 @@ impl PlayerItem {
     }
 
     fn seek_to_date_completion_handler(this, date: *u8, cb: fn(*u8, i8), ctx: *u8) -> bool {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PlayerItem_seek_to_date_completion_handler_block = PlayerItem_seek_to_date_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItem_seek_to_date_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PlayerItem_seek_to_date_completion_handler_block = PlayerItem_seek_to_date_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItem_seek_to_date_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("seekToDate:completionHandler:\0")), date, bp) != (0 as i8);
     }
@@ -18188,8 +18126,7 @@ impl PlayerItem {
     }
 
     fn request_content_authorization_asynchronously_with_timeout_interval(this, timeout_interval: f64, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PlayerItem_request_content_authorization_asynchronously_with_timeout_interval_block = PlayerItem_request_content_authorization_asynchronously_with_timeout_interval_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItem_request_content_authorization_asynchronously_with_timeout_interval_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PlayerItem_request_content_authorization_asynchronously_with_timeout_interval_block = PlayerItem_request_content_authorization_asynchronously_with_timeout_interval_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItem_request_content_authorization_asynchronously_with_timeout_interval_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_f64_id(this._obj, rt::sel(#str_ptr("requestContentAuthorizationAsynchronouslyWithTimeoutInterval:completionHandler:\0")), timeout_interval, bp);
         return;
@@ -18457,8 +18394,7 @@ impl Player {
     }
 
     fn seek_to_date_completion_handler(this, date: *u8, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Player_seek_to_date_completion_handler_block = Player_seek_to_date_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Player_seek_to_date_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Player_seek_to_date_completion_handler_block = Player_seek_to_date_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Player_seek_to_date_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("seekToDate:completionHandler:\0")), date, bp);
         return;
@@ -18473,16 +18409,14 @@ impl Player {
     }
 
     fn seek_to_time_completion_handler(this, time: CMTime, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Player_seek_to_time_completion_handler_block = Player_seek_to_time_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Player_seek_to_time_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Player_seek_to_time_completion_handler_block = Player_seek_to_time_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Player_seek_to_time_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_CMTime_id(this._obj, rt::sel(#str_ptr("seekToTime:completionHandler:\0")), time, bp);
         return;
     }
 
     fn seek_to_time_tolerance_before_tolerance_after(this, time: CMTime, tolerance_before: CMTime, tolerance_after: CMTime, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Player_seek_to_time_tolerance_before_tolerance_after_block = Player_seek_to_time_tolerance_before_tolerance_after_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Player_seek_to_time_tolerance_before_tolerance_after_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Player_seek_to_time_tolerance_before_tolerance_after_block = Player_seek_to_time_tolerance_before_tolerance_after_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Player_seek_to_time_tolerance_before_tolerance_after_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_CMTime_CMTime_CMTime_id(this._obj, rt::sel(#str_ptr("seekToTime:toleranceBefore:toleranceAfter:completionHandler:\0")), time, tolerance_before, tolerance_after, bp);
         return;
@@ -18493,8 +18427,7 @@ impl Player {
     }
 
     fn preroll_at_rate(this, rate: f32, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Player_preroll_at_rate_block = Player_preroll_at_rate_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Player_preroll_at_rate_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Player_preroll_at_rate_block = Player_preroll_at_rate_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Player_preroll_at_rate_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_f32_id(this._obj, rt::sel(#str_ptr("prerollAtRate:completionHandler:\0")), rate, bp);
         return;
@@ -20961,16 +20894,14 @@ impl PlayerItemIntegratedTimeline {
     }
 
     fn seek_to_time(this, time: CMTime, tolerance_before: CMTime, tolerance_after: CMTime, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PlayerItemIntegratedTimeline_seek_to_time_block = PlayerItemIntegratedTimeline_seek_to_time_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItemIntegratedTimeline_seek_to_time_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PlayerItemIntegratedTimeline_seek_to_time_block = PlayerItemIntegratedTimeline_seek_to_time_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItemIntegratedTimeline_seek_to_time_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_CMTime_CMTime_CMTime_id(this._obj, rt::sel(#str_ptr("seekToTime:toleranceBefore:toleranceAfter:completionHandler:\0")), time, tolerance_before, tolerance_after, bp);
         return;
     }
 
     fn seek_to_date(this, date: *u8, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PlayerItemIntegratedTimeline_seek_to_date_block = PlayerItemIntegratedTimeline_seek_to_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItemIntegratedTimeline_seek_to_date_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PlayerItemIntegratedTimeline_seek_to_date_block = PlayerItemIntegratedTimeline_seek_to_date_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItemIntegratedTimeline_seek_to_date_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("seekToDate:completionHandler:\0")), date, bp);
         return;
@@ -20978,8 +20909,7 @@ impl PlayerItemIntegratedTimeline {
 
     // SKIPPED `addPeriodicTimeObserverForInterval:queue:usingBlock:`: block argument type `CMTime` has no C+ wire type
     fn add_boundary_time_observer_for_segment(this, segment: PlayerItemSegment, offsets_into_segment: *u8, queue: *u8, cb: fn(*u8, i8), ctx: *u8) -> PlayerItemIntegratedTimelineObserver {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PlayerItemIntegratedTimeline_add_boundary_time_observer_for_segment_block = PlayerItemIntegratedTimeline_add_boundary_time_observer_for_segment_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItemIntegratedTimeline_add_boundary_time_observer_for_segment_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PlayerItemIntegratedTimeline_add_boundary_time_observer_for_segment_block = PlayerItemIntegratedTimeline_add_boundary_time_observer_for_segment_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PlayerItemIntegratedTimeline_add_boundary_time_observer_for_segment_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return PlayerItemIntegratedTimelineObserver::from_raw(rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("addBoundaryTimeObserverForSegment:offsetsIntoSegment:queue:usingBlock:\0")), segment.raw(), offsets_into_segment, queue, bp));
     }
@@ -21114,8 +21044,7 @@ impl SampleBufferAudioRenderer {
     }
 
     fn flush_from_source_time(this, time: CMTime, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SampleBufferAudioRenderer_flush_from_source_time_block = SampleBufferAudioRenderer_flush_from_source_time_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferAudioRenderer_flush_from_source_time_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SampleBufferAudioRenderer_flush_from_source_time_block = SampleBufferAudioRenderer_flush_from_source_time_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferAudioRenderer_flush_from_source_time_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_CMTime_id(this._obj, rt::sel(#str_ptr("flushFromSourceTime:completionHandler:\0")), time, bp);
         return;
@@ -21146,8 +21075,7 @@ impl SampleBufferVideoRenderer {
     fn from_raw(ptr: *u8) -> SampleBufferVideoRenderer { return SampleBufferVideoRenderer { _obj: ptr }; }
 
     fn flush_with_removal_of_displayed_image(this, remove_displayed_image: bool, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SampleBufferVideoRenderer_flush_with_removal_of_displayed_image_block = SampleBufferVideoRenderer_flush_with_removal_of_displayed_image_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferVideoRenderer_flush_with_removal_of_displayed_image_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SampleBufferVideoRenderer_flush_with_removal_of_displayed_image_block = SampleBufferVideoRenderer_flush_with_removal_of_displayed_image_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferVideoRenderer_flush_with_removal_of_displayed_image_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_i8_id(this._obj, rt::sel(#str_ptr("flushWithRemovalOfDisplayedImage:completionHandler:\0")), remove_displayed_image as i8, bp);
         return;
@@ -21204,8 +21132,7 @@ impl SampleBufferVideoRenderer {
     }
 
     fn load_video_performance_metrics_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SampleBufferVideoRenderer_load_video_performance_metrics_with_completion_handler_block = SampleBufferVideoRenderer_load_video_performance_metrics_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferVideoRenderer_load_video_performance_metrics_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SampleBufferVideoRenderer_load_video_performance_metrics_with_completion_handler_block = SampleBufferVideoRenderer_load_video_performance_metrics_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferVideoRenderer_load_video_performance_metrics_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("loadVideoPerformanceMetricsWithCompletionHandler:\0")), bp);
         return;
@@ -21261,8 +21188,7 @@ impl SampleBufferDisplayLayer {
     }
 
     fn request_media_data_when_ready_on_queue(this, queue: *u8, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SampleBufferDisplayLayer_request_media_data_when_ready_on_queue_block = SampleBufferDisplayLayer_request_media_data_when_ready_on_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferDisplayLayer_request_media_data_when_ready_on_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SampleBufferDisplayLayer_request_media_data_when_ready_on_queue_block = SampleBufferDisplayLayer_request_media_data_when_ready_on_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferDisplayLayer_request_media_data_when_ready_on_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("requestMediaDataWhenReadyOnQueue:usingBlock:\0")), queue, bp);
         return;
@@ -21389,8 +21315,7 @@ impl SampleBufferRenderSynchronizer {
     }
 
     fn remove_renderer(this, renderer: QueuedSampleBufferRendering, at_time: CMTime, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SampleBufferRenderSynchronizer_remove_renderer_block = SampleBufferRenderSynchronizer_remove_renderer_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferRenderSynchronizer_remove_renderer_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SampleBufferRenderSynchronizer_remove_renderer_block = SampleBufferRenderSynchronizer_remove_renderer_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferRenderSynchronizer_remove_renderer_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_CMTime_id(this._obj, rt::sel(#str_ptr("removeRenderer:atTime:completionHandler:\0")), renderer.raw(), at_time, bp);
         return;
@@ -21530,8 +21455,7 @@ impl SampleBufferGeneratorBatch {
     }
 
     fn make_data_ready_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SampleBufferGeneratorBatch_make_data_ready_with_completion_handler_block = SampleBufferGeneratorBatch_make_data_ready_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferGeneratorBatch_make_data_ready_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SampleBufferGeneratorBatch_make_data_ready_with_completion_handler_block = SampleBufferGeneratorBatch_make_data_ready_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferGeneratorBatch_make_data_ready_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("makeDataReadyWithCompletionHandler:\0")), bp);
         return;
@@ -21594,8 +21518,7 @@ impl SampleBufferGenerator {
     }
 
     fn notify_of_data_ready_for_sample_buffer(sbuf: *u8, cb: fn(*u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SampleBufferGenerator_notify_of_data_ready_for_sample_buffer_block = SampleBufferGenerator_notify_of_data_ready_for_sample_buffer_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferGenerator_notify_of_data_ready_for_sample_buffer_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SampleBufferGenerator_notify_of_data_ready_for_sample_buffer_block = SampleBufferGenerator_notify_of_data_ready_for_sample_buffer_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SampleBufferGenerator_notify_of_data_ready_for_sample_buffer_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("AVSampleBufferGenerator\0")), rt::sel(#str_ptr("notifyOfDataReadyForSampleBuffer:completionHandler:\0")), sbuf, bp);
         return;
@@ -21928,8 +21851,7 @@ impl AudioPCMBuffer {
     }
 
     fn init_with_p_c_m_format_buffer_list_no_copy_deallocator(this, format: AudioFormat, buffer_list: *u8, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioPCMBuffer_init_with_p_c_m_format_buffer_list_no_copy_deallocator_block = AudioPCMBuffer_init_with_p_c_m_format_buffer_list_no_copy_deallocator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPCMBuffer_init_with_p_c_m_format_buffer_list_no_copy_deallocator_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioPCMBuffer_init_with_p_c_m_format_buffer_list_no_copy_deallocator_block = AudioPCMBuffer_init_with_p_c_m_format_buffer_list_no_copy_deallocator_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPCMBuffer_init_with_p_c_m_format_buffer_list_no_copy_deallocator_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("initWithPCMFormat:bufferListNoCopy:deallocator:\0")), format.raw(), buffer_list, bp);
     }
@@ -22221,8 +22143,7 @@ impl AudioNode {
     }
 
     fn install_tap_on_bus(this, bus: u64, buffer_size: u32, format: AudioFormat, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioNode_install_tap_on_bus_block = AudioNode_install_tap_on_bus_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioNode_install_tap_on_bus_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioNode_install_tap_on_bus_block = AudioNode_install_tap_on_bus_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioNode_install_tap_on_bus_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_u64_u32_id_id(this._obj, rt::sel(#str_ptr("installTapOnBus:bufferSize:format:block:\0")), bus, buffer_size, format.raw(), bp);
         return;
@@ -22327,8 +22248,7 @@ impl AudioConverter {
     }
 
     fn convert_to_buffer_error(this, output_buffer: AudioBuffer, out_error: *u8, cb: fn(*u8, u32, *u8) -> *u8, ctx: *u8) -> AudioConverterOutputStatus {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioConverter_convert_to_buffer_error_block = AudioConverter_convert_to_buffer_error_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioConverter_convert_to_buffer_error_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioConverter_convert_to_buffer_error_block = AudioConverter_convert_to_buffer_error_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioConverter_convert_to_buffer_error_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return audio_converter_output_status_from_raw(rt::msg_i64_id_id_id(this._obj, rt::sel(#str_ptr("convertToBuffer:error:withInputFromBlock:\0")), output_buffer.raw(), out_error, bp));
     }
@@ -22673,24 +22593,21 @@ impl AudioEngine {
     }
 
     fn connect_m_i_d_i(this, source_node: AudioNode, to: AudioNode, format: AudioFormat, cb: fn(*u8, i64, u8, i64, *u8) -> i32, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioEngine_connect_m_i_d_i_block = AudioEngine_connect_m_i_d_i_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioEngine_connect_m_i_d_i_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioEngine_connect_m_i_d_i_block = AudioEngine_connect_m_i_d_i_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioEngine_connect_m_i_d_i_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("connectMIDI:to:format:block:\0")), source_node.raw(), to.raw(), format.raw(), bp);
         return;
     }
 
     fn connect_m_i_d_i_to(this, source_node: AudioNode, destination_node: AudioNode, format: AudioFormat, cb: fn(*u8, i64, u8, *u8) -> i32, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioEngine_connect_m_i_d_i_to_block = AudioEngine_connect_m_i_d_i_to_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioEngine_connect_m_i_d_i_to_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioEngine_connect_m_i_d_i_to_block = AudioEngine_connect_m_i_d_i_to_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioEngine_connect_m_i_d_i_to_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("connectMIDI:to:format:eventListBlock:\0")), source_node.raw(), destination_node.raw(), format.raw(), bp);
         return;
     }
 
     fn connect_m_i_d_i_to_nodes(this, source_node: AudioNode, destination_nodes: vec::Vec[AudioNode], format: AudioFormat, cb: fn(*u8, i64, u8, i64, *u8) -> i32, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioEngine_connect_m_i_d_i_to_nodes_block = AudioEngine_connect_m_i_d_i_to_nodes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioEngine_connect_m_i_d_i_to_nodes_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioEngine_connect_m_i_d_i_to_nodes_block = AudioEngine_connect_m_i_d_i_to_nodes_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioEngine_connect_m_i_d_i_to_nodes_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_destination_nodes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_destination_nodes: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -22708,8 +22625,7 @@ impl AudioEngine {
     }
 
     fn connect_m_i_d_i_to_nodes_format(this, source_node: AudioNode, destination_nodes: vec::Vec[AudioNode], format: AudioFormat, cb: fn(*u8, i64, u8, *u8) -> i32, ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioEngine_connect_m_i_d_i_to_nodes_format_block = AudioEngine_connect_m_i_d_i_to_nodes_format_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioEngine_connect_m_i_d_i_to_nodes_format_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioEngine_connect_m_i_d_i_to_nodes_format_block = AudioEngine_connect_m_i_d_i_to_nodes_format_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioEngine_connect_m_i_d_i_to_nodes_format_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_destination_nodes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_destination_nodes: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -22844,15 +22760,13 @@ impl AudioInputNode {
 
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn set_manual_rendering_input_p_c_m_format(this, format: AudioFormat, cb: fn(*u8, u32) -> *u8, ctx: *u8) -> bool {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioInputNode_set_manual_rendering_input_p_c_m_format_block = AudioInputNode_set_manual_rendering_input_p_c_m_format_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioInputNode_set_manual_rendering_input_p_c_m_format_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioInputNode_set_manual_rendering_input_p_c_m_format_block = AudioInputNode_set_manual_rendering_input_p_c_m_format_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioInputNode_set_manual_rendering_input_p_c_m_format_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setManualRenderingInputPCMFormat:inputBlock:\0")), format.raw(), bp) != (0 as i8);
     }
 
     fn set_muted_speech_activity_event_listener(this, cb: fn(*u8, i64), ctx: *u8) -> bool {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioInputNode_set_muted_speech_activity_event_listener_block = AudioInputNode_set_muted_speech_activity_event_listener_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioInputNode_set_muted_speech_activity_event_listener_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioInputNode_set_muted_speech_activity_event_listener_block = AudioInputNode_set_muted_speech_activity_event_listener_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioInputNode_set_muted_speech_activity_event_listener_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setMutedSpeechActivityEventListener:\0")), bp) != (0 as i8);
     }
@@ -23038,8 +22952,7 @@ impl AudioUnit {
     fn as_audio_node(this) -> AudioNode { return AudioNode::from_raw(this._obj); }
 
     fn instantiate_with_component_description(audio_component_description: AudioComponentDescription, options: u64, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioUnit_instantiate_with_component_description_block = AudioUnit_instantiate_with_component_description_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioUnit_instantiate_with_component_description_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioUnit_instantiate_with_component_description_block = AudioUnit_instantiate_with_component_description_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioUnit_instantiate_with_component_description_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_AudioComponentDescription_u64_id(rt::get_class(#str_ptr("AVAudioUnit\0")), rt::sel(#str_ptr("instantiateWithComponentDescription:options:completionHandler:\0")), audio_component_description, options, bp);
         return;
@@ -23897,8 +23810,7 @@ impl AudioSession {
     }
 
     fn request_record_permission(this, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioSession_request_record_permission_block = AudioSession_request_record_permission_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSession_request_record_permission_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioSession_request_record_permission_block = AudioSession_request_record_permission_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSession_request_record_permission_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("requestRecordPermission:\0")), bp);
         return;
@@ -24019,8 +23931,7 @@ impl AudioSession {
     }
 
     fn activate_with_options(this, options: u64, cb: fn(*u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioSession_activate_with_options_block = AudioSession_activate_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSession_activate_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioSession_activate_with_options_block = AudioSession_activate_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSession_activate_with_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("activateWithOptions:completionHandler:\0")), options, bp);
         return;
@@ -24555,64 +24466,56 @@ impl AudioPlayerNode {
     }
 
     fn schedule_buffer(this, buffer: AudioPCMBuffer, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioPlayerNode_schedule_buffer_block = AudioPlayerNode_schedule_buffer_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_buffer_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioPlayerNode_schedule_buffer_block = AudioPlayerNode_schedule_buffer_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_buffer_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("scheduleBuffer:completionHandler:\0")), buffer.raw(), bp);
         return;
     }
 
     fn schedule_buffer_completion_callback_type(this, buffer: AudioPCMBuffer, callback_type: AudioPlayerNodeCompletionCallbackType, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioPlayerNode_schedule_buffer_completion_callback_type_block = AudioPlayerNode_schedule_buffer_completion_callback_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_buffer_completion_callback_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioPlayerNode_schedule_buffer_completion_callback_type_block = AudioPlayerNode_schedule_buffer_completion_callback_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_buffer_completion_callback_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("scheduleBuffer:completionCallbackType:completionHandler:\0")), buffer.raw(), audio_player_node_completion_callback_type_raw(callback_type), bp);
         return;
     }
 
     fn schedule_buffer_at_time(this, buffer: AudioPCMBuffer, when: AudioTime, options: u64, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioPlayerNode_schedule_buffer_at_time_block = AudioPlayerNode_schedule_buffer_at_time_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_buffer_at_time_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioPlayerNode_schedule_buffer_at_time_block = AudioPlayerNode_schedule_buffer_at_time_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_buffer_at_time_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_id_u64_id(this._obj, rt::sel(#str_ptr("scheduleBuffer:atTime:options:completionHandler:\0")), buffer.raw(), when.raw(), options, bp);
         return;
     }
 
     fn schedule_buffer_at_time_options(this, buffer: AudioPCMBuffer, when: AudioTime, options: u64, completion_callback_type: AudioPlayerNodeCompletionCallbackType, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioPlayerNode_schedule_buffer_at_time_options_block = AudioPlayerNode_schedule_buffer_at_time_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_buffer_at_time_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioPlayerNode_schedule_buffer_at_time_options_block = AudioPlayerNode_schedule_buffer_at_time_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_buffer_at_time_options_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_id_u64_i64_id(this._obj, rt::sel(#str_ptr("scheduleBuffer:atTime:options:completionCallbackType:completionHandler:\0")), buffer.raw(), when.raw(), options, audio_player_node_completion_callback_type_raw(completion_callback_type), bp);
         return;
     }
 
     fn schedule_file(this, file: AudioFile, at_time: AudioTime, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioPlayerNode_schedule_file_block = AudioPlayerNode_schedule_file_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_file_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioPlayerNode_schedule_file_block = AudioPlayerNode_schedule_file_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_file_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("scheduleFile:atTime:completionHandler:\0")), file.raw(), at_time.raw(), bp);
         return;
     }
 
     fn schedule_file_at_time(this, file: AudioFile, when: AudioTime, completion_callback_type: AudioPlayerNodeCompletionCallbackType, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioPlayerNode_schedule_file_at_time_block = AudioPlayerNode_schedule_file_at_time_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_file_at_time_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioPlayerNode_schedule_file_at_time_block = AudioPlayerNode_schedule_file_at_time_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_file_at_time_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_id_i64_id(this._obj, rt::sel(#str_ptr("scheduleFile:atTime:completionCallbackType:completionHandler:\0")), file.raw(), when.raw(), audio_player_node_completion_callback_type_raw(completion_callback_type), bp);
         return;
     }
 
     fn schedule_segment(this, file: AudioFile, starting_frame: i64, frame_count: u32, at_time: AudioTime, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioPlayerNode_schedule_segment_block = AudioPlayerNode_schedule_segment_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_segment_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioPlayerNode_schedule_segment_block = AudioPlayerNode_schedule_segment_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_segment_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_i64_u32_id_id(this._obj, rt::sel(#str_ptr("scheduleSegment:startingFrame:frameCount:atTime:completionHandler:\0")), file.raw(), starting_frame, frame_count, at_time.raw(), bp);
         return;
     }
 
     fn schedule_segment_starting_frame(this, file: AudioFile, start_frame: i64, frame_count: u32, at_time: AudioTime, completion_callback_type: AudioPlayerNodeCompletionCallbackType, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioPlayerNode_schedule_segment_starting_frame_block = AudioPlayerNode_schedule_segment_starting_frame_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_segment_starting_frame_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioPlayerNode_schedule_segment_starting_frame_block = AudioPlayerNode_schedule_segment_starting_frame_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioPlayerNode_schedule_segment_starting_frame_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_i64_u32_id_i64_id(this._obj, rt::sel(#str_ptr("scheduleSegment:startingFrame:frameCount:atTime:completionCallbackType:completionHandler:\0")), file.raw(), start_frame, frame_count, at_time.raw(), audio_player_node_completion_callback_type_raw(completion_callback_type), bp);
         return;
@@ -24851,8 +24754,7 @@ impl AudioRoutingArbiter {
     }
 
     fn begin_arbitration_with_category(this, category: AudioRoutingArbitrationCategory, cb: fn(*u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioRoutingArbiter_begin_arbitration_with_category_block = AudioRoutingArbiter_begin_arbitration_with_category_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioRoutingArbiter_begin_arbitration_with_category_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioRoutingArbiter_begin_arbitration_with_category_block = AudioRoutingArbiter_begin_arbitration_with_category_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioRoutingArbiter_begin_arbitration_with_category_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i64_id(this._obj, rt::sel(#str_ptr("beginArbitrationWithCategory:completionHandler:\0")), audio_routing_arbitration_category_raw(category), bp);
         return;
@@ -24994,8 +24896,7 @@ impl MusicTrack {
     }
 
     fn enumerate_events_in_range(this, range: BeatRange, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MusicTrack_enumerate_events_in_range_block = MusicTrack_enumerate_events_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MusicTrack_enumerate_events_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MusicTrack_enumerate_events_in_range_block = MusicTrack_enumerate_events_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MusicTrack_enumerate_events_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_BeatRange_id(this._obj, rt::sel(#str_ptr("enumerateEventsInRange:usingBlock:\0")), range, bp);
         return;
@@ -25070,8 +24971,7 @@ impl AudioSequencer {
     }
 
     fn set_user_callback(this, cb: fn(*u8, *u8, *u8, f64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioSequencer_set_user_callback_block = AudioSequencer_set_user_callback_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSequencer_set_user_callback_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioSequencer_set_user_callback_block = AudioSequencer_set_user_callback_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSequencer_set_user_callback_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setUserCallback:\0")), bp);
         return;
@@ -25191,8 +25091,7 @@ impl AudioSinkNode {
 
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn init_with_receiver_block(this, cb: fn(*u8, *u8, u32, *u8) -> i32, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioSinkNode_init_with_receiver_block_block = AudioSinkNode_init_with_receiver_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSinkNode_init_with_receiver_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioSinkNode_init_with_receiver_block_block = AudioSinkNode_init_with_receiver_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSinkNode_init_with_receiver_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithReceiverBlock:\0")), bp);
     }
@@ -25217,15 +25116,13 @@ impl AudioSourceNode {
 
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn init_with_render_block(this, cb: fn(*u8, *u8, *u8, u32, *u8) -> i32, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioSourceNode_init_with_render_block_block = AudioSourceNode_init_with_render_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSourceNode_init_with_render_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioSourceNode_init_with_render_block_block = AudioSourceNode_init_with_render_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSourceNode_init_with_render_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithRenderBlock:\0")), bp);
     }
 
     fn init_with_format_render_block(this, format: AudioFormat, cb: fn(*u8, *u8, *u8, u32, *u8) -> i32, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioSourceNode_init_with_format_render_block_block = AudioSourceNode_init_with_format_render_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSourceNode_init_with_format_render_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioSourceNode_init_with_format_render_block_block = AudioSourceNode_init_with_format_render_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioSourceNode_init_with_format_render_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithFormat:renderBlock:\0")), format.raw(), bp);
     }
@@ -25901,8 +25798,7 @@ impl MIDIPlayer {
     }
 
     fn play(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MIDIPlayer_play_block = MIDIPlayer_play_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MIDIPlayer_play_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MIDIPlayer_play_block = MIDIPlayer_play_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MIDIPlayer_play_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("play:\0")), bp);
         return;
@@ -26803,8 +26699,7 @@ impl SpeechSynthesizer {
     }
 
     fn write_utterance(this, utterance: SpeechUtterance, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SpeechSynthesizer_write_utterance_block = SpeechSynthesizer_write_utterance_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpeechSynthesizer_write_utterance_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SpeechSynthesizer_write_utterance_block = SpeechSynthesizer_write_utterance_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpeechSynthesizer_write_utterance_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("writeUtterance:toBufferCallback:\0")), utterance.raw(), bp);
         return;
@@ -26824,8 +26719,7 @@ impl SpeechSynthesizer {
     }
 
     fn request_personal_voice_authorization_with_completion_handler(cb: fn(*u8, u64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SpeechSynthesizer_request_personal_voice_authorization_with_completion_handler_block = SpeechSynthesizer_request_personal_voice_authorization_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpeechSynthesizer_request_personal_voice_authorization_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SpeechSynthesizer_request_personal_voice_authorization_with_completion_handler_block = SpeechSynthesizer_request_personal_voice_authorization_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpeechSynthesizer_request_personal_voice_authorization_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(rt::get_class(#str_ptr("AVSpeechSynthesizer\0")), rt::sel(#str_ptr("requestPersonalVoiceAuthorizationWithCompletionHandler:\0")), bp);
         return;
@@ -27079,8 +26973,7 @@ impl SpeechSynthesisProviderAudioUnit {
 
     // SKIPPED `speechSynthesisOutputMetadataBlock`: return `AVSpeechSynthesisProviderOutputBlock _Nullable` — unmapped type `AVSpeechSynthesisProviderOutputBlock`
     fn set_speech_synthesis_output_metadata_block(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SpeechSynthesisProviderAudioUnit_set_speech_synthesis_output_metadata_block_block = SpeechSynthesisProviderAudioUnit_set_speech_synthesis_output_metadata_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpeechSynthesisProviderAudioUnit_set_speech_synthesis_output_metadata_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SpeechSynthesisProviderAudioUnit_set_speech_synthesis_output_metadata_block_block = SpeechSynthesisProviderAudioUnit_set_speech_synthesis_output_metadata_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpeechSynthesisProviderAudioUnit_set_speech_synthesis_output_metadata_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSpeechSynthesisOutputMetadataBlock:\0")), bp);
         return;
@@ -27105,16 +26998,14 @@ impl AudioApplication {
 
     // SKIPPED `setInputMuteStateChangeHandler:error:`: params after the block not modelled
     fn request_record_permission_with_completion_handler(cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioApplication_request_record_permission_with_completion_handler_block = AudioApplication_request_record_permission_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioApplication_request_record_permission_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioApplication_request_record_permission_with_completion_handler_block = AudioApplication_request_record_permission_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioApplication_request_record_permission_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(rt::get_class(#str_ptr("AVAudioApplication\0")), rt::sel(#str_ptr("requestRecordPermissionWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn request_microphone_injection_permission_with_completion_handler(cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AudioApplication_request_microphone_injection_permission_with_completion_handler_block = AudioApplication_request_microphone_injection_permission_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioApplication_request_microphone_injection_permission_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AudioApplication_request_microphone_injection_permission_with_completion_handler_block = AudioApplication_request_microphone_injection_permission_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AudioApplication_request_microphone_injection_permission_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(rt::get_class(#str_ptr("AVAudioApplication\0")), rt::sel(#str_ptr("requestMicrophoneInjectionPermissionWithCompletionHandler:\0")), bp);
         return;
@@ -28392,8 +28283,7 @@ impl CaptureDevice {
     }
 
     fn request_access_for_media_type(media_type: str, cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureDevice_request_access_for_media_type_block = CaptureDevice_request_access_for_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureDevice_request_access_for_media_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureDevice_request_access_for_media_type_block = CaptureDevice_request_access_for_media_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureDevice_request_access_for_media_type_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("AVCaptureDevice\0")), rt::sel(#str_ptr("requestAccessForMediaType:completionHandler:\0")), bridge::nsstring(media_type), bp);
         return;
@@ -32050,8 +31940,7 @@ impl CapturePhotoOutput {
     }
 
     fn set_prepared_photo_settings_array(this, prepared_photo_settings_array: vec::Vec[CapturePhotoSettings], cb: fn(*u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CapturePhotoOutput_set_prepared_photo_settings_array_block = CapturePhotoOutput_set_prepared_photo_settings_array_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CapturePhotoOutput_set_prepared_photo_settings_array_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CapturePhotoOutput_set_prepared_photo_settings_array_block = CapturePhotoOutput_set_prepared_photo_settings_array_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CapturePhotoOutput_set_prepared_photo_settings_array_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_prepared_photo_settings_array: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_prepared_photo_settings_array: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -32924,8 +32813,7 @@ impl CaptureStillImageOutput {
 
     // SKIPPED `new`: method `new` already defined
     fn capture_still_image_asynchronously_from_connection(this, connection: CaptureConnection, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureStillImageOutput_capture_still_image_asynchronously_from_connection_block = CaptureStillImageOutput_capture_still_image_asynchronously_from_connection_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureStillImageOutput_capture_still_image_asynchronously_from_connection_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureStillImageOutput_capture_still_image_asynchronously_from_connection_block = CaptureStillImageOutput_capture_still_image_asynchronously_from_connection_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureStillImageOutput_capture_still_image_asynchronously_from_connection_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("captureStillImageAsynchronouslyFromConnection:completionHandler:\0")), connection.raw(), bp);
         return;
@@ -33049,8 +32937,7 @@ impl CaptureStillImageOutput {
     }
 
     fn prepare_to_capture_still_image_bracket_from_connection(this, connection: CaptureConnection, with_settings_array: vec::Vec[CaptureBracketedStillImageSettings], cb: fn(*u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureStillImageOutput_prepare_to_capture_still_image_bracket_from_connection_block = CaptureStillImageOutput_prepare_to_capture_still_image_bracket_from_connection_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureStillImageOutput_prepare_to_capture_still_image_bracket_from_connection_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureStillImageOutput_prepare_to_capture_still_image_bracket_from_connection_block = CaptureStillImageOutput_prepare_to_capture_still_image_bracket_from_connection_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureStillImageOutput_prepare_to_capture_still_image_bracket_from_connection_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_with_settings_array: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_with_settings_array: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -33068,8 +32955,7 @@ impl CaptureStillImageOutput {
     }
 
     fn capture_still_image_bracket_asynchronously_from_connection(this, connection: CaptureConnection, with_settings_array: vec::Vec[CaptureBracketedStillImageSettings], cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureStillImageOutput_capture_still_image_bracket_asynchronously_from_connection_block = CaptureStillImageOutput_capture_still_image_bracket_asynchronously_from_connection_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureStillImageOutput_capture_still_image_bracket_asynchronously_from_connection_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureStillImageOutput_capture_still_image_bracket_asynchronously_from_connection_block = CaptureStillImageOutput_capture_still_image_bracket_asynchronously_from_connection_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureStillImageOutput_capture_still_image_bracket_asynchronously_from_connection_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_with_settings_array: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_with_settings_array: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -33712,16 +33598,14 @@ impl CaptureDeskViewApplication {
     fn from_raw(ptr: *u8) -> CaptureDeskViewApplication { return CaptureDeskViewApplication { _obj: ptr }; }
 
     fn present_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureDeskViewApplication_present_with_completion_handler_block = CaptureDeskViewApplication_present_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureDeskViewApplication_present_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureDeskViewApplication_present_with_completion_handler_block = CaptureDeskViewApplication_present_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureDeskViewApplication_present_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("presentWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn present_with_launch_configuration(this, launch_configuration: CaptureDeskViewApplicationLaunchConfiguration, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureDeskViewApplication_present_with_launch_configuration_block = CaptureDeskViewApplication_present_with_launch_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureDeskViewApplication_present_with_launch_configuration_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureDeskViewApplication_present_with_launch_configuration_block = CaptureDeskViewApplication_present_with_launch_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureDeskViewApplication_present_with_launch_configuration_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("presentWithLaunchConfiguration:completionHandler:\0")), launch_configuration.raw(), bp);
         return;
@@ -33846,8 +33730,7 @@ impl CaptureIndexPicker {
     }
 
     fn init_with_localized_title_symbol_name_number_of_indexes_localized_title_transform(this, localized_title: str, symbol_name: str, number_of_indexes: i64, cb: fn(*u8, i64) -> *u8, ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureIndexPicker_init_with_localized_title_symbol_name_number_of_indexes_localized_title_transform_block = CaptureIndexPicker_init_with_localized_title_symbol_name_number_of_indexes_localized_title_transform_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureIndexPicker_init_with_localized_title_symbol_name_number_of_indexes_localized_title_transform_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureIndexPicker_init_with_localized_title_symbol_name_number_of_indexes_localized_title_transform_block = CaptureIndexPicker_init_with_localized_title_symbol_name_number_of_indexes_localized_title_transform_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureIndexPicker_init_with_localized_title_symbol_name_number_of_indexes_localized_title_transform_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return objc_msg_id_id_id_i64_id(this._obj, rt::sel(#str_ptr("initWithLocalizedTitle:symbolName:numberOfIndexes:localizedTitleTransform:\0")), bridge::nsstring(localized_title), bridge::nsstring(symbol_name), number_of_indexes, bp);
     }
@@ -33859,8 +33742,7 @@ impl CaptureIndexPicker {
     }
 
     fn set_action_queue(this, action_queue: *u8, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureIndexPicker_set_action_queue_block = CaptureIndexPicker_set_action_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureIndexPicker_set_action_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureIndexPicker_set_action_queue_block = CaptureIndexPicker_set_action_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureIndexPicker_set_action_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setActionQueue:action:\0")), action_queue, bp);
         return;
@@ -34379,8 +34261,7 @@ impl CaptureSlider {
     }
 
     fn set_action_queue(this, action_queue: *u8, cb: fn(*u8, f32), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureSlider_set_action_queue_block = CaptureSlider_set_action_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureSlider_set_action_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureSlider_set_action_queue_block = CaptureSlider_set_action_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureSlider_set_action_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setActionQueue:action:\0")), action_queue, bp);
         return;
@@ -34479,8 +34360,7 @@ impl CaptureSystemExposureBiasSlider {
     }
 
     fn init_with_device_action(this, device: CaptureDevice, cb: fn(*u8, f32), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureSystemExposureBiasSlider_init_with_device_action_block = CaptureSystemExposureBiasSlider_init_with_device_action_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureSystemExposureBiasSlider_init_with_device_action_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureSystemExposureBiasSlider_init_with_device_action_block = CaptureSystemExposureBiasSlider_init_with_device_action_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureSystemExposureBiasSlider_init_with_device_action_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithDevice:action:\0")), device.raw(), bp);
     }
@@ -34522,8 +34402,7 @@ impl CaptureSystemZoomSlider {
     }
 
     fn init_with_device_action(this, device: CaptureDevice, cb: fn(*u8, f64), ctx: *u8) -> *u8 {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CaptureSystemZoomSlider_init_with_device_action_block = CaptureSystemZoomSlider_init_with_device_action_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureSystemZoomSlider_init_with_device_action_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CaptureSystemZoomSlider_init_with_device_action_block = CaptureSystemZoomSlider_init_with_device_action_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CaptureSystemZoomSlider_init_with_device_action_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithDevice:action:\0")), device.raw(), bp);
     }
@@ -34774,8 +34653,7 @@ impl ExternalStorageDevice {
     }
 
     fn request_access_with_completion_handler(cb: fn(*u8, i8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ExternalStorageDevice_request_access_with_completion_handler_block = ExternalStorageDevice_request_access_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ExternalStorageDevice_request_access_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ExternalStorageDevice_request_access_with_completion_handler_block = ExternalStorageDevice_request_access_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ExternalStorageDevice_request_access_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(rt::get_class(#str_ptr("AVExternalStorageDevice\0")), rt::sel(#str_ptr("requestAccessWithCompletionHandler:\0")), bp);
         return;
@@ -34891,8 +34769,7 @@ impl AsynchronousKeyValueLoading {
     }
 
     fn load_values_asynchronously_for_keys(this, keys: vec::Vec[text::Text], cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: AsynchronousKeyValueLoading_load_values_asynchronously_for_keys_block = AsynchronousKeyValueLoading_load_values_asynchronously_for_keys_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AsynchronousKeyValueLoading_load_values_asynchronously_for_keys_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: AsynchronousKeyValueLoading_load_values_asynchronously_for_keys_block = AsynchronousKeyValueLoading_load_values_asynchronously_for_keys_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AsynchronousKeyValueLoading_load_values_asynchronously_for_keys_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("loadValuesAsynchronouslyForKeys:completionHandler:\0")), bridge::nsarray_of_text(keys), bp);
         return;
@@ -36055,8 +35932,7 @@ impl QueuedSampleBufferRendering {
     }
 
     fn request_media_data_when_ready_on_queue(this, queue: *u8, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: QueuedSampleBufferRendering_request_media_data_when_ready_on_queue_block = QueuedSampleBufferRendering_request_media_data_when_ready_on_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: QueuedSampleBufferRendering_request_media_data_when_ready_on_queue_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: QueuedSampleBufferRendering_request_media_data_when_ready_on_queue_block = QueuedSampleBufferRendering_request_media_data_when_ready_on_queue_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: QueuedSampleBufferRendering_request_media_data_when_ready_on_queue_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("requestMediaDataWhenReadyOnQueue:usingBlock:\0")), queue, bp);
         return;

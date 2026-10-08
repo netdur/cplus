@@ -746,16 +746,14 @@ impl MultiArray {
     }
 
     fn get_bytes_with_handler(this, cb: fn(*u8, *u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MultiArray_get_bytes_with_handler_block = MultiArray_get_bytes_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MultiArray_get_bytes_with_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MultiArray_get_bytes_with_handler_block = MultiArray_get_bytes_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MultiArray_get_bytes_with_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getBytesWithHandler:\0")), bp);
         return;
     }
 
     fn get_mutable_bytes_with_handler(this, cb: fn(*u8, *u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: MultiArray_get_mutable_bytes_with_handler_block = MultiArray_get_mutable_bytes_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MultiArray_get_mutable_bytes_with_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: MultiArray_get_mutable_bytes_with_handler_block = MultiArray_get_mutable_bytes_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MultiArray_get_mutable_bytes_with_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getMutableBytesWithHandler:\0")), bp);
         return;
@@ -908,8 +906,7 @@ impl State {
     fn from_raw(ptr: *u8) -> State { return State { _obj: rt::retain(ptr) }; }
 
     fn get_multi_array_for_state_named(this, state_name: str, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: State_get_multi_array_for_state_named_block = State_get_multi_array_for_state_named_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: State_get_multi_array_for_state_named_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: State_get_multi_array_for_state_named_block = State_get_multi_array_for_state_named_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: State_get_multi_array_for_state_named_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getMultiArrayForStateNamed:handler:\0")), bridge::nsstring(state_name), bp);
         return;
@@ -2038,24 +2035,21 @@ impl ModelAsset {
     }
 
     fn model_description_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ModelAsset_model_description_with_completion_handler_block = ModelAsset_model_description_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelAsset_model_description_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ModelAsset_model_description_with_completion_handler_block = ModelAsset_model_description_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelAsset_model_description_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("modelDescriptionWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn model_description_of_function_named(this, function_name: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ModelAsset_model_description_of_function_named_block = ModelAsset_model_description_of_function_named_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelAsset_model_description_of_function_named_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ModelAsset_model_description_of_function_named_block = ModelAsset_model_description_of_function_named_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelAsset_model_description_of_function_named_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("modelDescriptionOfFunctionNamed:completionHandler:\0")), bridge::nsstring(function_name), bp);
         return;
     }
 
     fn function_names_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ModelAsset_function_names_with_completion_handler_block = ModelAsset_function_names_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelAsset_function_names_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ModelAsset_function_names_with_completion_handler_block = ModelAsset_function_names_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelAsset_function_names_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("functionNamesWithCompletionHandler:\0")), bp);
         return;
@@ -2098,8 +2092,7 @@ impl Model {
     }
 
     fn load_contents_of_url(url: foundation::URL, configuration: ModelConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Model_load_contents_of_url_block = Model_load_contents_of_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_load_contents_of_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Model_load_contents_of_url_block = Model_load_contents_of_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_load_contents_of_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(rt::get_class(#str_ptr("MLModel\0")), rt::sel(#str_ptr("loadContentsOfURL:configuration:completionHandler:\0")), url.raw(), configuration.raw(), bp);
         return;
@@ -2122,16 +2115,14 @@ impl Model {
     }
 
     fn prediction_from_features_completion_handler(this, input: FeatureProvider, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Model_prediction_from_features_completion_handler_block = Model_prediction_from_features_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_prediction_from_features_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Model_prediction_from_features_completion_handler_block = Model_prediction_from_features_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_prediction_from_features_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("predictionFromFeatures:completionHandler:\0")), input.raw(), bp);
         return;
     }
 
     fn prediction_from_features_options_completion_handler(this, input: FeatureProvider, options: PredictionOptions, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Model_prediction_from_features_options_completion_handler_block = Model_prediction_from_features_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_prediction_from_features_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Model_prediction_from_features_options_completion_handler_block = Model_prediction_from_features_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_prediction_from_features_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("predictionFromFeatures:options:completionHandler:\0")), input.raw(), options.raw(), bp);
         return;
@@ -2159,8 +2150,7 @@ impl Model {
     }
 
     fn load_model_asset(asset: ModelAsset, configuration: ModelConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Model_load_model_asset_block = Model_load_model_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_load_model_asset_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Model_load_model_asset_block = Model_load_model_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_load_model_asset_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(rt::get_class(#str_ptr("MLModel\0")), rt::sel(#str_ptr("loadModelAsset:configuration:completionHandler:\0")), asset.raw(), configuration.raw(), bp);
         return;
@@ -2183,8 +2173,7 @@ impl Model {
     }
 
     fn compile_model_at_url_completion_handler(model_url: foundation::URL, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Model_compile_model_at_url_completion_handler_block = Model_compile_model_at_url_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_compile_model_at_url_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Model_compile_model_at_url_completion_handler_block = Model_compile_model_at_url_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_compile_model_at_url_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("MLModel\0")), rt::sel(#str_ptr("compileModelAtURL:completionHandler:\0")), model_url.raw(), bp);
         return;
@@ -2224,8 +2213,7 @@ impl Model {
     }
 
     fn prediction_from_features_using_state_options_completion_handler(this, input_features: FeatureProvider, state: State, options: PredictionOptions, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Model_prediction_from_features_using_state_options_completion_handler_block = Model_prediction_from_features_using_state_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_prediction_from_features_using_state_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Model_prediction_from_features_using_state_options_completion_handler_block = Model_prediction_from_features_using_state_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Model_prediction_from_features_using_state_options_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("predictionFromFeatures:usingState:options:completionHandler:\0")), input_features.raw(), state.raw(), options.raw(), bp);
         return;
@@ -2496,15 +2484,13 @@ impl ModelCollection {
     fn from_raw(ptr: *u8) -> ModelCollection { return ModelCollection { _obj: rt::retain(ptr) }; }
 
     fn begin_accessing_model_collection_with_identifier(identifier: str, cb: fn(*u8, *u8, *u8), ctx: *u8) -> foundation::Progress {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ModelCollection_begin_accessing_model_collection_with_identifier_block = ModelCollection_begin_accessing_model_collection_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelCollection_begin_accessing_model_collection_with_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ModelCollection_begin_accessing_model_collection_with_identifier_block = ModelCollection_begin_accessing_model_collection_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelCollection_begin_accessing_model_collection_with_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return foundation::Progress::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("MLModelCollection\0")), rt::sel(#str_ptr("beginAccessingModelCollectionWithIdentifier:completionHandler:\0")), bridge::nsstring(identifier), bp));
     }
 
     fn end_accessing_model_collection_with_identifier(identifier: str, cb: fn(*u8, i8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ModelCollection_end_accessing_model_collection_with_identifier_block = ModelCollection_end_accessing_model_collection_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelCollection_end_accessing_model_collection_with_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ModelCollection_end_accessing_model_collection_with_identifier_block = ModelCollection_end_accessing_model_collection_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelCollection_end_accessing_model_collection_with_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("MLModelCollection\0")), rt::sel(#str_ptr("endAccessingModelCollectionWithIdentifier:completionHandler:\0")), bridge::nsstring(identifier), bp);
         return;
@@ -2733,16 +2719,14 @@ impl ModelStructure {
     }
 
     fn load_contents_of_url(url: foundation::URL, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ModelStructure_load_contents_of_url_block = ModelStructure_load_contents_of_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelStructure_load_contents_of_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ModelStructure_load_contents_of_url_block = ModelStructure_load_contents_of_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelStructure_load_contents_of_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("MLModelStructure\0")), rt::sel(#str_ptr("loadContentsOfURL:completionHandler:\0")), url.raw(), bp);
         return;
     }
 
     fn load_model_asset(asset: ModelAsset, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ModelStructure_load_model_asset_block = ModelStructure_load_model_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelStructure_load_model_asset_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ModelStructure_load_model_asset_block = ModelStructure_load_model_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ModelStructure_load_model_asset_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("MLModelStructure\0")), rt::sel(#str_ptr("loadModelAsset:completionHandler:\0")), asset.raw(), bp);
         return;
@@ -3200,16 +3184,14 @@ impl ComputePlan {
     }
 
     fn load_contents_of_url(url: foundation::URL, configuration: ModelConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ComputePlan_load_contents_of_url_block = ComputePlan_load_contents_of_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ComputePlan_load_contents_of_url_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ComputePlan_load_contents_of_url_block = ComputePlan_load_contents_of_url_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ComputePlan_load_contents_of_url_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(rt::get_class(#str_ptr("MLComputePlan\0")), rt::sel(#str_ptr("loadContentsOfURL:configuration:completionHandler:\0")), url.raw(), configuration.raw(), bp);
         return;
     }
 
     fn load_model_asset(asset: ModelAsset, configuration: ModelConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ComputePlan_load_model_asset_block = ComputePlan_load_model_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ComputePlan_load_model_asset_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ComputePlan_load_model_asset_block = ComputePlan_load_model_asset_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ComputePlan_load_model_asset_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(rt::get_class(#str_ptr("MLComputePlan\0")), rt::sel(#str_ptr("loadModelAsset:configuration:completionHandler:\0")), asset.raw(), configuration.raw(), bp);
         return;

@@ -7361,8 +7361,7 @@ impl Transaction {
 
     // SKIPPED `completionBlock`: return `void (^ _Nullable)(void)` — block
     fn set_completion_block(cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Transaction_set_completion_block_block = Transaction_set_completion_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Transaction_set_completion_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Transaction_set_completion_block_block = Transaction_set_completion_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Transaction_set_completion_block_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(rt::get_class(#str_ptr("CATransaction\0")), rt::sel(#str_ptr("setCompletionBlock:\0")), bp);
         return;

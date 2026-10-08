@@ -2840,7 +2840,7 @@ impl ObjcEmitter {
             body_line
         };
         self.body.push_str(&format!(
-            "    fn {name}({sig}){ret_spelling} {{\n        var desc: rt::BlockDescriptor = rt::BlockDescriptor {{ reserved: 0 as u64, size: 48 as u64 }};\n        var blk: {struct_name} = {struct_name} {{ isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: {invoke_name}, descriptor: {{ #addr_of(desc) as *u8 }}, user_fn: cb, ctx: ctx }};\n        let bp: *u8 = {{ #addr_of(blk) as *u8 }};\n{coll_prologue}{body_line}    }}\n\n"
+            "    fn {name}({sig}){ret_spelling} {{\n        var blk: {struct_name} = {struct_name} {{ isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: {invoke_name}, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx }};\n        let bp: *u8 = {{ #addr_of(blk) as *u8 }};\n{coll_prologue}{body_line}    }}\n\n"
         ));
     }
 

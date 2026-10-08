@@ -2180,16 +2180,14 @@ impl NSAttributedString {
     }
 
     fn enumerate_attributes_in_range(this, enumeration_range: rt::Range, options: u64, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: NSAttributedString_enumerate_attributes_in_range_block = NSAttributedString_enumerate_attributes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_enumerate_attributes_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: NSAttributedString_enumerate_attributes_in_range_block = NSAttributedString_enumerate_attributes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_enumerate_attributes_in_range_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateAttributesInRange:options:usingBlock:\0")), enumeration_range, options, bp);
         return;
     }
 
     fn enumerate_attribute(this, attr_name: str, in_range: rt::Range, options: u64, cb: fn(*u8, i64, rt::Range, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: NSAttributedString_enumerate_attribute_block = NSAttributedString_enumerate_attribute_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_enumerate_attribute_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: NSAttributedString_enumerate_attribute_block = NSAttributedString_enumerate_attribute_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_enumerate_attribute_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_id_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateAttribute:inRange:options:usingBlock:\0")), bridge::nsstring(attr_name), in_range, options, bp);
         return;
@@ -2741,8 +2739,7 @@ impl NSAttributedString {
     }
 
     fn load_from_h_t_m_l_with_request(request: NSURLRequest, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: NSAttributedString_load_from_h_t_m_l_with_request_block = NSAttributedString_load_from_h_t_m_l_with_request_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_load_from_h_t_m_l_with_request_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: NSAttributedString_load_from_h_t_m_l_with_request_block = NSAttributedString_load_from_h_t_m_l_with_request_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_load_from_h_t_m_l_with_request_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -2768,8 +2765,7 @@ impl NSAttributedString {
     }
 
     fn load_from_h_t_m_l_with_file_u_r_l(file_u_r_l: NSURL, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: NSAttributedString_load_from_h_t_m_l_with_file_u_r_l_block = NSAttributedString_load_from_h_t_m_l_with_file_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_load_from_h_t_m_l_with_file_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: NSAttributedString_load_from_h_t_m_l_with_file_u_r_l_block = NSAttributedString_load_from_h_t_m_l_with_file_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_load_from_h_t_m_l_with_file_u_r_l_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -2795,8 +2791,7 @@ impl NSAttributedString {
     }
 
     fn load_from_h_t_m_l_with_string(string: str, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: NSAttributedString_load_from_h_t_m_l_with_string_block = NSAttributedString_load_from_h_t_m_l_with_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_load_from_h_t_m_l_with_string_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: NSAttributedString_load_from_h_t_m_l_with_string_block = NSAttributedString_load_from_h_t_m_l_with_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_load_from_h_t_m_l_with_string_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -2822,8 +2817,7 @@ impl NSAttributedString {
     }
 
     fn load_from_h_t_m_l_with_data(data: *u8, options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: NSAttributedString_load_from_h_t_m_l_with_data_block = NSAttributedString_load_from_h_t_m_l_with_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_load_from_h_t_m_l_with_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: NSAttributedString_load_from_h_t_m_l_with_data_block = NSAttributedString_load_from_h_t_m_l_with_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: NSAttributedString_load_from_h_t_m_l_with_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -3543,32 +3537,28 @@ impl ContentRuleListStore {
     }
 
     fn compile_content_rule_list_for_identifier(this, identifier: str, encoded_content_rule_list: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ContentRuleListStore_compile_content_rule_list_for_identifier_block = ContentRuleListStore_compile_content_rule_list_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentRuleListStore_compile_content_rule_list_for_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ContentRuleListStore_compile_content_rule_list_for_identifier_block = ContentRuleListStore_compile_content_rule_list_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentRuleListStore_compile_content_rule_list_for_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("compileContentRuleListForIdentifier:encodedContentRuleList:completionHandler:\0")), bridge::nsstring(identifier), bridge::nsstring(encoded_content_rule_list), bp);
         return;
     }
 
     fn look_up_content_rule_list_for_identifier(this, identifier: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ContentRuleListStore_look_up_content_rule_list_for_identifier_block = ContentRuleListStore_look_up_content_rule_list_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentRuleListStore_look_up_content_rule_list_for_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ContentRuleListStore_look_up_content_rule_list_for_identifier_block = ContentRuleListStore_look_up_content_rule_list_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentRuleListStore_look_up_content_rule_list_for_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("lookUpContentRuleListForIdentifier:completionHandler:\0")), bridge::nsstring(identifier), bp);
         return;
     }
 
     fn remove_content_rule_list_for_identifier(this, identifier: str, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ContentRuleListStore_remove_content_rule_list_for_identifier_block = ContentRuleListStore_remove_content_rule_list_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentRuleListStore_remove_content_rule_list_for_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ContentRuleListStore_remove_content_rule_list_for_identifier_block = ContentRuleListStore_remove_content_rule_list_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentRuleListStore_remove_content_rule_list_for_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("removeContentRuleListForIdentifier:completionHandler:\0")), bridge::nsstring(identifier), bp);
         return;
     }
 
     fn get_available_content_rule_list_identifiers(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ContentRuleListStore_get_available_content_rule_list_identifiers_block = ContentRuleListStore_get_available_content_rule_list_identifiers_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentRuleListStore_get_available_content_rule_list_identifiers_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ContentRuleListStore_get_available_content_rule_list_identifiers_block = ContentRuleListStore_get_available_content_rule_list_identifiers_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ContentRuleListStore_get_available_content_rule_list_identifiers_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getAvailableContentRuleListIdentifiers:\0")), bp);
         return;
@@ -3753,24 +3743,21 @@ impl WebView {
     }
 
     fn evaluate_java_script(this, java_script_string: str, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_evaluate_java_script_block = WebView_evaluate_java_script_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_evaluate_java_script_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_evaluate_java_script_block = WebView_evaluate_java_script_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_evaluate_java_script_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("evaluateJavaScript:completionHandler:\0")), bridge::nsstring(java_script_string), bp);
         return;
     }
 
     fn evaluate_java_script_in_frame(this, java_script_string: str, frame: FrameInfo, in_content_world: ContentWorld, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_evaluate_java_script_in_frame_block = WebView_evaluate_java_script_in_frame_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_evaluate_java_script_in_frame_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_evaluate_java_script_in_frame_block = WebView_evaluate_java_script_in_frame_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_evaluate_java_script_in_frame_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("evaluateJavaScript:inFrame:inContentWorld:completionHandler:\0")), bridge::nsstring(java_script_string), frame.raw(), in_content_world.raw(), bp);
         return;
     }
 
     fn call_async_java_script(this, function_body: str, arguments: string_map::StringMap[AnyObject], in_frame: FrameInfo, in_content_world: ContentWorld, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_call_async_java_script_block = WebView_call_async_java_script_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_call_async_java_script_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_call_async_java_script_block = WebView_call_async_java_script_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_call_async_java_script_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let dict_arguments: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_arguments: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -3796,8 +3783,7 @@ impl WebView {
     }
 
     fn close_all_media_presentations_with_completion_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_close_all_media_presentations_with_completion_handler_block = WebView_close_all_media_presentations_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_close_all_media_presentations_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_close_all_media_presentations_with_completion_handler_block = WebView_close_all_media_presentations_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_close_all_media_presentations_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("closeAllMediaPresentationsWithCompletionHandler:\0")), bp);
         return;
@@ -3808,96 +3794,84 @@ impl WebView {
     }
 
     fn pause_all_media_playback_with_completion_handler(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_pause_all_media_playback_with_completion_handler_block = WebView_pause_all_media_playback_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_pause_all_media_playback_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_pause_all_media_playback_with_completion_handler_block = WebView_pause_all_media_playback_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_pause_all_media_playback_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("pauseAllMediaPlaybackWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn pause_all_media_playback(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_pause_all_media_playback_block = WebView_pause_all_media_playback_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_pause_all_media_playback_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_pause_all_media_playback_block = WebView_pause_all_media_playback_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_pause_all_media_playback_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("pauseAllMediaPlayback:\0")), bp);
         return;
     }
 
     fn set_all_media_playback_suspended(this, suspended: bool, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_set_all_media_playback_suspended_block = WebView_set_all_media_playback_suspended_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_set_all_media_playback_suspended_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_set_all_media_playback_suspended_block = WebView_set_all_media_playback_suspended_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_set_all_media_playback_suspended_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_i8_id(this._obj, rt::sel(#str_ptr("setAllMediaPlaybackSuspended:completionHandler:\0")), suspended as i8, bp);
         return;
     }
 
     fn resume_all_media_playback(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_resume_all_media_playback_block = WebView_resume_all_media_playback_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_resume_all_media_playback_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_resume_all_media_playback_block = WebView_resume_all_media_playback_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_resume_all_media_playback_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("resumeAllMediaPlayback:\0")), bp);
         return;
     }
 
     fn suspend_all_media_playback(this, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_suspend_all_media_playback_block = WebView_suspend_all_media_playback_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_suspend_all_media_playback_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_suspend_all_media_playback_block = WebView_suspend_all_media_playback_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_suspend_all_media_playback_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("suspendAllMediaPlayback:\0")), bp);
         return;
     }
 
     fn request_media_playback_state_with_completion_handler(this, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_request_media_playback_state_with_completion_handler_block = WebView_request_media_playback_state_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_request_media_playback_state_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_request_media_playback_state_with_completion_handler_block = WebView_request_media_playback_state_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_request_media_playback_state_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("requestMediaPlaybackStateWithCompletionHandler:\0")), bp);
         return;
     }
 
     fn request_media_playback_state(this, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_request_media_playback_state_block = WebView_request_media_playback_state_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_request_media_playback_state_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_request_media_playback_state_block = WebView_request_media_playback_state_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_request_media_playback_state_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("requestMediaPlaybackState:\0")), bp);
         return;
     }
 
     fn set_camera_capture_state(this, state: MediaCaptureState, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_set_camera_capture_state_block = WebView_set_camera_capture_state_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_set_camera_capture_state_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_set_camera_capture_state_block = WebView_set_camera_capture_state_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_set_camera_capture_state_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i64_id(this._obj, rt::sel(#str_ptr("setCameraCaptureState:completionHandler:\0")), media_capture_state_raw(state), bp);
         return;
     }
 
     fn set_microphone_capture_state(this, state: MediaCaptureState, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_set_microphone_capture_state_block = WebView_set_microphone_capture_state_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_set_microphone_capture_state_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_set_microphone_capture_state_block = WebView_set_microphone_capture_state_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_set_microphone_capture_state_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i64_id(this._obj, rt::sel(#str_ptr("setMicrophoneCaptureState:completionHandler:\0")), media_capture_state_raw(state), bp);
         return;
     }
 
     fn take_snapshot_with_configuration(this, snapshot_configuration: SnapshotConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_take_snapshot_with_configuration_block = WebView_take_snapshot_with_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_take_snapshot_with_configuration_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_take_snapshot_with_configuration_block = WebView_take_snapshot_with_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_take_snapshot_with_configuration_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("takeSnapshotWithConfiguration:completionHandler:\0")), snapshot_configuration.raw(), bp);
         return;
     }
 
     fn create_p_d_f_with_configuration(this, pdf_configuration: PDFConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_create_p_d_f_with_configuration_block = WebView_create_p_d_f_with_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_create_p_d_f_with_configuration_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_create_p_d_f_with_configuration_block = WebView_create_p_d_f_with_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_create_p_d_f_with_configuration_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("createPDFWithConfiguration:completionHandler:\0")), pdf_configuration.raw(), bp);
         return;
     }
 
     fn create_web_archive_data_with_completion_handler(this, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_create_web_archive_data_with_completion_handler_block = WebView_create_web_archive_data_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_create_web_archive_data_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_create_web_archive_data_with_completion_handler_block = WebView_create_web_archive_data_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_create_web_archive_data_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("createWebArchiveDataWithCompletionHandler:\0")), bp);
         return;
@@ -3908,8 +3882,7 @@ impl WebView {
     }
 
     fn find_string(this, string: str, with_configuration: FindConfiguration, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_find_string_block = WebView_find_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_find_string_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_find_string_block = WebView_find_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_find_string_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("findString:withConfiguration:completionHandler:\0")), bridge::nsstring(string), with_configuration.raw(), bp);
         return;
@@ -3920,16 +3893,14 @@ impl WebView {
     }
 
     fn start_download_using_request(this, request: NSURLRequest, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_start_download_using_request_block = WebView_start_download_using_request_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_start_download_using_request_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_start_download_using_request_block = WebView_start_download_using_request_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_start_download_using_request_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("startDownloadUsingRequest:completionHandler:\0")), request.raw(), bp);
         return;
     }
 
     fn resume_download_from_resume_data(this, resume_data: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_resume_download_from_resume_data_block = WebView_resume_download_from_resume_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_resume_download_from_resume_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_resume_download_from_resume_data_block = WebView_resume_download_from_resume_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_resume_download_from_resume_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("resumeDownloadFromResumeData:completionHandler:\0")), resume_data, bp);
         return;
@@ -3964,16 +3935,14 @@ impl WebView {
     }
 
     fn fetch_data_of_types(this, data_types: u64, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_fetch_data_of_types_block = WebView_fetch_data_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_fetch_data_of_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_fetch_data_of_types_block = WebView_fetch_data_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_fetch_data_of_types_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("fetchDataOfTypes:completionHandler:\0")), data_types, bp);
         return;
     }
 
     fn restore_data(this, data: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebView_restore_data_block = WebView_restore_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_restore_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebView_restore_data_block = WebView_restore_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebView_restore_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("restoreData:completionHandler:\0")), data, bp);
         return;
@@ -4194,8 +4163,7 @@ impl Download {
     fn as_n_s_object(this) -> NSObject { return NSObject::from_raw(this._obj); }
 
     fn cancel(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Download_cancel_block = Download_cancel_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Download_cancel_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Download_cancel_block = Download_cancel_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Download_cancel_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("cancel:\0")), bp);
         return;
@@ -4604,16 +4572,14 @@ impl HTTPCookieStore {
 
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn get_all_cookies(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: HTTPCookieStore_get_all_cookies_block = HTTPCookieStore_get_all_cookies_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStore_get_all_cookies_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: HTTPCookieStore_get_all_cookies_block = HTTPCookieStore_get_all_cookies_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStore_get_all_cookies_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getAllCookies:\0")), bp);
         return;
     }
 
     fn set_cookie(this, cookie: *u8, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: HTTPCookieStore_set_cookie_block = HTTPCookieStore_set_cookie_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStore_set_cookie_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: HTTPCookieStore_set_cookie_block = HTTPCookieStore_set_cookie_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStore_set_cookie_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setCookie:completionHandler:\0")), cookie, bp);
         return;
@@ -4621,8 +4587,7 @@ impl HTTPCookieStore {
 
     // SKIPPED `setCookies:completionHandler:`: leading param `NSArray<NSHTTPCookie *> * _Nonnull` — generic collection
     fn delete_cookie(this, cookie: *u8, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: HTTPCookieStore_delete_cookie_block = HTTPCookieStore_delete_cookie_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStore_delete_cookie_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: HTTPCookieStore_delete_cookie_block = HTTPCookieStore_delete_cookie_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStore_delete_cookie_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("deleteCookie:completionHandler:\0")), cookie, bp);
         return;
@@ -4637,16 +4602,14 @@ impl HTTPCookieStore {
     }
 
     fn set_cookie_policy(this, policy: CookiePolicy, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: HTTPCookieStore_set_cookie_policy_block = HTTPCookieStore_set_cookie_policy_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStore_set_cookie_policy_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: HTTPCookieStore_set_cookie_policy_block = HTTPCookieStore_set_cookie_policy_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStore_set_cookie_policy_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i64_id(this._obj, rt::sel(#str_ptr("setCookiePolicy:completionHandler:\0")), cookie_policy_raw(policy), bp);
         return;
     }
 
     fn get_cookie_policy(this, cb: fn(*u8, i64), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: HTTPCookieStore_get_cookie_policy_block = HTTPCookieStore_get_cookie_policy_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStore_get_cookie_policy_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: HTTPCookieStore_get_cookie_policy_block = HTTPCookieStore_get_cookie_policy_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: HTTPCookieStore_get_cookie_policy_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getCookiePolicy:\0")), bp);
         return;
@@ -5192,16 +5155,14 @@ impl WebExtension {
 
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn extension_with_app_extension_bundle(app_extension_bundle: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtension_extension_with_app_extension_bundle_block = WebExtension_extension_with_app_extension_bundle_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtension_extension_with_app_extension_bundle_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtension_extension_with_app_extension_bundle_block = WebExtension_extension_with_app_extension_bundle_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtension_extension_with_app_extension_bundle_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("WKWebExtension\0")), rt::sel(#str_ptr("extensionWithAppExtensionBundle:completionHandler:\0")), app_extension_bundle, bp);
         return;
     }
 
     fn extension_with_resource_base_u_r_l(resource_base_u_r_l: NSURL, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtension_extension_with_resource_base_u_r_l_block = WebExtension_extension_with_resource_base_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtension_extension_with_resource_base_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtension_extension_with_resource_base_u_r_l_block = WebExtension_extension_with_resource_base_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtension_extension_with_resource_base_u_r_l_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("WKWebExtension\0")), rt::sel(#str_ptr("extensionWithResourceBaseURL:completionHandler:\0")), resource_base_u_r_l.raw(), bp);
         return;
@@ -5613,8 +5574,7 @@ impl WebExtensionContext {
     }
 
     fn load_background_content_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionContext_load_background_content_with_completion_handler_block = WebExtensionContext_load_background_content_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionContext_load_background_content_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionContext_load_background_content_with_completion_handler_block = WebExtensionContext_load_background_content_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionContext_load_background_content_with_completion_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("loadBackgroundContentWithCompletionHandler:\0")), bp);
         return;
@@ -6306,8 +6266,7 @@ impl WebExtensionController {
     }
 
     fn fetch_data_records_of_types(this, data_types: string_set::StringSet, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionController_fetch_data_records_of_types_block = WebExtensionController_fetch_data_records_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionController_fetch_data_records_of_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionController_fetch_data_records_of_types_block = WebExtensionController_fetch_data_records_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionController_fetch_data_records_of_types_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_data_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_data_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -6326,8 +6285,7 @@ impl WebExtensionController {
     }
 
     fn fetch_data_record_of_types(this, data_types: string_set::StringSet, for_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionController_fetch_data_record_of_types_block = WebExtensionController_fetch_data_record_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionController_fetch_data_record_of_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionController_fetch_data_record_of_types_block = WebExtensionController_fetch_data_record_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionController_fetch_data_record_of_types_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_data_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_data_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -6346,8 +6304,7 @@ impl WebExtensionController {
     }
 
     fn remove_data_of_types(this, data_types: string_set::StringSet, from_data_records: vec::Vec[WebExtensionDataRecord], cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionController_remove_data_of_types_block = WebExtensionController_remove_data_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionController_remove_data_of_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionController_remove_data_of_types_block = WebExtensionController_remove_data_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionController_remove_data_of_types_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_data_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_data_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -6537,8 +6494,7 @@ impl WebExtensionMessagePort {
 
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn send_message(this, message: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionMessagePort_send_message_block = WebExtensionMessagePort_send_message_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionMessagePort_send_message_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionMessagePort_send_message_block = WebExtensionMessagePort_send_message_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionMessagePort_send_message_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("sendMessage:completionHandler:\0")), message, bp);
         return;
@@ -6559,8 +6515,7 @@ impl WebExtensionMessagePort {
 
     // SKIPPED `messageHandler`: return `void (^ _Nullable)(id _Nullable, NSError * _Nullable)` — block
     fn set_message_handler(this, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionMessagePort_set_message_handler_block = WebExtensionMessagePort_set_message_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionMessagePort_set_message_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionMessagePort_set_message_handler_block = WebExtensionMessagePort_set_message_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionMessagePort_set_message_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMessageHandler:\0")), bp);
         return;
@@ -6568,8 +6523,7 @@ impl WebExtensionMessagePort {
 
     // SKIPPED `disconnectHandler`: return `void (^ _Nullable)(NSError * _Nullable)` — block
     fn set_disconnect_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionMessagePort_set_disconnect_handler_block = WebExtensionMessagePort_set_disconnect_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionMessagePort_set_disconnect_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionMessagePort_set_disconnect_handler_block = WebExtensionMessagePort_set_disconnect_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionMessagePort_set_disconnect_handler_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDisconnectHandler:\0")), bp);
         return;
@@ -6836,8 +6790,7 @@ impl WebsiteDataStore {
     }
 
     fn fetch_data_records_of_types(this, data_types: string_set::StringSet, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebsiteDataStore_fetch_data_records_of_types_block = WebsiteDataStore_fetch_data_records_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_fetch_data_records_of_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebsiteDataStore_fetch_data_records_of_types_block = WebsiteDataStore_fetch_data_records_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_fetch_data_records_of_types_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_data_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_data_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -6856,8 +6809,7 @@ impl WebsiteDataStore {
     }
 
     fn remove_data_of_types(this, data_types: string_set::StringSet, for_data_records: vec::Vec[WebsiteDataRecord], cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebsiteDataStore_remove_data_of_types_block = WebsiteDataStore_remove_data_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_remove_data_of_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebsiteDataStore_remove_data_of_types_block = WebsiteDataStore_remove_data_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_remove_data_of_types_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_data_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_data_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -6887,8 +6839,7 @@ impl WebsiteDataStore {
     }
 
     fn remove_data_of_types_modified_since(this, data_types: string_set::StringSet, date: *u8, cb: fn(*u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebsiteDataStore_remove_data_of_types_modified_since_block = WebsiteDataStore_remove_data_of_types_modified_since_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_remove_data_of_types_modified_since_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebsiteDataStore_remove_data_of_types_modified_since_block = WebsiteDataStore_remove_data_of_types_modified_since_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_remove_data_of_types_modified_since_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_data_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_data_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -6907,8 +6858,7 @@ impl WebsiteDataStore {
     }
 
     fn fetch_data_of_types(this, data_types: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebsiteDataStore_fetch_data_of_types_block = WebsiteDataStore_fetch_data_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_fetch_data_of_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebsiteDataStore_fetch_data_of_types_block = WebsiteDataStore_fetch_data_of_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_fetch_data_of_types_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let arr_data_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_data_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -6927,8 +6877,7 @@ impl WebsiteDataStore {
     }
 
     fn restore_data(this, data: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebsiteDataStore_restore_data_block = WebsiteDataStore_restore_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_restore_data_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebsiteDataStore_restore_data_block = WebsiteDataStore_restore_data_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_restore_data_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("restoreData:completionHandler:\0")), data, bp);
         return;
@@ -6939,16 +6888,14 @@ impl WebsiteDataStore {
     }
 
     fn remove_data_store_for_identifier(identifier: *u8, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebsiteDataStore_remove_data_store_for_identifier_block = WebsiteDataStore_remove_data_store_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_remove_data_store_for_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebsiteDataStore_remove_data_store_for_identifier_block = WebsiteDataStore_remove_data_store_for_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_remove_data_store_for_identifier_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(rt::get_class(#str_ptr("WKWebsiteDataStore\0")), rt::sel(#str_ptr("removeDataStoreForIdentifier:completionHandler:\0")), identifier, bp);
         return;
     }
 
     fn fetch_all_data_store_identifiers(cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebsiteDataStore_fetch_all_data_store_identifiers_block = WebsiteDataStore_fetch_all_data_store_identifiers_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_fetch_all_data_store_identifiers_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebsiteDataStore_fetch_all_data_store_identifiers_block = WebsiteDataStore_fetch_all_data_store_identifiers_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebsiteDataStore_fetch_all_data_store_identifiers_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id(rt::get_class(#str_ptr("WKWebsiteDataStore\0")), rt::sel(#str_ptr("fetchAllDataStoreIdentifiers:\0")), bp);
         return;
@@ -18251,8 +18198,7 @@ impl ScriptMessageHandlerWithReply {
     fn from_raw(ptr: *u8) -> ScriptMessageHandlerWithReply { return ScriptMessageHandlerWithReply { _obj: ptr }; }
 
     fn user_content_controller(this, user_content_controller: UserContentController, did_receive_script_message: ScriptMessage, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: ScriptMessageHandlerWithReply_user_content_controller_block = ScriptMessageHandlerWithReply_user_content_controller_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ScriptMessageHandlerWithReply_user_content_controller_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: ScriptMessageHandlerWithReply_user_content_controller_block = ScriptMessageHandlerWithReply_user_content_controller_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ScriptMessageHandlerWithReply_user_content_controller_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("userContentController:didReceiveScriptMessage:replyHandler:\0")), user_content_controller.raw(), did_receive_script_message.raw(), bp);
         return;
@@ -18343,8 +18289,7 @@ impl WebExtensionTab {
     }
 
     fn set_parent_tab(this, parent_tab: WebExtensionTab, for_web_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_set_parent_tab_block = WebExtensionTab_set_parent_tab_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_parent_tab_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_set_parent_tab_block = WebExtensionTab_set_parent_tab_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_parent_tab_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setParentTab:forWebExtensionContext:completionHandler:\0")), parent_tab.raw(), for_web_extension_context.raw(), bp);
         return;
@@ -18368,8 +18313,7 @@ impl WebExtensionTab {
     }
 
     fn set_pinned(this, pinned: bool, for_web_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_set_pinned_block = WebExtensionTab_set_pinned_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_pinned_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_set_pinned_block = WebExtensionTab_set_pinned_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_pinned_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i8_id_id(this._obj, rt::sel(#str_ptr("setPinned:forWebExtensionContext:completionHandler:\0")), pinned as i8, for_web_extension_context.raw(), bp);
         return;
@@ -18384,8 +18328,7 @@ impl WebExtensionTab {
     }
 
     fn set_reader_mode_active(this, active: bool, for_web_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_set_reader_mode_active_block = WebExtensionTab_set_reader_mode_active_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_reader_mode_active_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_set_reader_mode_active_block = WebExtensionTab_set_reader_mode_active_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_reader_mode_active_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i8_id_id(this._obj, rt::sel(#str_ptr("setReaderModeActive:forWebExtensionContext:completionHandler:\0")), active as i8, for_web_extension_context.raw(), bp);
         return;
@@ -18400,8 +18343,7 @@ impl WebExtensionTab {
     }
 
     fn set_muted(this, muted: bool, for_web_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_set_muted_block = WebExtensionTab_set_muted_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_muted_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_set_muted_block = WebExtensionTab_set_muted_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_muted_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i8_id_id(this._obj, rt::sel(#str_ptr("setMuted:forWebExtensionContext:completionHandler:\0")), muted as i8, for_web_extension_context.raw(), bp);
         return;
@@ -18416,8 +18358,7 @@ impl WebExtensionTab {
     }
 
     fn set_zoom_factor(this, zoom_factor: f64, for_web_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_set_zoom_factor_block = WebExtensionTab_set_zoom_factor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_zoom_factor_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_set_zoom_factor_block = WebExtensionTab_set_zoom_factor_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_zoom_factor_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_f64_id_id(this._obj, rt::sel(#str_ptr("setZoomFactor:forWebExtensionContext:completionHandler:\0")), zoom_factor, for_web_extension_context.raw(), bp);
         return;
@@ -18444,56 +18385,49 @@ impl WebExtensionTab {
     }
 
     fn detect_webpage_locale_for_web_extension_context(this, context: WebExtensionContext, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_detect_webpage_locale_for_web_extension_context_block = WebExtensionTab_detect_webpage_locale_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_detect_webpage_locale_for_web_extension_context_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_detect_webpage_locale_for_web_extension_context_block = WebExtensionTab_detect_webpage_locale_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_detect_webpage_locale_for_web_extension_context_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("detectWebpageLocaleForWebExtensionContext:completionHandler:\0")), context.raw(), bp);
         return;
     }
 
     fn take_snapshot_using_configuration(this, configuration: SnapshotConfiguration, for_web_extension_context: WebExtensionContext, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_take_snapshot_using_configuration_block = WebExtensionTab_take_snapshot_using_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_take_snapshot_using_configuration_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_take_snapshot_using_configuration_block = WebExtensionTab_take_snapshot_using_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_take_snapshot_using_configuration_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("takeSnapshotUsingConfiguration:forWebExtensionContext:completionHandler:\0")), configuration.raw(), for_web_extension_context.raw(), bp);
         return;
     }
 
     fn load_u_r_l(this, url: NSURL, for_web_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_load_u_r_l_block = WebExtensionTab_load_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_load_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_load_u_r_l_block = WebExtensionTab_load_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_load_u_r_l_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("loadURL:forWebExtensionContext:completionHandler:\0")), url.raw(), for_web_extension_context.raw(), bp);
         return;
     }
 
     fn reload_from_origin(this, from_origin: bool, for_web_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_reload_from_origin_block = WebExtensionTab_reload_from_origin_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_reload_from_origin_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_reload_from_origin_block = WebExtensionTab_reload_from_origin_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_reload_from_origin_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i8_id_id(this._obj, rt::sel(#str_ptr("reloadFromOrigin:forWebExtensionContext:completionHandler:\0")), from_origin as i8, for_web_extension_context.raw(), bp);
         return;
     }
 
     fn go_back_for_web_extension_context(this, context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_go_back_for_web_extension_context_block = WebExtensionTab_go_back_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_go_back_for_web_extension_context_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_go_back_for_web_extension_context_block = WebExtensionTab_go_back_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_go_back_for_web_extension_context_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("goBackForWebExtensionContext:completionHandler:\0")), context.raw(), bp);
         return;
     }
 
     fn go_forward_for_web_extension_context(this, context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_go_forward_for_web_extension_context_block = WebExtensionTab_go_forward_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_go_forward_for_web_extension_context_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_go_forward_for_web_extension_context_block = WebExtensionTab_go_forward_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_go_forward_for_web_extension_context_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("goForwardForWebExtensionContext:completionHandler:\0")), context.raw(), bp);
         return;
     }
 
     fn activate_for_web_extension_context(this, context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_activate_for_web_extension_context_block = WebExtensionTab_activate_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_activate_for_web_extension_context_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_activate_for_web_extension_context_block = WebExtensionTab_activate_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_activate_for_web_extension_context_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("activateForWebExtensionContext:completionHandler:\0")), context.raw(), bp);
         return;
@@ -18504,24 +18438,21 @@ impl WebExtensionTab {
     }
 
     fn set_selected(this, selected: bool, for_web_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_set_selected_block = WebExtensionTab_set_selected_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_selected_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_set_selected_block = WebExtensionTab_set_selected_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_set_selected_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i8_id_id(this._obj, rt::sel(#str_ptr("setSelected:forWebExtensionContext:completionHandler:\0")), selected as i8, for_web_extension_context.raw(), bp);
         return;
     }
 
     fn duplicate_using_configuration(this, configuration: WebExtensionTabConfiguration, for_web_extension_context: WebExtensionContext, cb: fn(*u8, i64, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_duplicate_using_configuration_block = WebExtensionTab_duplicate_using_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_duplicate_using_configuration_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_duplicate_using_configuration_block = WebExtensionTab_duplicate_using_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_duplicate_using_configuration_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("duplicateUsingConfiguration:forWebExtensionContext:completionHandler:\0")), configuration.raw(), for_web_extension_context.raw(), bp);
         return;
     }
 
     fn close_for_web_extension_context(this, context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionTab_close_for_web_extension_context_block = WebExtensionTab_close_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_close_for_web_extension_context_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionTab_close_for_web_extension_context_block = WebExtensionTab_close_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionTab_close_for_web_extension_context_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("closeForWebExtensionContext:completionHandler:\0")), context.raw(), bp);
         return;
@@ -18577,8 +18508,7 @@ impl WebExtensionWindow {
     }
 
     fn set_window_state(this, state: WebExtensionWindowState, for_web_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionWindow_set_window_state_block = WebExtensionWindow_set_window_state_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionWindow_set_window_state_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionWindow_set_window_state_block = WebExtensionWindow_set_window_state_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionWindow_set_window_state_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_i64_id_id(this._obj, rt::sel(#str_ptr("setWindowState:forWebExtensionContext:completionHandler:\0")), web_extension_window_state_raw(state), for_web_extension_context.raw(), bp);
         return;
@@ -18597,24 +18527,21 @@ impl WebExtensionWindow {
     }
 
     fn set_frame(this, frame: rt::Rect, for_web_extension_context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionWindow_set_frame_block = WebExtensionWindow_set_frame_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionWindow_set_frame_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionWindow_set_frame_block = WebExtensionWindow_set_frame_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionWindow_set_frame_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         objc_msg_void_rect_id_id(this._obj, rt::sel(#str_ptr("setFrame:forWebExtensionContext:completionHandler:\0")), frame, for_web_extension_context.raw(), bp);
         return;
     }
 
     fn focus_for_web_extension_context(this, context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionWindow_focus_for_web_extension_context_block = WebExtensionWindow_focus_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionWindow_focus_for_web_extension_context_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionWindow_focus_for_web_extension_context_block = WebExtensionWindow_focus_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionWindow_focus_for_web_extension_context_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("focusForWebExtensionContext:completionHandler:\0")), context.raw(), bp);
         return;
     }
 
     fn close_for_web_extension_context(this, context: WebExtensionContext, cb: fn(*u8, *u8), ctx: *u8) {
-        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: WebExtensionWindow_close_for_web_extension_context_block = WebExtensionWindow_close_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionWindow_close_for_web_extension_context_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: WebExtensionWindow_close_for_web_extension_context_block = WebExtensionWindow_close_for_web_extension_context_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: WebExtensionWindow_close_for_web_extension_context_invoke, descriptor: rt::block_descriptor(), user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("closeForWebExtensionContext:completionHandler:\0")), context.raw(), bp);
         return;
