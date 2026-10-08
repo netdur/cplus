@@ -24,11 +24,17 @@ fn cache_dir() -> option::Option[text::Text] {
 }
 
 // `getter` is a Context method answering a java.io.File.
+//
+// ANY TIME, ANY THREAD (spendwise S45). The Application context is captured
+// before the app's entry runs, so `run()` gets an answer, not None; and a
+// worker thread is attached to the VM for the call rather than borrowing the
+// UI thread's env, which is only valid on the UI thread.
 fn context_dir(getter: *u8) -> option::Option[text::Text] {
     if !e::have_env() { return option::Option[text::Text]::None; }
-    let ctx: jni::jobject = e::context();
+    let ctx: jni::jobject = e::app_context();
     if ctx == (0 as jni::jobject) { return option::Option[text::Text]::None; }
-    let env: rt::Env = e::env();
+    let env: rt::Env = e::attached_env();
+    if env.raw().is_null() { return option::Option[text::Text]::None; }
     let file: jni::jobject = env.call_object_0(ctx, #str_ptr("android/content/Context\0"), getter,
                                                #str_ptr("()Ljava/io/File;\0"));
     env.clear_exception();

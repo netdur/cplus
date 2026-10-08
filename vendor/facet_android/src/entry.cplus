@@ -28,6 +28,7 @@ import "facet/facet" as core;
 import "./facet_android" as backend;
 import "./window" as window;
 import "./env" as e;
+import "./mainthread" as mainthread;
 import "./log" as log;
 
 // THE ROOT HAS TO OUTLIVE THE CALL, and that is the structural difference from
@@ -116,6 +117,11 @@ export extern fn Java_cplus_facet_FacetActivity_nativeCreateView(
 ) -> jni::jobject {
     let env: rt::Env = rt::from_native(envp);
     e::set_env(env);
+    // BEFORE the app's entry (spendwise S45): the VM, so a worker thread can
+    // attach, and the Application context, so `run()` can ask where its
+    // files go. The Activity itself is recorded later, at attach.
+    mainthread::remember_vm(env);
+    e::set_app_context(env, activity);
     backend::install();
 
     // ONCE PER PROCESS. The Activity is recreated on rotation with the same
