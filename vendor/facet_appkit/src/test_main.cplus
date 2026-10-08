@@ -19930,3 +19930,70 @@ fn an_editor_paints_no_page_when_not_bordered() {
     assert { rt::msg_i8(v, rt::sel(#str_ptr("drawsBackground\0"))) } == (0 as i8);
     assert { rt::msg_i8(tv, rt::sel(#str_ptr("drawsBackground\0"))) } == (0 as i8);
 }
+
+// ---- spendwise S28: a percentage-wide list ------------------------------------
+// Reported as a 0x0 native frame with a correct layout frame. These are the
+// shapes the report describes; at HEAD they get their frame. Kept so the claim
+// stays checked.
+
+#[test]
+fn a_list_whose_width_is_a_percentage_gets_its_native_frame() {
+    backend::install();
+    var l: core::Node = list::list(key: "s28:list");
+    core::set_width_percent(#addr_of(l), 100.0f64);
+    l.set_max_width(flex::StyleLength::points(712.0f64));
+    l.set_grow(1.0f64);
+    var b: core::Builder = core::Builder::new();
+    b.add(l);
+    var mid: core::Node = core::column(b, key: "s28:mid");
+    mid.set_align_items(flex::Align::Center);
+    mid.set_grow(1.0f64);
+    var page: core::Builder = core::Builder::new();
+    var head: core::Node = ui::label("Expenses", key: "s28:head");
+    head.set_height(flex::StyleLength::points(134.0f64));
+    page.add(head);
+    page.add(mid);
+    var root: core::Node = core::column(page, key: "s28:root");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    // The window lays out before it has its real size, then again at it.
+    geometry::relayout_root(rp, 0.0f64, 0.0f64, 1.0f64);
+    geometry::relayout_root(rp, 480.0f64, 760.0f64, 1.0f64);
+    let f: rt::Rect = frame_of_key(rp, "s28:list");
+    assert f.w == 480.0f64;
+    assert f.h == 626.0f64;
+    mount::unmount(rp);
+    backend::uninstall();
+}
+
+#[test]
+fn a_percentage_wide_list_added_after_layout_gets_its_native_frame() {
+    backend::install();
+    var mid: core::Node = core::column(core::Builder::new(), key: "s28b:mid");
+    mid.set_align_items(flex::Align::Center);
+    mid.set_grow(1.0f64);
+    var page: core::Builder = core::Builder::new();
+    var head: core::Node = ui::label("Expenses", key: "s28b:head");
+    head.set_height(flex::StyleLength::points(134.0f64));
+    page.add(head);
+    page.add(mid);
+    var root: core::Node = core::column(page, key: "s28b:root");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 480.0f64, 760.0f64, 1.0f64);
+
+    var l: core::Node = list::list(key: "s28b:list");
+    core::set_width_percent(#addr_of(l), 100.0f64);
+    l.set_max_width(flex::StyleLength::points(712.0f64));
+    l.set_grow(1.0f64);
+    match core::find_in(rp, "s28b:mid") {
+        option::Option[*core::Node]::Some(m) => { mount::add_child(m, l); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    geometry::relayout_root(rp, 480.0f64, 760.0f64, 1.0f64);
+    let f: rt::Rect = frame_of_key(rp, "s28b:list");
+    assert f.w == 480.0f64;
+    assert f.h == 626.0f64;
+    mount::unmount(rp);
+    backend::uninstall();
+}
