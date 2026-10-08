@@ -58,15 +58,30 @@ instead of "Copy".
 `EXTRA_TEXT`. So `url()` and `text()` are the same call on Android and
 different calls on Apple, which is exactly why the facade keeps them apart.
 
-## Files on Android and Windows are `Unsupported`
+## Files on Android: a `content://` URI, from a provider the app declares
 
-`file://` URIs have thrown `FileUriExposedException` since API 24. A real file
-share needs a `FileProvider` declared in the **app's** manifest with an
-authority and an XML path list — an app-level arrangement this package cannot
-make on the caller's behalf.
+`file://` URIs have thrown `FileUriExposedException` since API 24, and
+androidx's `FileProvider` is an AAR facet does not ship. So facet_android
+carries its own: `cplus.facet.FacetFileProvider`, read-only, serving only
+files copied into `<cacheDir>/cplus-share/`. `file(path)` copies the file
+there and sends `content://<package>.cplus.files/<name>` through a chooser,
+with a read grant that travels to the app the person picks.
 
-So `file()` answers `Unsupported` on Android rather than handing the system a
-URI it will refuse. Said rather than half-done.
+A provider has to be declared in the app's manifest, as `FacetActivity`
+already is, inside `<application>`:
+
+```xml
+<provider android:name="cplus.facet.FacetFileProvider"
+          android:authorities="<your package>.cplus.files"
+          android:exported="false" android:grantUriPermissions="true"/>
+```
+
+Without it, `file()` answers `Unsupported`, and logcat (tag `facet`) prints
+that line with your package filled in, once. The provider is created by the
+system from the APK, so facet_android's dex has to be merged into the APK,
+which is how facet apps are built.
+
+Windows `file()` is still `Unsupported`.
 
 ## Windows: WinRT reached as plain COM
 

@@ -23,6 +23,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 import "facet/app_events" as ev;
 import "./share" as sh;
+import "facet_android/dex" as fdex;
 
 // A `str` is a fat pointer with NO TERMINATOR and `NewStringUTF` reads a C
 // string, so a runtime string has to be copied and terminated first. Every
@@ -159,11 +160,22 @@ export extern fn _share_url(link: *u8, link_len: usize) -> i32 {
     }
 }
 
-// UNSUPPORTED, and said rather than half-done. A file share needs a
-// FileProvider declared in the APP's manifest with an authority and a paths
-// XML — this package cannot add either on the caller's behalf, and a `file://`
-// URI has thrown FileUriExposedException since API 24. Answering Unsupported
-// beats crashing the app that trusted us.
+// A FILE, AS A content:// URI (spendwise S54). A `file://` URI has thrown
+// FileUriExposedException since API 24, so the file is copied into
+// facet_android's FacetFileProvider folder and sent from there with a read
+// grant, through a chooser (facet_android/dex::share_file). The provider is
+// declared in the app's manifest, as FacetActivity is; without that line the
+// answer is Unsupported, and logcat names the line once.
 export extern fn _share_file(path: *u8, path_len: usize) -> i32 {
-    return 1;
+    match _env_ready() {
+        option::Option[rt::Env]::None => { return 1; }
+        option::Option[rt::Env]::Some(env) => {
+            let activity: jni::jobject = _context();
+            if activity == (0 as jni::jobject) { return 1; }
+            let p: jni::jstring = _jstr(env, { #str_from_raw_parts(path, path_len) });
+            let r: i32 = fdex::share_file(env, activity, p);
+            env.delete_local_ref(p);
+            return r;
+        }
+    }
 }

@@ -19,7 +19,8 @@ macOS, iOS, Android and Windows. Linux builds and reports `Unsupported` because
 the desktop has no system share-sheet service. On Windows it goes through WinRT's
 `DataTransferManager` reached as plain COM, and it needs **a window and a
 running message loop** — the sheet asks for the payload later, on that loop.
-`file()` is `Unsupported` there and on Android; the guide says why.
+`file()` is `Unsupported` there. On Android it works once the app's manifest
+declares `FacetFileProvider` (one line, given in the guide and in logcat).
 
 ## The return value is "the sheet opened"
 
@@ -41,7 +42,7 @@ a URL should say so.
 |---|---|---|---|---|---|
 | `text` | ✅ | ✅ | ✅ | ❌ `Unsupported` | ✅ |
 | `url` | ✅ real `NSURL` | ✅ real `NSURL` | ✅ as text | ❌ `Unsupported` | ✅ real `Uri` |
-| `file` | ✅ | ✅ | ❌ needs an app-level `FileProvider` | ❌ `Unsupported` | ❌ not built |
+| `file` | ✅ | ✅ | ✅ with `FacetFileProvider` declared | ❌ `Unsupported` | ❌ not built |
 | `subject` | dropped | dropped | ✅ `EXTRA_SUBJECT` | — | used as title |
 
 - [tutorial](docs/tutorial.md) · [guide](docs/guide.md) · [ref](docs/ref.md)

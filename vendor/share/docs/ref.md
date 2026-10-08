@@ -17,7 +17,7 @@ fn Outcome::from_code(c: i32) -> Outcome
 | | meaning |
 |---|---|
 | `Ok` | the sheet was **presented**. Not that anything was shared. |
-| `Unsupported` | no share sheet on Linux, nothing to present from (no window on Windows), or `file()` on Android or Windows |
+| `Unsupported` | no share sheet on Linux, nothing to present from (no window on Windows), `file()` on Windows, or `file()` on Android when the app's manifest does not declare `FacetFileProvider` |
 | `InvalidInput` | an empty item — a caller bug |
 | `Failed` | anything else |
 
@@ -42,7 +42,7 @@ arrives empty.
 |---|---|---|---|---|---|
 | `text` | ✅ | ✅ | ✅ | ❌ `Unsupported` | ✅ `DataPackage::SetText` |
 | `url` | ✅ `NSURL` | ✅ `NSURL` | ✅ as text | ❌ `Unsupported` | ✅ `SetUri`, a real `Uri` object |
-| `file` | ✅ `fileURLWithPath:` | ✅ | ❌ `Unsupported` | ❌ `Unsupported` | ❌ `Unsupported` |
+| `file` | ✅ `fileURLWithPath:` | ✅ | ✅ `content://` via `FacetFileProvider` (declare it) | ❌ `Unsupported` | ❌ `Unsupported` |
 
 Windows goes through WinRT's `DataTransferManager`, reached with
 `RoGetActivationFactory` and driven by vtable index — no projection, no WinRT
