@@ -42,7 +42,6 @@
 // unwind, so there is nothing to redirect and `app_should_terminate` has no
 // counterpart here either — `on_should_quit` rides the window's own close, the
 // same question at the same moment.
-import "./app_dirs" as app_dirs;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
@@ -905,10 +904,3 @@ fn open_owned_window(n: nav_model::Navigator) -> bool {
 }
 
 fn run_owned_loop() { host::run_loop(); settle_and_teardown(0 as *core::Node); }
-
-// ---- where this app keeps its files (spendwise S42) ----------------------------
-// MAUI's FileSystem.AppDataDirectory / CacheDirectory: the app's private data
-// directory and its cache, created on first ask; None when the platform gives
-// no answer. app_dirs.cplus has each platform's.
-fn app_data_dir() -> option::Option[text::Text] { return app_dirs::data_dir(); }
-fn cache_dir() -> option::Option[text::Text] { return app_dirs::cache_dir(); }

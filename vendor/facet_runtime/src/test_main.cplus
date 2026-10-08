@@ -10,8 +10,6 @@
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "./runtime" as runtime;
-import "stdlib/fs" as fs;
-import "stdlib/result" as result;
 
 #[test]
 fn the_facade_and_its_backend_compile() {
@@ -45,35 +43,4 @@ fn the_clipboard_is_reachable_from_the_portable_facade() {
             option::Option[text::Text]::None => { }
         }
     }
-}
-
-// spendwise S42: the app's data and cache directories exist once asked for, a
-// file written there reads back, and the two are different places.
-#[test]
-fn the_app_data_and_cache_directories_exist_and_take_a_file() {
-    var data: text::Text = text::new();
-    var cache: text::Text = text::new();
-    match runtime::app_data_dir() {
-        option::Option[text::Text]::Some(d) => { data = d; }
-        option::Option[text::Text]::None => { assert false; }
-    }
-    match runtime::cache_dir() {
-        option::Option[text::Text]::Some(d) => { cache = d; }
-        option::Option[text::Text]::None => { assert false; }
-    }
-    assert fs::is_dir(data.view());
-    assert fs::is_dir(cache.view());
-    assert data.view() != cache.view();
-    // Named for this app, not the shared Library itself.
-    assert data.view().has_suffix("Application Support") == false;
-    let f: text::Text = "${data.view()}/s42-probe.txt";
-    match fs::write_string(f.view(), "saved") {
-        result::Result[usize, result::IoError]::Ok(_) => { }
-        result::Result[usize, result::IoError]::Err(_) => { assert false; }
-    }
-    match fs::read_to_string(f.view()) {
-        result::Result[text::Text, result::IoError]::Ok(t) => { assert t.view() == "saved"; }
-        result::Result[text::Text, result::IoError]::Err(_) => { assert false; }
-    }
-    let _r = fs::remove_file(f.view());
 }
