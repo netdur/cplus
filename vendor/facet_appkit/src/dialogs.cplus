@@ -157,15 +157,28 @@ fn window_frame_of(root: *core::Node) -> vocab::Rect {
     return vocab::Rect { x: f.x, y: f.y, width: f.w, height: f.h };
 }
 
+// CLAMPED TO THE WINDOW'S OWN LIMITS (spendwise S48). AppKit applies
+// contentMinSize / contentMaxSize to a person's drag and not to setFrame:, so
+// set_frame(300) on a window whose Chrome says min_width 360 was accepted:
+// code could make a window no hand could. The asked frame's CONTENT is clamped
+// to the limits Chrome set, and turned back into a frame, so the two agree.
 fn set_window_frame_of(root: *core::Node, frame: vocab::Rect) {
     let win: *u8 = app::window_native(root);
     if win.is_null() { return; }
-    ak::Window::from_raw(win).set_frame_display(
-        rt::Rect { x: frame.x, y: frame.y, w: frame.width, h: frame.height },
-        true,
-        false,
-    );
+    let asked: rt::Rect = rt::Rect { x: frame.x, y: frame.y, w: frame.width, h: frame.height };
+    var content: rt::Rect = { msg_rect_of_rect(win, rt::sel(#str_ptr("contentRectForFrameRect:\0")), asked) };
+    let lo: rt::Size = { rt::msg_size(win, rt::sel(#str_ptr("contentMinSize\0"))) };
+    let hi: rt::Size = { rt::msg_size(win, rt::sel(#str_ptr("contentMaxSize\0"))) };
+    if content.w < lo.w { content.w = lo.w; }
+    if content.h < lo.h { content.h = lo.h; }
+    if hi.w > 0.0f64 && content.w > hi.w { content.w = hi.w; }
+    if hi.h > 0.0f64 && content.h > hi.h { content.h = hi.h; }
+    let r: rt::Rect = { msg_rect_of_rect(win, rt::sel(#str_ptr("frameRectForContentRect:\0")), content) };
+    ak::Window::from_raw(win).set_frame_display(r, true, false);
 }
+
+#[link_name = "objc_msgSend"]
+extern fn msg_rect_of_rect(recv: *u8, sel: *u8, r: rt::Rect) -> rt::Rect;
 
 // ---- alert: a window-modal SHEET, non-blocking -------------------------------
 //

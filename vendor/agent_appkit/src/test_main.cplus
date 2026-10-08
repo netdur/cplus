@@ -3214,6 +3214,44 @@ fn each_tab_of_a_tabs_node_is_a_button_an_agent_can_find() {
     app::reset_default_for_tests();
 }
 
+// spendwise S48: a tab part says where the tab control is DRAWN — the
+// segmented control's frame — not its pane's, so a layout bug like S38 (the
+// control off-centre after a resize) can be read over MCP.
+#[test]
+fn a_tab_part_reports_the_tab_controls_frame() {
+    let win = fixture_window(300.0, 200.0);
+    var root: core::Node = tabs_fixture(win.raw());
+    let content = content_of(win);
+    // host -> strip -> control, as facet_appkit builds it.
+    let strip = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 36.0 });
+    content.add_subview(ak::View::from_raw(strip.raw()));
+    let sc: *u8 = rt::alloc_init(#str_ptr("NSSegmentedControl\0"));
+    { rt::msg_void_rect(sc, rt::sel(#str_ptr("setFrame:\0")), rt::Rect { x: 90.0, y: 6.0, w: 120.0, h: 24.0 }) };
+    strip.add_subview(ak::View::from_raw(sc));
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open_app();
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    var seen: bool = false;
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                if { (*n).id.view() } == "nav:tab:Income" {
+                    seen = true;
+                    let f: rt::Rect = { (*n).frame };
+                    assert f.w == 120.0f64 && f.h == 24.0f64;
+                    // Centred in the 300-wide strip: midX 150.
+                    assert f.x + f.w / 2.0f64 == 150.0f64;
+                }
+            }
+            option::Option[*agent::AppKitNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert seen;
+    app::reset_default_for_tests();
+}
+
 #[test]
 fn clicking_a_tab_selects_it_and_the_app_hears_it() {
     TAB_HEARD = 0 as i64;

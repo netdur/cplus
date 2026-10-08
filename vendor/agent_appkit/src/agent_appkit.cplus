@@ -1246,6 +1246,44 @@ fn add_item_part(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
     return;
 }
 
+// WHERE THE TABS ARE DRAWN (spendwise S48). A tab part's view is the tabs
+// host, so its frame was the PANE's — 0..host width — and after a resize
+// nothing on the surface said where the tab control actually sat (S38's bug
+// was the control drifting off-centre). NSSegmentedControl has no public rect
+// per segment, so a tab answers its control's frame, in the coordinates the
+// host's own frame is in (its superview's). The host's frame when there is no
+// control.
+fn tab_control_frame(host: *u8) -> rt::Rect {
+    let own: rt::Rect = rt::msg_rect(host, rt::sel(#str_ptr("frame\0")));
+    let sc: *u8 = find_segmented(host, 0);
+    if is_null(sc) { return own; }
+    let sup: *u8 = rt::msg_id(host, rt::sel(#str_ptr("superview\0")));
+    let b: rt::Rect = rt::msg_rect(sc, rt::sel(#str_ptr("bounds\0")));
+    if is_null(sup) { return { msg_rect_rect_id(sc, rt::sel(#str_ptr("convertRect:toView:\0")), b, host) }; }
+    return { msg_rect_rect_id(sc, rt::sel(#str_ptr("convertRect:toView:\0")), b, sup) };
+}
+
+// The first NSSegmentedControl at or under `v`, two levels down at most
+// (host -> strip -> control).
+fn find_segmented(v: *u8, depth: i32) -> *u8 {
+    if is_null(v) || depth > 2 { return 0 as *u8; }
+    if is_kind(v, #str_ptr("NSSegmentedControl\0")) { return v; }
+    let subs: *u8 = rt::msg_id(v, rt::sel(#str_ptr("subviews\0")));
+    if is_null(subs) { return 0 as *u8; }
+    let n: u64 = rt::msg_u64(subs, rt::sel(#str_ptr("count\0")));
+    var i: u64 = 0 as u64;
+    while i < n {
+        let c: *u8 = rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i);
+        let hit: *u8 = find_segmented(c, depth + 1);
+        if !is_null(hit) { return hit; }
+        i = i +% (1 as u64);
+    }
+    return 0 as *u8;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_rect_rect_id(recv: *u8, sel: *u8, r: rt::Rect, view: *u8) -> rt::Rect;
+
 fn add_tab_part(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
                 owner: *u8, parent: usize, base: str, n: *core::Node, at: usize,
                 selected: bool) {
@@ -1879,7 +1917,8 @@ impl Surface {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(view),
-                frame: rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))),
+                frame: if this.part_of(node) >= PART_TAB_BASE { tab_control_frame(view) }
+                       else { rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))) },
                 is_hidden: live_hidden(view),
                 // The FULL view is the diagnostic one — frames, classes, the
                 // platform's own answer — and it is still not a way around the

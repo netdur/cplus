@@ -20258,3 +20258,26 @@ fn a_performed_click_flips_a_toggle_and_runs_its_handler() {
     assert { rt::msg_i64(v, rt::sel(#str_ptr("state\0"))) } == (1 as i64);
     assert S49_TOGGLED == 1;
 }
+
+// spendwise S48's side finding: set_frame cannot make a window smaller than
+// its Chrome's minimum — AppKit enforces contentMinSize on drags only.
+#[test]
+fn set_frame_is_clamped_to_the_windows_minimum() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = empty_keyed_column();
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "s48", width: 480.0f64,
+                                                             height: 300.0f64, min_width: 360.0f64));
+    assert win.is_not_null();
+    let f0: rt::Rect = ak::Window::from_raw(win).frame();
+    dialogs::set_window_frame_of(rp, vocab::Rect { x: f0.x, y: f0.y, width: 300.0f64, height: f0.h });
+    let content: rt::Rect = { rt::msg_rect(rt::msg_id(win, rt::sel(#str_ptr("contentView\0"))), rt::sel(#str_ptr("frame\0"))) };
+    assert content.w >= 360.0f64 - 0.5f64;
+    // A size inside the limits is taken as asked.
+    dialogs::set_window_frame_of(rp, vocab::Rect { x: f0.x, y: f0.y, width: 900.0f64, height: f0.h });
+    assert ak::Window::from_raw(win).frame().w == 900.0f64;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
