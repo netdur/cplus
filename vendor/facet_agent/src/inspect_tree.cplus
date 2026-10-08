@@ -59,6 +59,9 @@ import "facet/props" as props;
 import "stdlib/str" as _;
 import "facet/label" as label;
 import "facet/button" as button;
+import "facet/icon_button" as icon_button;
+import "facet/radio" as radio;
+import "facet/box" as fbox;
 import "facet/text_field" as text_field;
 import "facet/text_area" as text_area;
 import "facet/checkbox" as checkbox;
@@ -383,6 +386,15 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
     if prop == "translation_x" { return num(core::translation_x(n)); }
     if prop == "translation_y" { return num(core::translation_y(n)); }
     if prop == "corner_radius" {
+        // What is DRAWN. A control with a radius of its own draws that one, on
+        // the same layer the node's would use, so reading only the node's said
+        // 0 for a 44pt circle (spendwise S39).
+        match own_corner_radius(n) {
+            option::Option[vocab::Corners]::Some(c) => {
+                if any_corner(c) { return num(c.top_leading); }
+            }
+            option::Option[vocab::Corners]::None => { }
+        }
         let c: vocab::Corners = core::corner_radius(n);
         return num(c.top_leading);
     }
@@ -1373,7 +1385,11 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
     if prop == "corner_radius" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => {
-                core::set_corner_radius(n, vocab::Corners::all(x));
+                // The control's own radius when it has one — the one it draws —
+                // else the node's.
+                if !set_own_corner_radius(n, vocab::Corners::all(x)) {
+                    core::set_corner_radius(n, vocab::Corners::all(x));
+                }
                 insp::Outcome::Ok
             }
             option::Option::None => insp::Outcome::TypeMismatch,
@@ -3009,4 +3025,83 @@ fn kind_name(kind: u32) -> str {
     // control props, only the common band and flex style, which is exactly
     // what tiers 1 and 2 edit.
     return "node";
+}
+
+// ---- a control's OWN corner radius (spendwise S39) ---------------------------
+// box, button, icon_button and radio carry `corner_radius` of their own (the
+// ledger's Button.CornerRadius), beside the node's shared-band one. Two
+// properties, one name, one layer: `inspect` reports the one drawn.
+
+fn own_corner_radius(n: *core::Node) -> option::Option[vocab::Corners] {
+    match button::from(n) {
+        option::Option[button::Button]::Some(c) => { return option::some(c.corner_radius()); }
+        option::Option[button::Button]::None => { }
+    }
+    match icon_button::from(n) {
+        option::Option[icon_button::IconButton]::Some(c) => { return option::some(c.corner_radius()); }
+        option::Option[icon_button::IconButton]::None => { }
+    }
+    match radio::from(n) {
+        option::Option[radio::Radio]::Some(c) => { return option::some(c.corner_radius()); }
+        option::Option[radio::Radio]::None => { }
+    }
+    match fbox::from(n) {
+        option::Option[fbox::Box]::Some(c) => { return option::some(c.corner_radius()); }
+        option::Option[fbox::Box]::None => { }
+    }
+    return option::Option[vocab::Corners]::None;
+}
+
+fn set_own_corner_radius(n: *core::Node, r: vocab::Corners) -> bool {
+    match button::from(n) {
+        option::Option[button::Button]::Some(c) => { let _c = c.set_corner_radius(r); return true; }
+        option::Option[button::Button]::None => { }
+    }
+    match icon_button::from(n) {
+        option::Option[icon_button::IconButton]::Some(c) => { let _c = c.set_corner_radius(r); return true; }
+        option::Option[icon_button::IconButton]::None => { }
+    }
+    match radio::from(n) {
+        option::Option[radio::Radio]::Some(c) => { let _c = c.set_corner_radius(r); return true; }
+        option::Option[radio::Radio]::None => { }
+    }
+    match fbox::from(n) {
+        option::Option[fbox::Box]::Some(c) => { let _c = c.set_corner_radius(r); return true; }
+        option::Option[fbox::Box]::None => { }
+    }
+    return false;
+}
+
+fn any_corner(c: vocab::Corners) -> bool {
+    return c.top_leading > 0.0f64 || c.top_trailing > 0.0f64
+        || c.bottom_leading > 0.0f64 || c.bottom_trailing > 0.0f64;
+}
+
+#[test]
+fn inspect_reads_and_writes_a_controls_own_corner_radius() {
+    var n: core::Node = ui::icon_button(key: "s39", corner_radius: vocab::Corners::all(22.0f64));
+    let p: *core::Node = #addr_of(n);
+    // The control's 22 is what is drawn, though the node's own is unset.
+    match get_uniform(p, "corner_radius") {
+        option::Option[insp::Value]::Some(insp::Value::Num(x)) => { assert x == 22.0f64; }
+        _ => { assert false; }
+    }
+    // A write goes to the control's radius, where it is drawn from.
+    assert is_ok(apply_uniform(p, "corner_radius", insp::Value::Num(8.0f64)));
+    match icon_button::from(p) {
+        option::Option[icon_button::IconButton]::Some(c) => { assert c.corner_radius().top_leading == 8.0f64; }
+        option::Option[icon_button::IconButton]::None => { assert false; }
+    }
+    // A plain node keeps the node's radius, both ways.
+    var col: core::Node = core::column(core::Builder::new(), key: "s39:col");
+    let cp: *core::Node = #addr_of(col);
+    assert is_ok(apply_uniform(cp, "corner_radius", insp::Value::Num(6.0f64)));
+    match get_uniform(cp, "corner_radius") {
+        option::Option[insp::Value]::Some(insp::Value::Num(x)) => { assert x == 6.0f64; }
+        _ => { assert false; }
+    }
+}
+
+fn is_ok(o: insp::Outcome) -> bool {
+    return match o { insp::Outcome::Ok => true, _ => false };
 }

@@ -798,7 +798,7 @@ fn table() -> vec::Vec[Descriptor] {
     let _a4: status::Status = v.append(d("background_color", "color", "", "*", "",
         "Fill behind the node's content. Send #rrggbb or #rrggbbaa."));
     let _a5: status::Status = v.append(d("corner_radius", "number", "points", "*", "",
-        "All four corners. Reads the top-leading corner."));
+        "All four corners. Reads the top-leading corner. A box, button, icon_button or radio has a radius of its own, which is the one it draws; on those it reads and writes that."));
     let _a6: status::Status = v.append(d("shadow_color", "color", "", "*", "",
         "The drop shadow's colour. Its opacity is separate — a colour alone draws nothing until shadow_opacity is above zero."));
     let _a7: status::Status = v.append(d("shadow_opacity", "number", "0..1", "*", "",

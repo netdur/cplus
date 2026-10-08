@@ -243,9 +243,11 @@ impl IconButton {
         return { (*p).on };
     }
 
-    // The border is DESCRIBED by border_color / border_width /
-    // corner_radius and SWITCHED by this. Off does not forget: a width of
-    // 0 would have meant restating the border every time it came back.
+    // The border is DESCRIBED by border_color / border_width and
+    // SWITCHED by this. Off does not forget: a width of 0 would have
+    // meant restating the border every time it came back. corner_radius
+    // is NOT switched: it rounds the control with or without a border,
+    // which is how a round tile with no outline is drawn (spendwise S39).
     fn set_bordered(this, v: bool) -> IconButton {
         let p: *props::IconButtonProps = this._props();
         if p == (0 as *props::IconButtonProps) { return this; }
