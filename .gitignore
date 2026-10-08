@@ -7,8 +7,8 @@ a.out
 # `lib/include/` headers are all recreated by the prebuild pass whenever the
 # fingerprint (source + triple + mode + compiler version) mismatches. A
 # missing lib/ just means the package compiles from source; a fresh clone
-# needs nothing here. Author-SHIPPED binaries (`[link].bundled`) would be
-# tracked deliberately via `git add -f` — no package does this today.
+# needs nothing here. Author-SHIPPED binaries (`[link].bundled`) are
+# tracked deliberately via `git add -f` — sqlite's Android libsqlite3.a is.
 /vendor/*/lib/
 
 /proves

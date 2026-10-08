@@ -124,5 +124,5 @@ Bind `at` is **1-based**. Column `at` is **0-based**.
 | Package name | `sqlite` |
 | Module | `sqlite/sqlite` |
 | Dependencies | `stdlib` |
-| Link | `libsqlite3` |
+| Link | the system `libsqlite3`; on Android, the package's own `lib/aarch64-linux-android/libsqlite3.a` |
 | Tests | `cpc test` |

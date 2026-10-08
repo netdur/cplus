@@ -22,5 +22,30 @@ prebuild = false
 [dependencies]
 stdlib = "*"
 
+# THE SYSTEM SQLITE where there is one, and our own where there is not.
+#
+# Apple and Linux ship libsqlite3 and the binding was generated from Apple's
+# header, so those link the system copy. ANDROID HAS NONE AN APP MAY LINK: the
+# platform's libsqlite.so is not an NDK library, and `-lsqlite3` failed with
+# "unable to find library" (spendwise, 2026-10-08). MAUI's answer is the same
+# as this one — SQLitePCLRaw's bundle_green ships e_sqlite3 inside the app.
+#
+# `bundled` is in the BASE table on purpose. It means "shipped where
+# `lib/<triple>/` exists", and only lib/aarch64-linux-android/ does; declared
+# under [android.link] instead, a macOS build would read that archive as an
+# undeclared orphan (E0861), since the orphan check walks every triple. The
+# archive is built by tools/build_android.sh and committed.
 [link]
+bundled = ["libsqlite3.a"]
+
+[macos.link]
+libs = ["sqlite3"]
+
+[ios.link]
+libs = ["sqlite3"]
+
+[linux.link]
+libs = ["sqlite3"]
+
+[windows.link]
 libs = ["sqlite3"]

@@ -10,7 +10,16 @@ safe. Tutorial: [tutorial.md](tutorial.md). API: [ref.md](ref.md).
 | **`sqlite/sqlite`** | App API |
 | **`sqlite/raw`** | Auto-generated C ABI (`sqlite3_*` as `*u8` / `*i8`) |
 
-The package links `libsqlite3`. Escape hatch: `raw_handle()` on a connection
+The package links the system `libsqlite3` on macOS, iOS, Linux and Windows.
+Android has no SQLite an app may link, so there the package ships its own:
+SQLite 3.53.4 built from the official amalgamation by
+`tools/build_android.sh` (FTS5, R*Tree and math functions on; temp storage in
+memory, because an app has no writable `/tmp`). Its version is not the system
+one elsewhere, so check `select sqlite_version()` rather than assuming one.
+Nothing changes for the app: the archive comes with
+`cpc build --print-link-args`.
+
+Escape hatch: `raw_handle()` on a connection
 or statement plus `sqlite/raw` for rare generated APIs.
 
 ## Types
