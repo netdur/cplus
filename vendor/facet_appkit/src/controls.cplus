@@ -3742,17 +3742,43 @@ fn points_of(l: flex::StyleLength) -> f64 {
     };
 }
 
-// Centred in the strip, kept there as the strip resizes: both side margins
-// flexible (MinX 1 | MaxX 4), vertically centred once.
+// CENTRED IN THE STRIP, AND KEPT THERE BY CONSTRAINTS (spendwise S38).
+//
+// It was kept there by autoresizing — both side margins flexible — and
+// AppKit shares a size change between flexible margins IN PROPORTION to the
+// margins they already have. Once the strip was narrower than the control a
+// margin reached 0, a zero margin gets no share of any later change, and the
+// control stayed against one edge at every width after (measured: centred at
+// 480, 66.5pt off at 200, still 73.5 off back at 480, 333.5 off at 1000).
+// Centre constraints have no such state: centred at every width, and clipped
+// evenly when the strip is narrower. The control keeps its intrinsic size.
+fn tab_centred_key() -> *u8 { return { 29076 as *u8 }; }
+
 fn centre_tab_control(v: *u8) {
     let strip: *u8 = tab_strip_of(v);
     let sc: *u8 = tab_control_of(v);
     if strip.is_null() || sc.is_null() { return; }
+    // Placed now as well, so it is right before the first layout pass.
     let sb: rt::Rect = ak::View::from_raw(strip).bounds();
     let f: rt::Rect = ak::View::from_raw(sc).frame();
     ak::View::from_raw(sc).set_frame(rt::Rect {
         x: (sb.w - f.w) / 2.0f64, y: (sb.h - f.h) / 2.0f64, w: f.w, h: f.h });
-    { rt::msg_void_u64(sc, rt::sel(#str_ptr("setAutoresizingMask:\0")), 5 as u64) };
+    if { synth::get_associated(sc, tab_centred_key()) } != (0 as *u8) { return; }
+    { rt::msg_void_i8(sc, rt::sel(#str_ptr("setTranslatesAutoresizingMaskIntoConstraints:\0")), 0 as i8) };
+    centre_on(sc, strip, #str_ptr("centerXAnchor\0"));
+    centre_on(sc, strip, #str_ptr("centerYAnchor\0"));
+    synth::set_associated(sc, tab_centred_key(), 1 as *u8);
+    return;
+}
+
+// `child.<anchor> == parent.<anchor>`, active.
+fn centre_on(child: *u8, parent: *u8, anchor: *u8) {
+    let a: *u8 = { rt::msg_id(child, rt::sel(anchor)) };
+    let b: *u8 = { rt::msg_id(parent, rt::sel(anchor)) };
+    if a.is_null() || b.is_null() { return; }
+    let c: *u8 = { rt::msg_id_id(a, rt::sel(#str_ptr("constraintEqualToAnchor:\0")), b) };
+    if c.is_null() { return; }
+    { rt::msg_void_i8(c, rt::sel(#str_ptr("setActive:\0")), 1 as i8) };
     return;
 }
 

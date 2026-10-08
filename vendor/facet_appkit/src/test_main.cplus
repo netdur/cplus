@@ -1894,6 +1894,56 @@ fn a_tab_pane_is_an_ordinary_subview_and_gains_a_tab_for_it() {
     assert segment_label(host, 0 as i64).view() == "Settings";
 }
 
+// spendwise S38: the segmented control stays CENTRED in its strip at every
+// width. Autoresizing's flexible margins share a change in proportion to the
+// current margins, so once the strip went narrower than the control a margin
+// hit 0 and kept 0: the control stuck to one edge for good.
+fn strip_mid_minus_control_mid(host: *u8) -> f64 {
+    let strip: *u8 = controls::tab_strip_of(host);
+    let sc: *u8 = controls::tab_control_of(host);
+    { rt::msg_void(host, rt::sel(#str_ptr("layoutSubtreeIfNeeded\0"))) };
+    let sb: rt::Rect = ak::View::from_raw(strip).bounds();
+    let cf: rt::Rect = ak::View::from_raw(sc).frame();
+    return (sb.w / 2.0f64) - (cf.x + cf.w / 2.0f64);
+}
+
+#[test]
+fn the_tab_control_stays_centred_after_the_window_was_narrower_than_it() {
+    backend::install();
+    var t: core::Node = tabs::tabs(key: "nav");
+    let names: [str; 5] = ["Dashboard", "Income", "Expense", "Goals", "More"];
+    var i: usize = 0 as usize;
+    while i < (5 as usize) {
+        t.add_child(core::column(core::Builder::new(), key: names[i]));
+        i = i +% (1 as usize);
+    }
+    let p: *core::Node = #addr_of(t);
+    let host: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, host, views::view_release);
+    i = 0 as usize;
+    while i < (5 as usize) {
+        let child: *u8 = views::create(0 as *u8, match_child(p, i));
+        core::set_view(match_child(p, i), child, views::view_release);
+        views::insert(0 as *u8, host, child, i);
+        i = i +% (1 as usize);
+    }
+    geometry::set_view_frame(host, rt::Rect { x: 0.0f64, y: 0.0f64, w: 480.0f64, h: 300.0f64 });
+    core::touch(p, props::C_LAYOUT);
+    views::apply(0 as *u8, p);
+    let cw: f64 = ak::View::from_raw(controls::tab_control_of(host)).frame().w;
+    assert cw > 200.0f64;
+    let widths: [f64; 4] = [480.0f64, 200.0f64, 480.0f64, 1000.0f64];
+    var k: usize = 0 as usize;
+    while k < (4 as usize) {
+        geometry::set_view_frame(host, rt::Rect { x: 0.0f64, y: 0.0f64, w: widths[k], h: 300.0f64 });
+        let off: f64 = strip_mid_minus_control_mid(host);
+        // Within half a point: an odd-width control cannot sit on a half point.
+        assert off <= 0.5f64 && off >= -0.5f64;
+        k = k +% (1 as usize);
+    }
+    app::reset_default_for_tests();
+}
+
 // examples/glass_music_ios on macOS, 2026-10-07: every pane of the shell is a
 // `slot` — a column with no view of its own — and the window drew all five
 // screens stacked, the last on top. A viewless pane switched off has to hide
