@@ -483,6 +483,8 @@ fn owned_loop() { }
 fn open_owned_window(n: nav_model::Navigator) -> bool {
     let chrome = windows::chrome(n);
     if chrome.zoomable { host::set_zoom(chrome.min_zoom, chrome.max_zoom); }
+    // Hidden and Custom: not the platform's bar (spendwise S34).
+    host::set_bar_hidden(host::hides_bar(chrome.bar));
     if !entry::set_window_root(navigation::root(n)) { return false; }
     let s = nav_model::session(n.owner, n.id);
     entry::on_attached(owned_attached, s as *u8);
