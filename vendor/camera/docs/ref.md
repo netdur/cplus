@@ -146,12 +146,25 @@ fn is_open(this) -> bool
 False after `close`.
 
 ```cplus
-fn preview(this, key: str = "") -> core::Node
+fn preview(this, key: str = "", fit: vocab::ImageFit = vocab::ImageFit::AspectFit) -> core::Node
 ```
 
 The preview surface as a facet node. A leaf with no intrinsic size: it fills
 the box it is given. The platform view is built at MOUNT, so this may be called
 before the tree is mounted, and the node may be mounted more than once.
+
+`fit` is how the picture meets that box, as for an `image`:
+
+| `fit` | Shows |
+|---|---|
+| `AspectFit` (default) | the whole frame, with bars where the aspects differ |
+| `AspectFill` | the box covered, the frame's centre cropped to it — a viewfinder or a scanner |
+| `Fill` | the whole frame stretched to the box |
+
+`Center` draws as `AspectFit`. The crop stays inside the preview's own frame on
+every platform. Apple sets the preview layer's `videoGravity`, Android the
+TextureView's transform, Windows the blit's rects and Linux the GtkPicture's
+content fit.
 
 ```cplus
 fn capture(this, on_photo: fn(u8[], *u8), on_photo_ctx: *u8 = 0 as *u8) -> Outcome

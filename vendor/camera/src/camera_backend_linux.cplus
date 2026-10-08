@@ -124,6 +124,8 @@ extern fn g_object_ref(obj: *u8) -> *u8;
 extern fn g_object_unref(obj: *u8);
 #[link_name = "gtk_picture_set_paintable"]
 extern fn gtk_picture_set_paintable(picture: *u8, paintable: *u8);
+#[link_name = "gtk_picture_set_content_fit"]
+extern fn gtk_picture_set_content_fit(picture: *u8, fit: i32);
 #[link_name = "gtk_picture_get_paintable"]
 extern fn gtk_picture_get_paintable(picture: *u8) -> *u8;
 #[link_name = "gdk_paintable_get_intrinsic_width"]
@@ -1066,6 +1068,8 @@ export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
 // STARTING THE PUMP IS THE POINT. An application that only wants to SEE the
 // camera never calls `on_frame`, so mounting the preview is what puts the
 // stream on screen.
+extern fn _c_preview_fit_for(h: *u8) -> i32;
+
 export extern fn _c_preview_create(h: *u8) -> *u8 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return 0 as *u8; }
@@ -1089,6 +1093,14 @@ export extern fn _c_preview_create(h: *u8) -> *u8 {
         // 640x480 stream from forcing a 640-wide pane.
         { pic.set_can_shrink(true) };
     }
+    // How the frame meets the box — `preview(fit:)`, spendwise S26. GTK's own
+    // ContentFit is the same three answers: CONTAIN letterboxes (its default),
+    // COVER fills and crops, FILL stretches. COVER clips to the widget itself.
+    let fit: i32 = { _c_preview_fit_for(h) };
+    var content: i32 = gtk::content_fit_contain();
+    if fit == 1 { content = gtk::content_fit_cover(); }
+    if fit == 2 { content = gtk::content_fit_fill(); }
+    { gtk_picture_set_content_fit({ (*s).preview }, content) };
     let _started: bool = ensure_pump(s);
     return { g_object_ref({ (*s).preview }) };
 }

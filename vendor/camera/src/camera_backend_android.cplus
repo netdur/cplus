@@ -25,7 +25,7 @@ import "facet/app_events" as ev;
 import "./camera" as cam;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const _DEX_LEN: usize = 13672;
+const _DEX_LEN: usize = 14024;
 
 static _LOADER: usize = 0;
 static _C_CAMERA: usize = 0;
@@ -137,7 +137,7 @@ fn _ensure_loaded(env: rt::Env) -> bool {
     // pending NoClassDefFoundError rather than leaving it for the next call.
     env.clear_exception();
 
-    let dex: *[u8; 13672] = #include_bytes("../camera.dex");
+    let dex: *[u8; 14024] = #include_bytes("../camera.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, _DEX_LEN as i64)
     };
@@ -425,6 +425,8 @@ export extern fn _c_close(h: *u8) {
     box::from_raw::[_Session](h);
 }
 
+extern fn _c_preview_fit_for(h: *u8) -> i32;
+
 export extern fn _c_preview_create(h: *u8) -> *u8 {
     if h.is_null() { return 0 as *u8; }
     let s: *_Session = h as *_Session;
@@ -443,9 +445,10 @@ export extern fn _c_preview_create(h: *u8) -> *u8 {
     // mount walk. `_C_CAMERA` is the global ref taken from the loader that
     // actually loaded the class, and is right on both paths.
     let m: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("preview\0"),
-        #str_ptr("(Landroid/content/Context;)Landroid/view/View;\0"));
+        #str_ptr("(Landroid/content/Context;I)Landroid/view/View;\0"));
     if m == (0 as jni::jmethodID) { env.clear_exception(); return 0 as *u8; }
-    var args: [jni::JValue; 1] = [jni::arg_object(_context())];
+    // The fit `preview(fit:)` asked for, kept per session in camera.cplus.
+    var args: [jni::JValue; 2] = [jni::arg_object(_context()), jni::arg_int({ _c_preview_fit_for(h) })];
     let local: jni::jobject = {
         (*(*env.raw())).CallObjectMethodA(env.raw(), obj, m, #addr_of(args[0]))
     };

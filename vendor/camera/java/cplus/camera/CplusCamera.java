@@ -282,7 +282,12 @@ public final class CplusCamera {
     // A TextureView rather than a SurfaceView: it is an ordinary view in the
     // hierarchy, so facet's layout applies to it like anything else. A
     // SurfaceView punches a hole through the window and does not compose.
-    public android.view.View preview(Context ctx) {
+    // How the picture meets its box (spendwise S26): 0 fit — the whole frame,
+    // letterboxed; 1 fill — cover the box and crop; 2 stretch.
+    private int previewFit = 0;
+
+    public android.view.View preview(Context ctx, int fit) {
+        previewFit = fit;
         wantsPreview = true;
         view = new TextureView(ctx);
         view.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
@@ -391,13 +396,49 @@ public final class CplusCamera {
                 bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY());
                 matrix.setRectToRect(viewRect, bufferRect,
                                      android.graphics.Matrix.ScaleToFit.FILL);
-                float scale = Math.max((float) viewH / PREVIEW_H, (float) viewW / PREVIEW_W);
-                matrix.postScale(scale, scale, cx, cy);
+                float sx = (float) viewW / PREVIEW_W;
+                float sy = (float) viewH / PREVIEW_H;
+                if (previewFit == 2) {
+                    matrix.postScale(sx, sy, cx, cy);
+                } else {
+                    // FIT shows the whole frame (the smaller scale), FILL
+                    // covers the view (the larger) and crops.
+                    float scale = previewFit == 1 ? Math.max(sx, sy) : Math.min(sx, sy);
+                    matrix.postScale(scale, scale, cx, cy);
+                }
                 matrix.postRotate(90 * (rotation - 2), cx, cy);
-            } else if (rotation == Surface.ROTATION_180) {
-                matrix.postRotate(180, cx, cy);
+            } else {
+                // UPRIGHT (or upside down): the buffer arrives turned by the
+                // sensor's own angle and the TextureView STRETCHES it onto the
+                // view — the identity matrix was a stretch, not a fit. The
+                // picture's upright aspect is the buffer's, swapped when the
+                // sensor sits at a quarter turn; scale one axis to keep it.
+                boolean quarter = (sensorOrientation % 180) != 0;
+                float pw = quarter ? PREVIEW_H : PREVIEW_W;
+                float ph = quarter ? PREVIEW_W : PREVIEW_H;
+                if (previewFit != 2) {
+                    float pictureAspect = pw / ph;
+                    float viewAspect = (float) viewW / (float) viewH;
+                    float ax = 1f, ay = 1f;
+                    boolean fill = previewFit == 1;
+                    if (viewAspect > pictureAspect) {
+                        // The view is wider than the picture.
+                        if (fill) { ay = viewAspect / pictureAspect; }
+                        else { ax = pictureAspect / viewAspect; }
+                    } else {
+                        if (fill) { ax = pictureAspect / viewAspect; }
+                        else { ay = viewAspect / pictureAspect; }
+                    }
+                    matrix.postScale(ax, ay, cx, cy);
+                }
+                if (rotation == Surface.ROTATION_180) { matrix.postRotate(180, cx, cy); }
             }
             view.setTransform(matrix);
+            // FILL draws past the view's edges, and facet's host does NOT clip
+            // its children (FacetHost: setClipChildren(false), for shadows) —
+            // so the cropped part painted over the label above and the button
+            // below. The view clips itself to its own frame.
+            view.setClipBounds(new android.graphics.Rect(0, 0, viewW, viewH));
 
             // LOGGED because this is a per-device fact being applied to a
             // per-device buffer, and the only way to tell a right transform

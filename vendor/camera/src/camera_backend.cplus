@@ -1016,6 +1016,25 @@ export extern fn _c_close(h: *u8) {
     box::from_raw::[_Session](s as *u8);
 }
 
+// The fit `preview(fit:)` asked for (camera.cplus keeps it per session), as the
+// layer's videoGravity: AspectFit letterboxes, AspectFill fills and crops,
+// Fill stretches (spendwise S26). The layer's default was all there was.
+extern fn _c_preview_fit_for(h: *u8) -> i32;
+
+fn _apply_gravity(layer: *u8, h: *u8) {
+    if layer.is_null() { return; }
+    let fit: i32 = { _c_preview_fit_for(h) };
+    var g: str = "AVLayerVideoGravityResizeAspect";
+    if fit == 1 { g = "AVLayerVideoGravityResizeAspectFill"; }
+    if fit == 2 { g = "AVLayerVideoGravityResize"; }
+    rt::msg_void_id(layer, rt::sel(#str_ptr("setVideoGravity:\0")), bridge::nsstring(g));
+    // FILL DRAWS PAST THE LAYER'S EDGES. Nothing above clips it — a UIView's
+    // clipsToBounds is off by default — so the crop would paint over whatever
+    // sits beside the preview. Android showed exactly that.
+    rt::msg_void_i8(layer, rt::sel(#str_ptr("setMasksToBounds:\0")), 1 as i8);
+    return;
+}
+
 export extern fn _c_preview_create(h: *u8) -> *u8 {
     if h.is_null() { return 0 as *u8; }
     let s: *_Session = h as *_Session;
@@ -1034,6 +1053,7 @@ export extern fn _c_preview_create(h: *u8) -> *u8 {
         let layer: *u8 = rt::msg_id(view, rt::sel(#str_ptr("layer\0")));
         if layer.is_not_null() {
             rt::msg_void_id(layer, rt::sel(#str_ptr("setSession:\0")), sess);
+            _apply_gravity(layer, h);
         }
         // The first layout pass has not run yet, and on a device already held
         // in landscape the preview would be wrong until something moved.
@@ -1050,6 +1070,10 @@ export extern fn _c_preview_create(h: *u8) -> *u8 {
     // owns it — and the preview never appears.
     rt::msg_void_id(view, rt::sel(#str_ptr("setLayer:\0")), layer.raw());
     rt::msg_void_i8(view, rt::sel(#str_ptr("setWantsLayer:\0")), 1 as i8);
+    // AFTER the view takes the layer: AppKit resets masksToBounds when it
+    // adopts one, so a clip set before was gone by the first frame (measured
+    // in playground/camfit_mac — masksToBounds read back 0).
+    _apply_gravity(layer.raw(), h);
     _reassert_rate(h);
     return view;
 }
