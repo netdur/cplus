@@ -1608,6 +1608,39 @@ fn an_empty_label_measures_one_line() -> bool {
     return ok && text_ok;
 }
 
+// spendwise S47: a list's rows sit where facet laid them out and are what facet
+// drew — no automatic header padding above the first row, no automatic inset,
+// and no white table or cell under the rows.
+#[link_name = "objc_msgSend"]
+extern fn st_msg_f64(o: *u8, s: *u8) -> f64;
+
+fn a_lists_table_adds_no_padding_and_paints_nothing() -> bool {
+    var l: core::Node = ui::list(key: "st:s47");
+    let tv: *u8 = ui_verbs_table(l, "st:s47");
+    if tv == (0 as *u8) { return false; }
+    var pad: f64 = 0.0f64;
+    let psel: *u8 = rt::sel(#str_ptr("sectionHeaderTopPadding\0"));
+    if { rt::msg_i8_id(tv, rt::sel(#str_ptr("respondsToSelector:\0")), psel) } != (0 as i8) {
+        pad = { st_msg_f64(tv, psel) };
+    }
+    let adjust: i64 = { rt::msg_i64(tv, rt::sel(#str_ptr("contentInsetAdjustmentBehavior\0"))) };
+    let clear: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIColor\0")), rt::sel(#str_ptr("clearColor\0"))) };
+    let bg: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("backgroundColor\0"))) };
+    // The shared band runs after create and leaves an undeclared background
+    // nil, which a table draws as nothing; an explicit clear is the same.
+    let table_clear: bool = bg == (0 as *u8) || { rt::msg_i8_id(bg, rt::sel(#str_ptr("isEqual:\0")), clear) } != (0 as i8);
+    // A vended cell's background configuration is the clear one.
+    let cell: *u8 = recycler::cell_for_row(tv, 0 as i64);
+    var cell_clear: bool = false;
+    if cell != (0 as *u8) {
+        let cbg: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("backgroundColor\0"))) };
+        cell_clear = cbg != (0 as *u8) && { rt::msg_i8_id(cbg, rt::sel(#str_ptr("isEqual:\0")), clear) } != (0 as i8);
+    }
+    let ok: bool = pad == 0.0f64 && adjust == (2 as i64) && table_clear && cell_clear;
+    if !ok { io::eprintln(text::from_str("  pad ${pad} adjust ${adjust} table clear ${table_clear} cell clear ${cell_clear}")); }
+    return ok;
+}
+
 // A LIST'S ROWS ARE DESCRIBED IN THE ORDER THE USER SEES. A table's subviews
 // come in the order UIKit added or reused its cells — on a fresh list, bottom
 // to top — and the agent walk listed them that way: rows 3, 2, 1, 0 over a
@@ -4476,13 +4509,22 @@ fn a_changed_relist_row_is_re_measured() -> bool {
     RL_BUMP = 100.0f64;
     rows.note_changed(2 as usize);
     views::apply(0 as *u8, np);
+    // Counted from HERE. The reload `apply` runs may ask UIKit's visible rows
+    // for their heights, and which rows are visible is the table's geometry:
+    // with no header padding above the first row (S47), row 0 is one of them
+    // and is measured for the first time. That is not the contract; this is:
+    // row 2 is measured again with the bump, row 1 answers from its cache.
+    recycler::reset_measure_realises();
     let h2: f64 = recycler::row_height_for(v, 2 as i64);
+    let after_2: i64 = recycler::measure_realises();
     let h1: f64 = recycler::row_height_for(v, 1 as i64);
+    let after_1: i64 = recycler::measure_realises();
     RL_BUMP = 0.0f64;
-    // Row 2 measured again with the bump; row 1 answered from its cache.
     if h2 != 150.0f64 { return false; }
     if h1 != 40.0f64 { return false; }
-    return recycler::measure_realises() == (3 as i64);
+    // Row 2: at most one measurement (the reload may already have taken it).
+    // Row 1: none — a cached row is not realised again.
+    return after_2 <= (1 as i64) && after_1 == after_2;
 }
 
 // A STATED HEIGHT IS ANSWERED WITHOUT REALISING ANYTHING — the hatch `list`
@@ -4824,6 +4866,8 @@ fn run_all() -> i32 {
           a_padded_label_insets_its_text());
     check("an empty label measures one line",
           an_empty_label_measures_one_line());
+    check("a list's table adds no padding and paints nothing",
+          a_lists_table_adds_no_padding_and_paints_nothing());
     check("a list's rows are described top to bottom",
           a_lists_rows_are_described_top_to_bottom());
     check("an agent scroll reaches a view inside two scrollers",

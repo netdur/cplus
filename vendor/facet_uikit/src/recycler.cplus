@@ -755,8 +755,18 @@ fn dequeue_row_cell(tv: *u8, ident: str) -> *u8 {
                            0 as i64, bridge::nsstring(ident)) };
     if cell == (0 as *u8) { return 0 as *u8; }
     // A facet row draws its own background; the cell's would sit under it and
-    // win at the edges.
-    { rt::msg_void_id(cell, rt::sel(#str_ptr("setBackgroundColor:\0")), 0 as *u8) };
+    // win at the edges. NIL WAS NOT ENOUGH (S47): since iOS 14 a cell paints
+    // its `backgroundConfiguration`, white in light mode, whatever its
+    // backgroundColor says. The clear configuration where there is one, and a
+    // clear colour (not nil) everywhere.
+    let bg_cls: *u8 = rt::get_class(#str_ptr("UIBackgroundConfiguration\0"));
+    if bg_cls != (0 as *u8) {
+        let clear_cfg: *u8 = { rt::msg_id(bg_cls, rt::sel(#str_ptr("clearConfiguration\0"))) };
+        if clear_cfg != (0 as *u8) {
+            { rt::msg_void_id(cell, rt::sel(#str_ptr("setBackgroundConfiguration:\0")), clear_cfg) };
+        }
+    }
+    { rt::msg_void_id(cell, rt::sel(#str_ptr("setBackgroundColor:\0")), clear_color()) };
     { rt::msg_void_i64(cell, rt::sel(#str_ptr("setSelectionStyle:\0")), 0 as i64) };
     return cell;
 }
@@ -1315,6 +1325,11 @@ fn make_table_view(n: *core::Node, style: i64) -> *u8 {
                                    zero, style) };
     if v == (0 as *u8) { return 0 as *u8; }
     input::bind_node(v, n);
+    // BEFORE the data source: set after it, the header padding invalidates
+    // the table's cached row heights, and the next change re-measured a row
+    // that should have answered from cache (selftest "a changed relist row is
+    // re-measured": 4 realisations where 3 is the contract).
+    facet_owns_the_table(v);
     let ds: *u8 = data_source();
     if ds != (0 as *u8) {
         { rt::msg_void_id(v, rt::sel(#str_ptr("setDataSource:\0")), ds) };
@@ -1322,6 +1337,35 @@ fn make_table_view(n: *core::Node, style: i64) -> *u8 {
     }
     return v;
 }
+
+// A ROW IS WHERE FACET PUT IT, AND IS WHAT FACET DREW (spendwise S47). Three
+// UIKit defaults each made the iOS list differ from the AppKit and Android
+// ones, measured in playground/ios_controls (52pt rows in a 156pt list):
+//   - a plain table's `sectionHeaderTopPadding` (iOS 15+) is automatic, about
+//     22pt above the first row, so every row sat low and the last was cut;
+//   - the automatic content-inset adjustment adds the safe area to a table
+//     that facet has already placed inside it;
+//   - the table and its cells paint white, over the card a list sits on.
+// facet lays the list out itself, so the padding is 0, the adjustment Never,
+// and the table clear. A list's own background_color still paints, through
+// the shared band, like any node's.
+fn facet_owns_the_table(v: *u8) {
+    let pad: *u8 = rt::sel(#str_ptr("setSectionHeaderTopPadding:\0"));
+    if { msg_i8_responds(v, rt::sel(#str_ptr("respondsToSelector:\0")), pad) } != (0 as i8) {
+        rt::msg_void_f64(v, pad, 0.0f64);
+    }
+    // UIScrollViewContentInsetAdjustmentNever = 2.
+    { rt::msg_void_i64(v, rt::sel(#str_ptr("setContentInsetAdjustmentBehavior:\0")), 2 as i64) };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setBackgroundColor:\0")), clear_color()) };
+    return;
+}
+
+fn clear_color() -> *u8 {
+    return { rt::msg_id(rt::get_class(#str_ptr("UIColor\0")), rt::sel(#str_ptr("clearColor\0"))) };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_i8_responds(recv: *u8, sel: *u8, a: *u8) -> i8;
 
 // A CELL VENDED THROUGH THE DATA SOURCE, the way UITableView asks for one. The
 // suite's way into the real path: a headless table lays nothing out, so it never
