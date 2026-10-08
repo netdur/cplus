@@ -1085,6 +1085,19 @@ fn is_bezeled(v: *u8) -> bool {
 }
 
 fn apply_background(view: ak::View, c: vocab::Color) {
+    // A SCROLL HOST PAINTS ITS OWN BACKGROUND, through its own API. Both the
+    // scroll and the list hosts clear it by default, so a Sidebar's glass shows
+    // through (recycler.cplus, "A LIST DOES NOT PAINT WHAT IS BEHIND IT") — and
+    // an explicit `background_color` then had nowhere to land: an NSScrollView
+    // manages its own layer's background, so the colour set on that layer was
+    // not what it drew, and a list's table painted its own over it (spendwise
+    // S25, measured: a red scroll drew nothing once displayed in a window, a red
+    // list drew the table's grey). Set, the scroll draws it and the table inside
+    // a list takes it; cleared, both go back to transparent.
+    if is_a(view.raw(), #str_ptr("NSScrollView\0")) {
+        paint_scroll_background(view.raw(), c);
+        return;
+    }
     if is_bezeled(view.raw()) {
         var tint: *u8 = 0 as *u8;
         if c.is_set() { tint = ns_color(c).raw(); }
@@ -1106,6 +1119,31 @@ fn apply_background(view: ak::View, c: vocab::Color) {
     view.set_wants_layer(true);
     let l: quartz::Layer = view.layer();
     l.set_background_color(ns_color(c).c_g_color());
+}
+
+fn is_a(obj: *u8, class_name: *u8) -> bool {
+    if obj.is_null() { return false; }
+    let cls: *u8 = rt::get_class(class_name);
+    if cls.is_null() { return false; }
+    return { rt::msg_i8_id(obj, rt::sel(#str_ptr("isKindOfClass:\0")), cls) } != (0 as i8);
+}
+
+fn paint_scroll_background(scroll: *u8, c: vocab::Color) {
+    let doc: *u8 = { rt::msg_id(scroll, rt::sel(#str_ptr("documentView\0"))) };
+    let table: bool = doc.is_not_null() && is_a(doc, #str_ptr("NSTableView\0"));
+    if c.is_set() {
+        let ns: *u8 = ns_color(c).raw();
+        { rt::msg_void_id(scroll, rt::sel(#str_ptr("setBackgroundColor:\0")), ns) };
+        { rt::msg_void_i8(scroll, rt::sel(#str_ptr("setDrawsBackground:\0")), 1 as i8) };
+        if table { { rt::msg_void_id(doc, rt::sel(#str_ptr("setBackgroundColor:\0")), ns) }; }
+        return;
+    }
+    { rt::msg_void_i8(scroll, rt::sel(#str_ptr("setDrawsBackground:\0")), 0 as i8) };
+    if table {
+        let clear: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("clearColor\0"))) };
+        { rt::msg_void_id(doc, rt::sel(#str_ptr("setBackgroundColor:\0")), clear) };
+    }
+    return;
 }
 
 // The shared band's `background` — a Brush, which is a solid or a linear

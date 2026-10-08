@@ -19803,3 +19803,81 @@ fn a_drawn_image_can_be_released_after_its_maker_returned() {
     rt::release(img);
     assert true;
 }
+
+// ---- an explicit background on a scroll or a list is painted (spendwise S25) ----
+// Both hosts are transparent by default — glass in a Sidebar pane has to show
+// through — and an explicit background_color then had nowhere to land: the
+// window's own colour showed through a scroll the app had painted black.
+
+// The colour a view DRAWS at its centre, rendered offscreen: red and alpha.
+fn s25_centre(v: *u8) -> rt::Rect {
+    let b: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
+    let rep: *u8 = { rt::msg_id_rect(v, rt::sel(#str_ptr("bitmapImageRepForCachingDisplayInRect:\0")), b) };
+    if rep.is_null() { return rt::Rect { x: -1.0, y: -1.0, w: -1.0, h: -1.0 }; }
+    { rt::msg_void_rect_id(v, rt::sel(#str_ptr("cacheDisplayInRect:toBitmapImageRep:\0")), b, rep) };
+    let c: *u8 = { rt::msg_id_i64_i64(rep, rt::sel(#str_ptr("colorAtX:y:\0")),
+                                      (b.w / 2.0) as i64, (b.h / 2.0) as i64) };
+    if c.is_null() { return rt::Rect { x: -1.0, y: -1.0, w: -1.0, h: -1.0 }; }
+    let srgb: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("sRGBColorSpace\0"))) };
+    let cc: *u8 = { rt::msg_id_id(c, rt::sel(#str_ptr("colorUsingColorSpace:\0")), srgb) };
+    if cc.is_null() { return rt::Rect { x: -1.0, y: -1.0, w: -1.0, h: -1.0 }; }
+    return rt::Rect { x: { rt::msg_f64(cc, rt::sel(#str_ptr("redComponent\0"))) },
+                      y: { rt::msg_f64(cc, rt::sel(#str_ptr("greenComponent\0"))) },
+                      w: { rt::msg_f64(cc, rt::sel(#str_ptr("alphaComponent\0"))) }, h: 0.0 };
+}
+
+fn s25_painted_red(n: *core::Node) -> bool {
+    let v: *u8 = views::create(0 as *u8, n);
+    core::set_view(n, v, views::view_release);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0, y: 0.0, w: 120.0, h: 120.0 }) };
+    let px: rt::Rect = s25_centre(v);
+    if !(px.x > 0.9 && px.y < 0.3 && px.w > 0.9) {
+        io::eprintln(text::from_str("  red ${px.x} green ${px.y} alpha ${px.w}"));
+        return false;
+    }
+    return true;
+}
+
+#[test]
+fn a_scroll_paints_the_background_it_was_given() {
+    backend::install();
+    var s: core::Node = scroll::scroll(key: "painted");
+    s.set_background_color(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64));
+    assert s25_painted_red(#addr_of(s));
+    // ON SCREEN, after AppKit has displayed it: an NSScrollView manages its
+    // own layer's background, and an offscreen render does not run that pass.
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "s25", width: 200.0f64, height: 200.0f64));
+    let v: *u8 = core::view_of(#addr_of(s));
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(ak::View::from_raw(v)); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    { rt::msg_void(w.raw(), rt::sel(#str_ptr("display\0"))) };
+    let draws: i8 = { rt::msg_i8(v, rt::sel(#str_ptr("drawsBackground\0"))) };
+    let px: rt::Rect = s25_centre(v);
+    assert draws != (0 as i8);
+    assert px.x > 0.9 && px.w > 0.9;
+}
+
+#[test]
+fn a_list_paints_the_background_it_was_given() {
+    backend::install();
+    var l: core::Node = list::list(key: "painted-list");
+    l.set_background_color(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64));
+    assert s25_painted_red(#addr_of(l));
+}
+
+#[test]
+fn a_scroll_with_no_background_stays_transparent() {
+    // NEGATIVE: the default is what lets a Sidebar's glass show through.
+    backend::install();
+    var s: core::Node = scroll::scroll(key: "clear");
+    let v: *u8 = views::create(0 as *u8, #addr_of(s));
+    core::set_view(#addr_of(s), v, views::view_release);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0, y: 0.0, w: 120.0, h: 120.0 }) };
+    let px: rt::Rect = s25_centre(v);
+    assert px.w < 0.1;
+}
