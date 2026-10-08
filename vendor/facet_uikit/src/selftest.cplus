@@ -1641,6 +1641,38 @@ fn a_lists_table_adds_no_padding_and_paints_nothing() -> bool {
     return ok;
 }
 
+// spendwise S49: an agent's click on a toggle flips it and runs on_toggled, as
+// a tap does — it answered "allowed" and did neither.
+static TOGGLED: i32 = 0;
+fn heard_toggle(sender: *u8, ctx: *u8) { TOGGLED = TOGGLED + 1; return; }
+
+fn an_agent_click_flips_a_toggle() -> bool {
+    TOGGLED = 0;
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    if win == (0 as *u8) { return false; }
+    var n: core::Node = ui::toggle(false, key: "st:switch", on_toggled: heard_toggle);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_id(win, rt::sel(#str_ptr("addSubview:\0")), v) };
+    app::reset_default_for_tests();
+    app::open_window(p);
+    app::set_window_native(p, win);
+    var s: agent::Surface = agent::open_app();
+    let allowed: bool = surf::outcome_eq(s.click(auth::operator(), "st:switch"), surf::Outcome::Allowed);
+    let flipped: bool = { rt::msg_i8(v, rt::sel(#str_ptr("isOn\0"))) } != (0 as i8);
+    let heard: bool = TOGGLED == 1;
+    // And back.
+    let _again = s.click(auth::operator(), "st:switch");
+    let back: bool = { rt::msg_i8(v, rt::sel(#str_ptr("isOn\0"))) } == (0 as i8) && TOGGLED == 2;
+    let ok: bool = allowed && flipped && heard && back;
+    if !ok { io::eprintln(text::from_str("  allowed ${allowed} flipped ${flipped} heard ${TOGGLED} back ${back}")); }
+    app::reset_default_for_tests();
+    { rt::release(win) };
+    return ok;
+}
+
 // A LIST'S ROWS ARE DESCRIBED IN THE ORDER THE USER SEES. A table's subviews
 // come in the order UIKit added or reused its cells — on a fresh list, bottom
 // to top — and the agent walk listed them that way: rows 3, 2, 1, 0 over a
@@ -4868,6 +4900,8 @@ fn run_all() -> i32 {
           an_empty_label_measures_one_line());
     check("a list's table adds no padding and paints nothing",
           a_lists_table_adds_no_padding_and_paints_nothing());
+    check("an agent click flips a toggle",
+          an_agent_click_flips_a_toggle());
     check("a list's rows are described top to bottom",
           a_lists_rows_are_described_top_to_bottom());
     check("an agent scroll reaches a view inside two scrollers",

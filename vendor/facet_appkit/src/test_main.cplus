@@ -20239,3 +20239,22 @@ fn a_padded_label_draws_its_text_inside_the_padding() {
     let x0: f64 = s40_first_ink_x(mv);
     assert x0 >= 0.0f64 && x0 < 8.0f64;
 }
+
+// spendwise S49, the macOS half: the agent's click on a toggle is
+// `performClick:` (agent_appkit). An NSSwitch must flip and run on_toggled on
+// it, as it does under a mouse — iOS's synthesized event did neither.
+static S49_TOGGLED: i32 = 0;
+fn s49_heard(sender: *u8, ctx: *u8) { S49_TOGGLED = S49_TOGGLED + 1; return; }
+
+#[test]
+fn a_performed_click_flips_a_toggle_and_runs_its_handler() {
+    backend::install();
+    S49_TOGGLED = 0;
+    var n: core::Node = ui::toggle(false, key: "s49", on_toggled: s49_heard);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_id(v, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert { rt::msg_i64(v, rt::sel(#str_ptr("state\0"))) } == (1 as i64);
+    assert S49_TOGGLED == 1;
+}

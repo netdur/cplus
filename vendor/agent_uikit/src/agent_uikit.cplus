@@ -133,7 +133,59 @@ static SHIMS_REGISTERED: bool = false;
 
 // UIControlEventTouchUpInside = 1 << 6 — the event facet_uikit arms its primary
 // action on.
+#[link_name = "objc_msgSend"]
+extern fn msg_void_i8_i8(recv: *u8, sel: *u8, a: i8, b: i8);
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: u64) -> *u8;
+extern fn NSSelectorFromString(s: *u8) -> *u8;
+
+// EACH ACTION, SENT TO EACH TARGET. `sendActionsForControlEvents:` and
+// `sendAction:to:forEvent:` both deliver through UIApplication; measured on
+// the UISwitch, neither reached facet's `facetValueChanged:` (the switch had
+// one target armed for ValueChanged, and the action was found). The action
+// is sent to its target directly — the message a real tap ends in.
+fn send_actions_directly(view: *u8, events: u64) {
+    let set: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("allTargets\0"))) };
+    if is_null(set) { return; }
+    let targets: *u8 = { rt::msg_id(set, rt::sel(#str_ptr("allObjects\0"))) };
+    if is_null(targets) { return; }
+    let nt: u64 = { rt::msg_u64(targets, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < nt {
+        let target: *u8 = { rt::msg_id_u64(targets, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        let actions: *u8 = { msg_id_id_u64(view, rt::sel(#str_ptr("actionsForTarget:forControlEvent:\0")), target, events) };
+        if !is_null(actions) {
+            let na: u64 = { rt::msg_u64(actions, rt::sel(#str_ptr("count\0"))) };
+            var j: u64 = 0 as u64;
+            while j < na {
+                let name: *u8 = { rt::msg_id_u64(actions, rt::sel(#str_ptr("objectAtIndex:\0")), j) };
+                let action: *u8 = { NSSelectorFromString(name) };
+                // `target action:sender` — the message UIApplication's
+                // sendAction:to:from:forEvent: delivers in the end, sent
+                // without needing one to route it.
+                if !is_null(action) { { rt::msg_void_id(target, action, view) }; }
+                j = j +% (1 as u64);
+            }
+        }
+        i = i +% (1 as u64);
+    }
+    return;
+}
+
 fn cplus_agent_touch_up(view: *u8, _cmd: *u8, _arg: *u8) {
+    // A SWITCH IS TAPPED BY FLIPPING IT (spendwise S49). A UISwitch neither
+    // changes its own state on a synthesized TouchUpInside nor fires the
+    // ValueChanged action facet arms a toggle on, so a click answered
+    // "allowed" while nothing flipped and on_toggled never ran. A tap flips it
+    // and then reports ValueChanged; the click does exactly that.
+    if is_kind(view, #str_ptr("UISwitch\0")) {
+        let on: i8 = { rt::msg_i8(view, rt::sel(#str_ptr("isOn\0"))) };
+        var next: i8 = 1 as i8;
+        if on != (0 as i8) { next = 0 as i8; }
+        { msg_void_i8_i8(view, rt::sel(#str_ptr("setOn:animated:\0")), next, 1 as i8) };
+        send_actions_directly(view, value_changed_mask());
+        return;
+    }
     { msg_void_u64(view, rt::sel(#str_ptr("sendActionsForControlEvents:\0")),
                    touch_up_inside_mask()) };
     return;
