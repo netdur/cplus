@@ -20186,3 +20186,56 @@ fn a_percentage_wide_list_added_after_layout_gets_its_native_frame() {
     mount::unmount(rp);
     backend::uninstall();
 }
+
+// ---- a padded label draws its text inside the padding (spendwise S40) --------
+
+// The leftmost column, in points, that has dark ink anywhere down it.
+fn s40_first_ink_x(v: *u8) -> f64 {
+    let b: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
+    let rep: *u8 = { rt::msg_id_rect(v, rt::sel(#str_ptr("bitmapImageRepForCachingDisplayInRect:\0")), b) };
+    if rep.is_null() { return -1.0f64; }
+    { rt::msg_void_rect_id(v, rt::sel(#str_ptr("cacheDisplayInRect:toBitmapImageRep:\0")), b, rep) };
+    let pw: i64 = { rt::msg_i64(rep, rt::sel(#str_ptr("pixelsWide\0"))) };
+    let ph: i64 = { rt::msg_i64(rep, rt::sel(#str_ptr("pixelsHigh\0"))) };
+    let scale: f64 = (pw as f64) / b.w;
+    var x: i64 = 0 as i64;
+    while x < pw {
+        var y: i64 = 0 as i64;
+        while y < ph {
+            let c: *u8 = { rt::msg_id_i64_i64(rep, rt::sel(#str_ptr("colorAtX:y:\0")), x, y) };
+            if c.is_not_null() {
+                let a: f64 = { rt::msg_f64(c, rt::sel(#str_ptr("alphaComponent\0"))) };
+                if a > 0.5f64 { return (x as f64) / scale; }
+            }
+            y = y + (1 as i64);
+        }
+        x = x + (1 as i64);
+    }
+    return -1.0f64;
+}
+
+#[test]
+fn a_padded_label_draws_its_text_inside_the_padding() {
+    backend::install();
+    var n: core::Node = ui::label("WWWW", key: "s40",
+                                  text_color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64));
+    n.set_padding(flex::Edge::All, flex::StyleLength::points(20.0f64));
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 60.0 }) };
+    let x: f64 = s40_first_ink_x(v);
+    if x < 20.0f64 { io::eprintln(text::from_str("  first ink at ${x}")); }
+    assert x >= 20.0f64;
+    // And an unpadded one still starts at its edge.
+    var m: core::Node = ui::label("WWWW", key: "s40b",
+                                  text_color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64));
+    let mp: *core::Node = #addr_of(m);
+    let mv: *u8 = views::create(0 as *u8, mp);
+    core::set_view(mp, mv, views::view_release);
+    { rt::msg_void_rect(mv, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 60.0 }) };
+    let x0: f64 = s40_first_ink_x(mv);
+    assert x0 >= 0.0f64 && x0 < 8.0f64;
+}

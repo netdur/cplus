@@ -70,6 +70,11 @@ fn marker_key() -> *u8 { return { 29082 as *u8 }; }
 fn trailing_key() -> *u8 { return { 29083 as *u8 }; }
 fn clear_button_key() -> *u8 { return { 29084 as *u8 }; }
 fn placeholder_key() -> *u8 { return { 29085 as *u8 }; }
+// A label's padding, per edge, in 1/64 points (spendwise S40).
+fn pad_left_key() -> *u8 { return { 29160 as *u8 }; }
+fn pad_top_key() -> *u8 { return { 29161 as *u8 }; }
+fn pad_right_key() -> *u8 { return { 29162 as *u8 }; }
+fn pad_bottom_key() -> *u8 { return { 29163 as *u8 }; }
 
 // ---- the runtime subclass, once ----------------------------------------------
 // One subclass per BASE class, cached on the base itself: a Class is an object,
@@ -325,7 +330,7 @@ fn control_is_flipped(cell: *u8) -> bool {
 // inset a clear button occupies comes off the same rect — one place that owns
 // where the text goes.
 fn drawing_rect_imp(self_obj: *u8, cmd: *u8, bounds: rt::Rect) -> rt::Rect {
-    var base: rt::Rect = super_drawing_rect(self_obj, cmd, bounds);
+    var base: rt::Rect = padded(self_obj, super_drawing_rect(self_obj, cmd, bounds));
     let trailing: f64 = { synth::get_associated(self_obj, trailing_key()) as u64 } as f64;
     if trailing > 0.0f64 && base.w > trailing {
         base = rt::Rect { x: base.x, y: base.y, w: base.w - trailing, h: base.h };
@@ -416,6 +421,52 @@ fn apply_field_vertical_align(v: *u8, a: vocab::TextAlign, centre_is_asked: bool
     let cell: *u8 = adopt_cell(v);
     if cell.is_null() { return; }
     synth::set_associated(cell, align_key(), { code as *u8 });
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setNeedsDisplay:\0")), 1 as i8) };
+}
+
+// ---- a label's padding (spendwise S40) -----------------------------------------
+// flex adds a leaf's padding to the size it measures, so a padded label's BOX
+// was right and its text was not: the field is given the whole box and drew
+// from its edge. The background and corners belong to that whole box, so the
+// frame stays; the TEXT comes in by the padding, here, where the cell decides
+// where text goes. Point padding only: a percentage resolves against a parent
+// this cell cannot see.
+fn pad_of(cell: *u8, key: *u8) -> f64 {
+    return ({ synth::get_associated(cell, key) as u64 } as f64) / 64.0f64;
+}
+
+fn padded(cell: *u8, r: rt::Rect) -> rt::Rect {
+    let l: f64 = pad_of(cell, pad_left_key());
+    let t: f64 = pad_of(cell, pad_top_key());
+    let rr: f64 = pad_of(cell, pad_right_key());
+    let b: f64 = pad_of(cell, pad_bottom_key());
+    if l == 0.0f64 && t == 0.0f64 && rr == 0.0f64 && b == 0.0f64 { return r; }
+    // A flipped control counts y down, so its top inset moves the origin; an
+    // unflipped one's bottom inset does.
+    var y_in: f64 = b;
+    if control_is_flipped(cell) { y_in = t; }
+    var w: f64 = r.w - l - rr;
+    var h: f64 = r.h - t - b;
+    if w < 0.0f64 { w = 0.0f64; }
+    if h < 0.0f64 { h = 0.0f64; }
+    return rt::Rect { x: r.x + l, y: r.y + y_in, w: w, h: h };
+}
+
+fn points_or_zero(l: flex::StyleLength) -> f64 {
+    return match l.unit {
+        flex::Unit::Point => l.value,
+        _ => 0.0f64,
+    };
+}
+
+fn apply_label_padding(v: *u8, n: *core::Node) {
+    let cell: *u8 = adopt_cell(v);
+    if cell.is_null() { return; }
+    let st: flex::Style = { (*n).style };
+    synth::set_associated(cell, pad_left_key(), { (points_or_zero(st.padding_left) * 64.0f64) as u64 } as *u8);
+    synth::set_associated(cell, pad_top_key(), { (points_or_zero(st.padding_top) * 64.0f64) as u64 } as *u8);
+    synth::set_associated(cell, pad_right_key(), { (points_or_zero(st.padding_right) * 64.0f64) as u64 } as *u8);
+    synth::set_associated(cell, pad_bottom_key(), { (points_or_zero(st.padding_bottom) * 64.0f64) as u64 } as *u8);
     { rt::msg_void_i8(v, rt::sel(#str_ptr("setNeedsDisplay:\0")), 1 as i8) };
 }
 

@@ -124,7 +124,13 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // simply blank, which is exactly what it did.
     if has_intrinsic_size(kind) {
         { (*n).set_context(v) };
-        { (*n).set_measure(geometry::measure_node) };
+        // A label carries its flex padding as the TextView's own (S40), which
+        // its measure has to take back out: flex adds the padding itself.
+        let padded: bool = kind == props::K_LABEL
+            || ((kind == props::K_BUTTON || kind == text_button::K_TEXT_BUTTON)
+                && controls::states_its_box(n));
+        if padded { { (*n).set_measure(geometry::measure_padded) }; }
+        else { { (*n).set_measure(geometry::measure_node) }; }
     }
     // Configure it WHOLE: the shared band, then the kind's own body with every
     // bit set. One code path with apply, so the two cannot drift.

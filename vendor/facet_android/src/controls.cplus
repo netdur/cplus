@@ -112,6 +112,13 @@ fn create_label(n: *core::Node) -> *u8 {
     return tv.into_raw();
 }
 
+fn px_of(l: flex::StyleLength) -> i32 {
+    return match l.unit {
+        flex::Unit::Point => { e::px(l.value) as i32 },
+        _ => 0 as i32,
+    };
+}
+
 fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
     if p == (0 as *props::LabelProps) { return; }
@@ -128,6 +135,19 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     // its tap back has to be able to ask for it.
     if (dirty & label::P_SELECTABLE) != (0 as u64) {
         tv.set_text_is_selectable({ (*p).selectable });
+    }
+
+    // THE TEXT INSIDE THE PADDING (spendwise S40). flex sizes the box with the
+    // padding in it and the TextView is given the whole box, so without its
+    // own padding the text sat on the box's edge. The background is the whole
+    // box's, so it is the view's padding that moves, not its frame. Point
+    // padding only; `geometry::measure_padded` takes it back out of a measure.
+    if (dirty & props::C_LAYOUT) != (0 as u64) || dirty == paint::all_bits() {
+        let st: flex::Style = { (*n).style };
+        var pv: w::View = w::View::from_global(env, v);
+        pv.set_padding(px_of(st.padding_left), px_of(st.padding_top),
+                       px_of(st.padding_right), px_of(st.padding_bottom));
+        paint::unwrap_keep(pv);
     }
 
     if (dirty & (label::P_TEXT | label::P_TEXT_FORMAT)) != (0 as u64) {
@@ -202,6 +222,37 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
 }
 
 // ---- button ------------------------------------------------------------------
+
+// A BUTTON THE APP SIZED IS THE APP'S BOX (spendwise S44). An android.widget.
+// Button brings its own padding (about 8dp top and bottom) and a 48dp minimum
+// height, so a 36pt chip kept ~20pt for a 17pt font and drew its text low and
+// cut off. The date picker already strips them, for the same reason. A
+// button that states its HEIGHT or its PADDING owns its box: the native
+// padding becomes the flex padding (which `views` then measures around, as a
+// label's) and the minimums go to 0. A button that states neither keeps the
+// platform's own look.
+fn states_its_box(n: *core::Node) -> bool {
+    let st: flex::Style = { (*n).style };
+    if px_of(st.height) > (0 as i32) { return true; }
+    return px_of(st.padding_left) > (0 as i32) || px_of(st.padding_top) > (0 as i32)
+        || px_of(st.padding_right) > (0 as i32) || px_of(st.padding_bottom) > (0 as i32);
+}
+
+fn own_the_box(env: rt::Env, v: *u8, n: *core::Node) {
+    if !states_its_box(n) { return; }
+    let st: flex::Style = { (*n).style };
+    var view: w::View = w::View::from_global(env, v);
+    view.set_padding(px_of(st.padding_left), px_of(st.padding_top),
+                     px_of(st.padding_right), px_of(st.padding_bottom));
+    view.set_minimum_height(0 as i32);
+    view.set_minimum_width(0 as i32);
+    paint::unwrap_keep(view);
+    var tv: w::TextView = w::TextView::from_global(env, v);
+    tv.set_min_height(0 as i32);
+    tv.set_min_width(0 as i32);
+    let _k: *u8 = tv.into_raw();
+    return;
+}
 
 fn create_button(n: *core::Node) -> *u8 {
     let env: rt::Env = e::env();
@@ -293,6 +344,9 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     }
     // P_TITLE too: a button that gains a title after being glyph-only (below)
     // has to get its own typeface back.
+    if (dirty & props::C_LAYOUT) != (0 as u64) || dirty == paint::all_bits() {
+        own_the_box(env, v, n);
+    }
     let typography: u64 = button::P_FONT_FAMILY | button::P_FONT_WEIGHT
                         | button::P_IS_ITALIC | button::P_LINE_BREAK
                         | button::P_TEXT_TRANSFORM | button::P_CHARACTER_SPACING
@@ -1108,6 +1162,9 @@ fn create_text_button(n: *core::Node) -> *u8 {
 
 fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *text_button::TextButtonProps = props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
+    if (dirty & props::C_LAYOUT) != (0 as u64) || dirty == paint::all_bits() {
+        own_the_box(e::env(), v, n);
+    }
     if p == (0 as *text_button::TextButtonProps) { return; }
     let env: rt::Env = e::env();
     var b: w::Button = w::Button::from_global(env, v);
@@ -1921,9 +1978,18 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & icon_button::P_FIT) != (0 as u64) { set_fit(env, v, { (*p).fit }); }
     // THE ICON'S TINT (spendwise S30): a colour filter over the drawable,
     // SRC_ATOP, so a glyph or a symbol takes the colour where it is drawn and
-    // nowhere else. Clear hands it back to the drawable's own colour.
+    // nowhere else.
+    //
+    // CLEAR IS THE THEME'S ICON COLOUR, not the bitmap's (spendwise S41). A
+    // bundled glyph is painted BLACK into its bitmap, so "no filter" drew a
+    // black glyph in dark mode too, near-invisible on a dark surface, where
+    // macOS draws its template in the label colour and iOS tints it. The
+    // platform's text colour follows the appearance, and a change of
+    // appearance recreates the Activity, which applies this again. A picture
+    // `source` with no colour is drawn as itself.
     if (dirty & (icon_button::P_COLOR | icon_button::P_SOURCE | icon_button::P_SYMBOL)) != (0 as u64) {
-        let c: vocab::Color = { (*p).color };
+        var c: vocab::Color = { (*p).color };
+        if !c.is_set() && { (*p).symbol } != 0u32 { c = vocab::Color::text(); }
         if c.is_set() {
             env.call_void_1(v, #str_ptr("android/widget/ImageView\0"), #str_ptr("setColorFilter\0"),
                             #str_ptr("(I)V\0"), jni::arg_int(paint::argb_of(c)));
@@ -5831,4 +5897,18 @@ fn fire_menu_item(token: i64, index: i32) {
         option::Option[*core::Node]::None => { }
     }
     return;
+}
+
+// spendwise S44: a button that states its height or its padding owns its box;
+// one that states neither keeps the platform's own.
+#[test]
+fn a_button_that_states_its_height_or_padding_owns_its_box() {
+    var plain: core::Node = button::button("Save", key: "s44:plain");
+    assert !states_its_box(#addr_of(plain));
+    var tall: core::Node = button::button("Today", key: "s44:tall");
+    tall.set_height(flex::StyleLength::points(36.0f64));
+    assert states_its_box(#addr_of(tall));
+    var padded: core::Node = button::button("Yesterday", key: "s44:pad");
+    padded.set_padding(flex::Edge::Horizontal, flex::StyleLength::points(14.0f64));
+    assert states_its_box(#addr_of(padded));
 }

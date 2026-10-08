@@ -116,6 +116,30 @@ fn measure_node(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     return flex::Size { width: dp({ mw as f64 }), height: dp({ mh as f64 }) };
 }
 
+// A view whose native padding IS its flex padding — a label's (spendwise S40).
+// flex hands a measure the CONTENT box and adds the padding to what comes
+// back, and `View.measure` answers padding included, so measured as is the
+// padding would count twice. The native padding is added to a bounded extent
+// and taken off the answer: what flex gets is the text alone.
+fn measure_padded(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
+                  avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
+    if ctx == (0 as *u8) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
+    var view: w::View = paint::wrap(ctx);
+    let ph: f64 = dp({ (view.get_padding_left() + view.get_padding_right()) as f64 });
+    let pv: f64 = dp({ (view.get_padding_top() + view.get_padding_bottom()) as f64 });
+    paint::unwrap_keep(view);
+    var aw: f64 = avail_w;
+    var ah: f64 = avail_h;
+    if is_number(aw) { aw = aw + ph; }
+    if is_number(ah) { ah = ah + pv; }
+    let s: flex::Size = measure_node(ctx, aw, wm, ah, hm);
+    var w: f64 = s.width - ph;
+    var h: f64 = s.height - pv;
+    if w < 0.0f64 { w = 0.0f64; }
+    if h < 0.0f64 { h = 0.0f64; }
+    return flex::Size { width: w, height: h };
+}
+
 fn measure_intrinsic(v: *u8, max_w: f64, max_h: f64) -> flex::Size {
     var view: w::View = paint::wrap(v);
     view.measure(spec_at_most({ max_w as i32 }), spec_at_most({ max_h as i32 }));

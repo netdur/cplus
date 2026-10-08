@@ -188,6 +188,11 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & label::P_VERTICAL_ALIGN) != (0 as u64) {
         compose::apply_field_vertical_align(v, { (*p).vertical_align }, centre_is_asked: true);
     }
+    // The text inside the padding (spendwise S40): a style write is a layout
+    // change, so the padding is re-read with it.
+    if (dirty & props::C_LAYOUT) != (0 as u64) || dirty == paint::all_bits() {
+        compose::apply_label_padding(v, n);
+    }
     // PICKING THE TEXT UP. `labelWithString:` hands back a field with
     // `selectable = NO`, so a label was a picture of text — a transcript, an
     // error, a stack trace and an id all unreadable by Cmd-C. One setter is
