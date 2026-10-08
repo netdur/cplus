@@ -1566,6 +1566,23 @@ fn a_symbol_is_an_image_to_the_agent() -> bool {
     return icon_ok && text_ok;
 }
 
+// spendwise S40: a padded label draws its text inside the padding — its class
+// insets the rect it draws in by what the node's padding says.
+fn a_padded_label_insets_its_text() -> bool {
+    var n: core::Node = ui::label("Padded", key: "st:padded");
+    n.set_padding(flex::Edge::All, flex::StyleLength::points(20.0f64));
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    let cls: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("class\0"))) };
+    let name: text::Text = bridge::to_text({ rt::msg_id(cls, rt::sel(#str_ptr("description\0"))) });
+    let left: u64 = { synth::get_associated(v, 41100 as *u8) as u64 };
+    let ok: bool = name.view() == "FacetPaddedLabel" && left == (20 * 64) as u64;
+    if !ok { io::eprintln(text::from_str("  class ${name.view()} left ${left}")); }
+    return ok;
+}
+
 // A LIST'S ROWS ARE DESCRIBED IN THE ORDER THE USER SEES. A table's subviews
 // come in the order UIKit added or reused its cells — on a fresh list, bottom
 // to top — and the agent walk listed them that way: rows 3, 2, 1, 0 over a
@@ -4778,6 +4795,8 @@ fn run_all() -> i32 {
           an_icon_buttons_color_is_its_tint());
     check("a symbol is an image to the agent",
           a_symbol_is_an_image_to_the_agent());
+    check("a padded label insets its text",
+          a_padded_label_insets_its_text());
     check("a list's rows are described top to bottom",
           a_lists_rows_are_described_top_to_bottom());
     check("an agent scroll reaches a view inside two scrollers",
