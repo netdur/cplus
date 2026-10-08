@@ -40,6 +40,7 @@ const P_TEXT: u64 = 524288u64;
 const P_TEXT_COLOR: u64 = 1048576u64;
 const P_TEXT_TRANSFORM: u64 = 2097152u64;
 const P_STYLE_RUNS: u64 = 4194304u64;
+const P_BORDERED: u64 = 8388608u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -73,6 +74,7 @@ fn text_area(
     on_submit_ctx: *u8 = 0 as *u8,
     on_text_changed: fn(*u8, *u8) = props::no_handler,
     on_text_changed_ctx: *u8 = 0 as *u8,
+    bordered: bool = true,
 ) -> core::Node {
     var p: props::TextAreaProps = props::TextAreaProps::new();
     p.auto_size = auto_size;
@@ -101,6 +103,7 @@ fn text_area(
     p.on_submit_ctx = on_submit_ctx;
     p.input_view.on_text_changed = on_text_changed;
     p.input_view.on_text_changed_ctx = on_text_changed_ctx;
+    p.bordered = bordered;
     return match box::new::[props::TextAreaProps](p) {
         option::Option[box::Box[props::TextAreaProps]]::Some(b) =>
             core::node_with(key, props::K_TEXT_AREA, b.into_raw(), props::release_text_area_props),
@@ -555,6 +558,24 @@ impl TextArea {
             }
         }
         return option::Option[vocab::Rect]::None;
+    }
+
+    // facet's own word, button's `bordered`: whether the platform draws
+    // its own frame — AppKit's bezel, UIKit's rounded rect, Android's
+    // underline. Off leaves the text on whatever the app draws around
+    // the field, which is how a filled field is built (spendwise S24).
+    fn set_bordered(this, v: bool) -> TextArea {
+        let p: *props::TextAreaProps = this._props();
+        if p == (0 as *props::TextAreaProps) { return this; }
+        { (*p).bordered = v };
+        core::touch(this._p, P_BORDERED);
+        return this;
+    }
+
+    fn is_bordered(this) -> bool {
+        let p: *props::TextAreaProps = this._props();
+        if p == (0 as *props::TextAreaProps) { return true; }
+        return { (*p).bordered };
     }
 
     // The flex node this cursor points at. The DOM division, and the

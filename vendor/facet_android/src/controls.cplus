@@ -922,6 +922,9 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     let env: rt::Env = e::env();
     var et: w::EditText = w::EditText::from_global(env, v);
     var tv: w::TextView = et.as_text_view();
+    if (dirty & text_field::P_BORDERED) != (0 as u64) || dirty == paint::all_bits() {
+        paint::apply_input_frame(v, n);
+    }
 
     if (dirty & text_field::P_TEXT) != (0 as u64) {
         var buf: [u8; 1024] = #zero::[[u8; 1024]]();
@@ -1477,6 +1480,9 @@ fn apply_input_common(v: *u8, iv: *props::InputViewProps, text_bit: bool,
 fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
     if p == (0 as *props::TextAreaProps) { return; }
+    if (dirty & text_area::P_BORDERED) != (0 as u64) || dirty == paint::all_bits() {
+        paint::apply_input_frame(v, n);
+    }
     let typography: u64 = text_area::P_FONT_FAMILY | text_area::P_FONT_WEIGHT
                         | text_area::P_IS_ITALIC | text_area::P_TEXT_TRANSFORM
                         | text_area::P_CHARACTER_SPACING | text_area::P_TEXT_ALIGN

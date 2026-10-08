@@ -377,6 +377,7 @@ fn text_field(
     on_submit_ctx: *u8 = 0 as *u8,
     on_text_changed: fn(*u8, *u8) = props::no_handler,
     on_text_changed_ctx: *u8 = 0 as *u8,
+    bordered: bool = true,
 ) -> core::Node {
     return m_text_field::text_field(
         text,
@@ -408,6 +409,7 @@ fn text_field(
         on_submit_ctx: on_submit_ctx,
         on_text_changed: on_text_changed,
         on_text_changed_ctx: on_text_changed_ctx,
+        bordered: bordered,
     );
 }
 
@@ -439,6 +441,7 @@ fn text_area(
     on_submit_ctx: *u8 = 0 as *u8,
     on_text_changed: fn(*u8, *u8) = props::no_handler,
     on_text_changed_ctx: *u8 = 0 as *u8,
+    bordered: bool = true,
 ) -> core::Node {
     return m_text_area::text_area(
         text,
@@ -468,6 +471,7 @@ fn text_area(
         on_submit_ctx: on_submit_ctx,
         on_text_changed: on_text_changed,
         on_text_changed_ctx: on_text_changed_ctx,
+        bordered: bordered,
     );
 }
 

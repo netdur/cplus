@@ -676,7 +676,7 @@ fn descriptors() -> vec::Vec[insp::Descriptor] {
     let _d21: status::Status = v.append(insp::d("title", "string", "", "button popup", "", "Text, Title, written through the control's own setter."));
     let _d22: status::Status = v.append(insp::d("toggles", "bool", "", "button icon_button", "", "facet's own, written through the control's own setter."));
     let _d23: status::Status = v.append(insp::d("on", "bool", "", "button toggle checkbox radio icon_button", "", "facet's own, IsToggled, IsChecked, written through the control's own setter."));
-    let _d24: status::Status = v.append(insp::d("bordered", "bool", "", "button icon_button", "", "facet's own, written through the control's own setter."));
+    let _d24: status::Status = v.append(insp::d("bordered", "bool", "", "button text_field text_area icon_button", "", "facet's own, written through the control's own setter."));
     let _d25: status::Status = v.append(insp::d("clear_button", "enum", "", "text_field", "never while_editing", "ClearButtonVisibility, written through the control's own setter."));
     let _d26: status::Status = v.append(insp::d("is_secure", "bool", "", "text_field", "", "IsPassword, written through the control's own setter."));
     let _d27: status::Status = v.append(insp::d("return_key", "enum", "", "text_field search_field", "default done go next search send", "ReturnType, written through the control's own setter."));
@@ -858,6 +858,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "text" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.text()))); }
                 if prop == "text_color" { return option::Option[insp::Value]::Some(insp::Value::Color(to_color(c.text_color()))); }
                 if prop == "text_transform" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_TextTransform(c.text_transform())))); }
+                if prop == "bordered" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_bordered())); }
             }
             option::Option[m_text_field::TextField]::None => { }
         }
@@ -888,6 +889,7 @@ fn get(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if prop == "text" { return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(c.text()))); }
                 if prop == "text_color" { return option::Option[insp::Value]::Some(insp::Value::Color(to_color(c.text_color()))); }
                 if prop == "text_transform" { return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(en_TextTransform(c.text_transform())))); }
+                if prop == "bordered" { return option::Option[insp::Value]::Some(insp::Value::Bool(c.is_bordered())); }
             }
             option::Option[m_text_area::TextArea]::None => { }
         }
@@ -1934,6 +1936,16 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                         option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
                     };
                 }
+                if prop == "bordered" {
+                    let x: option::Option[bool] = match v {
+                        insp::Value::Bool(b) => option::Option[bool]::Some(b),
+                        _ => option::Option[bool]::None,
+                    };
+                    return match x {
+                        option::Option[bool]::Some(a) => { let _c: m_text_field::TextField = c.set_bordered(a); insp::Outcome::Ok },
+                        option::Option[bool]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
             }
             option::Option[m_text_field::TextField]::None => { return insp::Outcome::Stale; }
         }
@@ -2146,6 +2158,16 @@ fn set(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                             option::Option[vocab::TextTransform]::None => insp::Outcome::TypeMismatch,
                         },
                         option::Option[text::Text]::None => insp::Outcome::TypeMismatch,
+                    };
+                }
+                if prop == "bordered" {
+                    let x: option::Option[bool] = match v {
+                        insp::Value::Bool(b) => option::Option[bool]::Some(b),
+                        _ => option::Option[bool]::None,
+                    };
+                    return match x {
+                        option::Option[bool]::Some(a) => { let _c: m_text_area::TextArea = c.set_bordered(a); insp::Outcome::Ok },
+                        option::Option[bool]::None => insp::Outcome::TypeMismatch,
                     };
                 }
             }
@@ -4685,6 +4707,10 @@ fn every_text_field_property_reads_and_writes_back() {
         option::Option[insp::Value]::Some(v) => { assert set(p, "text_transform", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
+    match get(p, "bordered") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "bordered", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
     match get(p, "is_secure") {
         option::Option[insp::Value]::Some(insp::Value::Bool(b)) => {
             assert set(p, "is_secure", insp::Value::Bool(!b)) == insp::Outcome::Ok;
@@ -4739,6 +4765,16 @@ fn every_text_field_property_reads_and_writes_back() {
         option::Option[insp::Value]::Some(insp::Value::Bool(b)) => {
             assert set(p, "predicts_text", insp::Value::Bool(!b)) == insp::Outcome::Ok;
             match get(p, "predicts_text") {
+                option::Option[insp::Value]::Some(insp::Value::Bool(c)) => { assert c == !b; }
+                _ => { assert false; }
+            }
+        }
+        _ => { assert false; }
+    }
+    match get(p, "bordered") {
+        option::Option[insp::Value]::Some(insp::Value::Bool(b)) => {
+            assert set(p, "bordered", insp::Value::Bool(!b)) == insp::Outcome::Ok;
+            match get(p, "bordered") {
                 option::Option[insp::Value]::Some(insp::Value::Bool(c)) => { assert c == !b; }
                 _ => { assert false; }
             }
@@ -4841,6 +4877,10 @@ fn every_text_area_property_reads_and_writes_back() {
         option::Option[insp::Value]::Some(v) => { assert set(p, "text_transform", v) == insp::Outcome::Ok; }
         option::Option[insp::Value]::None => { assert false; }
     }
+    match get(p, "bordered") {
+        option::Option[insp::Value]::Some(v) => { assert set(p, "bordered", v) == insp::Outcome::Ok; }
+        option::Option[insp::Value]::None => { assert false; }
+    }
     match get(p, "is_italic") {
         option::Option[insp::Value]::Some(insp::Value::Bool(b)) => {
             assert set(p, "is_italic", insp::Value::Bool(!b)) == insp::Outcome::Ok;
@@ -4885,6 +4925,16 @@ fn every_text_area_property_reads_and_writes_back() {
         option::Option[insp::Value]::Some(insp::Value::Bool(b)) => {
             assert set(p, "predicts_text", insp::Value::Bool(!b)) == insp::Outcome::Ok;
             match get(p, "predicts_text") {
+                option::Option[insp::Value]::Some(insp::Value::Bool(c)) => { assert c == !b; }
+                _ => { assert false; }
+            }
+        }
+        _ => { assert false; }
+    }
+    match get(p, "bordered") {
+        option::Option[insp::Value]::Some(insp::Value::Bool(b)) => {
+            assert set(p, "bordered", insp::Value::Bool(!b)) == insp::Outcome::Ok;
+            match get(p, "bordered") {
                 option::Option[insp::Value]::Some(insp::Value::Bool(c)) => { assert c == !b; }
                 _ => { assert false; }
             }

@@ -19881,3 +19881,52 @@ fn a_scroll_with_no_background_stays_transparent() {
     let px: rt::Rect = s25_centre(v);
     assert px.w < 0.1;
 }
+
+// ---- a field without the platform's frame (spendwise S24) -----------------------
+
+#[test]
+fn a_field_drops_its_bezel_when_not_bordered_and_takes_it_back() {
+    backend::install();
+    var n: core::Node = text_field::text_field("hello", key: "plain");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // The default is today's field: the bezel, its fill, its focus ring.
+    assert { rt::msg_i8(v, rt::sel(#str_ptr("isBezeled\0"))) } != (0 as i8);
+    match text_field::find("plain", within: p) {
+        option::Option[text_field::TextField]::Some(f) => { let _f = f.set_bordered(false); }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert { rt::msg_i8(v, rt::sel(#str_ptr("isBezeled\0"))) } == (0 as i8);
+    assert { rt::msg_i8(v, rt::sel(#str_ptr("isBordered\0"))) } == (0 as i8);
+    assert { rt::msg_i8(v, rt::sel(#str_ptr("drawsBackground\0"))) } == (0 as i8);
+    assert { rt::msg_u64(v, rt::sel(#str_ptr("focusRingType\0"))) } == (1 as u64);
+    // Nothing is drawn behind the text: a corner pixel is transparent.
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")), rt::Rect { x: 0.0, y: 0.0, w: 120.0, h: 30.0 }) };
+    let b: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
+    let rep: *u8 = { rt::msg_id_rect(v, rt::sel(#str_ptr("bitmapImageRepForCachingDisplayInRect:\0")), b) };
+    { rt::msg_void_rect_id(v, rt::sel(#str_ptr("cacheDisplayInRect:toBitmapImageRep:\0")), b, rep) };
+    let c: *u8 = { rt::msg_id_i64_i64(rep, rt::sel(#str_ptr("colorAtX:y:\0")), 116 as i64, 2 as i64) };
+    assert { rt::msg_f64(c, rt::sel(#str_ptr("alphaComponent\0"))) } < 0.1f64;
+    // And back: the frame returns.
+    match text_field::find("plain", within: p) {
+        option::Option[text_field::TextField]::Some(f) => { let _f = f.set_bordered(true); }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert { rt::msg_i8(v, rt::sel(#str_ptr("isBezeled\0"))) } != (0 as i8);
+    assert { rt::msg_i8(v, rt::sel(#str_ptr("drawsBackground\0"))) } != (0 as i8);
+}
+
+#[test]
+fn an_editor_paints_no_page_when_not_bordered() {
+    backend::install();
+    var n: core::Node = text_area::text_area("notes", key: "notes", bordered: false);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert { rt::msg_i8(v, rt::sel(#str_ptr("drawsBackground\0"))) } == (0 as i8);
+    assert { rt::msg_i8(tv, rt::sel(#str_ptr("drawsBackground\0"))) } == (0 as i8);
+}

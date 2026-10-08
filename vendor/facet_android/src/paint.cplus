@@ -493,6 +493,35 @@ fn remember_native_background(v: *u8) {
     return;
 }
 
+// AN INPUT ASKED NOT TO DRAW ITS FRAME (spendwise S24). An EditText's
+// underline IS its background drawable, so `bordered: false` is "no native
+// background": what the decoration restores when the app declares none, and
+// what a runtime switch writes.
+fn is_borderless_input(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_TEXT_FIELD { return !{ (*(raw as *props::TextFieldProps)).bordered }; }
+    if kind == props::K_TEXT_AREA { return !{ (*(raw as *props::TextAreaProps)).bordered }; }
+    return false;
+}
+
+// The frame switched at runtime. The decoration owns the background when the
+// app declared one, so this only speaks for the undecorated case.
+fn apply_input_frame(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) || !e::have_env() { return; }
+    let brush: vocab::Brush = core::background(n);
+    if core::background_color(n).is_set() || brush.start.is_set() || brush.is_gradient { return; }
+    let env: rt::Env = e::env();
+    var view: w::View = wrap(v);
+    if is_borderless_input(n) { view.set_background(0 as jni::jobject); }
+    else { view.set_background(native_background_of(env, v)); }
+    unwrap_keep(view);
+    return;
+}
+
 // A LOCAL ref or null, the caller's for the length of the call.
 fn native_background_of(env: rt::Env, v: *u8) -> jni::jobject {
     var view: w::View = wrap(v);
@@ -730,7 +759,8 @@ fn apply_decoration(env: rt::Env, v: *u8, n: *core::Node) {
         // centred text on the create that configured it. `native_background`
         // is remembered before the first configure and restored here; for a
         // FacetHost, which has none, this is the null it always was.
-        view.set_background(native_background_of(env, v));
+        if is_borderless_input(n) { view.set_background(0 as jni::jobject); }
+        else { view.set_background(native_background_of(env, v)); }
         // A scroll keeps its self-clip (controls::clip_to_own_bounds).
         view.set_clip_to_outline(core::kind_of(n) == props::K_SCROLL);
         unwrap_keep(view);

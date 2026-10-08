@@ -409,6 +409,22 @@ fn create_text_field(n: *core::Node) -> *u8 {
     return rt::retain(f.as_view().raw());
 }
 
+// THE PLATFORM'S FRAME, or none (spendwise S24). Bordered is AppKit's own
+// bezel, its white fill and its focus ring — exactly what a field always had.
+// Without it the field draws only its text, so a filled shape the app draws
+// around it IS the field: no bezel inside the app's rounded rectangle.
+fn apply_field_frame(v: *u8, bordered: bool) {
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setBezeled:\0")), bordered as i8) };
+    if !bordered { { rt::msg_void_i8(v, rt::sel(#str_ptr("setBordered:\0")), 0 as i8) }; }
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setDrawsBackground:\0")), bordered as i8) };
+    // NSFocusRingType: Default 0, None 1. The app's own shape says where focus
+    // is, and AppKit's ring would draw a second outline around it.
+    var ring: u64 = 0 as u64;
+    if !bordered { ring = 1 as u64; }
+    { rt::msg_void_u64(v, rt::sel(#str_ptr("setFocusRingType:\0")), ring) };
+    return;
+}
+
 fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
     if p.is_null() { return; }
@@ -418,6 +434,9 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     // editor and the search field, because all three embed the same props.
     text_input::apply_field_band(f, n, iv, { (*p).text_align }, dirty,
                                  text_input::bits_of(props::K_TEXT_FIELD));
+    if (dirty & text_field::P_BORDERED) != (0 as u64) || dirty == paint::all_bits() {
+        apply_field_frame(v, { (*p).bordered });
+    }
     // `return_key` is read where Return is HANDLED — `text_input::submit_imp` —
     // so nothing is written here. The bit still has to be gated: a field whose
     // return key becomes `Next` after it was built needs the delegate that
@@ -2088,6 +2107,16 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
             let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
             text_input::apply_editor_band(tv, n, iv, { (*p).text_align }, dirty,
                                           text_input::bits_of(props::K_TEXT_AREA));
+            // Bordered is the editor's own white page; off, neither the
+            // scroll view nor the text view paints, and the app's fill shows.
+            if (dirty & text_area::P_BORDERED) != (0 as u64) || dirty == paint::all_bits() {
+                let on: bool = { (*p).bordered };
+                { rt::msg_void_i8(v, rt::sel(#str_ptr("setDrawsBackground:\0")), on as i8) };
+                { rt::msg_void_i8(tv.raw(), rt::sel(#str_ptr("setDrawsBackground:\0")), on as i8) };
+                var ring: u64 = 0 as u64;
+                if !on { ring = 1 as u64; }
+                { rt::msg_void_u64(tv.raw(), rt::sel(#str_ptr("setFocusRingType:\0")), ring) };
+            }
             // NSTextView has no cell, so the vertical answer is one level
             // down: `textContainerOrigin`, which is where the laid-out text is
             // drawn from.

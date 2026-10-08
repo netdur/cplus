@@ -2819,6 +2819,22 @@ PICKER_LABEL_FIELDS = [
 # first step and not the destination.
 SELECTABLE_TEXT = ("label",)
 
+# AN INPUT WITHOUT THE PLATFORM'S FRAME (spendwise S24). Every current design
+# language draws a field as a FILLED shape — iOS's grouped forms, Material 3's
+# filled text field — and the app draws that shape itself, around the field.
+# The platform's own bezel (AppKit), rounded rect (UIKit) or underline
+# (Android) then shows INSIDE it. `bordered: false` takes the platform's frame
+# away and leaves the text, so the app's fill IS the field. The ledger has no
+# word for it (MAUI's Entry customises this through handlers); the name is
+# button's `bordered`, so one word means one thing across the contract.
+FRAMED_INPUT = ("text_field", "text_area")
+
+FRAMED_INPUT_FIELDS = [
+    ("bordered", "bool", "true",
+     "facet — draw the platform's own frame (bezel, rounded rect, underline)? "
+     "false leaves the text on whatever the app draws around it"),
+]
+
 SELECTABLE_TEXT_FIELDS = [
     ("selectable", "bool", "false",
      "facet — may the drawn text be picked up and copied? default false, "
@@ -2965,6 +2981,11 @@ def emit_props(rows_by_control, by_type):
                 inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
         if mod in SELECTABLE_TEXT:
             for f, t, zero, why in SELECTABLE_TEXT_FIELDS:
+                fields.append(f"    {f}: {t},"
+                              + (f"    // {why}\n" if why else "\n"))
+                inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
+        if mod in FRAMED_INPUT:
+            for f, t, zero, why in FRAMED_INPUT_FIELDS:
                 fields.append(f"    {f}: {t},"
                               + (f"    // {why}\n" if why else "\n"))
                 inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
@@ -3267,6 +3288,8 @@ def ctor_params(row_type, writes, reads, events, owned=()):
         params.append(("bar_placement", "vocab::BarPlacement", "vocab::BarPlacement::Default"))
     if MODULE.get(row_type) in SELECTABLE_TEXT:
         params.append(("selectable", "bool", "false"))
+    if MODULE.get(row_type) in FRAMED_INPUT:
+        params.append(("bordered", "bool", "true"))
     if MODULE.get(row_type) in ROW_SOURCE:
         params.append(("count", "usize", "0 as usize"))
         params.append(("row", "fn(usize, *u8) -> core::Node", "props::no_row"))
@@ -3342,7 +3365,8 @@ def emit_control(row_type, merged):
             + (["LABEL", "ITEM_ENABLED"] if mod in PICKER_LABEL else [])
             + (["STYLE_RUNS"] if mod in EDITOR_TIER else [])
             + (["TOGGLES", "ON", "BORDERED", "SYMBOL"] if mod in BUTTONS else [])
-            + (["SELECTABLE"] if mod in SELECTABLE_TEXT else []))
+            + (["SELECTABLE"] if mod in SELECTABLE_TEXT else [])
+            + (["BORDERED"] if mod in FRAMED_INPUT else []))
     for i, b in enumerate(bits):
         o.append(f"const P_{b}: u64 = {1 << i}u64;\n")
     o.append("\n")
@@ -3404,6 +3428,8 @@ def emit_control(row_type, merged):
         o.append("    p.selection_highlight = selection_highlight;\n")
     if mod in SELECTABLE_TEXT:
         o.append("    p.selectable = selectable;\n")
+    if mod in FRAMED_INPUT:
+        o.append("    p.bordered = bordered;\n")
     keep = "    var n: core::Node = match" if carries_param(row_type) else "    return match"
     o.append(f"{keep} box::new::[props::{props}](p) {{\n")
     o.append(f"        option::Option[box::Box[props::{props}]]::Some(b) =>\n")
@@ -3879,6 +3905,23 @@ def emit_control(row_type, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return 0u32; }}\n")
         o.append("        return { (*p).symbol };\n    }\n")
+
+    # ---- facet's own: an input without the platform's frame
+    if mod in FRAMED_INPUT:
+        o.append("\n    // facet's own word, button's `bordered`: whether the platform draws\n")
+        o.append("    // its own frame — AppKit's bezel, UIKit's rounded rect, Android's\n")
+        o.append("    // underline. Off leaves the text on whatever the app draws around\n")
+        o.append("    // the field, which is how a filled field is built (spendwise S24).\n")
+        o.append(f"    fn set_bordered(this, v: bool) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).bordered = v };\n")
+        o.append("        core::touch(this._p, P_BORDERED);\n")
+        o.append("        return this;\n    }\n")
+        o.append(f"\n    fn is_bordered(this) -> bool {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return true; }}\n")
+        o.append("        return { (*p).bordered };\n    }\n")
 
     # ---- facet's own: text a person can pick up
     if mod in SELECTABLE_TEXT:
@@ -5324,6 +5367,8 @@ def inspect_props(row_type, merged):
     if mod in TAB_SOURCE:
         out.append(("selected_index", "i64", "selected_index", "set_selected_index", "facet"))
         out.append(("bar_placement", "BarPlacement", "bar_placement", "set_bar_placement", "facet"))
+    if mod in FRAMED_INPUT:
+        out.append(("bordered", "bool", "is_bordered", "set_bordered", "facet"))
     if mod in BUTTONS:
         out.append(("toggles", "bool", "toggles", "set_toggles", "facet"))
         out.append(("on", "bool", "is_on", "set_on", "facet"))

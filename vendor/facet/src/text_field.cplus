@@ -41,6 +41,7 @@ const P_SELECTION_LENGTH: u64 = 1048576u64;
 const P_TEXT: u64 = 2097152u64;
 const P_TEXT_COLOR: u64 = 4194304u64;
 const P_TEXT_TRANSFORM: u64 = 8388608u64;
+const P_BORDERED: u64 = 16777216u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -76,6 +77,7 @@ fn text_field(
     on_submit_ctx: *u8 = 0 as *u8,
     on_text_changed: fn(*u8, *u8) = props::no_handler,
     on_text_changed_ctx: *u8 = 0 as *u8,
+    bordered: bool = true,
 ) -> core::Node {
     var p: props::TextFieldProps = props::TextFieldProps::new();
     p.clear_button = clear_button;
@@ -106,6 +108,7 @@ fn text_field(
     p.on_submit_ctx = on_submit_ctx;
     p.input_view.on_text_changed = on_text_changed;
     p.input_view.on_text_changed_ctx = on_text_changed_ctx;
+    p.bordered = bordered;
     return match box::new::[props::TextFieldProps](p) {
         option::Option[box::Box[props::TextFieldProps]]::Some(b) =>
             core::node_with(key, props::K_TEXT_FIELD, b.into_raw(), props::release_text_field_props),
@@ -532,6 +535,24 @@ impl TextField {
             }
         }
         return option::Option[vocab::Rect]::None;
+    }
+
+    // facet's own word, button's `bordered`: whether the platform draws
+    // its own frame — AppKit's bezel, UIKit's rounded rect, Android's
+    // underline. Off leaves the text on whatever the app draws around
+    // the field, which is how a filled field is built (spendwise S24).
+    fn set_bordered(this, v: bool) -> TextField {
+        let p: *props::TextFieldProps = this._props();
+        if p == (0 as *props::TextFieldProps) { return this; }
+        { (*p).bordered = v };
+        core::touch(this._p, P_BORDERED);
+        return this;
+    }
+
+    fn is_bordered(this) -> bool {
+        let p: *props::TextFieldProps = this._props();
+        if p == (0 as *props::TextFieldProps) { return true; }
+        return { (*p).bordered };
     }
 
     // The flex node this cursor points at. The DOM division, and the

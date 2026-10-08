@@ -1627,6 +1627,26 @@ fn a_gradient_box_keeps_its_corner_radius() -> bool {
     return r == 14.0f64;
 }
 
+// spendwise S24: a field without the platform's frame. Bordered is the rounded
+// rect; off is no border, so the app's own fill is the field.
+fn a_field_drops_its_rounded_rect_when_not_bordered() -> bool {
+    var n: core::Node = ui::text_field("hello", key: "st:plain", bordered: false);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    // UITextBorderStyle: None 0, RoundedRect 3.
+    let off: i64 = { rt::msg_i64(v, rt::sel(#str_ptr("borderStyle\0"))) };
+    var m: core::Node = ui::text_field("hello", key: "st:framed");
+    let q: *core::Node = #addr_of(m);
+    let w: *u8 = views::create(0 as *u8, q);
+    let on: i64 = { rt::msg_i64(w, rt::sel(#str_ptr("borderStyle\0"))) };
+    views::view_release(v);
+    views::view_release(w);
+    let ok: bool = off == (0 as i64) && on == (3 as i64);
+    if !ok { io::eprintln(text::from_str("  borderless ${off} framed ${on}")); }
+    return ok;
+}
+
 // spendwise S20 item 6: a PRESENTED screen is a window of the app whose native
 // object is its controller. Everything that messages a window's native object
 // as a view must take the controller's view — the agent's refresh sent
@@ -4577,6 +4597,8 @@ fn run_all() -> i32 {
           a_date_pickers_date_is_read_and_picked_by_an_agent());
     check("an open alert is read and answered by an agent",
           an_open_alert_is_read_and_answered_by_an_agent());
+    check("a field drops its rounded rect when not bordered",
+          a_field_drops_its_rounded_rect_when_not_bordered());
     check("a presented controller stands for its view",
           a_presented_controller_stands_for_its_view());
     check("a blurred node carries a material behind its content",

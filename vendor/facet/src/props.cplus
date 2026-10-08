@@ -870,6 +870,7 @@ struct TextAreaProps {
     style_runs: vocab::StyleRuns,    // facet — how to draw RANGES of the text that is already there
     on_selection_changed: fn(*u8, *u8),    // facet — the caret moved or the selection changed
     opaque on_selection_changed_ctx: *u8,
+    bordered: bool,    // facet — draw the platform's own frame (bezel, rounded rect, underline)? false leaves the text on whatever the app draws around it
 }
 
 impl TextAreaProps {
@@ -884,6 +885,7 @@ impl TextAreaProps {
             style_runs: vocab::StyleRuns::new(),
             on_selection_changed: no_handler,
             on_selection_changed_ctx: 0 as *u8,
+            bordered: true,
         };
     }
 }
@@ -907,6 +909,7 @@ struct TextFieldProps {
     vertical_align: vocab::TextAlign,    // Entry.VerticalTextAlignment
     on_submit: fn(*u8, *u8),    // Entry.Completed
     opaque on_submit_ctx: *u8,
+    bordered: bool,    // facet — draw the platform's own frame (bezel, rounded rect, underline)? false leaves the text on whatever the app draws around it
 }
 
 impl TextFieldProps {
@@ -920,6 +923,7 @@ impl TextFieldProps {
             vertical_align: vocab::TextAlign::Center,
             on_submit: no_handler,
             on_submit_ctx: 0 as *u8,
+            bordered: true,
         };
     }
 }

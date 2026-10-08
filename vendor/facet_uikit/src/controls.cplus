@@ -1997,6 +1997,13 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::TextFieldProps) { return; }
     let f: ui::TextField = ui::TextField::from_raw(v);
     ti::write_text_field(v, { #addr_of((*p).input_view) }, dirty);
+    // THE PLATFORM'S FRAME, or none (spendwise S24): the rounded rect an iOS
+    // user reads as "type here", or no border at all, so the filled shape the
+    // app draws around the field is the field.
+    if (dirty & text_field::P_BORDERED) != (0 as u64) || dirty == paint::all_bits() {
+        if { (*p).bordered } { f.set_border_style(ui::TextBorderStyle::RoundedRect); }
+        else { f.set_border_style(ui::TextBorderStyle::None); }
+    }
     if (dirty & text_field::P_IS_SECURE) != (0 as u64) {
         // A property, not a class. The one control where UIKit removes a whole
         // mechanism: AppKit needs NSSecureTextField and a live RECLASS, and
@@ -2149,6 +2156,16 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
     let t: ui::TextView = ui::TextView::from_raw(v);
     let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
     ti::write_text_area(v, iv, dirty);
+    // A text view's frame is its own page — the system background. Off, it
+    // paints none, unless the app gave the node a colour of its own (S24).
+    if ((dirty & text_area::P_BORDERED) != (0 as u64) || dirty == paint::all_bits())
+       && !core::background_color(n).is_set() {
+        var page: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIColor\0")), rt::sel(#str_ptr("clearColor\0"))) };
+        if { (*p).bordered } {
+            page = { rt::msg_id(rt::get_class(#str_ptr("UIColor\0")), rt::sel(#str_ptr("systemBackgroundColor\0"))) };
+        }
+        { rt::msg_void_id(v, rt::sel(#str_ptr("setBackgroundColor:\0")), page) };
+    }
     if (dirty & text_area::P_TEXT_ALIGN) != (0 as u64) {
         t.set_text_alignment(text_align_of({ (*p).text_align }));
     }
