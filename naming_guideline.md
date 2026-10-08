@@ -93,7 +93,33 @@ not one. A control is a constructor plus a typed cursor, and every verb on that
 cursor is an imperative API in the sense this page means, so the guideline
 applies to it in full.
 
-## Current state (2026-09-01)
+## Current state (2026-10-08)
+
+- appenv (pass done 2026-10-08, audited after its first implementation):
+  - Removed repeated app context from `app_id`, `app_name`, `app_version`,
+    `app_build` and `app_data_dir`: callers now write `appenv::id()`, `name()`,
+    `version()`, `build()` and `data_dir(namespace:)`. Kept `app_path()` because
+    the installed app location differs from the process executable on Android.
+  - Lookup codes, path operations, the Linux configuration parser and backend
+    entry points were accessible through support modules. They are now
+    `_`-prefixed in their owning modules; the facade and selected backend meet
+    through a private C ABI, following camera's owned-Text output seam. The
+    public API exposes no raw string pointers or transport constants. Consumer
+    checks require E0403 for attempts to use implementation functions/constants.
+  - Added `downloads_dir`, `library_dir`, `external_data_dir` and
+    `external_cache_dir`, plus `read_asset` / `read_asset_text`. Asset reads return
+    owned `Vec[u8]` / `Text` with explicit read/encoding errors; all reader
+    transports remain private. Platform-only locations report unavailability.
+  - Storage namespace arguments stay labeled and defaulted. Directory lookups
+    return `Result[Text, Error]` to report unavailability or invalid input;
+    optional installed identity returns `Option[Text]`. These follow the return
+    model without sentinels or a public out-parameter.
+  - Examples now use inferred match variants, with full generic types reserved
+    for signatures. README and tutorial snippets are compiled as consuming
+    packages. The reference has one signature and behavioral paragraph per
+    public function, and implementation helpers stay outside the manual.
+
+## Earlier state (2026-09-01)
 
 - sensors (pass done 2026-09-02, **written against this page**, and the
   cheapest pass yet — one rename). Findings:

@@ -269,7 +269,8 @@ component and application code is paired with native backends:
 `facet_runtime` owns application startup, windows, routes, and navigation.
 Capabilities remain packages rather than language features: HTTP, filesystem
 watching, notifications, application links, camera, location, sensors,
-biometrics, secure storage, permissions, file picking, haptics, sharing,
+biometrics, secure storage, [app paths, assets and identity](vendor/appenv/README.md),
+permissions, file picking, haptics, sharing,
 terminal support, SQLite, Metal, CUDA, Core ML, and llama.cpp bindings are all
 represented in [`vendor/`](vendor/), with native implementations or explicit
 unsupported outcomes per platform.
