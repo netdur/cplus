@@ -285,7 +285,13 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     // Unbacked: its children hang from the SAME host, placed
                     // against that host's frame — mirroring the mount walk's
                     // pass-through, where their views were inserted into this host.
-                    if { (*c).layout_changed() } { reposition_children(c, host_abs); }
+                    // NOT PRUNED ON ITS OWN CACHE: a cache-skip says the
+                    // ABSOLUTE frame held, but these views sit relative to the
+                    // host, which can move while it holds (a box growing upward
+                    // over a row pinned at its foot). See facet_appkit's
+                    // geometry for the measured case. The walk still stops at
+                    // the first backed node down each path.
+                    reposition_children(c, host_abs);
                 }
             }
             option::Option[*core::Node]::None => { }

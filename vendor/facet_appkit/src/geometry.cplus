@@ -443,7 +443,19 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     // Unbacked: its children hang from the SAME host, placed
                     // against that host's frame — mirroring mount_walk's
                     // pass-through, where their views inserted into this host.
-                    if { (*c).layout_changed() } { reposition_children(c, host_abs); }
+                    //
+                    // NOT PRUNED ON ITS OWN CACHE, unlike the backed branch.
+                    // A cache-skip says this node's ABSOLUTE frame held — but
+                    // its views are placed relative to the HOST, and the host
+                    // can move while it holds. Measured in iris's agent panel:
+                    // the prompt box grows UPWARD, so the controls row at its
+                    // foot keeps its window position and the send/stop zstack
+                    // inside it cache-skipped; `+` and the model popup (direct
+                    // children of the row) were re-placed, and the send arrow
+                    // stayed at its old box-relative offset, over the text.
+                    // The walk stops at the first backed node down each path,
+                    // which prunes on its own cache as before.
+                    reposition_children(c, host_abs);
                 }
             }
             option::Option[*core::Node]::None => { }
@@ -472,6 +484,14 @@ fn size_scroll_content(node: *core::Node, host_abs: flex::Frame) {
     // from its row count — and a table told what size to be is a table fighting
     // its own data source.
     if is_kind_of(doc, #str_ptr("NSTableView\0")) { return; }
+    // ...and so is a RELIST's, which is an NSCollectionView sized by its
+    // layout's content size. It has no facet children, so the union below came
+    // to zero, was floored at the viewport, and shrank a forty-screen
+    // transcript to one screen — which clamped the clip to the origin. Any
+    // height change did it: the agent panel's composer growing a line threw
+    // the chat back to its first message. facet_uikit skips UICollectionView
+    // here for the same reason.
+    if is_kind_of(doc, #str_ptr("NSCollectionView\0")) { return; }
     // A text area's is its NSTextView, sized by the text container — which
     // answers how tall the TEXT is and knows nothing about how tall the BOX is.
     // Left at that, a one-line description inside a 297-point box was a
