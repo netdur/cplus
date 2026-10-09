@@ -18,7 +18,7 @@ enum Outcome { Ok, NotFound, Denied, Unsupported, Failed }
 | `Ok` | Done. |
 | `NotFound` | No item under this key in this service. **Not an error** — it is what a first run sees. |
 | `Denied` | The platform refused. On Apple this is its access control; see the guide's note on code identity. |
-| `Unsupported` | No secure storage reachable here — no keychain, or no Activity and VM on Android. |
+| `Unsupported` | No secure storage reachable here — no keychain, or, on Android, Facet has not started (no VM and Context published yet). |
 | `Failed` | Anything else. The platform's own code is deliberately not surfaced: a caller cannot act on `errSecDecode` differently from `errSecIO`, and leaking `OSStatus` would make every consumer platform-specific to read. |
 
 ## `MAX_VALUE_BYTES`

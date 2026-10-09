@@ -24,7 +24,7 @@ flex_layout  = "*"
 events       = "*"
 ```
 
-Android names `facet` because the Context comes from the running Activity. No
+Android names `facet` because the Context comes from Facet: the Application context it publishes before the app's entry runs, so a call from `run()` is answered. No
 permission is needed on either platform, and nothing is added to the manifest.
 
 ```cplus
