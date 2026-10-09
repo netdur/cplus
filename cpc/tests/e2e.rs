@@ -26044,6 +26044,52 @@ fn compile_and_run_src(name: &str, src: &str) -> std::process::Output {
     Command::new(&bin).output().expect("run produced binary")
 }
 
+/// An enum carrying another enum is sized after that enum is. Codegen sized
+/// enums in table order, so one declared (or instantiated) BEFORE the enum it
+/// carries read that enum's still-empty payload list: `Maybe[Maybe[Buf]]` got
+/// one 8-byte slot for a 24-byte inner enum, the Buf landed past the slot and
+/// came back as zeroes (and its pointer was freed twice). Found through
+/// appenv's `Option[Result[Text, Error]]`.
+#[test]
+fn an_enum_carrying_an_enum_is_sized_after_it() {
+    let out = compile_and_run_src(
+        "nestedenum",
+        "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         struct Buf { _p: *u8, n: i32 }\n\
+         impl Buf { fn drop(ref this) { if this._p != (0 as *u8) { free(this._p); } } }\n\
+         enum Maybe[T] { Some(T), None }\n\
+         enum Outer { Has(Inner), Empty }\n\
+         enum Inner { Big(i64, i64, i64), Small }\n\
+         fn make(n: i32) -> Buf { let p: *u8 = { malloc(16 as usize) }; return Buf { _p: p, n: n }; }\n\
+         fn main() -> i32 {\n\
+             let inner: Maybe[Buf] = Maybe[Buf]::Some(make(7));\n\
+             let local: Maybe[Maybe[Buf]] = Maybe[Maybe[Buf]]::Some(inner);\n\
+             var got: i32 = 0;\n\
+             match local {\n\
+                 Maybe[Maybe[Buf]]::Some(f) => {\n\
+                     match f { Maybe[Buf]::Some(v) => { got = v.n; } Maybe[Buf]::None => { got = 100; } }\n\
+                 }\n\
+                 Maybe[Maybe[Buf]]::None => { got = 200; }\n\
+             }\n\
+             if got != 7 { return 1; }\n\
+             let o: Outer = Outer::Has(Inner::Big(11, 22, 33));\n\
+             let sum: i64 = match o {\n\
+                 Outer::Has(i) => match i { Inner::Big(a, b, c) => a + b + c, Inner::Small => 0 },\n\
+                 Outer::Empty => 0,\n\
+             };\n\
+             if sum != 66 { return 2; }\n\
+             return 0;\n\
+         }\n",
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "an enum inside an enum lost its payload: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// The events-package ctor shape: a generic static method building a field
 /// whose type is ANOTHER generic, via that generic's own static method. The
 /// call is no-arg, so it also pins the Path-vs-Call dispatch decision for

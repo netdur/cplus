@@ -2900,9 +2900,17 @@ fn collect_types(
         // issue-15(b): the slot count comes from the same rule the enum's own
         // layout is computed with, so the emitted `[N x i64]` and the size
         // every consumer reports cannot disagree.
-        let max_slots = crate::sema::enum_payload_slots(&payloads, &t) as u32;
         t.enum_defs[id.0 as usize].variant_payloads = payloads;
-        t.enum_defs[id.0 as usize].payload_slots = max_slots;
+    }
+    // Sized only once EVERY enum has its payloads: the slot rule recurses into
+    // an enum payload's own variants, and an enum declared (or instantiated)
+    // before the one it carries used to read that one's still-empty list —
+    // `Option[Option[Text]]` got ONE slot for a 32-byte inner enum, so the
+    // Text was stored past the end of its slot and read back as zeroes.
+    for i in 0..t.enum_defs.len() {
+        let payloads = t.enum_defs[i].variant_payloads.clone();
+        let max_slots = crate::sema::enum_payload_slots(&payloads, &t) as u32;
+        t.enum_defs[i].payload_slots = max_slots;
     }
     // Third pass: collect methods from impl blocks.
     for item in &p.items {
