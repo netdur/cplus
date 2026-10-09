@@ -248,3 +248,6 @@ export extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text)
         option::Option[text::Text]::None => { return false; }
     }
 }
+
+// LocalAppData is outside File History and OneDrive folder backup, so there is nothing to opt out of.
+export extern fn _appenv_exclude_from_backup_v1(p: *u8, count: usize) -> u32 { return 0 as u32; }

@@ -24,6 +24,7 @@ one child beneath the data/cache root.
 | `library_dir` | Container Library | Unavailable | Foundation Library | Unavailable | Unavailable |
 | `external_data_dir` | Unavailable | App-specific external files | Unavailable | Unavailable | Unavailable |
 | `external_cache_dir` | Unavailable | App-specific external cache | Unavailable | Unavailable | Unavailable |
+| `no_backup_dir` | `data_dir` / NoBackup | `Context.getNoBackupFilesDir()` | `data_dir` / NoBackup | `data_dir` / NoBackup | `data_dir` / NoBackup |
 
 Linux honors absolute `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_CONFIG_HOME`;
 empty or relative values fall back to the XDG defaults. Documents and Downloads honor the
@@ -34,6 +35,58 @@ apps; it doesn't expose MSIX `ApplicationData`. Android external directories are
 app-specific, require no storage permission on the supported API 24+ targets,
 and can be absent when storage is unavailable. They do not grant access to shared
 public Downloads; use a picker or MediaStore for shared files.
+
+## Keeping files out of backups
+
+`data_dir` is backed up: iCloud/device backup on iOS, Android Auto Backup,
+Time Machine on macOS. Keep what must persist but not travel — a downloaded
+model, a device-bound token, a large local index — in `no_backup_dir`:
+
+```cplus
+fn model_dir() -> option::Option[text::Text] {
+    match appenv::no_backup_dir() {
+        result::Result::Ok(dir) => {
+            match fs::create_dir_all(dir.view()) {
+                result::Result::Ok(made) => {}
+                result::Result::Err(e) => { return option::Option[text::Text]::None; }
+            }
+            match appenv::exclude_from_backup(dir.view()) {
+                result::Result::Ok(done) => { return option::Option[text::Text]::Some(dir); }
+                result::Result::Err(e) => { return option::Option[text::Text]::None; }
+            }
+        }
+        result::Result::Err(e) => { return option::Option[text::Text]::None; }
+    }
+}
+```
+
+Android's no-backup directory is excluded by the OS, so `exclude_from_backup`
+only confirms it. On Apple the directory is a plain child of `data_dir` until
+`exclude_from_backup` sets `NSURLIsExcludedFromBackupKey` on it, which covers
+everything inside. Linux and Windows have no OS backup of app storage, so the
+call answers `Ok`. Android can't exclude an arbitrary path at run time; its
+backup rules live in the manifest, so a path outside the no-backup and cache
+directories answers `Unavailable`.
+
+## Pointing an app at throwaway storage
+
+`APPENV_ROOT=/abs/dir` in the environment, or `appenv::set_root("/abs/dir")`,
+moves every place the app writes to `<root>/<kind>`: `data`, `cache`, `temp`,
+`home`, `documents`, `downloads`, `no_backup`, and `library` /
+`external_data` / `external_cache` where the platform has one. A namespace
+still adds its child. Use it for tests, CI, and an agent driving the app
+without touching real data.
+
+`set_root` outranks the environment, and `set_root("")` lifts it. Call it
+before another thread asks for a location. A relative root is refused:
+`set_root` returns `InvalidInput`, and a relative `APPENV_ROOT` makes every
+storage lookup return `InvalidInput` rather than fall back to the real
+location. The override doesn't move where the app is (`current_dir`,
+executable, `app_path`, `resource_dir`, assets) or change its identity.
+
+On the iOS simulator, pass the variable as `SIMCTL_CHILD_APPENV_ROOT` to
+`xcrun simctl launch`. An Android app gets no environment from `am start`,
+so call `set_root` there.
 
 ## Path lifetime and filesystem behavior
 

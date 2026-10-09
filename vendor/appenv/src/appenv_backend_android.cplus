@@ -6,6 +6,7 @@
 // local frame and detaches only threads it attached.
 import "stdlib/fs_sys" as fsys;
 import "stdlib/text" as text;
+import "stdlib/path" as path;
 import "stdlib/option" as option;
 import "jni/jni" as jni;
 import "facet/app_events" as events;
@@ -81,6 +82,7 @@ fn _path(env: *jni::JNIEnv, context: jni::jobject, kind: u32) -> option::Option[
     if kind == _APP { return _text(env, _object(env, context, #str_ptr("getPackageCodePath\0"), #str_ptr("()Ljava/lang/String;\0"))); }
     if kind == _HOME { return _file(env, context, #str_ptr("getDataDir\0")); } // API 24, the target's minimum
     if kind == _DATA { return _file(env, context, #str_ptr("getFilesDir\0")); }
+    if kind == _NO_BACKUP { return _file(env, context, #str_ptr("getNoBackupFilesDir\0")); }
     if kind == _CACHE || kind == _TEMP { return _file(env, context, #str_ptr("getCacheDir\0")); }
     if kind == _EXTERNAL_CACHE { return _file(env, context, #str_ptr("getExternalCacheDir\0")); }
     if kind == _EXTERNAL_DATA || kind == _DOWNLOADS {
@@ -95,7 +97,7 @@ fn _path(env: *jni::JNIEnv, context: jni::jobject, kind: u32) -> option::Option[
     if kind == _DOCUMENTS {
         // Private app documents; shared user documents need a picker/content URI.
         match _file(env, context, #str_ptr("getFilesDir\0")) {
-            option::Option[text::Text]::Some(root) => { return option::Option[text::Text]::Some(_join(root.view(), "Documents")); }
+            option::Option[text::Text]::Some(root) => { return option::Option[text::Text]::Some(path::join(root.view(), "Documents")); }
             option::Option[text::Text]::None => {}
         }
     }
@@ -197,21 +199,11 @@ const _DOWNLOADS: u32 = 8;
 const _LIBRARY: u32 = 9;
 const _EXTERNAL_DATA: u32 = 10;
 const _EXTERNAL_CACHE: u32 = 11;
+const _NO_BACKUP: u32 = 12;
 const _ID: u32 = 0;
 const _NAME: u32 = 1;
 const _VERSION: u32 = 2;
 const _BUILD: u32 = 3;
-
-fn _join(base: str, child: str) -> text::Text {
-    let n: usize = #str_len(base);
-    if n == (0 as usize) { return child.to_text(); }
-    if #str_len(child) == (0 as usize) { return base.to_text(); }
-    let sep: str = fsys::separator_str();
-    if fsys::is_separator({ *(#str_ptr(base) + n - (1 as usize)) }) {
-        return "${base}${child}";
-    }
-    return "${base}${sep}${child}";
-}
 
 extern fn getcwd(buf: *u8, size: usize) -> *u8;
 extern fn strlen(s: *u8) -> usize;
@@ -244,3 +236,7 @@ export extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text)
         option::Option[text::Text]::None => { return false; }
     }
 }
+
+// Never called: Android has no run-time exclusion of one path, so the facade
+// answers from where the path is (no_backup / cache) before reaching a seam.
+export extern fn _appenv_exclude_from_backup_v1(p: *u8, count: usize) -> u32 { return 1 as u32; }

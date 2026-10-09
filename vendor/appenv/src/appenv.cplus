@@ -8,6 +8,9 @@ import "stdlib/bundle" as bundle;
 import "stdlib/fs_sys" as fsys;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
+import "stdlib/path" as path;
+import "stdlib/env" as env;
+import "stdlib/fs" as fs;
 
 enum Error {
     Unavailable, // no host, unsupported lookup, or native query failed
@@ -32,13 +35,118 @@ fn executable_dir() -> result::Result[text::Text, Error] { return _require(_none
 fn app_path() -> result::Result[text::Text, Error] { return _require(_lookup(_APP)); }
 // Android assets live inside the APK, so this lookup is Unavailable there.
 fn resource_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_RESOURCES)); }
-fn home_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_HOME)); }
-fn temp_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_TEMP)); }
-fn documents_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_DOCUMENTS)); }
-fn downloads_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_DOWNLOADS)); }
-fn library_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_LIBRARY)); }
-fn external_data_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_EXTERNAL_DATA)); }
-fn external_cache_dir() -> result::Result[text::Text, Error] { return _require(_lookup(_EXTERNAL_CACHE)); }
+fn home_dir() -> result::Result[text::Text, Error] { return _located(_HOME); }
+fn temp_dir() -> result::Result[text::Text, Error] { return _located(_TEMP); }
+fn documents_dir() -> result::Result[text::Text, Error] { return _located(_DOCUMENTS); }
+fn downloads_dir() -> result::Result[text::Text, Error] { return _located(_DOWNLOADS); }
+fn library_dir() -> result::Result[text::Text, Error] { return _located(_LIBRARY); }
+fn external_data_dir() -> result::Result[text::Text, Error] { return _located(_EXTERNAL_DATA); }
+fn external_cache_dir() -> result::Result[text::Text, Error] { return _located(_EXTERNAL_CACHE); }
+
+// ---- the override root ---------------------------------------------------------
+//
+// One switch moves every place an app WRITES under a root of the caller's
+// choosing — for a test, a CI run, or an agent driving the app with throwaway
+// data. `set_root` wins; otherwise `APPENV_ROOT` from the environment. Under a
+// root each location is `<root>/<kind>` (`data`, `cache`, `temp`, `home`,
+// `documents`, `downloads`, `no_backup`, and `library` / `external_data` /
+// `external_cache` where the platform has one), plus the namespace child for
+// `data_dir` / `cache_dir` / `no_backup_dir`. Where the app IS — current_dir,
+// executable, app_path, resource_dir, assets, identity — does not move.
+
+static _ROOT: *u8 = 0 as *u8;
+static _ROOT_LEN: usize = 0 as usize;
+
+extern fn malloc(size: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+
+// Put every storage location under `root`, which must be absolute. `""` lifts
+// the override. Call it before another thread asks for a location.
+fn set_root(root: str) -> result::Result[bool, Error] {
+    let n: usize = #str_len(root);
+    if n > (0 as usize) && !path::is_absolute(root) {
+        return result::Result[bool, Error]::Err(Error::InvalidInput);
+    }
+    var copy: *u8 = 0 as *u8;
+    if n > (0 as usize) {
+        copy = { malloc(n) };
+        if copy.is_null() { return result::Result[bool, Error]::Err(Error::OutOfMemory); }
+        let _w = { memcpy(copy, #str_ptr(root), n) };
+    }
+    let old: *u8 = _ROOT;
+    _ROOT = copy;
+    _ROOT_LEN = n;
+    if old.is_not_null() { free(old); }
+    return result::Result[bool, Error]::Ok(true);
+}
+
+// The root in force: Some(Ok) when one is, Some(Err) when `APPENV_ROOT` is set
+// but not absolute — refused rather than ignored, so a run meant to be
+// sandboxed can never fall through to real data.
+fn _override() -> option::Option[result::Result[text::Text, Error]] {
+    if _ROOT.is_not_null() {
+        let view: str = { #str_from_raw_parts(_ROOT, _ROOT_LEN) };
+        return option::Option[result::Result[text::Text, Error]]::Some(result::Result[text::Text, Error]::Ok(view.to_text()));
+    }
+    match env::var("APPENV_ROOT") {
+        option::Option[text::Text]::Some(value) => {
+            if value.is_empty() { return option::Option[result::Result[text::Text, Error]]::None; }
+            if !path::is_absolute(value.view()) {
+                return option::Option[result::Result[text::Text, Error]]::Some(result::Result[text::Text, Error]::Err(Error::InvalidInput));
+            }
+            return option::Option[result::Result[text::Text, Error]]::Some(result::Result[text::Text, Error]::Ok(value));
+        }
+        option::Option[text::Text]::None => { return option::Option[result::Result[text::Text, Error]]::None; }
+    }
+}
+
+// The child of the override root that stands in for `kind`; "" for a kind
+// this platform has no such place for, which stays Unavailable under a root.
+fn _override_child(kind: u32) -> str {
+    let apple: bool = #platform() == "macos" || #platform() == "ios";
+    let android: bool = #platform() == "android";
+    if kind == _HOME { return "home"; }
+    if kind == _TEMP { return "temp"; }
+    if kind == _DATA { return "data"; }
+    if kind == _CACHE { return "cache"; }
+    if kind == _DOCUMENTS { return "documents"; }
+    if kind == _DOWNLOADS { return "downloads"; }
+    if kind == _NO_BACKUP { return "no_backup"; }
+    if kind == _LIBRARY && apple { return "library"; }
+    if kind == _EXTERNAL_DATA && android { return "external_data"; }
+    if kind == _EXTERNAL_CACHE && android { return "external_cache"; }
+    return "";
+}
+
+// `kind` under the override root, when there is one.
+fn _overridden(kind: u32, namespace: str) -> option::Option[result::Result[text::Text, Error]] {
+    match _override() {
+        option::Option[result::Result[text::Text, Error]]::Some(found) => {
+            match found {
+                result::Result[text::Text, Error]::Ok(root) => {
+                    let child: str = _override_child(kind);
+                    if #str_len(child) == (0 as usize) {
+                        return option::Option[result::Result[text::Text, Error]]::Some(result::Result[text::Text, Error]::Err(Error::Unavailable));
+                    }
+                    let place: text::Text = path::join(root.view(), child);
+                    return option::Option[result::Result[text::Text, Error]]::Some(result::Result[text::Text, Error]::Ok(path::join(place.view(), namespace)));
+                }
+                result::Result[text::Text, Error]::Err(e) => {
+                    return option::Option[result::Result[text::Text, Error]]::Some(result::Result[text::Text, Error]::Err(e));
+                }
+            }
+        }
+        option::Option[result::Result[text::Text, Error]]::None => { return option::Option[result::Result[text::Text, Error]]::None; }
+    }
+}
+
+fn _located(kind: u32) -> result::Result[text::Text, Error] {
+    match _overridden(kind, "") {
+        option::Option[result::Result[text::Text, Error]]::Some(found) => { return found; }
+        option::Option[result::Result[text::Text, Error]]::None => { return _require(_lookup(kind)); }
+    }
+}
 
 // Names are relative to the packaged resource root, using forward slashes.
 // Android reads APK assets directly, including compressed assets.
@@ -73,10 +181,14 @@ fn _storage(kind: u32, namespace: str) -> result::Result[text::Text, Error] {
     if #str_len(namespace) > (0 as usize) && !_is_valid_namespace(namespace) {
         return result::Result[text::Text, Error]::Err(Error::InvalidInput);
     }
+    match _overridden(kind, namespace) {
+        option::Option[result::Result[text::Text, Error]]::Some(found) => { return found; }
+        option::Option[result::Result[text::Text, Error]]::None => {}
+    }
     match _lookup(kind) {
         option::Option[text::Text]::Some(root) => {
             if #platform() == "ios" || #platform() == "android" {
-                return result::Result[text::Text, Error]::Ok(_join(root.view(), namespace));
+                return result::Result[text::Text, Error]::Ok(path::join(root.view(), namespace));
             }
             // A desktop root is shared by all apps. Never silently return it
             // as app-owned storage when a CLI has no installed identity.
@@ -97,8 +209,8 @@ fn _storage(kind: u32, namespace: str) -> result::Result[text::Text, Error] {
 }
 
 fn _desktop_storage(root: str, namespace: str, kind: u32) -> text::Text {
-    let app: text::Text = _join(root, namespace);
-    if #platform() == "windows" && kind == _CACHE { return _join(app.view(), "Cache"); }
+    let app: text::Text = path::join(root, namespace);
+    if #platform() == "windows" && kind == _CACHE { return path::join(app.view(), "Cache"); }
     return app;
 }
 
@@ -106,6 +218,62 @@ fn _desktop_storage(root: str, namespace: str, kind: u32) -> text::Text {
 // Mobile: the root already belongs to this app; namespace adds a child.
 fn data_dir(namespace: str = "") -> result::Result[text::Text, Error] { return _storage(_DATA, namespace); }
 fn cache_dir(namespace: str = "") -> result::Result[text::Text, Error] { return _storage(_CACHE, namespace); }
+
+// Persistent private storage the platform's backup leaves out: Android's
+// no-backup files directory, which the OS never backs up; elsewhere a
+// `NoBackup` child of `data_dir`, which `exclude_from_backup` marks once the
+// app has created it (Apple sets the exclusion flag, Linux and Windows have no
+// OS backup of app storage to opt out of).
+fn no_backup_dir(namespace: str = "") -> result::Result[text::Text, Error] {
+    if #platform() == "android" { return _storage(_NO_BACKUP, namespace); }
+    if #str_len(namespace) > (0 as usize) && !_is_valid_namespace(namespace) {
+        return result::Result[text::Text, Error]::Err(Error::InvalidInput);
+    }
+    match _overridden(_NO_BACKUP, namespace) {
+        option::Option[result::Result[text::Text, Error]]::Some(found) => { return found; }
+        option::Option[result::Result[text::Text, Error]]::None => {}
+    }
+    match data_dir(namespace: namespace) {
+        result::Result[text::Text, Error]::Ok(data) => { return result::Result[text::Text, Error]::Ok(path::join(data.view(), "NoBackup")); }
+        result::Result[text::Text, Error]::Err(e) => { return result::Result[text::Text, Error]::Err(e); }
+    }
+}
+
+// Keep an existing file or directory (and, for a directory, what it holds) out
+// of the OS backup. Apple: sets NSURLIsExcludedFromBackupKey (iCloud/device
+// backup on iOS, Time Machine on macOS). Android cannot exclude one path at
+// run time — its backup rules are in the manifest — so a path under
+// `no_backup_dir`, `cache_dir` or `temp_dir` answers Ok and any other path
+// answers Unavailable. Linux and Windows have no OS backup of app storage:
+// Ok. NotFound when nothing is at `p`.
+fn exclude_from_backup(p: str) -> result::Result[bool, Error] {
+    if !fs::exists(p) { return result::Result[bool, Error]::Err(Error::NotFound); }
+    if #platform() == "android" {
+        if _is_under(p, _lookup(_NO_BACKUP)) || _is_under(p, _lookup(_CACHE)) {
+            return result::Result[bool, Error]::Ok(true);
+        }
+        return result::Result[bool, Error]::Err(Error::Unavailable);
+    }
+    let code: u32 = _appenv_exclude_from_backup_v1(#str_ptr(p), #str_len(p));
+    if code == (0 as u32) { return result::Result[bool, Error]::Ok(true); }
+    return result::Result[bool, Error]::Err(Error::Unavailable);
+}
+
+// True when `p` is `root` or inside it — whole components, so `/a/bc` is not
+// inside `/a/b`.
+fn _is_under(p: str, take root: option::Option[text::Text]) -> bool {
+    match root {
+        option::Option[text::Text]::Some(r) => {
+            let base: str = r.view();
+            if !p.has_prefix(base) { return false; }
+            let n: usize = #str_len(base);
+            if #str_len(p) == n { return true; }
+            if n > (0 as usize) && { *(#str_ptr(base) + n - (1 as usize)) } == (47 as u8) { return true; }
+            return { *(#str_ptr(p) + n) } == (47 as u8);
+        }
+        option::Option[text::Text]::None => { return false; }
+    }
+}
 
 fn id() -> option::Option[text::Text] { return _metadata(_ID); }
 fn name() -> option::Option[text::Text] { return _metadata(_NAME); }
@@ -128,6 +296,7 @@ fn _appenv_rejects_invalid_storage_names_before_native_lookup() {
 // implementation function private without a source import cycle or raw API.
 extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text) -> bool;
 extern fn _appenv_read_asset_v1(name: *u8, count: usize, into: *vec::Vec[u8]) -> u32;
+extern fn _appenv_exclude_from_backup_v1(p: *u8, count: usize) -> u32;
 
 fn _lookup(kind: u32, metadata: bool = false) -> option::Option[text::Text] {
     var value: text::Text = text::from_str("");
@@ -148,6 +317,7 @@ const _DOWNLOADS: u32 = 8;
 const _LIBRARY: u32 = 9;
 const _EXTERNAL_DATA: u32 = 10;
 const _EXTERNAL_CACHE: u32 = 11;
+const _NO_BACKUP: u32 = 12;
 const _ID: u32 = 0;
 const _NAME: u32 = 1;
 const _VERSION: u32 = 2;
@@ -156,17 +326,6 @@ const _BUILD: u32 = 3;
 fn _nonempty(take value: text::Text) -> option::Option[text::Text] {
     if value.is_empty() { return option::Option[text::Text]::None; }
     return option::Option[text::Text]::Some(value);
-}
-
-fn _join(base: str, child: str) -> text::Text {
-    let n: usize = #str_len(base);
-    if n == (0 as usize) { return child.to_text(); }
-    if #str_len(child) == (0 as usize) { return base.to_text(); }
-    let sep: str = fsys::separator_str();
-    if fsys::is_separator({ *(#str_ptr(base) + n - (1 as usize)) }) {
-        return "${base}${child}";
-    }
-    return "${base}${sep}${child}";
 }
 
 // One portable filename component, never a path. Keep the allowed alphabet
@@ -284,11 +443,130 @@ fn _appenv_namespaces_cannot_escape_or_name_devices() {
     assert !_is_valid_namespace("NUL");
 }
 
+extern fn setenv(name: *u8, value: *u8, overwrite: i32) -> i32;
+extern fn unsetenv(name: *u8) -> i32;
+
+fn _ok_text(r: result::Result[text::Text, Error], expect: str) -> bool {
+    return match r {
+        result::Result[text::Text, Error]::Ok(v) => v.view() == expect,
+        result::Result[text::Text, Error]::Err(e) => false,
+    };
+}
+
+fn _err_is(r: result::Result[text::Text, Error], expect: Error) -> bool {
+    return match r {
+        result::Result[text::Text, Error]::Ok(v) => false,
+        result::Result[text::Text, Error]::Err(e) => e == expect,
+    };
+}
+
 #[test]
-fn _appenv_join_preserves_roots_and_unicode() {
-    let sep: str = fsys::separator_str();
-    assert _join(sep, "notes").view() == "${sep}notes";
-    assert _join("", "notes").view() == "notes";
-    assert _join("base", "").view() == "base";
-    assert _join("base", "café").view() == "base${sep}café";
+fn _appenv_a_root_moves_every_storage_location_under_it() {
+    let _set = set_root("/tmp/appenv-root");
+    assert _ok_text(data_dir(), "/tmp/appenv-root/data");
+    assert _ok_text(data_dir(namespace: "ledger"), "/tmp/appenv-root/data/ledger");
+    assert _ok_text(cache_dir(namespace: "ledger"), "/tmp/appenv-root/cache/ledger");
+    assert _ok_text(no_backup_dir(namespace: "ledger"), "/tmp/appenv-root/no_backup/ledger");
+    assert _ok_text(temp_dir(), "/tmp/appenv-root/temp");
+    assert _ok_text(home_dir(), "/tmp/appenv-root/home");
+    assert _ok_text(documents_dir(), "/tmp/appenv-root/documents");
+    assert _ok_text(downloads_dir(), "/tmp/appenv-root/downloads");
+    assert _ok_text(library_dir(), "/tmp/appenv-root/library");
+    let _lift = set_root("");
+}
+
+#[test]
+fn _appenv_a_root_does_not_add_a_place_the_platform_lacks() {
+    // Android's external storage has no Mac counterpart; a root relocates, it
+    // does not invent.
+    let _set = set_root("/tmp/appenv-root");
+    assert _err_is(external_data_dir(), Error::Unavailable);
+    assert _err_is(external_cache_dir(), Error::Unavailable);
+    let _lift = set_root("");
+}
+
+#[test]
+fn _appenv_a_root_leaves_where_the_app_is_alone() {
+    let before: result::Result[text::Text, Error] = current_dir();
+    let _set = set_root("/tmp/appenv-root");
+    match current_dir() {
+        result::Result[text::Text, Error]::Ok(v) => { assert !v.view().has_prefix("/tmp/appenv-root"); }
+        result::Result[text::Text, Error]::Err(e) => { assert false; }
+    }
+    match executable_dir() {
+        result::Result[text::Text, Error]::Ok(v) => { assert !v.view().has_prefix("/tmp/appenv-root"); }
+        result::Result[text::Text, Error]::Err(e) => { assert false; }
+    }
+    let _lift = set_root("");
+}
+
+#[test]
+fn _appenv_lifting_the_root_restores_the_native_locations() {
+    let _set = set_root("/tmp/appenv-root");
+    let _lift = set_root("");
+    match temp_dir() {
+        result::Result[text::Text, Error]::Ok(v) => { assert !v.view().has_prefix("/tmp/appenv-root"); }
+        result::Result[text::Text, Error]::Err(e) => { assert false; }
+    }
+}
+
+#[test]
+fn _appenv_a_relative_root_is_refused() {
+    match set_root("relative/root") {
+        result::Result[bool, Error]::Ok(v) => { assert false; }
+        result::Result[bool, Error]::Err(e) => { assert e == Error::InvalidInput; }
+    }
+}
+
+#[test]
+fn _appenv_the_environment_sets_the_root_and_set_root_outranks_it() {
+    let _e = { setenv(#str_ptr("APPENV_ROOT\0"), #str_ptr("/tmp/appenv-env\0"), 1) };
+    assert _ok_text(data_dir(), "/tmp/appenv-env/data");
+    let _set = set_root("/tmp/appenv-root");
+    assert _ok_text(data_dir(), "/tmp/appenv-root/data");
+    let _lift = set_root("");
+    let _u = { unsetenv(#str_ptr("APPENV_ROOT\0")) };
+}
+
+#[test]
+fn _appenv_a_relative_root_in_the_environment_fails_instead_of_falling_through() {
+    // A run meant to be sandboxed must never reach real data by a typo.
+    let _e = { setenv(#str_ptr("APPENV_ROOT\0"), #str_ptr("not/absolute\0"), 1) };
+    assert _err_is(data_dir(namespace: "ledger"), Error::InvalidInput);
+    assert _err_is(temp_dir(), Error::InvalidInput);
+    let _u = { unsetenv(#str_ptr("APPENV_ROOT\0")) };
+}
+
+#[test]
+fn _appenv_no_backup_is_a_child_of_data_off_android() {
+    if #platform() == "android" { return; }
+    match data_dir(namespace: "dev.cplus.appenv-test") {
+        result::Result[text::Text, Error]::Ok(data) => {
+            let expect: text::Text = path::join(data.view(), "NoBackup");
+            assert _ok_text(no_backup_dir(namespace: "dev.cplus.appenv-test"), expect.view());
+        }
+        result::Result[text::Text, Error]::Err(e) => { assert false; }
+    }
+    match no_backup_dir(namespace: "../x") {
+        result::Result[text::Text, Error]::Ok(v) => { assert false; }
+        result::Result[text::Text, Error]::Err(e) => { assert e == Error::InvalidInput; }
+    }
+}
+
+#[test]
+fn _appenv_excluding_nothing_is_not_found() {
+    match exclude_from_backup("/tmp/appenv-there-is-nothing-here-zz") {
+        result::Result[bool, Error]::Ok(v) => { assert false; }
+        result::Result[bool, Error]::Err(e) => { assert e == Error::NotFound; }
+    }
+}
+
+#[test]
+fn _appenv_under_means_whole_components() {
+    assert _is_under("/a/b", option::Option[text::Text]::Some(text::from_str("/a/b")));
+    assert _is_under("/a/b/c.db", option::Option[text::Text]::Some(text::from_str("/a/b")));
+    assert _is_under("/a/b/c.db", option::Option[text::Text]::Some(text::from_str("/a/b/")));
+    assert !_is_under("/a/bc", option::Option[text::Text]::Some(text::from_str("/a/b")));
+    assert !_is_under("/a", option::Option[text::Text]::Some(text::from_str("/a/b")));
+    assert !_is_under("/a/b", option::Option[text::Text]::None);
 }

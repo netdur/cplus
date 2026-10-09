@@ -1,5 +1,6 @@
 import "stdlib/env" as env;
 import "stdlib/text" as text;
+import "stdlib/path" as path;
 import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "stdlib/fs" as fs;
@@ -9,7 +10,7 @@ import "stdlib/str" as _;
 
 fn _home_child(child: str) -> option::Option[text::Text] {
     match _absolute_env("HOME") {
-        option::Option[text::Text]::Some(home) => { return option::Option[text::Text]::Some(_join(home.view(), child)); }
+        option::Option[text::Text]::Some(home) => { return option::Option[text::Text]::Some(path::join(home.view(), child)); }
         option::Option[text::Text]::None => { return option::Option[text::Text]::None; }
     }
 }
@@ -72,7 +73,7 @@ fn _user_dir(key: str, fallback: str) -> option::Option[text::Text] {
         option::Option[text::Text]::Some(home) => {
             match _xdg("XDG_CONFIG_HOME", ".config") {
                 option::Option[text::Text]::Some(config) => {
-                    let file: text::Text = _join(config.view(), "user-dirs.dirs");
+                    let file: text::Text = path::join(config.view(), "user-dirs.dirs");
                     match fs::read_to_string(file.view()) {
                         result::Result[text::Text, result::IoError]::Ok(content) => {
                             match _user_dir_from_config(content.view(), home.view(), key) {
@@ -85,7 +86,7 @@ fn _user_dir(key: str, fallback: str) -> option::Option[text::Text] {
                 }
                 option::Option[text::Text]::None => {}
             }
-            return option::Option[text::Text]::Some(_join(home.view(), fallback));
+            return option::Option[text::Text]::Some(path::join(home.view(), fallback));
         }
         option::Option[text::Text]::None => { return option::Option[text::Text]::None; }
     }
@@ -196,17 +197,6 @@ fn _nonempty(take value: text::Text) -> option::Option[text::Text] {
     return option::Option[text::Text]::Some(value);
 }
 
-fn _join(base: str, child: str) -> text::Text {
-    let n: usize = #str_len(base);
-    if n == (0 as usize) { return child.to_text(); }
-    if #str_len(child) == (0 as usize) { return base.to_text(); }
-    let sep: str = fsys::separator_str();
-    if fsys::is_separator({ *(#str_ptr(base) + n - (1 as usize)) }) {
-        return "${base}${child}";
-    }
-    return "${base}${sep}${child}";
-}
-
 extern fn malloc(size: usize) -> *u8;
 extern fn free(buf: *u8);
 extern fn getcwd(buf: *u8, size: usize) -> *u8;
@@ -250,3 +240,6 @@ export extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text)
         option::Option[text::Text]::None => { return false; }
     }
 }
+
+// No OS backup covers app storage here, so there is nothing to opt out of.
+export extern fn _appenv_exclude_from_backup_v1(p: *u8, count: usize) -> u32 { return 0 as u32; }

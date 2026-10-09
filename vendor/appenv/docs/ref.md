@@ -24,8 +24,8 @@ enum Error {
 | Case | Meaning |
 |---|---|
 | `Unavailable` | Facet has not started (Android) or installed identity is missing, the lookup is unsupported, or a native query failed. |
-| `InvalidInput` | A storage namespace or relative asset name is invalid. |
-| `NotFound` | The packaged asset could not be opened because it is absent (Android also uses this for any failed native asset open). |
+| `InvalidInput` | A storage namespace, relative asset name or override root is invalid. |
+| `NotFound` | The packaged asset could not be opened because it is absent (Android also uses this for any failed native asset open), or `exclude_from_backup` found nothing at the path. |
 | `ReadFailed` | The asset could not be read, including access or native I/O failures. |
 | `InvalidData` | An asset requested as text is not valid UTF-8. |
 | `OutOfMemory` | An asset buffer or native filename allocation failed. |
@@ -183,6 +183,52 @@ Returns storage for data that can be recreated: Library/Caches on Apple,
 internal cache on Android, the XDG cache root on Linux, and LocalAppData/app/Cache
 on Windows. Namespace selection, defaults and errors match `data_dir`; the
 package doesn't create the namespace directory. OS cleanup can remove contents.
+
+### `no_backup_dir`
+
+```cplus
+fn no_backup_dir(namespace: str = "") -> result::Result[text::Text, Error]
+```
+
+Returns persistent private storage the OS backup leaves out. On Android it is
+`Context.getNoBackupFilesDir()`, plus the namespace child when one is given.
+Elsewhere it is `data_dir(namespace)` / `NoBackup`, and on Apple it is only
+excluded once `exclude_from_backup` has marked it. Namespace rules and errors
+match `data_dir`.
+
+### `exclude_from_backup`
+
+```cplus
+fn exclude_from_backup(p: str) -> result::Result[bool, Error]
+```
+
+Keeps the existing file or directory at `p`, and everything inside a
+directory, out of the OS backup.
+- **Apple:** sets `NSURLIsExcludedFromBackupKey`.
+- **Android:** answers `Ok` for a path under `no_backup_dir`, `cache_dir` or
+  `temp_dir`, which the OS already excludes. Any other path is `Unavailable`.
+- **Linux and Windows:** answers `Ok`, since no OS backup covers app storage
+  there.
+
+Returns `NotFound` when nothing is at `p`, and `Unavailable` when Foundation
+refuses.
+
+### `set_root`
+
+```cplus
+fn set_root(root: str) -> result::Result[bool, Error]
+```
+
+Moves every storage location under the absolute `root`: `home_dir`,
+`temp_dir`, `data_dir`, `cache_dir`, `no_backup_dir`, `documents_dir`,
+`downloads_dir`, and `library_dir` / `external_*` where the platform has them.
+Each one becomes `<root>/<kind>`, plus the namespace child. `""` lifts the
+override.
+- It outranks `APPENV_ROOT` from the environment.
+- A relative `root` returns `InvalidInput`.
+- A relative `APPENV_ROOT` makes each storage lookup return `InvalidInput`.
+- Locations of the app itself, assets and identity don't move.
+- Not synchronized: call it before other threads look up locations.
 
 ## Packaged assets
 

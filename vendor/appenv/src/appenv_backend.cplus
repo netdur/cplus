@@ -138,3 +138,58 @@ export extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text)
         option::Option[text::Text]::None => { return false; }
     }
 }
+
+// Mark the item at `p` excluded from backup — iCloud and device backups on iOS,
+// Time Machine on macOS. 0 = set, 1 = Foundation refused. The key's value is
+// its own name, so it is built as a string rather than read from Foundation.
+export extern fn _appenv_exclude_from_backup_v1(p: *u8, count: usize) -> u32 {
+    let pool: *u8 = { objc_autoreleasePoolPush() };
+    let url: *u8 = _file_url({ #str_from_raw_parts(p, count) });
+    var code: u32 = 1 as u32;
+    if url.is_not_null() {
+        let yes: *u8 = rt::msg_id_i8(rt::get_class(#str_ptr("NSNumber\0")) as *u8, rt::sel(#str_ptr("numberWithBool:\0")), 1 as i8);
+        let key: *u8 = bridge::nsstring("NSURLIsExcludedFromBackupKey");
+        let ok: i8 = rt::msg_i8_id_id_id(url, rt::sel(#str_ptr("setResourceValue:forKey:error:\0")), yes, key, 0 as *u8);
+        if ok != (0 as i8) { code = 0 as u32; }
+    }
+    objc_autoreleasePoolPop(pool);
+    return code;
+}
+
+fn _file_url(p: str) -> *u8 {
+    return rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")) as *u8, rt::sel(#str_ptr("fileURLWithPath:\0")), bridge::nsstring(p));
+}
+
+// Read back, from a fresh NSURL (an NSURL caches resource values). Tests only.
+fn _is_excluded_from_backup(p: str) -> bool {
+    let pool: *u8 = { objc_autoreleasePoolPush() };
+    let url: *u8 = _file_url(p);
+    var value: *u8 = 0 as *u8;
+    let key: *u8 = bridge::nsstring("NSURLIsExcludedFromBackupKey");
+    let ok: i8 = rt::msg_i8_id_id_id(url, rt::sel(#str_ptr("getResourceValue:forKey:error:\0")), #addr_of(value) as *u8, key, 0 as *u8);
+    var excluded: bool = false;
+    if ok != (0 as i8) && value.is_not_null() {
+        excluded = rt::msg_i8(value, rt::sel(#str_ptr("boolValue\0"))) != (0 as i8);
+    }
+    objc_autoreleasePoolPop(pool);
+    return excluded;
+}
+
+extern fn mkdir(p: *u8, mode: u32) -> i32;
+extern fn rmdir(p: *u8) -> i32;
+extern fn getpid() -> i32;
+
+#[test]
+fn _appenv_excluding_a_directory_sets_the_backup_flag() {
+    let pid: i32 = { getpid() };
+    let dir: text::Text = "/tmp/appenv-nobackup-${pid}";
+    let c: text::CString = match dir.c_str() {
+        option::Option[text::CString]::Some(v) => v,
+        option::Option[text::CString]::None => { assert false; return; }
+    };
+    let _m = { mkdir(c.as_ptr(), 448 as u32) };
+    assert !_is_excluded_from_backup(dir.view());
+    assert _appenv_exclude_from_backup_v1(#str_ptr(dir.view()), #str_len(dir.view())) == (0 as u32);
+    assert _is_excluded_from_backup(dir.view());
+    let _r = { rmdir(c.as_ptr()) };
+}
