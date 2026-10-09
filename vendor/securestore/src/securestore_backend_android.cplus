@@ -84,12 +84,23 @@ fn _current_env() -> rt::Env {
     return rt::from_native(envp);
 }
 
-// A build with no Activity and no VM is a build with no facet backend — a
+// A build with no Context and no VM is a build with no facet backend — a
 // headless tool linking this package. `Unsupported` is the honest answer.
+//
+// THE APPLICATION CONTEXT FIRST (spendwise S46 C). Facet publishes it before
+// the app's entry runs, so a token read in `run()` — where an app restores a
+// session — is answered rather than refused for want of a window. The
+// Activity (`host()`) is the fallback for a host that publishes none. Shared
+// preferences belong to the app, not to a window, so either answers the same.
 fn _ready() -> bool {
-    if !ev::has_host() { return false; }
+    if !ev::has_app_context() && !ev::has_host() { return false; }
     if !ev::has_host_runtime() { return false; }
     return true;
+}
+
+fn _context() -> jni::jobject {
+    if ev::has_app_context() { return { ev::app_context() as jni::jobject }; }
+    return { ev::host() as jni::jobject };
 }
 
 fn _view(p: *u8, n: usize) -> str { return { #str_from_raw_parts(p, n) }; }
@@ -235,7 +246,7 @@ fn _prefs(env: rt::Env, service: str) -> jni::jobject {
     // MODE_PRIVATE = 0. The file is readable only by this uid, which is the
     // sandbox's job; the encryption is what protects it from a backup or an
     // extracted image.
-    let p: jni::jobject = env.call_object_2(ev::host(),
+    let p: jni::jobject = env.call_object_2(_context(),
         #str_ptr("android/content/Context\0"), #str_ptr("getSharedPreferences\0"),
         #str_ptr("(Ljava/lang/String;I)Landroid/content/SharedPreferences;\0"),
         jni::JValue::of_object(_jstr(env, service)), jni::JValue::of_int(0 as i32));
