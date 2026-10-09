@@ -49,6 +49,8 @@ import "./geometry" as geometry;
 import "./recycler" as recycler;
 import "./swipe" as swipe;
 import "./darkmode" as darkmode;
+import "./dialogs" as dialogs;
+import "facet/window" as app_window;
 
 fn renderer() -> mount::Renderer {
     return mount::Renderer {
@@ -95,6 +97,7 @@ fn install() {
     // bounded.
     darkmode::install();
     window::report_theme(icc);
+    app_window::install_host(dialogs::window_host());
     return;
 }
 
@@ -107,6 +110,7 @@ fn uninstall() {
     input::uninstall();
     theme::set_is_dark_fn(0 as fn() -> bool);
     theme::set_theme_changed_fn(0 as fn());
+    app_window::uninstall_host();
     INSTALLED = false;
     return;
 }

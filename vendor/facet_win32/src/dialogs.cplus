@@ -37,6 +37,7 @@ import "facet/mount" as mount;
 import "facet/screen" as screen;
 import "facet/vocabulary" as vocab;
 import "facet/application" as app;
+import "facet/window" as app_window;
 import "facet/label" as label;
 import "facet/button" as button;
 import "facet/text_field" as text_field;
@@ -790,6 +791,54 @@ fn set_window_frame_of(root: *core::Node, frame: vocab::Rect) {
                                     frame.width as i32, frame.height as i32,
                                     flags) };
     return;
+}
+
+// ---- the window tier's host ----------------------------------------------------
+//
+// facet's portable `window::Window` reads and writes through these. facet_win32
+// had every function and installed none of them, so `window::find("main")
+// .set_frame(...)` — and an agent sizing a window — did nothing on Win32 while
+// it worked on AppKit, GTK and WinUI.
+fn wh_frame(root: *core::Node) -> vocab::Rect { return window_frame_of(root); }
+fn wh_set_frame(root: *core::Node, r: vocab::Rect) { set_window_frame_of(root, r); return; }
+fn wh_is_active(root: *core::Node) -> bool { return window::is_active(root); }
+fn wh_density(root: *core::Node) -> f64 { return window::density_of(root); }
+fn wh_close(root: *core::Node) { window::close_window_of(root); return; }
+
+fn wh_title(root: *core::Node) -> text::Text {
+    let w: *u8 = window::window_of_root(root);
+    if w == (0 as *u8) { return text::new(); }
+    let n: i32 = { u::GetWindowTextLengthW(w) };
+    if n <= (0 as i32) { return text::new(); }
+    let buf: *u8 = { malloc(((n as usize) +% (1 as usize)) *% (2 as usize)) };
+    if buf.is_null() { return text::new(); }
+    let got: i32 = { u::GetWindowTextW(w, buf as *u16, n +% (1 as i32)) };
+    var out: text::Text = text::new();
+    if got > (0 as i32) { out = sys::from_wide(buf as *u16); }
+    { free(buf) };
+    return out;
+}
+
+fn wh_set_title(root: *core::Node, t: str) {
+    let w: *u8 = window::window_of_root(root);
+    if w == (0 as *u8) { return; }
+    let wide: *u16 = sys::to_wide(t);
+    if wide == (0 as *u16) { return; }
+    let _r: i32 = { u::SetWindowTextW(w, wide) };
+    sys::free_wide(wide);
+    return;
+}
+
+fn window_host() -> app_window::WindowHost {
+    var h: app_window::WindowHost = app_window::empty_host();
+    h.frame = wh_frame;
+    h.set_frame = wh_set_frame;
+    h.is_active = wh_is_active;
+    h.density = wh_density;
+    h.title = wh_title;
+    h.set_title = wh_set_title;
+    h.close = wh_close;
+    return h;
 }
 
 #[test]
