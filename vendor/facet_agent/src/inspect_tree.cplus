@@ -52,6 +52,7 @@ import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/application" as app;
+import "facet/window" as win;
 import "facet/elements" as ui;
 import "facet/mount" as mount;
 import "facet/vocabulary" as vocab;
@@ -461,6 +462,13 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
 
     if prop == "flex_basis" { return option::Option[insp::Value]::Some(len_value({ (*n).style.flex_basis })); }
     if prop == "width" { return option::Option[insp::Value]::Some(len_value({ (*n).style.width })); }
+    // The window's content size — the root's laid-out frame — on a window root.
+    if prop == "window_width" || prop == "window_height" {
+        if !app::has_window_root(n) { return option::Option[insp::Value]::None; }
+        let f: flex::Frame = core::frame_of(n);
+        if prop == "window_width" { return num(f.width); }
+        return num(f.height);
+    }
     if prop == "height" { return option::Option[insp::Value]::Some(len_value({ (*n).style.height })); }
     if prop == "grow" { return num({ (*n).style.flex_grow }); }
     if prop == "shrink" { return num({ (*n).style.flex_shrink }); }
@@ -1924,6 +1932,15 @@ fn set_inner(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
         option::Option::None => { return insp::Outcome::UnknownProperty; }
     };
 
+    // THE WINDOW'S OWN SIZE (spendwise S48), on its root and nowhere else. Its
+    // own names, not `width`: the root's `width` is a style that round-trips
+    // points, percent and auto like every node's. Not journalled — it is not
+    // something the app declared, so `reset` has no value to put back.
+    if mine == "window_width" || mine == "window_height" {
+        if !app::has_window_root(n) { return insp::Outcome::UnknownProperty; }
+        return set_window_size(n, mine, v);
+    }
+
     // Record what the application declared, before the first inspector write
     // to this pair replaces it.
     match get(h, mine) {
@@ -1948,6 +1965,40 @@ fn set_inner(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
         _ => c,
     };
 }
+// The content size asked for, turned into the frame the backend takes: the
+// chrome around the content (title bar, borders) is the window's frame less
+// the root's laid-out size, and is kept. The origin is kept as the backend
+// reports it. The backend clamps to the window's own min/max, as a drag is
+// clamped, so `inspect` afterwards shows what the window really became.
+fn set_window_size(root: *core::Node, which: str, take v: insp::Value) -> insp::Outcome {
+    let asked: f64 = match num_of(v) {
+        option::Option[f64]::Some(x) => x,
+        option::Option::None => { return insp::Outcome::TypeMismatch; }
+    };
+    if asked <= 0.0f64 { return insp::Outcome::TypeMismatch; }
+    let ws: vec::Vec[win::Window] = win::all();
+    var i: usize = 0 as usize;
+    while i < ws.count() {
+        match ws.at_ptr(i) {
+            option::Option[*win::Window]::Some(w) => {
+                if (*w).root() == root {
+                    let outer: vocab::Rect = (*w).frame();
+                    if outer.width <= 0.0f64 { return insp::Outcome::Unsupported; }
+                    let content: flex::Frame = core::frame_of(root);
+                    var next: vocab::Rect = outer;
+                    if which == "window_width" { next.width = asked + (outer.width - content.width); }
+                    if which == "window_height" { next.height = asked + (outer.height - content.height); }
+                    (*w).set_frame(next);
+                    return insp::Outcome::Ok;
+                }
+            }
+            option::Option[*win::Window]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return insp::Outcome::NotFound;
+}
+
 // Reset, and then PUT THE OUTLINE BACK.
 //
 // A wrapper rather than a line before each `return`: this body has several exits

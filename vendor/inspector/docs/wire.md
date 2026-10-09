@@ -142,6 +142,28 @@ Colours come **back** by what they are, never by inventing channels:
 A property that is unset reads as `null`, not `0`. `auto` has no number to hand
 back unchanged, and `0` is a value a client would write back as a real zero.
 
+### Sizing a window: `window_width` and `window_height`
+
+A window's root node (the `@nav:window` row, depth 0) has two properties no
+other node has. `window_width` and `window_height` read the window's content
+size. Writing one sizes the window, as a person dragging an edge would. The
+window keeps its origin and its chrome. The backend clamps the size to the
+window's minimum and maximum, as it clamps a drag, so read the result back
+rather than assuming it.
+
+```json
+{ "node": 0, "property": "window_width", "value": 300 }   // → 300 wide, or the window's minimum
+```
+
+- The value must be a positive number. `"50%"`, `"auto"` and `0` answer
+  `type_mismatch`.
+- On any other node the answer is `unknown_property`.
+- A window the platform can't size (a phone's, or no backend) answers
+  `unsupported`.
+- The root's `width` is still its style, like every node's. The window size
+  isn't journalled, so `reset` doesn't put the old size back; set it again
+  instead.
+
 ### `insert`
 
 `element` is one of `vocabulary`'s names, spelled as `facet/elements`

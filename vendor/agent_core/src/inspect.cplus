@@ -676,6 +676,12 @@ fn table() -> vec::Vec[Descriptor] {
     let _s3: status::Status = v.append(d("max_width", "length", "points", "*", "", LENGTH_DOC));
     let _s4: status::Status = v.append(d("min_height", "length", "points", "*", "", LENGTH_DOC));
     let _s5: status::Status = v.append(d("max_height", "length", "points", "*", "", LENGTH_DOC));
+    // A WINDOW ROOT's own size (spendwise S48): the window, as a person drags
+    // it. Not `width`, which is the root's style like any other node's.
+    let _w0: status::Status = v.append(d("window_width", "number", "points", "window", "",
+        "On a window's root only: the window's content width. A write sizes the window as a drag would — clamped to its minimum and maximum, origin and chrome kept — so read it back afterwards. `reset` does not undo it."));
+    let _w1: status::Status = v.append(d("window_height", "number", "points", "window", "",
+        "On a window's root only: the window's content height. Written and clamped like `window_width`."));
     let _s6: status::Status = v.append(d("aspect_ratio", "number", "width/height", "*", "",
         "Width divided by height. Unset reads as nothing rather than as a number."));
     let _s7: status::Status = v.append(d("grow", "number", "factor", "*", "",

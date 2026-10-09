@@ -20,6 +20,7 @@ import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/application" as app;
+import "facet/window" as fwin;
 import "facet/vocabulary" as vocab;
 import "facet/props" as props;
 import "facet/label" as label;
@@ -4774,4 +4775,97 @@ fn two_embedded_inspectors_paint_only_their_own_property_fields_and_status() {
     widget::paint_editor(#addr_of(b), "text", "new B");
     assert widget::field_text(#addr_of(b), "insp:f:text".to_text()) == "new B";
     mount::unmount(#addr_of(second)); mount::unmount(#addr_of(first));
+}
+
+// ---- S48: a window root's window_width / window_height are the window's ------
+
+static WS_ASKED: vocab::Rect = #zero::[vocab::Rect]();
+static WS_CALLS: i32 = 0;
+
+// A window 20 wider and 40 taller than its content: the title bar and borders.
+fn ws_frame(w: *flex::Node) -> vocab::Rect { return vocab::Rect::of(10.0f64, 20.0f64, 300.0f64, 220.0f64); }
+fn ws_set_frame(w: *flex::Node, r: vocab::Rect) { WS_ASKED = r; WS_CALLS = WS_CALLS + 1; return; }
+
+fn ws_install() {
+    var h: fwin::WindowHost = fwin::empty_host();
+    h.frame = ws_frame;
+    h.set_frame = ws_set_frame;
+    fwin::install_host(h);
+    WS_CALLS = 0;
+    WS_ASKED = #zero::[vocab::Rect]();
+}
+
+#[test]
+fn window_width_on_a_root_sizes_the_window_and_keeps_its_chrome() {
+    fresh();
+    ws_install();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    root.calculate_layout(width: 280.0f64, height: 180.0f64);
+    let h: insp::Handle = row_for(tree::describe(), "root");
+
+    // Read: the content size.
+    assert num_prop(h, "window_width") == 280.0f64;
+    assert num_prop(h, "window_height") == 180.0f64;
+
+    assert tree::set(h, "window_width", insp::Value::Num(400.0f64)) == insp::Outcome::Ok;
+    assert WS_CALLS == 1;
+    assert WS_ASKED.width == 420.0f64;      // 400 of content + 20 of chrome
+    assert WS_ASKED.height == 220.0f64;     // untouched
+    assert WS_ASKED.x == 10.0f64 && WS_ASKED.y == 20.0f64;
+
+    assert tree::set(h, "window_height", insp::Value::Int(500)) == insp::Outcome::Ok;
+    assert WS_ASKED.height == 540.0f64;     // 500 + 40
+    assert WS_ASKED.width == 300.0f64;
+
+    // The root's own style is a different property, untouched.
+    assert str_prop(h, "width") == "auto" || !tree::is_overridden(#addr_of(root), "width");
+    fwin::uninstall_host();
+}
+
+#[test]
+fn a_window_size_must_be_a_positive_number() {
+    fresh();
+    ws_install();
+    var body: core::Builder = core::Builder::new();
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    root.calculate_layout(width: 280.0f64, height: 180.0f64);
+    let h: insp::Handle = row_for(tree::describe(), "root");
+    assert tree::set(h, "window_width", insp::Value::Str(text::from_str("50%"))) == insp::Outcome::TypeMismatch;
+    assert tree::set(h, "window_width", insp::Value::Num(0.0f64)) == insp::Outcome::TypeMismatch;
+    assert WS_CALLS == 0;
+    fwin::uninstall_host();
+}
+
+#[test]
+fn a_window_the_platform_cannot_size_says_so() {
+    // No frame at all — a phone's window, or no backend.
+    fresh();
+    fwin::uninstall_host();
+    var body: core::Builder = core::Builder::new();
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = row_for(tree::describe(), "root");
+    assert tree::set(h, "window_width", insp::Value::Num(400.0f64)) == insp::Outcome::Unsupported;
+}
+
+#[test]
+fn window_width_is_not_a_property_of_a_node_inside_the_window() {
+    fresh();
+    ws_install();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "inner"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = row_for(tree::describe(), "inner");
+    assert tree::set(h, "window_width", insp::Value::Num(120.0f64)) == insp::Outcome::UnknownProperty;
+    match tree::get(h, "window_width") {
+        option::Option[insp::Value]::Some(v) => { assert false; }
+        option::Option::None => { }
+    }
+    assert WS_CALLS == 0;
+    fwin::uninstall_host();
 }

@@ -364,6 +364,16 @@ Records the application's value on the first write to a given (node, property),
 then applies. Checks liveness, then existence, then writability, then type, so
 the answer names the first thing that was wrong.
 
+`window_width` and `window_height` exist on a **window root** only, and on any
+other node they're `UnknownProperty`. They read the window's content size.
+Writing one sizes the window through `facet/window`'s `set_frame`, keeping its
+origin and chrome. The window's own minimum and maximum clamp the size.
+- Only a positive number is accepted; anything else is `TypeMismatch`.
+- A window with no frame to size is `Unsupported`.
+- The write isn't recorded, so `reset` doesn't undo it.
+
+See [wire.md](wire.md#sizing-a-window-window_width-and-window_height).
+
 ### `reset`
 
 ```cplus
