@@ -27,6 +27,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 import "facet/app_events" as ev;
 import "./filepicker" as fp;
+import "facet_android/dex" as fdex;
 
 // Distinct enough not to collide with an app's own flows, and stable so a
 // result arriving after a rotation still finds us.
@@ -187,12 +188,17 @@ export extern fn _filepicker_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
     match _env_ready() {
         option::Option[rt::Env]::None => { return 1; }
         option::Option[rt::Env]::Some(env) => {
+            // ONE AT A TIME, as on Linux: a second chooser while one is up
+            // would take the first one's handler, which then never runs.
+            if _ON_PICK != 0 { return 4; }
             _subscribe();
             _ON_PICK = { on_pick as usize };
             _CTX = { #addr(ctx) };
-            return _launch(env, "android.intent.action.OPEN_DOCUMENT",
+            let rc: i32 = _launch(env, "android.intent.action.OPEN_DOCUMENT",
                            _mime_for({ #str_from_raw_parts(types, types_len) }),
                            "", _REQ_OPEN);
+            if rc != 0 { _ON_PICK = 0; _CTX = 0; }
+            return rc;
         }
     }
 }
@@ -202,12 +208,90 @@ export extern fn _filepicker_save(suggested: *u8, suggested_len: usize,
     match _env_ready() {
         option::Option[rt::Env]::None => { return 1; }
         option::Option[rt::Env]::Some(env) => {
+            if _ON_PICK != 0 { return 4; }
             _subscribe();
             _ON_PICK = { on_pick as usize };
             _CTX = { #addr(ctx) };
-            return _launch(env, "android.intent.action.CREATE_DOCUMENT", "*/*",
+            let rc: i32 = _launch(env, "android.intent.action.CREATE_DOCUMENT", "*/*",
                            { #str_from_raw_parts(suggested, suggested_len) },
                            _REQ_SAVE);
+            if rc != 0 { _ON_PICK = 0; _CTX = 0; }
+            return rc;
+        }
+    }
+}
+
+// ---- FileRef's URI half --------------------------------------------------------
+//
+// A URI is opened through the ContentResolver, by facet_android's FacetFiles;
+// a file is the exchange medium. Any Context reaches the resolver, so the
+// Application context serves from the app's entry, before a window exists.
+
+fn _resolver_context() -> jni::jobject {
+    if ev::has_app_context() { return { ev::app_context() as jni::jobject }; }
+    return { ev::host() as jni::jobject };
+}
+
+fn _resolver_env() -> option::Option[rt::Env] {
+    if !ev::has_host_runtime() { return option::Option[rt::Env]::None; }
+    if !ev::has_app_context() && !ev::has_host() { return option::Option[rt::Env]::None; }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return option::Option[rt::Env]::None; }
+    return option::Option[rt::Env]::Some(env);
+}
+
+// A Java String as owned UTF-8, released before returning.
+fn _text_of(env: rt::Env, s: jni::jobject) -> text::Text {
+    if s == (0 as jni::jobject) { return text::new(); }
+    let n: usize = { (*(*env.raw())).GetStringUTFLength(env.raw(), s as jni::jstring) } as usize;
+    let chars: *u8 = { (*(*env.raw())).GetStringUTFChars(env.raw(), s as jni::jstring, 0 as *jni::jboolean) };
+    if chars.is_null() { return text::new(); }
+    let out: text::Text = { #str_from_raw_parts(chars, n) }.to_text();
+    { (*(*env.raw())).ReleaseStringUTFChars(env.raw(), s as jni::jstring, chars) };
+    return out;
+}
+
+export extern fn _filepicker_uri_copy(from: *u8, from_len: usize, to: *u8, to_len: usize, into_uri: bool) -> i32 {
+    match _resolver_env() {
+        option::Option[rt::Env]::None => { return 1; }
+        option::Option[rt::Env]::Some(env) => {
+            let a: jni::jstring = _jstr(env, { #str_from_raw_parts(from, from_len) });
+            let b: jni::jstring = _jstr(env, { #str_from_raw_parts(to, to_len) });
+            let ctx: jni::jobject = _resolver_context();
+            let r: i32 = if into_uri { fdex::copy_to_uri(env, ctx, a, b) } else { fdex::copy_from_uri(env, ctx, a, b) };
+            env.delete_local_ref(a);
+            env.delete_local_ref(b);
+            return r;
+        }
+    }
+}
+
+export extern fn _filepicker_uri_name(uri: *u8, uri_len: usize, into: *text::Text) -> bool {
+    if into.is_null() { return false; }
+    match _resolver_env() {
+        option::Option[rt::Env]::None => { return false; }
+        option::Option[rt::Env]::Some(env) => {
+            let u: jni::jstring = _jstr(env, { #str_from_raw_parts(uri, uri_len) });
+            let name: jni::jobject = fdex::display_name(env, _resolver_context(), u);
+            env.delete_local_ref(u);
+            if name == (0 as jni::jobject) { return false; }
+            { *into = _text_of(env, name) };
+            env.delete_local_ref(name);
+            return true;
+        }
+    }
+}
+
+export extern fn _filepicker_scratch(into: *text::Text) -> bool {
+    if into.is_null() { return false; }
+    match _resolver_env() {
+        option::Option[rt::Env]::None => { return false; }
+        option::Option[rt::Env]::Some(env) => {
+            let at: jni::jobject = fdex::scratch_file(env, _resolver_context());
+            if at == (0 as jni::jobject) { return false; }
+            { *into = _text_of(env, at) };
+            env.delete_local_ref(at);
+            return true;
         }
     }
 }

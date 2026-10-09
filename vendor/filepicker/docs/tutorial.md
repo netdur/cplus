@@ -44,17 +44,29 @@ fp::save("report.pdf", picked);
 
 `Unsupported` on iOS, which has no such picker.
 
-## 5. Read what came back
+## 5. Read or write what came back
 
 ```cplus
 fn picked(p: fp::Pick, ctx: *u8) {
     if !p.chose() { return; }
-    // macOS, iOS, Linux, and Windows: a real path.
-    // Android: a content:// URI — use ContentResolver, not fs::open_read.
+    let f: fp::FileRef = p.file();
+    match f.read_text() {
+        result::Result[text::Text, result::IoError]::Ok(body) => { show(body.view()); }
+        result::Result[text::Text, result::IoError]::Err(e) => {}
+    }
+}
+
+fn save_to(p: fp::Pick, ctx: *u8) {
+    if !p.chose() { return; }
+    let _w = p.file().write("date,amount\n");
 }
 ```
 
-## 6. Copy it if you keep it
+`p.path` is a real path on macOS, iOS, Linux and Windows, and a `content://`
+URI on Android, which `fs` can't open. A `FileRef` reads and writes either.
+When an API only takes a path, use `f.copy_to(dir)` to get a real file.
+
+## 6. Keep the FileRef, not the path
 
 `path` is borrowed for the dispatch, like every handler string in this repo.
-Storing it is a use-after-free; copy it into a `Text` first.
+Storing it is a use-after-free. `p.file()` copies it, so keep the `FileRef`.

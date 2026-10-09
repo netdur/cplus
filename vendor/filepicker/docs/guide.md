@@ -33,9 +33,17 @@ handed through as `path` because it is what the platform gives:
 // Android: this will NOT work
 let f = fs::open_read(p.path);
 
-// Android: read it through the resolver
-// ContentResolver.openInputStream(Uri.parse(p.path))
+// Every platform: a FileRef opens either
+let doc: fp::FileRef = p.file();
+let body = doc.read_text();
 ```
+
+`FileRef` sends a URI through `ContentResolver`, via facet_android's
+`FacetFiles`. A file in the app's cache carries the bytes, so no byte array
+crosses JNI. `write` opens the output stream `"wt"`: with a plain `"w"`, some
+providers keep the old tail when the new content is shorter. `copy_to(dir)`
+gives a real file for an API that only takes a path, such as sqlite or an
+image decoder.
 
 The permission it carries is **per-process** and dies with the app unless
 `takePersistableUriPermission` is called — a decision about long-term access

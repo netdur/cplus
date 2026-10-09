@@ -2,6 +2,11 @@
 
 import "stdlib/option" as option;
 import "stdlib/box" as box;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/result" as result;
+import "stdlib/fs" as fs;
+import "stdlib/path" as path;
 
 enum Outcome {
     // The picker was SHOWN. The chosen path arrives on the handler.
@@ -50,6 +55,158 @@ struct Pick {
 
 impl Pick {
     fn chose(this) -> bool { return #str_len(this.path) > (0 as usize); }
+
+    // The choice as something to read or write — a real path or an Android
+    // `content://` URI alike. Owned, so it outlives the handler.
+    fn file(this) -> FileRef { return FileRef::of(this.path); }
+}
+
+// A file the platform handed over: a filesystem path, or on Android a
+// `content://` URI that only a ContentResolver opens. Every method works on
+// either, so nothing has to ask which it is first.
+//
+// A URI's access lasts as long as the process (the picker takes no persistable
+// grant), so keep the FileRef for the session, not across launches.
+struct FileRef {
+    _where: text::Text,
+}
+
+impl FileRef {
+    // Rebuild one from what `location()` gave back.
+    fn of(location: str) -> FileRef { return FileRef { _where: location.to_text() }; }
+
+    // The path or URI, verbatim.
+    fn location(this) -> str { return this._where.view(); }
+
+    // True for a filesystem path — `fs` can open it directly.
+    fn is_path(this) -> bool { return !this._where.view().contains("://"); }
+
+    // The name a person would recognise: the provider's display name for a
+    // URI (falling back to its last segment), the file name for a path.
+    fn name(this) -> text::Text {
+        let at: str = this._where.view();
+        if this.is_path() { return path::file_name(at).to_text(); }
+        var shown: text::Text = text::new();
+        if { _filepicker_uri_name(#str_ptr(at), #str_len(at), #addr_of(shown)) } && !shown.is_empty() {
+            return shown;
+        }
+        return path::file_name(at).to_text();
+    }
+
+    fn read(this) -> result::Result[vec::Vec[u8], result::IoError] {
+        if this.is_path() { return _read_bytes(this._where.view()); }
+        match _scratch() {
+            result::Result[text::Text, result::IoError]::Ok(tmp) => {
+                let code: i32 = _copy(this._where.view(), tmp.view(), false);
+                if code != (0 as i32) {
+                    let _rm = fs::remove_file(tmp.view());
+                    return result::io_err::[vec::Vec[u8]](_io_error(code));
+                }
+                let got: result::Result[vec::Vec[u8], result::IoError] = _read_bytes(tmp.view());
+                let _rm = fs::remove_file(tmp.view());
+                return got;
+            }
+            result::Result[text::Text, result::IoError]::Err(e) => { return result::io_err::[vec::Vec[u8]](e); }
+        }
+    }
+
+    // UTF-8 text; `InvalidData` when it is not.
+    fn read_text(this) -> result::Result[text::Text, result::IoError] {
+        if this.is_path() { return fs::read_to_string(this._where.view()); }
+        match _scratch() {
+            result::Result[text::Text, result::IoError]::Ok(tmp) => {
+                let code: i32 = _copy(this._where.view(), tmp.view(), false);
+                if code != (0 as i32) {
+                    let _rm = fs::remove_file(tmp.view());
+                    return result::io_err::[text::Text](_io_error(code));
+                }
+                let got: result::Result[text::Text, result::IoError] = fs::read_to_string(tmp.view());
+                let _rm = fs::remove_file(tmp.view());
+                return got;
+            }
+            result::Result[text::Text, result::IoError]::Err(e) => { return result::io_err::[text::Text](e); }
+        }
+    }
+
+    // Replace the contents — what a `save` choice is for. Returns the bytes
+    // written.
+    fn write(this, contents: str) -> result::Result[usize, result::IoError] {
+        if this.is_path() { return fs::write_string(this._where.view(), contents); }
+        match _scratch() {
+            result::Result[text::Text, result::IoError]::Ok(tmp) => {
+                match fs::write_string(tmp.view(), contents) {
+                    result::Result[usize, result::IoError]::Ok(n) => {
+                        let code: i32 = _copy(tmp.view(), this._where.view(), true);
+                        let _rm = fs::remove_file(tmp.view());
+                        if code != (0 as i32) { return result::io_err::[usize](_io_error(code)); }
+                        return result::io_ok::[usize](n);
+                    }
+                    result::Result[usize, result::IoError]::Err(e) => {
+                        let _rm = fs::remove_file(tmp.view());
+                        return result::io_err::[usize](e);
+                    }
+                }
+            }
+            result::Result[text::Text, result::IoError]::Err(e) => { return result::io_err::[usize](e); }
+        }
+    }
+
+    // A real file in `dir`, named `name()`, holding the same bytes — for an
+    // API that only takes a path (sqlite, an image decoder). Returns its path;
+    // an existing file of that name is replaced.
+    fn copy_to(this, dir: str) -> result::Result[text::Text, result::IoError] {
+        let shown: text::Text = this.name();
+        if shown.is_empty() { return result::io_err::[text::Text](result::IoError::InvalidInput); }
+        let dst: text::Text = path::join(dir, shown.view());
+        if this.is_path() {
+            match _read_bytes(this._where.view()) {
+                result::Result[vec::Vec[u8], result::IoError]::Ok(bytes) => {
+                    match fs::write_string(dst.view(), bytes.as_byte_view()) {
+                        result::Result[usize, result::IoError]::Ok(n) => { return result::io_ok::[text::Text](dst); }
+                        result::Result[usize, result::IoError]::Err(e) => { return result::io_err::[text::Text](e); }
+                    }
+                }
+                result::Result[vec::Vec[u8], result::IoError]::Err(e) => { return result::io_err::[text::Text](e); }
+            }
+        }
+        let code: i32 = _copy(this._where.view(), dst.view(), false);
+        if code != (0 as i32) { return result::io_err::[text::Text](_io_error(code)); }
+        return result::io_ok::[text::Text](dst);
+    }
+}
+
+fn _read_bytes(p: str) -> result::Result[vec::Vec[u8], result::IoError] {
+    match fs::open_read(p) {
+        result::Result[fs::File, result::IoError]::Ok(f) => {
+            var file: fs::File = f;
+            return file.read_to_end();
+        }
+        result::Result[fs::File, result::IoError]::Err(e) => { return result::io_err::[vec::Vec[u8]](e); }
+    }
+}
+
+// A URI copy, either way round: `into_uri` false reads URI `from` into file
+// `to`; true writes file `from` into URI `to`.
+fn _copy(from: str, to: str, into_uri: bool) -> i32 {
+    return { _filepicker_uri_copy(#str_ptr(from), #str_len(from), #str_ptr(to), #str_len(to), into_uri) };
+}
+
+fn _scratch() -> result::Result[text::Text, result::IoError] {
+    var at: text::Text = text::new();
+    if !{ _filepicker_scratch(#addr_of(at)) } || at.is_empty() {
+        // Off Android no resolver exists, so a URI is not something to open.
+        if #platform() != "android" { return result::io_err::[text::Text](result::IoError::InvalidInput); }
+        return result::io_err::[text::Text](result::IoError::Other);
+    }
+    return result::io_ok::[text::Text](at);
+}
+
+// The seam's codes: 0 done, 1 no resolver here (not Android, or no context
+// yet), 2 nothing at the URI, 3 the provider failed.
+fn _io_error(code: i32) -> result::IoError {
+    if code == (2 as i32) { return result::IoError::NotFound; }
+    if code == (1 as i32) { return result::IoError::InvalidInput; }
+    return result::IoError::Other;
 }
 
 fn available() -> bool {
@@ -76,8 +233,11 @@ fn open(on_pick: fn(Pick, *u8),
     if on_pick.is_null() { return Outcome::InvalidInput; }
     let b: *u8 = _bridge(on_pick, ctx);
     if b.is_null() { return Outcome::Failed; }
-    return Outcome::from_code({ _filepicker_open(_tramp, b,
-                                        #str_ptr(types), #str_len(types)) });
+    let code: i32 = { _filepicker_open(_tramp, b, #str_ptr(types), #str_len(types)) };
+    // Not shown means the handler will never run, so nothing frees the bridge
+    // but this.
+    if code != (0 as i32) { let _gone = box::from_raw::[_Bridge](b); }
+    return Outcome::from_code(code);
 }
 
 // Choose where to write a new file.
@@ -91,8 +251,9 @@ fn save(suggested: str,
     if #str_len(suggested) == (0 as usize) { return Outcome::InvalidInput; }
     let b: *u8 = _bridge(on_pick, ctx);
     if b.is_null() { return Outcome::Failed; }
-    return Outcome::from_code({ _filepicker_save(#str_ptr(suggested), #str_len(suggested),
-                                        _tramp, b) });
+    let code: i32 = { _filepicker_save(#str_ptr(suggested), #str_len(suggested), _tramp, b) };
+    if code != (0 as i32) { let _gone = box::from_raw::[_Bridge](b); }
+    return Outcome::from_code(code);
 }
 
 // ---- the seam ----------------------------------------------------------------
@@ -116,6 +277,9 @@ fn _tramp(path: *u8, path_len: usize, ctx: *u8) {
     let b: *_Bridge = ctx as *_Bridge;
     let f: fn(Pick, *u8) = { (*b).on_pick };
     let user: *u8 = { (*b).ctx };
+    // Every backend calls this exactly once per bridge, so the bridge ends
+    // here. It used to outlive every pick.
+    let _gone = box::from_raw::[_Bridge](ctx);
     var p: Pick = Pick { path: "" };
     if path.is_not_null() && path_len > (0 as usize) {
         p.path = { #str_from_raw_parts(path, path_len) };
@@ -133,7 +297,135 @@ fn _bridge(on_pick: fn(Pick, *u8), ctx: *u8) -> *u8 {
 }
 
 extern fn _filepicker_available() -> i32;
+extern fn _filepicker_uri_copy(from: *u8, from_len: usize, to: *u8, to_len: usize, into_uri: bool) -> i32;
+extern fn _filepicker_uri_name(uri: *u8, uri_len: usize, into: *text::Text) -> bool;
+extern fn _filepicker_scratch(into: *text::Text) -> bool;
 extern fn _filepicker_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
                   types: *u8, types_len: usize) -> i32;
 extern fn _filepicker_save(suggested: *u8, suggested_len: usize,
                   on_pick: fn(*u8, usize, *u8), ctx: *u8) -> i32;
+
+// ---- FileRef ---------------------------------------------------------------------
+
+extern fn getpid() -> i32;
+
+fn _scratch_dir() -> text::Text {
+    let pid: i32 = { getpid() };
+    let dir: text::Text = "/tmp/filepicker-fileref-${pid}";
+    let _m = fs::create_dir_all(dir.view());
+    return dir;
+}
+
+#[test]
+fn a_fileref_knows_a_path_from_a_uri() {
+    let a: FileRef = FileRef::of("/tmp/notes.txt");
+    assert a.is_path();
+    let b: FileRef = FileRef::of("content://com.android.providers.downloads.documents/document/42");
+    assert !b.is_path();
+    assert b.location() == "content://com.android.providers.downloads.documents/document/42";
+}
+
+#[test]
+fn a_pick_becomes_a_fileref_that_outlives_it() {
+    var held: FileRef = FileRef::of("");
+    {
+        let p: Pick = Pick { path: "/tmp/a picked/name.csv" };
+        held = p.file();
+    }
+    assert held.location() == "/tmp/a picked/name.csv";
+    let shown: text::Text = held.name();
+    assert shown.view() == "name.csv";
+}
+
+#[test]
+fn a_fileref_writes_then_reads_back_what_it_wrote() {
+    let dir: text::Text = _scratch_dir();
+    let at: text::Text = path::join(dir.view(), "budget.csv");
+    let f: FileRef = FileRef::of(at.view());
+    match f.write("a,b\n1,2\n") {
+        result::Result[usize, result::IoError]::Ok(n) => { assert n == (8 as usize); }
+        result::Result[usize, result::IoError]::Err(e) => { assert false; }
+    }
+    match f.read_text() {
+        result::Result[text::Text, result::IoError]::Ok(t) => { assert t.view() == "a,b\n1,2\n"; }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    match f.read() {
+        result::Result[vec::Vec[u8], result::IoError]::Ok(b) => { assert b.count() == (8 as usize); }
+        result::Result[vec::Vec[u8], result::IoError]::Err(e) => { assert false; }
+    }
+    // A shorter write replaces, it does not leave the old tail.
+    let _w = f.write("x");
+    match f.read_text() {
+        result::Result[text::Text, result::IoError]::Ok(t) => { assert t.view() == "x"; }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    let _r = fs::remove_file(at.view());
+}
+
+#[test]
+fn copy_to_lands_a_real_file_under_its_own_name() {
+    let dir: text::Text = _scratch_dir();
+    let src: text::Text = path::join(dir.view(), "photo.jpg");
+    let _w = fs::write_string(src.view(), "jpeg-bytes");
+    let into: text::Text = path::join(dir.view(), "imported");
+    let _m = fs::create_dir_all(into.view());
+    let f: FileRef = FileRef::of(src.view());
+    match f.copy_to(into.view()) {
+        result::Result[text::Text, result::IoError]::Ok(p) => {
+            let expect: text::Text = path::join(into.view(), "photo.jpg");
+            assert p.view() == expect.view();
+            match fs::read_to_string(p.view()) {
+                result::Result[text::Text, result::IoError]::Ok(t) => { assert t.view() == "jpeg-bytes"; }
+                result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+            }
+            let _r = fs::remove_file(p.view());
+        }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    let _r = fs::remove_file(src.view());
+}
+
+#[test]
+fn reading_nothing_is_not_found() {
+    let f: FileRef = FileRef::of("/tmp/filepicker-there-is-nothing-here-zz");
+    match f.read() {
+        result::Result[vec::Vec[u8], result::IoError]::Ok(b) => { assert false; }
+        result::Result[vec::Vec[u8], result::IoError]::Err(e) => { assert e == result::IoError::NotFound; }
+    }
+}
+
+#[test]
+fn off_android_a_uri_is_refused_and_named_by_its_last_segment() {
+    if #platform() == "android" { return; }
+    let f: FileRef = FileRef::of("content://provider/document/report.pdf");
+    match f.read() {
+        result::Result[vec::Vec[u8], result::IoError]::Ok(b) => { assert false; }
+        result::Result[vec::Vec[u8], result::IoError]::Err(e) => { assert e == result::IoError::InvalidInput; }
+    }
+    let shown: text::Text = f.name();
+    assert shown.view() == "report.pdf";
+}
+
+static _HEARD: i32 = 0;
+static _HEARD_LEN: usize = 0 as usize;
+
+fn _heard(p: Pick, ctx: *u8) {
+    _HEARD = _HEARD + 1;
+    _HEARD_LEN = #str_len(p.path);
+    return;
+}
+
+#[test]
+fn the_trampoline_hands_over_the_path_once_and_a_cancel_as_empty() {
+    _HEARD = 0;
+    let chose: *u8 = _bridge(_heard, 0 as *u8);
+    let at: str = "content://p/d/7";
+    _tramp(#str_ptr(at), #str_len(at), chose);
+    assert _HEARD == 1;
+    assert _HEARD_LEN == #str_len(at);
+    let cancelled: *u8 = _bridge(_heard, 0 as *u8);
+    _tramp(0 as *u8, 0 as usize, cancelled);
+    assert _HEARD == 2;
+    assert _HEARD_LEN == (0 as usize);
+}

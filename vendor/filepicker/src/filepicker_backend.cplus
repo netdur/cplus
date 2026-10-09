@@ -13,6 +13,7 @@
 // stored by AppKit until the panel closes — verified safe on an iPad against
 // CMAltimeter, which stores its handler far longer.
 
+import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/box" as box;
 import "objc/runtime" as rt;
@@ -187,3 +188,9 @@ export extern fn _filepicker_save(suggested: *u8, suggested_len: usize,
     _begin(panel, p);
     return 0;
 }
+
+// FileRef's URI half. Only Android hands over a URI; here a FileRef is always
+// a path and the facade never reaches these.
+export extern fn _filepicker_uri_copy(from: *u8, from_len: usize, to: *u8, to_len: usize, into_uri: bool) -> i32 { return 1; }
+export extern fn _filepicker_uri_name(uri: *u8, uri_len: usize, into: *text::Text) -> bool { return false; }
+export extern fn _filepicker_scratch(into: *text::Text) -> bool { return false; }

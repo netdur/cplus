@@ -447,3 +447,9 @@ fn availability_is_asked_of_the_portal_not_assumed() {
     let a: i32 = { _filepicker_available() };
     assert a == (0 as i32) || a == (1 as i32);
 }
+
+// FileRef's URI half. Only Android hands over a URI; here a FileRef is always
+// a path and the facade never reaches these.
+export extern fn _filepicker_uri_copy(from: *u8, from_len: usize, to: *u8, to_len: usize, into_uri: bool) -> i32 { return 1; }
+export extern fn _filepicker_uri_name(uri: *u8, uri_len: usize, into: *text::Text) -> bool { return false; }
+export extern fn _filepicker_scratch(into: *text::Text) -> bool { return false; }

@@ -157,3 +157,9 @@ export extern fn _filepicker_save(suggested: *u8, suggested_len: usize,
 fn a_file_dialog_is_available_on_windows() {
     assert { _filepicker_available() } == (1 as i32);
 }
+
+// FileRef's URI half. Only Android hands over a URI; here a FileRef is always
+// a path and the facade never reaches these.
+export extern fn _filepicker_uri_copy(from: *u8, from_len: usize, to: *u8, to_len: usize, into_uri: bool) -> i32 { return 1; }
+export extern fn _filepicker_uri_name(uri: *u8, uri_len: usize, into: *text::Text) -> bool { return false; }
+export extern fn _filepicker_scratch(into: *text::Text) -> bool { return false; }
