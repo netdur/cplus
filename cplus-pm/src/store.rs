@@ -105,8 +105,8 @@ pub fn m2_dir(root: &std::path::Path) -> PathBuf {
 /// rather than a [`Store`] because tag records are tier-independent.
 pub fn tag_record(root: &std::path::Path, repo: &str, tag: &str) -> PathBuf {
     root.join("tags")
-        .join(crate::fetch::sanitize(repo))
-        .join(crate::fetch::sanitize(tag))
+        .join(crate::fetch::slot_key(repo))
+        .join(crate::fetch::slot_key(tag))
 }
 
 #[cfg(test)]
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(s.cache_dir(), PathBuf::from("/tmp/home/cache"));
         assert_eq!(
             tag_record(&s.root, "github.com/netdur/cplus", "v0.0.27"),
-            PathBuf::from("/tmp/home/tags/github.com_netdur_cplus/v0.0.27")
+            PathBuf::from("/tmp/home/tags/github.com_2fnetdur_2fcplus/v0.0.27")
         );
         // The Maven repo hangs off the ROOT, not the tier: coordinates are
         // immutable, so every tier reads the same bytes.

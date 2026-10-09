@@ -97,7 +97,7 @@ fn install_populates_the_store_transitively_via_cli() {
     // The clone cache and the tag record live under the store root.
     assert!(store.join("cache").is_dir());
     assert!(store
-        .join("tags/github.com_netdur_cplus/v0.0.26")
+        .join("tags/github.com_2fnetdur_2fcplus/v0.0.26")
         .is_file());
 }
 

@@ -43,11 +43,21 @@ a context, bare `*` deps cannot resolve and global install has no tier.
 
 ```text
 ~/.cplus/                        ($CPLUS_HOME overrides the root)
-  cache/                         disposable git clones — safe to delete
+  cache/<repo>/<tag>/source      disposable git clones — safe to delete
   tags/<repo>/<tag>              first-seen commit per release tag (D8)
   m2/<group>/<artifact>/<ver>/   the local Maven repo (D18) — NOT tiered
   v0.0.29/vendor/<name>/         the store tier: one package set per line
 ```
+
+`<repo>` and `<tag>` are escaped, not just tidied: `[A-Za-z0-9.-]` stays as
+written, `_` becomes `__`, and any other byte becomes `_` plus two hex digits.
+So `gitlab.com/acme/my_lib` is `gitlab.com_2facme_2fmy__lib`. The escaping is
+reversible, so no two repos share a slot or a tag record. The old mapping
+turned both `/` and `_` into `_`, which let `gitlab.com/acme_my/lib` be
+installed as `gitlab.com/acme/my_lib` (security audit F01). Slots and records
+in the old form aren't read: the cache re-clones once, and each tag is
+recorded again at its next fetch. A cached clone is reused only if its
+`origin` is the URL being asked for.
 
 The tier is derived from the toolchain version: exact pre-1.0 (`v0.0.29`),
 `major.minor` post-1.0 (`v1.2`). A different toolchain version is a
