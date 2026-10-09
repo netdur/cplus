@@ -931,7 +931,8 @@ fn init_three_platforms_serve_the_inspector_from_one_line() {
 ///
 /// Read out of facet's own source rather than restated here: restating is how
 /// the drift this guards against happened in the first place.
-fn lifecycle_signatures() -> Vec<(String, String)> {
+/// `(name, params, has_default_body)` for each method of `interface Lifecycle`.
+fn lifecycle_signatures() -> Vec<(String, String, bool)> {
     let src = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../vendor/facet/src/component.cplus"),
     )
@@ -940,7 +941,9 @@ fn lifecycle_signatures() -> Vec<(String, String)> {
         .split_once("interface Lifecycle {")
         .expect("interface Lifecycle")
         .1
-        .split_once('}')
+        // The interface's own closing brace, at the start of a line — not the
+        // first `}`, which is a defaulted method's empty body.
+        .split_once("\n}")
         .expect("its closing brace")
         .0;
     body.lines()
@@ -948,7 +951,8 @@ fn lifecycle_signatures() -> Vec<(String, String)> {
             let l = l.trim().strip_prefix("fn ")?;
             let (name, rest) = l.split_once('(')?;
             let params = rest.split(')').next()?;
-            Some((name.to_string(), params.to_string()))
+            let has_default = rest.contains('{');
+            Some((name.to_string(), params.to_string(), has_default))
         })
         .collect()
 }
@@ -984,7 +988,7 @@ fn kind_gui_implements_the_lifecycle_interface_facet_actually_declares() {
         !sigs.is_empty(),
         "read no methods out of interface Lifecycle — the parse above is stale"
     );
-    for (name, params) in &sigs {
+    for (name, params, has_default) in &sigs {
         // An implementor outside facet writes `component::Attach` where the
         // interface, being in that module, writes `Attach`. The qualifier is
         // not the thing being checked, so it comes off both sides.
@@ -995,6 +999,18 @@ fn kind_gui_implements_the_lifecycle_interface_facet_actually_declares() {
             .filter(|l| l.starts_with(&format!("fn {name}(")))
             .filter_map(|l| l.split_once('(')?.1.split(')').next().map(strip_qualifiers))
             .collect();
+        // LEAVING ONE OUT IS FINE when the interface gives it a body: the
+        // scaffold writes only what a screen needs (4ff62f73). What must never
+        // happen is a method written with a signature the interface no longer
+        // has, or one left out that the interface does not default.
+        if got.is_empty() {
+            assert!(
+                has_default,
+                "the scaffold leaves out `{name}`, which interface Lifecycle does not \
+                 default — the generated app will not build. Update cpc/src/main.rs."
+            );
+            continue;
+        }
         assert!(
             got.iter().any(|g| *g == want),
             "the scaffolded Lifecycle impl does not match the interface facet \
