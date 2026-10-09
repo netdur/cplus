@@ -894,11 +894,11 @@ platform's agent package in its `Cplus.toml`, then names ITSELF with
 `runtime::agent_mcp(id)`.
 
 `agent_mcp` takes an **id, not an address** — a name like `"myapp"`, from which
-the platform derives where to listen: `/tmp/mcp-<id>-<pid>.socket` at mode 0600
+the platform derives where to listen: `/tmp/cplus-<uid>/mcp-<id>-<pid>.socket` at mode 0600
 plus `http://127.0.0.1:<9000+pid%1000>/` on a desktop, the HTTP port alone on a
 phone. Both are keyed on this process's pid, so a launcher that spawned the app
 can compute the address without being told; the app also reports it on stderr
-and writes it to `/tmp/mcp-<id>-<pid>.json`. An id containing `/` is refused.
+and writes it to `/tmp/cplus-<uid>/mcp-<id>-<pid>.json`. An id containing `/` is refused.
 
 It is available before application startup, and `App::agent_mcp(id)` forwards to it, defaulting to
 the app's own name when called with no argument. There is ONE address per

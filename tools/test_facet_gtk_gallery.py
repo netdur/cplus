@@ -121,7 +121,7 @@ def run(binary, rounds, native_input=False):
         with log.open("w") as output:
             process = subprocess.Popen([str(binary)], cwd=GALLERY, env=env,
                                        stdout=output, stderr=subprocess.STDOUT)
-        endpoint = Path(f"/tmp/mcp-facet_gallery-{process.pid}.socket")
+        endpoint = Path(f"/tmp/cplus-{os.getuid()}/mcp-facet_gallery-{process.pid}.socket")
         conn = socket.socket(socket.AF_UNIX)
         conn.settimeout(15)
         try:

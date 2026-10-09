@@ -15,7 +15,7 @@ and not the other.
 
 THE PORT IS DERIVED FROM THE PID: `9000 + pid % 1000`. It is not a number the
 app chooses and not one you configure — a launcher that started the app knows
-its pid, and `/tmp/mcp-<id>-<pid>.json` records what was actually bound for
+its pid, and `/tmp/cplus-<uid>/mcp-<id>-<pid>.json` records what was actually bound for
 anything that did not. On a device the same port arrives over usbmuxd
 (`iproxy <port> <port> <UDID>`), and nothing here changes.
 """

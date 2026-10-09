@@ -481,7 +481,7 @@ is filed under — and the platform decides the address from it. A launcher that
 started the app has the pid, so it can work out the FIRST choice; when another
 app already holds that port (pids that agree mod 1000 — every app on a simulator
 shares one loopback) the app binds the next free one and prints it at startup.
-So read `/tmp/mcp-<id>-<pid>.json` or the startup line, which record what was
+So read `/tmp/cplus-<uid>/mcp-<id>-<pid>.json` or the startup line, which record what was
 actually bound, and check `serverInfo.name` is this app.
 
 The wire is **Streamable HTTP**: one JSON-RPC object POSTed, one JSON object

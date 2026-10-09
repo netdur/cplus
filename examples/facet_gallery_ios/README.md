@@ -119,7 +119,7 @@ address**, which is the whole iOS story. A Unix socket lives inside the app's
 sandbox where nothing on the development machine can reach it, and to a real
 device there is no shared filesystem at all, so the iOS facade binds TCP on
 **loopback**, never on every interface: port `9000 + pid % 1000`, which a
-launcher holding the pid can work out and `/tmp/mcp-<id>-<pid>.json` records.
+launcher holding the pid can work out and `/tmp/cplus-<uid>/mcp-<id>-<pid>.json` records.
 This surface can read a UI and press its buttons; it is not something to put on
 a network.
 

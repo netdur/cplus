@@ -5,7 +5,7 @@
 
 THE PORT IS DERIVED FROM THE PID, not configured: `9000 + pid % 1000`. A
 launcher that started the app knows the pid; anything else reads what the app
-filed in /tmp/mcp-<id>-<pid>.json. (It used to be a literal 8787, passed by the
+filed in /tmp/cplus-<uid>/mcp-<id>-<pid>.json. (It used to be a literal 8787, passed by the
 app — and the app still passed "8787" for a while after that became the app's
 ID rather than its port, which is how it ended up serving somewhere nobody was
 looking.)

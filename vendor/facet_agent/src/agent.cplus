@@ -233,7 +233,7 @@ fn serve_main(take job: AgentServe) -> i32 {
 // Start the serve worker exactly once per process.
 //
 // `id` NAMES THE APP and this derives where it listens —
-// `agent_mcp::uds_path`, `/tmp/mcp-<id>-<pid>.socket`.
+// `agent_mcp::uds_path`, `/tmp/cplus-<uid>/mcp-<id>-<pid>.socket`.
 //
 // BOUND ON THIS THREAD, NOT THE WORKER'S, so the result is something a caller
 // is still alive to hear. It used to bind inside the spawned thread whose
@@ -255,19 +255,28 @@ fn serve_once(id: str) {
         io::eprintln(bad.view());
         return;
     }
+    // THE SOCKET DOOR IS OPTIONAL; the HTTP door below does not depend on it.
+    // Its directory must be private to this user (security audit F04): one
+    // another account made first is never adopted, and then only HTTP serves.
     let path: text::Text = mcp::uds_path(id, mcp::current_pid());
-    let fd: i32 = mcp::bind_uds(path.view());
-    if fd < 0 {
-        let why: text::Text = "facet: agent surface not served at ${path} — ${mcp::bind_reason(fd)}";
-        io::eprintln(why.view());
-        return;
-    }
-    let l: i32 = mcp::listen_on(fd);
-    if l < 0 {
-        let why2: text::Text = "facet: agent surface not served at ${path} — ${mcp::bind_reason(l)}";
-        io::eprintln(why2.view());
-        mcp::unlink_bound_socket();
-        return;
+    var fd: i32 = - 1;
+    if !mcp::ensure_runtime_dir() {
+        let dirwhy: text::Text = "facet: no socket door — ${mcp::runtime_dir()} is not a private directory of this user's (another account may have made it); the HTTP door still serves";
+        io::eprintln(dirwhy.view());
+    } else {
+        fd = mcp::bind_uds(path.view());
+        if fd < 0 {
+            let why: text::Text = "facet: no socket door at ${path} — ${mcp::bind_reason(fd)}";
+            io::eprintln(why.view());
+        } else {
+            let l: i32 = mcp::listen_on(fd);
+            if l < 0 {
+                let why2: text::Text = "facet: no socket door at ${path} — ${mcp::bind_reason(l)}";
+                io::eprintln(why2.view());
+                mcp::unlink_bound_socket();
+                fd = - 1;
+            }
+        }
     }
     AGENT_SERVING = true;
     // WHO THIS IS, on the wire. A client that reached a stale address finds out
@@ -301,13 +310,15 @@ fn serve_once(id: str) {
     // ...and what was actually bound, beside the socket. The address is
     // derivable, so this is confirmation rather than discovery — see
     // `agent_mcp::write_descriptor`.
-    let _d: bool = mcp::write_descriptor(id, mcp::current_pid(), "uds", path.view());
-    let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
-        AgentServe { fd: fd, http: false, unlink_on_exit: true },
-        serve_main,
-    );
-    let ok: text::Text = "facet: agent surface on ${path} — ${mcp::verb_summary()}";
-    io::eprintln(ok.view());
+    if fd >= 0 {
+        let _d: bool = mcp::write_descriptor(id, mcp::current_pid(), "uds", path.view());
+        let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
+            AgentServe { fd: fd, http: false, unlink_on_exit: true },
+            serve_main,
+        );
+        let ok: text::Text = "facet: agent surface on ${path} — ${mcp::verb_summary()}";
+        io::eprintln(ok.view());
+    }
 
     // ...AND THE MCP-NATIVE DOOR, on loopback, beside it.
     //
@@ -326,7 +337,7 @@ fn serve_once(id: str) {
     let port: u16 = bound.port;
     let hfd: i32 = bound.fd;
     if hfd < 0 {
-        let hwhy: text::Text = "facet: no HTTP door on port ${port} — ${mcp::bind_reason(hfd)} (the socket above still serves)";
+        let hwhy: text::Text = "facet: no HTTP door on port ${port} — ${mcp::bind_reason(hfd)}";
         io::eprintln(hwhy.view());
         return;
     }

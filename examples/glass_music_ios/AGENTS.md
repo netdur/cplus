@@ -59,11 +59,11 @@ This app is an ACI: while it runs it serves MCP, and you can read its
 UI and act on it. `src/app.cplus` is where that is turned on.
 
 **Find it.** The address is derived from the app id and its pid, so a
-running instance writes `/tmp/mcp-glass_music_ios-<pid>.json` saying where
+running instance writes `/tmp/cplus-<uid>/mcp-glass_music_ios-<pid>.json` saying where
 it landed:
 
 ```
-cat /tmp/mcp-glass_music_ios-*.json
+cat /tmp/cplus-$(id -u)/mcp-glass_music_ios-*.json
 ```
 
 A pid whose process is gone is a leftover — check with `kill -0 <pid>`.

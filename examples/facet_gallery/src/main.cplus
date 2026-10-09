@@ -39,7 +39,7 @@ fn main() -> i32 {
     if env::has_var("FACET_GALLERY_AGENT") {
         agent::enable();
         // An ID, not a path: the platform derives the address from it
-        // (`/tmp/mcp-<id>-<pid>.socket` here, a loopback port on mobile). This
+        // (`/tmp/cplus-<uid>/mcp-<id>-<pid>.socket` here, a loopback port on mobile). This
         // said "/tmp/facet-gallery.sock" until 2026-08-30 and had therefore
         // been refused at startup — "is not a valid id (a NAME, not a path)" —
         // since the address stopped being configured. It still built, which is

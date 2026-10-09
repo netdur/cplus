@@ -24,6 +24,7 @@ extern fn mkdir(path: *u8, mode: u16) -> i32;
 // Darwin arm64 exposes the 64-bit-inode stat as the bare `stat` symbol (on
 // x86_64 it is `stat$INODE64`; this build targets arm64 macOS).
 extern fn stat(path: *u8, buf: *u8) -> i32;
+extern fn lstat(path: *u8, buf: *u8) -> i32;
 
 // O_WRONLY = 0x001, O_CREAT = 0x200, O_TRUNC = 0x400 -> 0x601.
 fn create_flags() -> i32 { return 1537 as i32; }
@@ -61,6 +62,17 @@ fn stat_path(path: *u8, buf: *u8) -> i32 {
 
 fn stat_mode(buf: *u8) -> u32 {
     return { *((buf + (4 as usize)) as *u16) } as u32;
+}
+
+// The link itself rather than what it names — the question to ask before
+// trusting a path someone else could have created.
+fn lstat_path(path: *u8, buf: *u8) -> i32 {
+    return { lstat(path, buf) };
+}
+
+// st_uid, a u32 at byte 16.
+fn stat_uid(buf: *u8) -> u32 {
+    return { *((buf + (16 as usize)) as *u32) };
 }
 
 fn stat_mtime_secs(buf: *u8) -> i64 {

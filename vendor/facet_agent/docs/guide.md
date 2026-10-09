@@ -83,7 +83,7 @@ pid, so it can compute the address without being told.
 
 ### What the descriptor adds
 
-`/tmp/mcp-<id>-<pid>.json` is not what makes an app findable — the filename and
+`/tmp/cplus-<uid>/mcp-<id>-<pid>.json` is not what makes an app findable — the filename and
 the process table already do that. It is the app saying what it **actually
 bound**, which a derived address cannot: derived is a prediction. That is the
 difference between "not running yet", "running and bound elsewhere", and "not

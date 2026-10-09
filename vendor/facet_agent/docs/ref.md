@@ -54,14 +54,14 @@ derivable by anything that knows the id and the pid:
 
 | platform | address |
 |---|---|
-| macOS, Linux | `agent_mcp::uds_path(id, pid)` → `/tmp/mcp-<id>-<pid>.socket`, mode 0600 |
+| macOS, Linux | `agent_mcp::uds_path(id, pid)` → `/tmp/cplus-<uid>/mcp-<id>-<pid>.socket`, mode 0600 |
 | macOS, Linux | plus `agent_mcp::loopback_port(pid)` → `http://127.0.0.1:<port>/` |
 | Windows, iOS, Android | `agent_mcp::loopback_port(pid)` → `http://127.0.0.1:<port>/` |
 
 `loopback_port(pid)` is `9000 + pid % 1000`. Both are reported on stderr at
 startup — on Android that is `adb logcat -s cplus`, where stdlib's sink puts
 it, since the process's own stderr goes to `/dev/null` there — and written to
-`/tmp/mcp-<id>-<pid>.json`.
+`/tmp/cplus-<uid>/mcp-<id>-<pid>.json`.
 
 An id containing `/` is refused — see `agent_mcp::valid_id`.
 

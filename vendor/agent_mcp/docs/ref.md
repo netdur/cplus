@@ -80,7 +80,7 @@ environment variable.
 
 ```cplus
 fn valid_id(id: str) -> bool
-fn uds_path(id: str, pid: i32) -> text::Text      // /tmp/mcp-<id>-<pid>.socket
+fn uds_path(id: str, pid: i32) -> text::Text      // /tmp/cplus-<uid>/mcp-<id>-<pid>.socket
 fn loopback_port(pid: i32) -> u16                 // 9000 + pid % 1000
 fn current_pid() -> i32
 fn pid_is_live(pid: i32) -> bool                  // kill(pid, 0)
@@ -93,7 +93,7 @@ parameter is a NAME.
 ### Descriptor
 
 ```cplus
-fn descriptor_path(id: str, pid: i32) -> text::Text   // /tmp/mcp-<id>-<pid>.json
+fn descriptor_path(id: str, pid: i32) -> text::Text   // /tmp/cplus-<uid>/mcp-<id>-<pid>.json
 fn write_descriptor(id: str, pid: i32, transport: str, address: str) -> bool
 fn unlink_descriptor()
 fn sweep_stale() -> usize

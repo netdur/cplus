@@ -15,6 +15,7 @@ import "./netsys" as netsys;
 
 extern fn mkdir(path: *u8, mode: u32) -> i32;
 extern fn stat(path: *u8, buf: *u8) -> i32;
+extern fn lstat(path: *u8, buf: *u8) -> i32;
 
 // Rename, REPLACING the destination if one is there — plain `rename(2)` on
 // Linux and bionic alike, exactly as on Darwin. It exists as a named wrapper
@@ -78,6 +79,19 @@ fn stat_mode_offset() -> usize {
 
 fn stat_mode(buf: *u8) -> u32 {
     return { *((buf + stat_mode_offset()) as *u32) };
+}
+
+// The link itself rather than what it names.
+fn lstat_path(path: *u8, buf: *u8) -> i32 {
+    return { lstat(path, buf) };
+}
+
+// st_uid follows st_mode on aarch64 (mode u32 @16, nlink u32 @20, uid @24) and
+// on x86_64 (nlink u64 @16, mode u32 @24, uid @28) alike — four bytes after the
+// mode on one, eight on the other, because nlink sits on opposite sides.
+fn stat_uid(buf: *u8) -> u32 {
+    if #arch() == "aarch64" { return { *((buf + (24 as usize)) as *u32) }; }
+    return { *((buf + (28 as usize)) as *u32) };
 }
 
 fn stat_mtime_secs(buf: *u8) -> i64 {

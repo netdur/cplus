@@ -29,7 +29,7 @@ An **id, not an address**: the platform derives where it listens from the id and
 this process's pid. macOS and Linux expose a 0600 Unix socket plus an HTTP port;
 Windows, iOS, and Android expose the loopback HTTP port. A launcher that spawned
 the app knows the pid, so it can work the address out without being told. The
-app also prints it and writes it to `/tmp/mcp-<id>-<pid>.json`.
+app also prints it and writes it to `/tmp/cplus-<uid>/mcp-<id>-<pid>.json`.
 
 Without a policy, anything that connects is admitted with `operator()` — read
 the tree and drive it, nothing behind a tier. `facet_agent/consent` is a

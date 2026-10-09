@@ -1885,8 +1885,22 @@ fn bind_uds(path: str) -> i32 {
 //
 // The join stays a FORWARD SLASH on both: every Win32 file API accepts one, so
 // one convention spans both platforms and nothing below has to know a separator.
+// NOT `/tmp` ITSELF (security audit F04). `/tmp` is shared by every account,
+// so another local user could plant `/tmp/mcp-<id>-<pid>.json` as a symlink
+// before the app started, and the descriptor write and its chmod followed it:
+// any file the victim could write was truncated, overwritten and made 0600. A
+// socket path could be squatted the same way. So the addresses live in a
+// directory only this user can create entries in: `/tmp/cplus-<uid>`, made
+// 0700 and checked before every use (`ensure_runtime_dir`). One name on every
+// Unix target, so a client finds it the same way everywhere:
+// `ls /tmp/cplus-$(id -u)/`.
+extern fn getuid() -> u32;
+
 fn runtime_dir() -> text::Text {
-    if #platform() != "windows" { return text::from_str("/tmp"); }
+    if #platform() != "windows" {
+        let uid: u32 = { getuid() };
+        return "/tmp/cplus-${uid as i64}";
+    }
     match env::var("TEMP") {
         option::Option[text::Text]::Some(t) => { return t; }
         option::Option[text::Text]::None => { }
@@ -1896,6 +1910,43 @@ fn runtime_dir() -> text::Text {
         option::Option[text::Text]::None => { }
     }
     return text::from_str("C:\\Windows\\Temp");
+}
+
+// Make the runtime directory if it is missing, and say whether it is safe to
+// put addresses in: a real directory (not a symlink), owned by this user, with
+// no group or other bits. A directory someone else made is never adopted. The
+// socket door and the descriptor are then skipped, and the HTTP door, which is
+// found by the pid, still serves. A directory of ours with loose bits is
+// tightened. Windows answers true: the per-user TEMP is already private.
+fn ensure_runtime_dir() -> bool {
+    if #platform() == "windows" { return true; }
+    let dir: text::Text = runtime_dir();
+    let cdir: text::CString = match dir.c_str() {
+        option::Option[text::CString]::Some(c) => c,
+        option::Option[text::CString]::None => { return false; }
+    };
+    let _made: i32 = fsys::make_dir(cdir.as_ptr(), 448 as u32);   // 0700; EEXIST is fine
+    return runtime_dir_is_private(cdir.as_ptr(), true);
+}
+
+fn runtime_dir_is_private(path: *u8, tighten: bool) -> bool {
+    let buf: *u8 = { malloc(fsys::stat_buf_bytes()) };
+    if buf.is_null() { return false; }
+    var ok: bool = false;
+    if fsys::lstat_path(path, buf) == 0 {
+        let mode: u32 = fsys::stat_mode(buf);
+        let is_dir: bool = (mode & (61440 as u32)) == (16384 as u32);   // S_IFMT, S_IFDIR
+        let mine: bool = fsys::stat_uid(buf) == { getuid() };
+        if is_dir && mine {
+            if (mode & (63 as u32)) == (0 as u32) {               // no 077 bits
+                ok = true;
+            } else if tighten {
+                ok = { chmod(path, 448 as u32) } == 0;
+            }
+        }
+    }
+    { free(buf); }
+    return ok;
 }
 
 // Does this platform have a Unix-domain socket this package can bind?
@@ -1941,9 +1992,10 @@ fn sockaddr_has_len_byte() -> bool {
 fn valid_id(id: str) -> bool {
     let n: usize = #str_len(id);
     if n == 0 { return false; }
-    // Room for `/tmp/mcp-` + id + `-` + up to 10 digits + `.socket`, inside the
-    // 100-byte `sun_path` budget `bind_uds` enforces.
-    if n > 60 { return false; }
+    // Room for `/tmp/cplus-<uid>/mcp-` (26 bytes with a ten-digit uid) + id +
+    // `-` + up to 10 digits + `.socket`, inside the 100-byte `sun_path` budget
+    // `bind_uds` enforces. It was 60 when the addresses sat directly in /tmp.
+    if n > 43 { return false; }
     let b: *u8 = #str_ptr(id);
     var i: usize = 0;
     while i < n {
@@ -2012,7 +2064,7 @@ fn bind_loopback(pid: i32) -> LoopbackBind {
 
 // ---- the descriptor -------------------------------------------------------------
 //
-// Beside the socket, `/tmp/mcp-<id>-<pid>.json`, saying what this process
+// Beside the socket, `/tmp/cplus-<uid>/mcp-<id>-<pid>.json`, saying what this process
 // ACTUALLY bound.
 //
 // The address is derivable, so this is not what makes an app findable — a
@@ -2065,7 +2117,15 @@ fn unlink_descriptor() {
 // Record what was bound. Called after a successful bind, by the facade that
 // knows which transport it used.
 fn write_descriptor(id: str, pid: i32, transport: str, address: str) -> bool {
+    // Only into a directory only this user can create entries in (F04). Inside
+    // it nobody else can plant a link, and an old file of ours at the name is
+    // removed first rather than written through.
+    if !ensure_runtime_dir() { return false; }
     let path: text::Text = descriptor_path(id, pid);
+    match path.c_str() {
+        option::Option[text::CString]::Some(c) => { { unlink(c.as_ptr()); } }
+        option::Option[text::CString]::None => { return false; }
+    }
     let body: text::Text =
         "{\"id\":\"${id}\",\"pid\":${pid},\"transport\":\"${transport}\",\"address\":\"${address}\",\"protocol\":\"2024-11-05\"}\n";
     let wrote: bool = match fs::write_string(path.view(), body.view()) {
@@ -3242,8 +3302,9 @@ fn a_derived_path_binds() {
     if !has_uds() { io::eprintln("agent_mcp: no AF_UNIX on this platform — the UDS bind is skipped."); return; }
     var id: text::Text = text::new();
     var i: i32 = 0;
-    while i < 60 { let _a: status::Status = id.append("x"); i = i +% 1; }
+    while i < 43 { let _a: status::Status = id.append("x"); i = i +% 1; }
     assert valid_id(id.view());
+    assert ensure_runtime_dir();
     let path: text::Text = uds_path(id.view(), 2147483647);
     let fd: i32 = bind_uds(path.view());
     assert fd >= 0;
@@ -5413,6 +5474,76 @@ fn an_id_with_dashes_is_read_back_whole() {
 
 // The address a descriptor states, which is how a target whose address is not
 // its path — a phone's loopback port — is reachable at all.
+// ---- F04: the addresses live where only this user can write -----------------
+
+extern fn symlink(target: *u8, link: *u8) -> i32;
+extern fn rmdir(path: *u8) -> i32;
+
+#[test]
+fn the_runtime_directory_is_this_users_and_private() {
+    if #platform() == "windows" { return; }
+    let dir: text::Text = runtime_dir();
+    let uid: u32 = { getuid() };
+    let expect: text::Text = "/tmp/cplus-${uid as i64}";
+    assert dir.view() == expect.view();
+    assert ensure_runtime_dir();
+    let c: text::CString = match dir.c_str() { option::Option[text::CString]::Some(v) => v, option::Option::None => { assert false; return; } };
+    assert runtime_dir_is_private(c.as_ptr(), false);
+    // Every address is inside it.
+    assert uds_path("app", 7).view().has_prefix(dir.view());
+    assert descriptor_path("app", 7).view().has_prefix(dir.view());
+}
+
+#[test]
+fn a_directory_that_is_not_ours_or_is_a_link_is_never_adopted() {
+    if #platform() == "windows" { return; }
+    // Owned by root and otherwise private (0700): only the OWNER says no.
+    // `/` would not do — its mode fails first and the owner is never asked.
+    let foreign: str = if #platform() == "linux" { "/root\0" } else { "/private/var/audit\0" };
+    assert !runtime_dir_is_private(#str_ptr(foreign), true);
+    // A symlink to a private directory of ours is still a symlink.
+    let pid: i32 = current_pid();
+    let real: text::Text = "/tmp/f04-real-${pid}";
+    let link: text::Text = "/tmp/f04-link-${pid}";
+    let rc: text::CString = match real.c_str() { option::Option[text::CString]::Some(v) => v, option::Option::None => { assert false; return; } };
+    let lc: text::CString = match link.c_str() { option::Option[text::CString]::Some(v) => v, option::Option::None => { assert false; return; } };
+    let _m: i32 = fsys::make_dir(rc.as_ptr(), 448 as u32);
+    let _s: i32 = { symlink(rc.as_ptr(), lc.as_ptr()) };
+    assert runtime_dir_is_private(rc.as_ptr(), false);
+    assert !runtime_dir_is_private(lc.as_ptr(), true);
+    // Ours with loose bits is tightened, not refused.
+    let _w: i32 = { chmod(rc.as_ptr(), 493 as u32) };          // 0755
+    assert !runtime_dir_is_private(rc.as_ptr(), false);
+    assert runtime_dir_is_private(rc.as_ptr(), true);
+    { unlink(lc.as_ptr()); }
+    let _r: i32 = { rmdir(rc.as_ptr()) };
+}
+
+#[test]
+fn a_link_planted_at_the_descriptor_path_is_replaced_not_written_through() {
+    if #platform() == "windows" { return; }
+    assert ensure_runtime_dir();
+    let pid: i32 = current_pid();
+    let victim: text::Text = "/tmp/f04-victim-${pid}";
+    let _v = fs::write_string(victim.view(), "precious\n");
+    let path: text::Text = descriptor_path("f04-plant", pid);
+    let pc: text::CString = match path.c_str() { option::Option[text::CString]::Some(v) => v, option::Option::None => { assert false; return; } };
+    let vc: text::CString = match victim.c_str() { option::Option[text::CString]::Some(v) => v, option::Option::None => { assert false; return; } };
+    { unlink(pc.as_ptr()); }
+    let _s: i32 = { symlink(vc.as_ptr(), pc.as_ptr()) };
+    assert write_descriptor("f04-plant", pid, "uds", "/x.socket");
+    match fs::read_to_string(victim.view()) {
+        result::Result[text::Text, result::IoError]::Ok(t) => { assert t.view() == "precious\n"; }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    match fs::read_to_string(path.view()) {
+        result::Result[text::Text, result::IoError]::Ok(t) => { assert t.view().contains("f04-plant"); }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    { unlink(pc.as_ptr()); }
+    { unlink(vc.as_ptr()); }
+}
+
 #[test]
 fn a_descriptors_address_is_read_out_of_it() {
     let probe: text::Text = "${runtime_dir()}/mcp-desc-probe-${current_pid()}.json";

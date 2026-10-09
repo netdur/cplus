@@ -8273,7 +8273,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   //\n\
          \x20   //   enable()      fills the serving seam (without it, nothing serves)\n\
          \x20   //   agent_mcp(id) names THIS APP; the platform derives where it\n\
-         \x20   //                 listens — `/tmp/mcp-{proj_name}-<pid>.socket` on a\n\
+         \x20   //                 listens — `/tmp/cplus-<uid>/mcp-{proj_name}-<pid>.socket` on a\n\
          \x20   //                 desktop, a loopback port on a phone. A launcher\n\
          \x20   //                 knows the pid it spawned, so it can work the\n\
          \x20   //                 address out without being told.\n\
@@ -8754,10 +8754,10 @@ fn run_init(args: &[OsString]) -> ExitCode {
          This app is an ACI: while it runs it serves MCP, and you can read its\n\
          UI and act on it. `src/app.cplus` is where that is turned on.\n\n\
          **Find it.** The address is derived from the app id and its pid, so a\n\
-         running instance writes `/tmp/mcp-{proj_name}-<pid>.json` saying where\n\
+         running instance writes `/tmp/cplus-<uid>/mcp-{proj_name}-<pid>.json` saying where\n\
          it landed:\n\n\
          ```\n\
-         cat /tmp/mcp-{proj_name}-*.json\n\
+         cat /tmp/cplus-$(id -u)/mcp-{proj_name}-*.json\n\
          ```\n\n\
          A pid whose process is gone is a leftover — check with `kill -0 <pid>`.\n\
          If you launched the app yourself you already know the pid, so you can\n\

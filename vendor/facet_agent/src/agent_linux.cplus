@@ -234,7 +234,7 @@ fn serve_main(take job: AgentServe) -> i32 {
 // Start the serve worker exactly once per process.
 //
 // `id` NAMES THE APP and this derives where it listens —
-// `agent_mcp::uds_path`, `/tmp/mcp-<id>-<pid>.socket`.
+// `agent_mcp::uds_path`, `/tmp/cplus-<uid>/mcp-<id>-<pid>.socket`.
 //
 // BOUND ON THIS THREAD, NOT THE WORKER'S, so the result is something a caller
 // is still alive to hear. It used to bind inside the spawned thread whose
@@ -254,6 +254,13 @@ fn serve_once(id: str) {
     if !mcp::valid_id(id) {
         let bad: text::Text = "facet: agent surface not served — \"${id}\" is not a valid id (a NAME, not a path)";
         io::eprintln(bad.view());
+        return;
+    }
+    // The socket's directory must be private to this user (security audit
+    // F04): one another account made first is never adopted.
+    if !mcp::ensure_runtime_dir() {
+        let dirwhy: text::Text = "facet: agent surface not served — ${mcp::runtime_dir()} is not a private directory of this user's (another account may have made it)";
+        io::eprintln(dirwhy.view());
         return;
     }
     let path: text::Text = mcp::uds_path(id, mcp::current_pid());

@@ -99,7 +99,7 @@ app.agent_mcp();                  // an ID, defaulting to the app's name
 ```
 
 With the app running, use either endpoint printed at startup: the 0600 Unix socket at
-`/tmp/mcp-hello-<pid>.socket`, or the streamable-HTTP endpoint at
+`/tmp/cplus-<uid>/mcp-hello-<pid>.socket`, or the streamable-HTTP endpoint at
 `http://127.0.0.1:<9000+pid%1000>/`. The
 [facet_agent tutorial](../../facet_agent/docs/tutorial.md#connect) shows the
 HTTP request.

@@ -100,6 +100,14 @@ fn stat_mode(buf: *u8) -> u32 {
     return { *((buf + (6 as usize)) as *u16) } as u32;
 }
 
+// No symlinks a stat can tell apart, and no owner uid: the Unix questions
+// answer as for a plain file owned by nobody.
+fn lstat_path(path: *u8, buf: *u8) -> i32 {
+    return { _stat64(path, buf) };
+}
+
+fn stat_uid(buf: *u8) -> u32 { return 0 as u32; }
+
 fn stat_mtime_secs(buf: *u8) -> i64 {
     return { *((buf + (40 as usize)) as *i64) };
 }

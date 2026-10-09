@@ -667,7 +667,7 @@ fn discover(app_id: str) -> vec::Vec[text::Text]
 | `target` | |
 |---|---|
 | `inapp` | this process. No transport, and `is_connected` stays false — there is nothing to disconnect |
-| `/tmp/mcp-app-123.socket` | a Unix socket |
+| `/tmp/cplus-<uid>/mcp-app-123.socket` | a Unix socket |
 | `9123` | a loopback port. What a phone reports |
 | `http://127.0.0.1:9123/` | the same JSON-RPC, POSTed |
 

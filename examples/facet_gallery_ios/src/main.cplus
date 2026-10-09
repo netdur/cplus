@@ -35,7 +35,7 @@ export extern fn facet_gallery_ios_main() -> i32 {
     // nothing on the development machine can reach it, and to a real device
     // there is no shared filesystem at all, so this backend binds TCP on
     // loopback: port `9000 + pid % 1000`, which a launcher holding the pid can
-    // work out and `/tmp/mcp-<id>-<pid>.json` records for anything that
+    // work out and `/tmp/cplus-<uid>/mcp-<id>-<pid>.json` records for anything that
     // cannot. The Mac reaches it over usbmux. See DEPLOYING.md.
     //
     // This used to pass "8787" and that used to BE the port. It became the id
