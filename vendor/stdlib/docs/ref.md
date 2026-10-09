@@ -28,7 +28,8 @@ Source of truth for edge cases: the header comment and impl in
 | [`str`](#str) | the builtin `str` view's method set (the one `impl str` block) |
 | [`text`](#text) | `Text`, `CString` |
 | [`io`](#io) | `print`, `println`, `eprintln` |
-| [`fs`](#fs) | `File`, path helpers |
+| [`fs`](#fs) | `File`, `Metadata`, files and directories on disk |
+| [`path`](#path) | `join`, `parent`, `file_name`, `stem`, `extension` — views, no filesystem |
 | [`net`](#net) | `TcpStream`, `TcpListener` |
 | [`netsys`](#netsys) | platform errno / constants (for `net`) |
 | [`env`](#env) | `var`, `argc`, `arg` |
@@ -286,23 +287,75 @@ Stdout / stderr via libc `write`. Best-effort; no `Result`.
 
 ```cplus
 struct File { /* owned fd; Drop closes */ }
+struct Metadata { size: i64, mtime: i64, is_dir: bool }
 
 fn open_read(path: str) -> result::Result[File, result::IoError]
 fn create(path: str) -> result::Result[File, result::IoError]
+fn open_append(path: str) -> result::Result[File, result::IoError]
+fn metadata(path: str) -> result::Result[Metadata, result::IoError]
+fn size(path: str) -> result::Result[i64, result::IoError]
+fn mtime(path: str) -> result::Result[i64, result::IoError]
+fn is_dir(path: str) -> bool
 fn exists(path: str) -> bool
 fn create_dir(path: str) -> result::Result[bool, result::IoError]
 fn create_dir_all(path: str) -> result::Result[bool, result::IoError]
+fn rename(from: str, to: str) -> result::Result[bool, result::IoError]
 fn remove_file(path: str) -> result::Result[bool, result::IoError]
 fn read_dir(path: str) -> option::Option[vec::Vec[text::Text]]
 fn read_to_string(path: str) -> result::Result[text::Text, result::IoError]
+fn write_string(path: str, contents: str) -> result::Result[usize, result::IoError]
+fn append_string(path: str, contents: str) -> result::Result[usize, result::IoError]
 ```
 
 | `File` method | Role |
 |---|---|
 | `read_to_end` | `Result[Vec[u8], IoError]` |
 | `write_all` | `Result[usize, IoError]` |
+| `write_str` | `Result[usize, IoError]` |
 | `close` | explicit close |
 | `make_nonblocking` | `i32` status from fcntl-style op |
+
+`rename` replaces an existing destination. `create_dir_all` is the one way to
+make a directory tree; nothing else in stdlib or `appenv` creates one.
+
+---
+
+## path
+
+Take a file path apart and put one together. Nothing here touches the disk —
+ask [`fs`](#fs) what is actually there.
+
+```cplus
+fn join(base: str, child: str) -> text::Text
+fn parent(p: str) -> str           // view
+fn file_name(p: str) -> str        // view
+fn stem(p: str) -> str             // view
+fn extension(p: str) -> str        // view, no dot
+fn is_absolute(p: str) -> bool
+```
+
+```cplus
+let db: text::Text = path::join(base: dir, child: "ledger.db");
+```
+
+| path | `parent` | `file_name` | `stem` | `extension` |
+|---|---|---|---|---|
+| `docs/notes.txt` | `docs` | `notes.txt` | `notes` | `txt` |
+| `/notes.txt` | `/` | `notes.txt` | `notes` | `txt` |
+| `notes` | `""` | `notes` | `notes` | `""` |
+| `archive.tar.gz` | `""` | `archive.tar.gz` | `archive.tar` | `gz` |
+| `.bashrc` | `""` | `.bashrc` | `.bashrc` | `""` |
+| `a/b/` | `a` | `b` | `b` | `""` |
+| `C:\Users\a.txt` (Windows) | `C:\Users` | `a.txt` | `a` | `txt` |
+
+- `/` separates on every platform. On Windows `\` does too, and `C:\` is a
+  root; `C:x` is drive-relative, so not absolute. `join` writes
+  `platform::path_separator()`.
+- `""` means there is none. `join("", x)` is `x`, so
+  `join(parent(p), file_name(p))` gives back `p`.
+- `join` writes one separator between the two, keeps one `base` already ends
+  in, and returns `child` alone when `child` is absolute.
+- The views share the argument's buffer, like [`str`](#str)'s sub-views.
 
 ---
 

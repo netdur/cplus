@@ -40,6 +40,7 @@ import "./date" as date;
 import "./process" as process;
 import "./pty" as pty;
 import "./fs" as fs;
+import "./path" as path;
 import "./bundle" as bundle;
 import "./base64" as base64;
 import "./url" as url;

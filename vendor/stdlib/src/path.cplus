@@ -1,0 +1,334 @@
+// stdlib/path — take a file path apart, and put one together. Views, not copies.
+//
+// WHY THIS IS IN STDLIB: packages that touched a path wrote their own.
+// `fswatch` had `basename_view` / `parent_path` / `full_path` and a second
+// parent in its Windows backend, and an app joining an `appenv` directory to a
+// file name wrote `"${dir}/${name}"` — which is wrong on Windows and doubles
+// the slash when `dir` already ends in one.
+//
+// ---- the rules ---------------------------------------------------------------
+//
+// `/` separates everywhere. On Windows `\` does too, and `C:\` / `C:/` is a
+// root. The separator `join` WRITES is `platform::path_separator()`.
+//
+// Nothing here touches the filesystem: `parent("a/..")` is `"a"`, not the
+// directory above `a`. Ask `fs` what is actually on disk.
+//
+// An empty answer means "there is none": `parent("notes.txt")` is `""`, and
+// `join("", x)` is `x`, so `join(parent(p), file_name(p))` gives back `p` for
+// any `p` without a trailing separator.
+//
+// Trailing separators are not part of a name: `file_name("a/b/")` is `"b"`
+// and `parent("a/b/")` is `"a"`.
+//
+//     path                 parent      file_name    stem        extension
+//     docs/notes.txt       docs        notes.txt    notes       txt
+//     /notes.txt           /           notes.txt    notes       txt
+//     notes                ""          notes        notes       ""
+//     archive.tar.gz       ""          archive.tar.gz archive.tar gz
+//     .bashrc              ""          .bashrc      .bashrc     ""
+//     /                    ""          ""           ""          ""
+//     C:\Users\a.txt       C:\Users    a.txt        a           txt   (Windows)
+
+import "./text" as text;
+import "./str" as strx;
+
+#[no_alloc]
+fn _byte(s: str, i: usize) -> u8 {
+    return { *(#str_ptr(s) + i) };
+}
+
+#[no_alloc]
+fn _on_windows() -> bool {
+    return #platform() == "windows";
+}
+
+#[no_alloc]
+fn _is_sep(b: u8, windows: bool) -> bool {
+    if b == (47 as u8) { return true; }
+    return windows && b == (92 as u8);
+}
+
+#[no_alloc]
+fn _is_letter(b: u8) -> bool {
+    return (b >= (65 as u8) && b <= (90 as u8)) || (b >= (97 as u8) && b <= (122 as u8));
+}
+
+// How many leading bytes are the root: 1 for `/`, 3 for `C:\`, 2 for a bare
+// `C:` (drive-relative), 0 for a relative path.
+#[no_alloc]
+fn _root_len(p: str, windows: bool) -> usize {
+    let n: usize = #str_len(p);
+    if windows && n >= (2 as usize) && _is_letter(_byte(p, 0 as usize)) && _byte(p, 1 as usize) == (58 as u8) {
+        if n >= (3 as usize) && _is_sep(_byte(p, 2 as usize), true) { return 3 as usize; }
+        return 2 as usize;
+    }
+    if n >= (1 as usize) && _is_sep(_byte(p, 0 as usize), windows) { return 1 as usize; }
+    return 0 as usize;
+}
+
+// The length of `p` without its trailing separators, never cutting into the root.
+#[no_alloc]
+fn _trimmed_len(p: str, windows: bool) -> usize {
+    let root: usize = _root_len(p, windows);
+    var end: usize = #str_len(p);
+    while end > root && _is_sep(_byte(p, end -% (1 as usize)), windows) {
+        end = end -% (1 as usize);
+    }
+    return end;
+}
+
+// Where the last name starts: one past the last separator inside the trimmed
+// path, or the root length when there is none.
+#[no_alloc]
+fn _name_start(p: str, end: usize, windows: bool) -> usize {
+    let root: usize = _root_len(p, windows);
+    var i: usize = end;
+    while i > root {
+        if _is_sep(_byte(p, i -% (1 as usize)), windows) { return i; }
+        i = i -% (1 as usize);
+    }
+    return root;
+}
+
+#[no_alloc]
+fn _view(p: str, from: usize, to: usize) -> str {
+    if to <= from { return ""; }
+    return { #str_from_raw_parts(#str_ptr(p) + from, to -% from) };
+}
+
+#[no_alloc]
+fn _file_name_in(p: str, windows: bool) -> str {
+    let end: usize = _trimmed_len(p, windows);
+    return _view(p, _name_start(p, end, windows), end);
+}
+
+#[no_alloc]
+fn _parent_in(p: str, windows: bool) -> str {
+    let root: usize = _root_len(p, windows);
+    let end: usize = _trimmed_len(p, windows);
+    if end <= root { return ""; }
+    var cut: usize = _name_start(p, end, windows);
+    // Drop the separators between the parent and the name — but keep the root.
+    while cut > root && _is_sep(_byte(p, cut -% (1 as usize)), windows) {
+        cut = cut -% (1 as usize);
+    }
+    return _view(p, 0 as usize, cut);
+}
+
+// Where the extension's dot is in `name`, or the length when there is none. A
+// leading dot (`.bashrc`) names the file; it does not start an extension.
+#[no_alloc]
+fn _dot(name: str) -> usize {
+    let n: usize = #str_len(name);
+    var i: usize = n;
+    while i > (1 as usize) {
+        i = i -% (1 as usize);
+        if _byte(name, i) == (46 as u8) { return i; }
+    }
+    return n;
+}
+
+#[no_alloc]
+fn _stem_in(p: str, windows: bool) -> str {
+    let name: str = _file_name_in(p, windows);
+    return _view(name, 0 as usize, _dot(name));
+}
+
+#[no_alloc]
+fn _extension_in(p: str, windows: bool) -> str {
+    let name: str = _file_name_in(p, windows);
+    let d: usize = _dot(name);
+    return _view(name, d +% (1 as usize), #str_len(name));
+}
+
+#[no_alloc]
+fn _is_absolute_in(p: str, windows: bool) -> bool {
+    if windows {
+        // `C:` alone is drive-RELATIVE; only `C:\` and `\` are absolute.
+        let root: usize = _root_len(p, true);
+        return root == (1 as usize) || root == (3 as usize);
+    }
+    return _root_len(p, false) == (1 as usize);
+}
+
+fn _join_in(base: str, child: str, windows: bool) -> text::Text {
+    if #str_len(base) == (0 as usize) || _root_len(child, windows) > (0 as usize) {
+        return text::from_str(child);
+    }
+    if #str_len(child) == (0 as usize) { return text::from_str(base); }
+    if _is_sep(_byte(base, #str_len(base) -% (1 as usize)), windows) {
+        return "${base}${child}";
+    }
+    let sep: str = if windows { "\\" } else { "/" };
+    return "${base}${sep}${child}";
+}
+
+// The last name in the path: `"docs/notes.txt"` → `"notes.txt"`. Trailing
+// separators are skipped. `""` for a bare root or an empty path.
+#[no_alloc]
+fn file_name(p: str) -> str {
+    return _file_name_in(p, _on_windows());
+}
+
+// Everything before the last name: `"docs/notes.txt"` → `"docs"`,
+// `"/notes.txt"` → `"/"`. `""` when there is no parent — a bare name, a bare
+// root, or an empty path.
+#[no_alloc]
+fn parent(p: str) -> str {
+    return _parent_in(p, _on_windows());
+}
+
+// The file name without its last extension: `"archive.tar.gz"` → `"archive.tar"`.
+// A leading dot is part of the stem: `".bashrc"` → `".bashrc"`.
+#[no_alloc]
+fn stem(p: str) -> str {
+    return _stem_in(p, _on_windows());
+}
+
+// The last extension, without its dot: `"archive.tar.gz"` → `"gz"`. `""` when
+// there is none, and for `".bashrc"`.
+#[no_alloc]
+fn extension(p: str) -> str {
+    return _extension_in(p, _on_windows());
+}
+
+// True for a path that starts at a root: `/x` everywhere, `C:\x` and `\x` on
+// Windows. `C:x` is drive-relative, so not absolute.
+#[no_alloc]
+fn is_absolute(p: str) -> bool {
+    return _is_absolute_in(p, _on_windows());
+}
+
+// `child` inside `base`, with one separator between them. An absolute `child`
+// replaces `base`; an empty side gives back the other.
+//
+//     join(base: dir, child: "notes.txt")     // "<dir>/notes.txt"
+fn join(base: str, child: str) -> text::Text {
+    return _join_in(base, child, _on_windows());
+}
+
+// ---- tests -------------------------------------------------------------------
+
+#[test]
+fn a_path_comes_apart_into_parent_name_stem_and_extension() {
+    assert parent("docs/notes.txt") == "docs";
+    assert file_name("docs/notes.txt") == "notes.txt";
+    assert stem("docs/notes.txt") == "notes";
+    assert extension("docs/notes.txt") == "txt";
+}
+
+#[test]
+fn the_parent_of_a_name_under_the_root_is_the_root() {
+    assert parent("/notes.txt") == "/";
+    assert file_name("/notes.txt") == "notes.txt";
+    assert parent("/") == "";
+    assert file_name("/") == "";
+}
+
+#[test]
+fn a_bare_name_has_no_parent() {
+    assert parent("notes") == "";
+    assert file_name("notes") == "notes";
+    assert parent("") == "";
+    assert file_name("") == "";
+}
+
+#[test]
+fn trailing_separators_are_not_part_of_a_name() {
+    assert file_name("a/b/") == "b";
+    assert parent("a/b/") == "a";
+    assert parent("a//b") == "a";
+    assert parent("/a") == "/";
+    assert parent("//a") == "/";
+}
+
+#[test]
+fn only_the_last_extension_is_the_extension() {
+    assert stem("archive.tar.gz") == "archive.tar";
+    assert extension("archive.tar.gz") == "gz";
+    assert stem("a.") == "a";
+    assert extension("a.") == "";
+    assert extension("dir.d/file") == "";
+}
+
+#[test]
+fn a_leading_dot_names_the_file_and_starts_no_extension() {
+    assert stem(".bashrc") == ".bashrc";
+    assert extension(".bashrc") == "";
+    assert stem("cfg/.env.local") == ".env";
+    assert extension("cfg/.env.local") == "local";
+}
+
+#[test]
+fn join_puts_exactly_one_separator_between_the_two() {
+    let a: text::Text = join(base: "dir", child: "notes.txt");
+    assert a.view() == "dir/notes.txt";
+    let b: text::Text = join(base: "dir/", child: "notes.txt");
+    assert b.view() == "dir/notes.txt";
+    let c: text::Text = join(base: "/", child: "notes.txt");
+    assert c.view() == "/notes.txt";
+}
+
+#[test]
+fn join_with_an_absolute_child_or_an_empty_side_gives_back_the_other() {
+    let a: text::Text = join(base: "dir", child: "/etc/hosts");
+    assert a.view() == "/etc/hosts";
+    let b: text::Text = join(base: "", child: "notes.txt");
+    assert b.view() == "notes.txt";
+    let c: text::Text = join(base: "dir", child: "");
+    assert c.view() == "dir";
+}
+
+#[test]
+fn join_of_parent_and_file_name_gives_back_the_path() {
+    let p: str = "/var/data/ledger.db";
+    let back: text::Text = join(base: parent(p), child: file_name(p));
+    assert back.view() == p;
+    let q: str = "ledger.db";
+    let back2: text::Text = join(base: parent(q), child: file_name(q));
+    assert back2.view() == q;
+}
+
+#[test]
+fn absolute_means_it_starts_at_a_root() {
+    assert is_absolute("/x");
+    assert !is_absolute("x/y");
+    assert !is_absolute("");
+}
+
+#[test]
+fn on_windows_a_backslash_separates_and_a_drive_is_a_root() {
+    assert _parent_in("C:\\Users\\a.txt", true) == "C:\\Users";
+    assert _file_name_in("C:\\Users\\a.txt", true) == "a.txt";
+    assert _stem_in("C:\\Users\\a.txt", true) == "a";
+    assert _parent_in("C:\\a.txt", true) == "C:\\";
+    assert _parent_in("C:\\", true) == "";
+    assert _parent_in("C:/data/x", true) == "C:/data";
+    assert _file_name_in("a\\b/c", true) == "c";
+}
+
+#[test]
+fn elsewhere_a_backslash_is_part_of_the_name() {
+    assert _file_name_in("a\\b", false) == "a\\b";
+    assert _parent_in("a\\b", false) == "";
+    assert _parent_in("C:/x", false) == "C:";
+}
+
+#[test]
+fn on_windows_a_bare_drive_is_relative_and_a_backslash_root_is_absolute() {
+    assert _is_absolute_in("C:\\x", true);
+    assert _is_absolute_in("\\x", true);
+    assert !_is_absolute_in("C:x", true);
+    assert !_is_absolute_in("C:\\x", false);
+}
+
+#[test]
+fn on_windows_join_writes_a_backslash_and_keeps_an_existing_one() {
+    let a: text::Text = _join_in("C:\\data", "x.db", true);
+    assert a.view() == "C:\\data\\x.db";
+    let b: text::Text = _join_in("C:/data/", "x.db", true);
+    assert b.view() == "C:/data/x.db";
+    let c: text::Text = _join_in("C:\\data", "D:\\x.db", true);
+    assert c.view() == "D:\\x.db";
+}

@@ -51,7 +51,8 @@ don't change the process CWD to make relative paths work.
 
 ### Gotcha: app resources and executables have different locations
 
-Use `stdlib/fs_sys::separator_str()` when joining filenames across all targets.
+Join a filename onto a returned directory with `stdlib/path::join`, which
+writes the target's separator and never doubles one.
 Paths are plain filenames rather than URLs. `executable_path()` is the process
 executable; on Android this is typically `app_process`, not your APK or shared
 library. `app_path()` answers the installed app location instead. A base APK

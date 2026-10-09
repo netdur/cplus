@@ -88,7 +88,8 @@ Cross-module use inside stdlib is normal (`vec` imports `option`, `status`,
 | Module | Role |
 |---|---|
 | `io` | `print` / `println` / `eprintln` |
-| `fs` | `File`, paths, dirs, `read_to_string` |
+| `fs` | `File`, metadata, dirs, `read_to_string` / `write_string` |
+| `path` | `join` / `parent` / `file_name` / `stem` / `extension` — views, no disk |
 | `net` | `TcpStream`, `TcpListener` |
 | `netsys` | Platform constants/errno for `net` (auto-overridden per OS) |
 | `env` | env vars and argv |

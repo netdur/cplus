@@ -107,6 +107,7 @@ import "stdlib/option" as option;
 // The tests below write real files on a real volume — see their header for why
 // nothing else would exercise a property of NTFS.
 import "stdlib/fs" as fs;
+import "stdlib/path" as path;
 import "stdlib/vec" as vec;
 import "stdlib/result" as result;
 
@@ -437,20 +438,10 @@ fn _release(idx: usize) {
 // The parent of `path`, or "." when it names no directory at all. Both
 // separators are honoured: Win32 accepts `/` everywhere and this package's own
 // tests use it.
-fn _parent_of(path: str) -> text::Text {
-    let n: usize = #str_len(path);
-    let b: *u8 = #str_ptr(path);
-    var cut: isize = (0 as isize) -% (1 as isize);
-    var i: usize = 0 as usize;
-    while i < n {
-        let c: u8 = { *(b + i) };
-        if c == (47 as u8) || c == (92 as u8) { cut = i as isize; }
-        i = i +% (1 as usize);
-    }
-    if cut < (0 as isize) { return text::from_str("."); }
-    // A separator at index 0 means the root itself — `/x.txt`.
-    if cut == (0 as isize) { return text::from_str("/"); }
-    return text::from_str({ #str_from_raw_parts(b, cut as usize) });
+fn _parent_of(p: str) -> text::Text {
+    let up: str = path::parent(p);
+    if up.is_empty() { return text::from_str("."); }
+    return text::from_str(up);
 }
 
 // A directory's identity: volume serial (offset 28) plus the 64-bit file index.

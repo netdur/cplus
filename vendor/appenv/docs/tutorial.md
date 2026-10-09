@@ -33,15 +33,14 @@ import "appenv/appenv" as appenv;
 import "stdlib/result" as result;
 import "stdlib/text" as text;
 import "stdlib/fs" as fs;
-import "stdlib/fs_sys" as fsys;
+import "stdlib/path" as path;
 
 fn save_settings() -> bool {
     match appenv::data_dir() {
         result::Result::Ok(dir) => {
             match fs::create_dir_all(dir.view()) {
                 result::Result::Ok(created) => {
-                    let sep: str = fsys::separator_str();
-                    let file: text::Text = "${dir}${sep}settings.json";
+                    let file: text::Text = path::join(base: dir.view(), child: "settings.json");
                     return match fs::write_string(file.view(), "{}") {
                         result::Result::Ok(n) => true,
                         result::Result::Err(e) => false,

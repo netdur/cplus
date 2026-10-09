@@ -4,6 +4,7 @@ import "stdlib/atomic" as atomic;
 import "stdlib/box" as box;
 import "stdlib/fs" as fs;
 import "stdlib/option" as option;
+import "stdlib/path" as path;
 import "stdlib/result" as result;
 import "stdlib/status" as status;
 import "stdlib/sync_sys" as sync_sys;
@@ -91,17 +92,6 @@ fn has_slash(s: str) -> bool {
     return false;
 }
 
-fn basename_view(s: str) -> str {
-    let n: usize = #str_len(s);
-    var start: usize = 0 as usize;
-    var i: usize = 0 as usize;
-    while i < n {
-        if byte_at(s, i) == (47 as u8) { start = i +% (1 as usize); }
-        i = i +% (1 as usize);
-    }
-    return { #str_from_raw_parts(#str_ptr(s) + start, n -% start) };
-}
-
 fn glob_from(pattern: str, value: str, pi: usize, vi: usize) -> bool {
     let pn: usize = #str_len(pattern);
     let vn: usize = #str_len(value);
@@ -148,7 +138,7 @@ fn glob_matches(pattern: str, relative_path: str) -> bool {
     if has_slash(pattern) {
         return glob_from(pattern, relative_path, 0 as usize, 0 as usize);
     }
-    return glob_from(pattern, basename_view(relative_path), 0 as usize, 0 as usize);
+    return glob_from(pattern, path::file_name(relative_path), 0 as usize, 0 as usize);
 }
 
 fn pattern_prunes_dir(pattern: str, relative_path: str) -> bool {
@@ -213,26 +203,13 @@ fn normalized_root(path: str) -> text::Text {
     return out;
 }
 
-fn parent_path(path: str) -> text::Text {
-    let n: usize = #str_len(path);
-    if n == (0 as usize) { return text::from_str("."); }
-    var found: bool = false;
-    var last: usize = 0 as usize;
-    var i: usize = 0 as usize;
-    while i < n {
-        if byte_at(path, i) == (47 as u8) { found = true; last = i; }
-        i = i +% (1 as usize);
-    }
-    if !found { return text::from_str("."); }
-    if last == (0 as usize) { return text::from_str("/"); }
-    let view: str = { #str_from_raw_parts(#str_ptr(path), last) };
-    return text::from_str(view);
-}
-
-fn full_path(root: str, relative_path: str) -> text::Text {
-    if #str_len(relative_path) == (0 as usize) { return text::from_str(root); }
-    if root == "/" { return "/${relative_path}"; }
-    return "${root}/${relative_path}";
+// The directory that holds `root`, so the root's own rename is seen. A bare root
+// (`/`) is its own; a relative name with no parent is held by `.`.
+fn parent_dir(root: str) -> text::Text {
+    let up: str = path::parent(root);
+    if !up.is_empty() { return text::from_str(up); }
+    if path::is_absolute(root) { return text::from_str(root); }
+    return text::from_str(".");
 }
 
 fn entry_from(relative_path: str, meta: backend::Metadata) -> Entry {
@@ -249,7 +226,7 @@ fn entry_from(relative_path: str, meta: backend::Metadata) -> Entry {
 }
 
 fn scan_dir(root: str, directory_relative: str, options: Options, ref out: vec::Vec[Entry], root_level: bool) -> ScanResult {
-    let directory_full: text::Text = full_path(root, directory_relative);
+    let directory_full: text::Text = path::join(root, directory_relative);
     match fs::read_dir(directory_full) {
         option::Option[vec::Vec[text::Text]]::Some(names) => {
             var i: usize = 0 as usize;
@@ -260,7 +237,7 @@ fn scan_dir(root: str, directory_relative: str, options: Options, ref out: vec::
                         if #str_len(directory_relative) != (0 as usize) {
                             rel = "${directory_relative}/${(*np).view()}";
                         }
-                        let absolute: text::Text = full_path(root, rel);
+                        let absolute: text::Text = path::join(root, rel);
                         match backend::metadata(absolute) {
                             backend::MetadataResult::Found(meta) => {
                                 let is_dir: bool = meta.kind == backend::NodeKind::Directory;
@@ -413,7 +390,7 @@ fn handle_index(handles: vec::Vec[WatchHandle], path: str, inode: u64) -> isize 
 
 fn desired_targets(root: str, snapshot: vec::Vec[Entry]) -> result::Result[vec::Vec[WatchTarget], WatchError] {
     var targets: vec::Vec[WatchTarget] = vec::new::[WatchTarget]();
-    let parent: text::Text = parent_path(root);
+    let parent: text::Text = parent_dir(root);
     match backend::metadata(parent) {
         backend::MetadataResult::Found(meta) => {
             let parent_added: status::Status =
@@ -428,7 +405,7 @@ fn desired_targets(root: str, snapshot: vec::Vec[Entry]) -> result::Result[vec::
     while i < snapshot.count() {
         match snapshot.at_ptr(i) {
             option::Option[*Entry]::Some(p) => {
-                let path: text::Text = full_path(root, (*p).relative_path);
+                let path: text::Text = path::join(root, (*p).relative_path);
                 if target_index(targets, path, (*p).inode) < (0 as isize) {
                     let target_added: status::Status =
                         targets.append(WatchTarget { path: path, inode: (*p).inode });
@@ -572,10 +549,10 @@ impl Watcher {
     }
 
     fn emit_one(ref this, kind: ChangeKind, relative_path: str, previous_relative_path: str, is_directory: bool) {
-        let path: text::Text = full_path(this._root, relative_path);
+        let path: text::Text = path::join(this._root, relative_path);
         var previous: text::Text = text::new();
         if #str_len(previous_relative_path) != (0 as usize) {
-            previous = full_path(this._root, previous_relative_path);
+            previous = path::join(this._root, previous_relative_path);
         }
         this._changes.emit(Change {
             kind: kind,
