@@ -64,6 +64,13 @@ pub enum VendorError {
     Io { path: PathBuf, source: std::io::Error },
     NotInstalled { name: String },
     InvalidName { name: String },
+    /// A directory this tool did not install (no `.cplus-vendor` stamp) is
+    /// where it would write or delete. Never ours to touch (audit F02).
+    NotOurs { path: PathBuf },
+    /// `<project>/vendor` resolves outside the project — a committed symlink
+    /// such as `vendor -> ..` — so a write or delete there would land in a
+    /// directory the project does not own (audit F02).
+    VendorOutsideProject { vendor: PathBuf, resolved: PathBuf },
 }
 
 /// Where a package landed.
@@ -166,6 +173,38 @@ impl InstallOptions {
 
 pub fn vendor_dir(project_dir: &Path) -> PathBuf {
     project_dir.join("vendor")
+}
+
+/// The project's `vendor/<name>`, checked before anything is written or
+/// deleted there (audit F02). A project checkout is untrusted input: git
+/// preserves a committed `vendor -> ..` or `vendor/<name> -> ~/Documents`,
+/// and `<project>/vendor/<name>` then names a directory the project does not
+/// own. So `vendor/` must resolve inside the project, and the entry itself
+/// must not be a symlink. Reading through a symlinked `vendor/` stays allowed —
+/// that is how every package inside the toolchain checkout reaches its
+/// siblings — only writing and deleting are refused.
+fn contained_vendor_entry(project_dir: &Path, name: &str) -> Result<PathBuf, VendorError> {
+    let vendor = vendor_dir(project_dir);
+    let entry = vendor.join(name);
+    if fs::symlink_metadata(&vendor).is_ok() {
+        let project = fs::canonicalize(project_dir).map_err(|source| VendorError::Io {
+            path: project_dir.to_path_buf(),
+            source,
+        })?;
+        let resolved = fs::canonicalize(&vendor).map_err(|source| VendorError::Io {
+            path: vendor.clone(),
+            source,
+        })?;
+        if !resolved.starts_with(&project) {
+            return Err(VendorError::VendorOutsideProject { vendor, resolved });
+        }
+    }
+    if let Ok(meta) = fs::symlink_metadata(&entry) {
+        if meta.file_type().is_symlink() {
+            return Err(VendorError::NotOurs { path: entry });
+        }
+    }
+    Ok(entry)
 }
 
 /// Resolve `<project>/Cplus.toml`'s dependencies (transitively) and
@@ -296,7 +335,7 @@ pub fn install(
         // case this project's copy goes local and the shared one is left
         // alone (D16).
         let (dest, location) = match &global_store {
-            None => (local_vendor.join(&dep.name), Location::Local),
+            None => (contained_vendor_entry(project_dir, &dep.name)?, Location::Local),
             Some(store) => {
                 let store_dest = store.vendor_dir().join(&dep.name);
                 match read_stamp(&store_dest) {
@@ -309,7 +348,7 @@ pub fn install(
                             dep.version,
                             local_vendor.join(&dep.name).display(),
                         ));
-                        (local_vendor.join(&dep.name), Location::Local)
+                        (contained_vendor_entry(project_dir, &dep.name)?, Location::Local)
                     }
                     _ => (store_dest, Location::Store),
                 }
@@ -382,14 +421,21 @@ pub fn install(
                 });
             }
 
+            // ONLY OURS IS REPLACED. The comment above promises an unstamped
+            // directory is never deleted, but the code spared it only when its
+            // manifest loaded — any other directory was `remove_dir_all`ed,
+            // and through a committed `vendor -> ..` that was the user's own
+            // `Documents` (audit F02).
             if dest.exists() {
+                if read_stamp(&dest).is_none() {
+                    return Err(VendorError::NotOurs { path: dest });
+                }
                 fs::remove_dir_all(&dest).map_err(|source| VendorError::Io {
                     path: dest.clone(),
                     source,
                 })?;
             }
-            copy_tree(&package_src, &dest)?;
-            write_stamp(&dest, &pin, &sha)?;
+            materialize(&package_src, &dest, &pin, &sha)?;
 
             report.packages.push(Resolved {
                 name: dep.name.clone(),
@@ -526,11 +572,16 @@ pub fn remove(project_dir: &Path, name: &str) -> Result<(), VendorError> {
             name: name.to_string(),
         });
     }
-    let dest = vendor_dir(project_dir).join(name);
+    let dest = contained_vendor_entry(project_dir, name)?;
     if !dest.exists() {
         return Err(VendorError::NotInstalled {
             name: name.to_string(),
         });
+    }
+    // Only what this tool installed: the name check keeps the path inside
+    // vendor/, and the stamp says the directory there is ours (audit F02).
+    if read_stamp(&dest).is_none() {
+        return Err(VendorError::NotOurs { path: dest });
     }
     fs::remove_dir_all(&dest).map_err(|source| VendorError::Io { path: dest, source })?;
     Ok(())
@@ -644,6 +695,28 @@ fn read_stamp(dest: &Path) -> Option<(String, Option<String>)> {
     let pin = lines.next()?.to_string();
     let sha = lines.next().map(str::to_string);
     Some((pin, sha))
+}
+
+/// Copy a package into `dest` and stamp it. CLAIMED BEFORE IT IS FILLED: a
+/// pin-only stamp goes in first, so a copy interrupted half-way leaves a
+/// directory that is still recognisably ours — it has no sha, so the next
+/// install replaces it — while a directory nobody stamped is never replaced
+/// at all (audit F02).
+fn materialize(package_src: &Path, dest: &Path, pin: &str, sha: &str) -> Result<(), VendorError> {
+    fs::create_dir_all(dest).map_err(|source| VendorError::Io {
+        path: dest.to_path_buf(),
+        source,
+    })?;
+    write_claim(dest, pin)?;
+    copy_tree(package_src, dest)?;
+    write_stamp(dest, pin, sha)
+}
+
+/// The stamp an install writes before copying: the pin and no sha. It reads
+/// as "ours, not finished" — the same as a pre-D8 stamp, which is reinstalled.
+fn write_claim(dest: &Path, pin: &str) -> Result<(), VendorError> {
+    let path = dest.join(VENDOR_STAMP);
+    fs::write(&path, format!("{pin}\n")).map_err(|source| VendorError::Io { path, source })
 }
 
 fn write_stamp(dest: &Path, pin: &str, sha: &str) -> Result<(), VendorError> {
@@ -764,6 +837,19 @@ impl fmt::Display for VendorError {
             VendorError::NotInstalled { name } => {
                 write!(f, "`{name}` is not installed in vendor/")
             }
+            VendorError::NotOurs { path } => write!(
+                f,
+                "{} exists and was not installed by this tool (no {VENDOR_STAMP} stamp); \
+                 refusing to replace or delete it. Move it aside yourself if it should go.",
+                path.display()
+            ),
+            VendorError::VendorOutsideProject { vendor, resolved } => write!(
+                f,
+                "{} resolves to {}, outside the project; refusing to write or delete there. \
+                 Make vendor/ a real directory, or vendor the package in place by hand.",
+                vendor.display(),
+                resolved.display()
+            ),
             VendorError::InvalidName { name } => write!(
                 f,
                 "invalid package name `{name}`: a package name must be a lowercase identifier ([a-z][a-z0-9_]*)"
@@ -1146,14 +1232,16 @@ mod tests {
     }
 
     #[test]
-    fn an_unstamped_dir_without_a_manifest_is_still_replaced() {
+    fn an_interrupted_copy_is_still_replaced() {
         // The complement: debris from an interrupted copy has no manifest and
-        // is not a package, so the normal fetch path still owns it.
+        // is not a package, but it carries the claim written before the copy
+        // began (a pin, no sha), so the normal fetch path still owns it.
         let (_repo, project, store, options) = appkit_project();
         let sv = store_vendor(&store);
         let junk = sv.join("appkit");
         fs::create_dir_all(&junk).unwrap();
         write(&junk.join("stray.txt"), "not a package\n");
+        write(&junk.join(VENDOR_STAMP), "github.com/netdur/cplus@0.0.26 vendor/appkit\n");
 
         let report = install(project.path(), &options).unwrap();
 
@@ -1164,6 +1252,110 @@ mod tests {
             .iter()
             .find(|p| p.name == "appkit")
             .is_some_and(|p| p.fresh));
+    }
+
+    // ---- audit F02: a project checkout is untrusted input --------------------
+
+    /// A workspace holding the user's own directory next to a cloned project
+    /// whose committed `vendor` is a symlink to `..`.
+    fn hostile_project(dir_name: &str) -> (TempDir, PathBuf, PathBuf) {
+        let ws = TempDir::new().unwrap();
+        let mine = ws.path().join(dir_name);
+        write(&mine.join("taxes/2025.txt"), "irreplaceable\n");
+        let app = ws.path().join("app");
+        write(
+            &app.join("Cplus.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.0.1\"\n\n[dependencies]\nappkit = \"https://github.com/netdur/cplus/tree/main/vendor/appkit@0.0.26\"\n",
+        );
+        std::os::unix::fs::symlink("..", app.join("vendor")).unwrap();
+        (ws, app, mine)
+    }
+
+    #[test]
+    fn install_local_never_writes_through_a_vendor_link_leaving_the_project() {
+        let (repo, _p, store, mut options) = appkit_project();
+        let _ = repo;
+        options.local = true;
+        let (_ws, app, mine) = hostile_project("appkit");
+
+        let err = install(&app, &options).unwrap_err();
+        assert!(
+            matches!(err, VendorError::VendorOutsideProject { .. }),
+            "got {err}"
+        );
+        assert!(mine.join("taxes/2025.txt").is_file(), "the user's directory survived");
+        assert!(!mine.join(VENDOR_STAMP).exists());
+        let _ = store;
+    }
+
+    #[test]
+    fn remove_never_deletes_through_a_vendor_link_leaving_the_project() {
+        let (_ws, app, mine) = hostile_project("notes");
+        let err = remove(&app, "notes").unwrap_err();
+        assert!(matches!(err, VendorError::VendorOutsideProject { .. }), "got {err}");
+        assert!(mine.join("taxes/2025.txt").is_file());
+    }
+
+    #[test]
+    fn remove_deletes_only_what_this_tool_installed() {
+        let project = TempDir::new().unwrap();
+        let hand = project.path().join("vendor/notes");
+        write(&hand.join("todo.txt"), "mine\n");
+        let err = remove(project.path(), "notes").unwrap_err();
+        assert!(matches!(err, VendorError::NotOurs { .. }), "got {err}");
+        assert!(hand.join("todo.txt").is_file());
+
+        // A stamped one goes.
+        let ours = project.path().join("vendor/objc");
+        write(&ours.join(VENDOR_STAMP), "github.com/netdur/cplus@0.0.26 vendor/objc\nabc\n");
+        remove(project.path(), "objc").unwrap();
+        assert!(!ours.exists());
+    }
+
+    #[test]
+    fn a_copy_that_fails_half_way_leaves_a_claim_the_next_install_owns() {
+        use std::os::unix::fs::PermissionsExt;
+        let src = TempDir::new().unwrap();
+        write(&src.path().join("Cplus.toml"), "[package]\nname = \"p\"\nversion = \"1.0.0\"\n");
+        let locked = src.path().join("z_unreadable");
+        write(&locked, "secret\n");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let out = TempDir::new().unwrap();
+        let dest = out.path().join("p");
+
+        assert!(materialize(src.path(), &dest, "pin", "sha").is_err());
+        // Interrupted, but claimed: ours, and unfinished (no sha).
+        assert_eq!(read_stamp(&dest), Some(("pin".to_string(), None)));
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    #[test]
+    fn a_symlinked_vendor_entry_is_never_replaced_or_removed() {
+        // `vendor/` is real, but the entry is a committed link to a directory
+        // outside the project.
+        let ws = TempDir::new().unwrap();
+        let mine = ws.path().join("Documents");
+        write(&mine.join("taxes/2025.txt"), "irreplaceable\n");
+        let project = ws.path().join("app");
+        fs::create_dir_all(project.join("vendor")).unwrap();
+        std::os::unix::fs::symlink(&mine, project.join("vendor/documents")).unwrap();
+        let err = remove(&project, "documents").unwrap_err();
+        assert!(matches!(err, VendorError::NotOurs { .. }), "got {err}");
+        assert!(mine.join("taxes/2025.txt").is_file());
+    }
+
+    #[test]
+    fn an_unstamped_dir_without_a_manifest_is_refused_not_replaced() {
+        // What the old code deleted: any directory it did not stamp whose
+        // manifest failed to load — `Documents` reached through `vendor -> ..`.
+        let (_repo, project, store, options) = appkit_project();
+        let sv = store_vendor(&store);
+        let foreign = sv.join("appkit");
+        write(&foreign.join("notes.txt"), "someone's files\n");
+
+        let err = install(project.path(), &options).unwrap_err();
+        assert!(matches!(err, VendorError::NotOurs { .. }), "got {err}");
+        assert!(foreign.join("notes.txt").is_file(), "left exactly as it was");
     }
 
     #[test]

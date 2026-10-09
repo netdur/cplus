@@ -235,6 +235,22 @@ Three fences keep a fetched package from writing outside its destination:
 3. **The copy skips symlinks** (and `.git`). A package cannot pull an
    external file in through a link, or redirect the copy walk out of its
    own tree via a symlinked directory.
+4. **Only this tool's own directories are replaced or removed.** A
+   directory is ours when it carries a `.cplus-vendor` stamp. An install
+   writes a pin-only stamp before it copies, so a copy interrupted half-way
+   is still ours and the next install replaces it. `install` and `remove`
+   refuse to touch an unstamped directory, whatever it holds.
+5. **The project's `vendor/` must resolve inside the project before
+   anything is written or deleted there.** A cloned project is untrusted
+   input, and git keeps a committed `vendor -> ..` or
+   `vendor/<name> -> ~/Documents` symlink. A `vendor/` that resolves
+   elsewhere, or an entry that is itself a symlink, is refused. Reading
+   through a symlinked `vendor/` stays allowed: inside the toolchain
+   checkout every example links to the monorepo's `vendor/`, and its
+   packages are found there, not written.
+
+Fences 1–3 assume `<project>/vendor` is a real directory. Fences 4 and 5 make
+that assumption true (security audit F02).
 
 ## Errors
 
@@ -248,6 +264,8 @@ Three fences keep a fetched package from writing outside its destination:
 | a release tag no longer matches its record | "tag `vX` of REPO moved from A to B; a release tag is immutable" |
 | pinned URL without `@version`, `/tree/`, or host/owner/repo | spec parse error naming the missing piece |
 | subpath escapes the repo | unsafe subpath |
+| an install or `remove` target has no `.cplus-vendor` stamp | "exists and was not installed by this tool … refusing to replace or delete it" |
+| `<project>/vendor` resolves outside the project (when writing or deleting) | "resolves to …, outside the project; refusing to write or delete there" |
 | tag or repo unreachable | the `git clone` command line and its stderr |
 | `<subpath>/Cplus.toml` absent at the tag | "package was not found in the fetched repo at PATH" |
 | `remove` of a package not in `vendor/` | "not installed" |
