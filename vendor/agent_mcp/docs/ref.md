@@ -167,11 +167,25 @@ after each request would hand every later one an empty `client`.
 
 | request | answer |
 |---|---|
-| `POST` with a JSON-RPC body | `200`, `application/json` |
+| `POST` with a JSON-RPC body and `Content-Type: application/json` | `200`, `application/json` |
+| any `Origin` header | `403`, and the connection ends |
+| a `Host` other than `127.0.0.1`, `localhost` or `[::1]` | `403`, and the connection ends |
+| no `Content-Type: application/json` | `415`, and the connection ends |
 | a notification (no `id`) | `202`, empty body — silence would hang a waiting client |
 | anything but `POST` | `405`, in words |
 | `Content-Length` over 64 KiB | `413`, and the connection ends (an unread body would desynchronise the next request) |
 | empty body | `400` |
+
+**A web page can't use this door.** A browser is a client of 127.0.0.1 too,
+and three checks run before the body is read:
+- `Origin`: a browser sends it on every cross-origin request, and an MCP client
+  never does.
+- `Host`: after DNS rebinding, a page shares the port's origin, but its Host is
+  still its own name.
+- `Content-Type: application/json`: a page can't send this cross-site without a
+  CORS preflight, and the server never approves one.
+
+Send all three as a local client would: no Origin, a loopback Host, and JSON.
 
 SSE is not implemented. Nothing here pushes — `poll_event` stands in for that —
 so plain JSON responses are conformant.

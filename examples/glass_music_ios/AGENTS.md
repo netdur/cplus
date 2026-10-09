@@ -76,6 +76,7 @@ next free one, so read the port the app printed at startup, and check that
 
 ```
 curl -s -X POST http://127.0.0.1:<port>/ \
+     -H 'Content-Type: application/json' \
      -d '{"jsonrpc":"2.0","id":1,"method":"describe_ui"}'
 ```
 

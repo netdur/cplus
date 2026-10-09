@@ -2711,10 +2711,65 @@ struct HttpHead {
     is_post: bool,
     has_length: bool,
     content_length: usize,
+    // WHO SENT IT (security audit F03). A web page is a client of 127.0.0.1
+    // too, and this door can read a UI and press its buttons. A browser marks
+    // its requests; an MCP client does not:
+    //   - `Origin` is sent by a browser on every cross-origin POST, and by no
+    //     MCP client.
+    //   - `Host` names the site the page THINKS it is talking to. After DNS
+    //     rebinding that is the attacker's name, not loopback.
+    //   - `Content-Type: application/json` cannot be sent cross-site without
+    //     a CORS preflight, and this server never approves one. `text/plain`
+    //     can, which is how a page posts JSON-RPC without asking.
+    has_origin: bool,
+    foreign_host: bool,
+    is_json: bool,
 }
 
 fn no_head() -> HttpHead {
-    return HttpHead { ok: false, is_post: false, has_length: false, content_length: 0 };
+    return HttpHead { ok: false, is_post: false, has_length: false, content_length: 0,
+                      has_origin: false, foreign_host: false, is_json: false };
+}
+
+// The value after `name:`, spaces trimmed.
+fn header_value(line: str) -> str {
+    let n: usize = #str_len(line);
+    let b: *u8 = #str_ptr(line);
+    var i: usize = 0;
+    while i < n {
+        if { *(b + i) } == (':' as u8) { i = i +% 1; break; }
+        i = i +% 1;
+    }
+    return { #str_from_raw_parts(b + i, n -% i) }.trim();
+}
+
+// True for a Host naming this machine's loopback: 127.0.0.1, localhost or
+// [::1], with or without a port. Anything else is a name a browser resolved —
+// the shape a rebound request arrives in.
+fn is_loopback_host(value: str) -> bool {
+    var host: str = value;
+    if value.has_prefix("[") {
+        match value.find("]") {
+            option::Option[usize]::Some(end) => { host = value.prefix(end +% 1); }
+            option::Option[usize]::None => { return false; }
+        }
+    } else {
+        match value.find(":") {
+            option::Option[usize]::Some(colon) => { host = value.prefix(colon); }
+            option::Option[usize]::None => { }
+        }
+    }
+    if host == "127.0.0.1" || host == "[::1]" { return true; }
+    return host.equals_ignoring_case("localhost");
+}
+
+// `application/json`, with or without parameters (`; charset=utf-8`).
+fn is_json_type(value: str) -> bool {
+    let media: str = match value.find(";") {
+        option::Option[usize]::Some(semi) => value.prefix(semi).trim(),
+        option::Option[usize]::None => value,
+    };
+    return media.equals_ignoring_case("application/json");
 }
 
 // ASCII-lowercase compare, for a header NAME. HTTP field names are
@@ -2800,6 +2855,11 @@ fn read_http_head(fd: i32, buf: *u8, cap: usize) -> HttpHead {
                 head.has_length = true;
                 head.content_length = header_number(line);
             }
+            if header_is(line, "origin") { head.has_origin = true; }
+            if header_is(line, "host") {
+                if !is_loopback_host(header_value(line)) { head.foreign_host = true; }
+            }
+            if header_is(line, "content-type") { head.is_json = is_json_type(header_value(line)); }
         }
         lines = lines +% 1;
         if lines > 64 { return no_head(); }   // a head this long is not one
@@ -2919,6 +2979,31 @@ fn serve_http_once(
             write_http_response(fd, "405 Method Not Allowed", "text/plain",
                                 "this endpoint takes JSON-RPC over POST\n");
             continue;
+        }
+        // A BROWSER IS REFUSED BEFORE ITS BODY IS DISPATCHED (F03), and the
+        // connection is closed. The body is drained first (when it fits):
+        // closing with bytes unread makes the kernel send a reset, and the
+        // client then loses the answer saying why. The order names the most
+        // specific reason first.
+        if head.has_origin || head.foreign_host || !head.is_json {
+            if head.content_length <= HTTP_MAX_BODY {
+                let _drained: bool = read_exact(fd, body_buf, head.content_length);
+            }
+        }
+        if head.has_origin {
+            write_http_response(fd, "403 Forbidden", "text/plain",
+                                "cross-origin requests are refused: this endpoint serves local MCP clients, not web pages\n");
+            return 2;
+        }
+        if head.foreign_host {
+            write_http_response(fd, "403 Forbidden", "text/plain",
+                                "Host must be 127.0.0.1, localhost or [::1]\n");
+            return 2;
+        }
+        if !head.is_json {
+            write_http_response(fd, "415 Unsupported Media Type", "text/plain",
+                                "send Content-Type: application/json\n");
+            return 2;
         }
         if head.content_length > HTTP_MAX_BODY {
             write_http_response(fd, "413 Payload Too Large", "text/plain",
@@ -3480,7 +3565,7 @@ fn two_requests_on_one_connection_share_an_identity() {
     let b1: str = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"claude-code\"}}}";
     let b2: str = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"describe_ui\"}";
     let req: text::Text =
-        "POST / HTTP/1.1\r\nContent-Length: ${#str_len(b1)}\r\n\r\n${b1}POST / HTTP/1.1\r\nContent-Length: ${#str_len(b2)}\r\n\r\n${b2}";
+        "POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(b1)}\r\n\r\n${b1}POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(b2)}\r\n\r\n${b2}";
 
     forget_client();
     let n: usize = http_round_trip(req.view(), { #addr_of(out[0]) }, 8192);
@@ -3512,7 +3597,7 @@ fn the_body_cap_and_the_buffer_are_one_number() {
     // A declared length past the cap is refused, whatever the buffer happens
     // to be.
     var out: [u8; 2048] = [0; 2048];
-    let over: text::Text = "POST / HTTP/1.1\r\nContent-Length: ${HTTP_MAX_BODY +% 1}\r\n\r\n{}";
+    let over: text::Text = "POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: ${HTTP_MAX_BODY +% 1}\r\n\r\n{}";
     let n: usize = http_round_trip(over.view(), { #addr_of(out[0]) }, 2048);
     assert n > 0;
     assert response_contains({ #addr_of(out[0]) }, n, "413");
@@ -3541,10 +3626,89 @@ fn a_get_is_refused_in_words() {
 #[test]
 fn an_oversized_body_is_refused_rather_than_truncated() {
     var out: [u8; 2048] = [0; 2048];
-    let req: str = "POST / HTTP/1.1\r\nContent-Length: 999999\r\n\r\n{}";
+    let req: str = "POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 999999\r\n\r\n{}";
     let n: usize = http_round_trip(req, { #addr_of(out[0]) }, 2048);
     assert n > 0;
     assert response_contains({ #addr_of(out[0]) }, n, "413");
+}
+
+// ---- F03: a web page is not an MCP client ---------------------------------------
+//
+// Each request below is what a browser sends for a page's
+// fetch(url, {method: "POST", mode: "no-cors", body}). Every one used to be
+// served: a page read the UI and pressed its buttons.
+
+fn refused_with(req: str, status: str) -> bool {
+    var out: [u8; 2048] = [0; 2048];
+    let n: usize = http_round_trip(req, { #addr_of(out[0]) }, 2048);
+    if n == 0 { return false; }
+    if !response_contains({ #addr_of(out[0]) }, n, status) { return false; }
+    // Refused before dispatch: no JSON-RPC answer came back.
+    return !response_contains({ #addr_of(out[0]) }, n, "jsonrpc");
+}
+
+#[test]
+fn a_request_carrying_an_origin_is_refused() {
+    let body: str = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}";
+    let req: text::Text =
+        "POST / HTTP/1.1\r\nHost: 127.0.0.1:9837\r\nOrigin: https://attacker.example\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
+    assert refused_with(req.view(), "403 Forbidden");
+    // `Origin: null` (a sandboxed frame, a file: page) is a browser too.
+    let null_origin: text::Text =
+        "POST / HTTP/1.1\r\nOrigin: null\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
+    assert refused_with(null_origin.view(), "403 Forbidden");
+}
+
+#[test]
+fn a_rebound_host_is_refused() {
+    // After DNS rebinding the page and the port share an origin, so it sends
+    // no Origin on a same-origin POST, but its Host is still its own name.
+    let body: str = "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"read_text\",\"params\":{\"id\":\"in:name\"}}";
+    let req: text::Text =
+        "POST / HTTP/1.1\r\nHost: rebind.attacker.example:9837\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
+    assert refused_with(req.view(), "403 Forbidden");
+}
+
+#[test]
+fn a_text_plain_body_is_refused() {
+    // The CORS "simple request" a page can send cross-site with no preflight.
+    let body: str = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"click\",\"params\":{\"id\":\"inputs\"}}";
+    let plain: text::Text =
+        "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain;charset=UTF-8\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
+    assert refused_with(plain.view(), "415");
+    let none: text::Text =
+        "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
+    assert refused_with(none.view(), "415");
+}
+
+#[test]
+fn a_loopback_client_in_any_spelling_is_served() {
+    let body: str = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}";
+    let a: text::Text =
+        "POST / HTTP/1.1\r\nHost: localhost:9837\r\ncontent-type: Application/JSON; charset=utf-8\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
+    var out: [u8; 4096] = [0; 4096];
+    let n: usize = http_round_trip(a.view(), { #addr_of(out[0]) }, 4096);
+    assert response_contains({ #addr_of(out[0]) }, n, "200 OK");
+    let b: text::Text =
+        "POST / HTTP/1.1\r\nHost: [::1]:9837\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
+    let m: usize = http_round_trip(b.view(), { #addr_of(out[0]) }, 4096);
+    assert response_contains({ #addr_of(out[0]) }, m, "200 OK");
+}
+
+#[test]
+fn the_header_readers_answer_what_they_should() {
+    assert is_loopback_host("127.0.0.1");
+    assert is_loopback_host("127.0.0.1:9000");
+    assert is_loopback_host("LocalHost:9000");
+    assert is_loopback_host("[::1]:9000");
+    assert !is_loopback_host("127.0.0.1.attacker.example");
+    assert !is_loopback_host("localhost.attacker.example:9000");
+    assert !is_loopback_host("[::1");
+    assert is_json_type("application/json");
+    assert is_json_type("application/json; charset=utf-8");
+    assert !is_json_type("text/plain");
+    assert !is_json_type("application/jsonx");
+    assert header_value("Host:   127.0.0.1  ") == "127.0.0.1";
 }
 
 // A notification carries no id and is entitled to no reply — but over HTTP the
@@ -3555,7 +3719,7 @@ fn a_notification_gets_an_empty_202_rather_than_silence() {
     var out: [u8; 2048] = [0; 2048];
     let body: str = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}";
     let req: text::Text =
-        "POST / HTTP/1.1\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
+        "POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
     let n: usize = http_round_trip(req.view(), { #addr_of(out[0]) }, 2048);
     assert n > 0;
     assert response_contains({ #addr_of(out[0]) }, n, "202 Accepted");

@@ -8765,6 +8765,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          **Talk to it.** Plain JSON-RPC over POST, no bridge:\n\n\
          ```\n\
          curl -s -X POST http://127.0.0.1:<port>/ \\\n\
+         \x20    -H 'Content-Type: application/json' \\\n\
          \x20    -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}}'\n\
          ```\n\n\
          `tools/list` names every verb, and the startup line says how many\n\

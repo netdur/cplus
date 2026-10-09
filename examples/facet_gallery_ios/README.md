@@ -146,9 +146,9 @@ tools/mcp_check.py $(( 9000 + PID % 1000 ))                # 28 checks, exits no
 or by hand:
 
 ```
-$ curl -s -X POST http://127.0.0.1:<port>/ -d '{"jsonrpc":"2.0","id":1,"method":"describe_ui"}'
+$ curl -s -X POST http://127.0.0.1:<port>/ -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"describe_ui"}'
 {"jsonrpc":"2.0","id":1,"result":[{"id":"g:title","role":"text","text":"facet_uikit",…}]}
-$ curl -s -X POST http://127.0.0.1:<port>/ -d '{"jsonrpc":"2.0","id":2,"method":"click","params":{"id":"row:button"}}'
+$ curl -s -X POST http://127.0.0.1:<port>/ -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"click","params":{"id":"row:button"}}'
 {"jsonrpc":"2.0","id":2,"result":{"outcome":"allowed"}}
 ```
 

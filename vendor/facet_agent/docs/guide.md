@@ -98,7 +98,7 @@ covers a normal quit but not a kill.
 | | speaks | reachable by |
 |---|---|---|
 | Unix socket (macOS, Linux) | line-delimited JSON-RPC | the owning user only — 0600 |
-| HTTP (everywhere) | Streamable HTTP, `application/json` | any MCP client, no bridge; any local process |
+| HTTP (everywhere) | Streamable HTTP, `application/json` | any MCP client, no bridge; any local process. Not web pages: requests with an `Origin`, a non-loopback `Host` or a non-JSON body are refused |
 
 Both funnel into one `handle_request`, so a verb cannot exist on one and not the
 other, and one consent gate covers both.
