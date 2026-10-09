@@ -1,12 +1,22 @@
 name: Release binaries
 
-# On a vX.Y.Z tag (or manual dispatch against an existing tag) build the cpc
-# toolchain for macOS / Apple Silicon, attach a tarball to the GitHub Release,
-# and rewrite the Homebrew tap formula to install that prebuilt binary — so
-# `brew install netdur/cplus/cplus` needs no Rust and no compile.
+# On a vX.Y.Z tag build the cpc toolchain for macOS / Apple Silicon, attach a
+# tarball to the GitHub Release, and rewrite the Homebrew tap formula to install
+# that prebuilt binary — so `brew install netdur/cplus/cplus` needs no Rust and
+# no compile.
 #
 # Requires repo secret HOMEBREW_TAP_TOKEN (Contents: read/write on
 # netdur/homebrew-cplus).
+#
+# SUPPLY CHAIN (security audit F05). The job that BUILDS holds no write token:
+# compiling runs every dependency's build code, so a compromised crate there
+# must not be able to push to this repository or replace a release. Publishing
+# is a separate job that runs no build code — it downloads the built tarball,
+# attests its provenance and uploads it. The release build starts from a clean
+# target/ (no shared cache a CI run could have written into). Every action is
+# pinned to a commit, with its tag in a comment. A ref name reaches a script
+# only through `env:` and is checked before use. An existing release asset is
+# never overwritten.
 
 on:
   push:
@@ -14,7 +24,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write # create the Release and upload assets
+  contents: read
 
 jobs:
   build-macos-arm64:
@@ -23,23 +33,27 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
       sha: ${{ steps.pkg.outputs.sha }}
+      asset: ${{ steps.pkg.outputs.asset }}
     steps:
-      - name: Resolve tag
+      - name: Resolve and check the tag
         id: meta
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          TAG="${{ github.ref_name }}"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $TAG" >&2; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Check out source at the tag
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ steps.meta.outputs.tag }}
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
 
+      # No rust-cache: a release is built from a clean target/.
       - name: Build release binaries
         run: cargo build --release -p cpc -p cpc-lsp -p cpc-bindgen
 
@@ -54,40 +68,87 @@ jobs:
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
           echo "built $ASSET ($SHA)"
 
+      - name: Hand the tarball to the publish job
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: release-macos-arm64
+          path: ${{ steps.pkg.outputs.asset }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-macos-arm64:
+    needs: build-macos-arm64
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the Release and upload the asset
+      id-token: write # sign the provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-macos-arm64
+
+      - name: Check the tarball is the one the build measured
+        env:
+          ASSET: ${{ needs.build-macos-arm64.outputs.asset }}
+          SHA: ${{ needs.build-macos-arm64.outputs.sha }}
+        run: |
+          set -euo pipefail
+          echo "$SHA  $ASSET" | sha256sum -c -
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: ${{ needs.build-macos-arm64.outputs.asset }}
+
       - name: Upload to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build-macos-arm64.outputs.tag }}
+          ASSET: ${{ needs.build-macos-arm64.outputs.asset }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.meta.outputs.tag }}"
-          gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --title "$TAG" --notes "Prebuilt binaries for $TAG."
-          gh release upload "$TAG" "${{ steps.pkg.outputs.asset }}" --clobber
+          # Idempotent across the parallel release workflows, which all fire on
+          # the same tag: create if absent (another may win the race).
+          gh release create "$TAG" --title "$TAG" --notes "Prebuilt binaries for $TAG." \
+            || gh release view "$TAG" >/dev/null
+          # No --clobber: an asset already on a release is never replaced.
+          gh release upload "$TAG" "$ASSET"
 
   bump-tap:
-    needs: build-macos-arm64
+    needs: [build-macos-arm64, publish-macos-arm64]
     runs-on: ubuntu-latest
     steps:
       - name: Check out source (for the formula template)
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Check out the tap
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: netdur/homebrew-cplus
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
 
       - name: Render formula from template
+        env:
+          VERSION: ${{ needs.build-macos-arm64.outputs.version }}
+          SHA: ${{ needs.build-macos-arm64.outputs.sha }}
         run: |
           set -euo pipefail
-          sed -e "s/@VERSION@/${{ needs.build-macos-arm64.outputs.version }}/g" \
-              -e "s/@SHA@/${{ needs.build-macos-arm64.outputs.sha }}/g" \
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad version: $VERSION" >&2; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "bad sha256: $SHA" >&2; exit 1; }
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/@SHA@/$SHA/g" \
               .github/homebrew/cplus.rb.in > tap/Formula/cplus.rb
           echo "----- rendered formula -----"
           cat tap/Formula/cplus.rb
 
       - name: Commit and push to the tap
+        env:
+          VERSION: ${{ needs.build-macos-arm64.outputs.version }}
         run: |
           set -euo pipefail
           cd tap
@@ -98,5 +159,5 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/cplus.rb
-          git commit -m "cplus ${{ needs.build-macos-arm64.outputs.version }} (prebuilt)"
+          git commit -m "cplus $VERSION (prebuilt)"
           git push

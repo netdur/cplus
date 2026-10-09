@@ -9,13 +9,21 @@ name: Linux CI
 # clang-19, honoring $CPC_CLANG), so installing clang-19 is enough — no
 # update-alternatives. Ubuntu 24.04's bare `clang` is still 18, which lacks the
 # `preserve_nonecc` calling convention cpc emits.
+#
+# SUPPLY CHAIN (security audit F05): the workflow's token is read-only. The
+# jobs that compile — and so run every dependency's build code — hold no write
+# token and do not persist one into .git/config. A release asset is published
+# by a separate job that runs no build code: it downloads the artifact, attests
+# its provenance and uploads it, never replacing an existing asset. Actions are
+# pinned to commits (tag in a comment); the ref name reaches a script only
+# through `env:` and is checked first.
 
 on:
   push:
   workflow_dispatch:
 
 permissions:
-  contents: write # create the Release and upload the .deb asset
+  contents: read
 
 env:
   # E2E fixtures share vendored packages and their mutable prebuild outputs.
@@ -28,10 +36,12 @@ jobs:
     runs-on: ubuntu-latest # currently Ubuntu 24.04 (amd64)
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Install clang-19
         run: |
@@ -47,13 +57,17 @@ jobs:
     name: Build + apt-install + smoke-test the .deb
     runs-on: ubuntu-latest # currently Ubuntu 24.04 (amd64)
     needs: test
+    outputs:
+      pkg: ${{ steps.deb.outputs.pkg }}
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      # No rust-cache: what may become a release asset is built from a clean
+      # target/, not from one a test run could have written into.
       - name: Build release binaries
         run: cargo build --release -p cpc -p cpc-lsp -p cpc-bindgen
 
@@ -99,7 +113,7 @@ jobs:
           dpkg-deb --contents "dist/${PKG}.deb"
 
       - name: Upload .deb artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: ${{ steps.deb.outputs.pkg }}
           path: dist/*.deb
@@ -107,18 +121,6 @@ jobs:
           # Cap accumulation against the account storage quota; the durable copy
           # is attached to the GitHub Release on a tag.
           retention-days: 14
-
-      - name: Attach the .deb to the GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          TAG="${{ github.ref_name }}"
-          # Idempotent across the parallel release jobs (macOS/Linux/Windows all
-          # fire on the same tag): create if absent, then clobber-upload.
-          gh release create "$TAG" --title "$TAG" --notes "Prebuilt binaries for $TAG." || true
-          gh release upload "$TAG" dist/*.deb --clobber
 
       - name: Install the .deb via apt (resolves Depends, incl. clang-19)
         run: |
@@ -150,3 +152,37 @@ jobs:
           echo "exit code: $code"
           test "$code" -eq 42
           echo "OK: installed cpc compiled, linked, and ran a native binary."
+
+  publish-deb:
+    name: Attach the .deb to the GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-deb
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the Release and upload the asset
+      id-token: write # sign the provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: ${{ needs.build-deb.outputs.pkg }}
+          path: dist
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: dist/*.deb
+
+      - name: Upload to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $TAG" >&2; exit 1; }
+          # Idempotent across the parallel release workflows: create if absent
+          # (another may win the race). No --clobber: an asset is never replaced.
+          gh release create "$TAG" --title "$TAG" --notes "Prebuilt binaries for $TAG." \
+            || gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" dist/*.deb

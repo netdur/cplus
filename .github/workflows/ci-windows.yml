@@ -11,13 +11,24 @@ name: Windows CI
 # (Rust's *-windows-msvc toolchain locates it automatically — no setup). The
 # clang ASan runtime dir is also put on PATH so the `--asan` e2e tests can load
 # clang_rt.asan_dynamic at run time.
+#
+# SUPPLY CHAIN (security audit F05): the workflow's token is read-only. The
+# jobs that compile — and so run every dependency's build code — hold no write
+# token and do not persist one into .git/config. A release asset is published
+# by a separate job that runs no build code: it downloads the artifact, attests
+# its provenance and uploads it, never replacing an existing asset. Actions are
+# pinned to commits (tag in a comment); the ref name reaches a script only
+# through `env:` and is checked first.
+#
+# The release .zip is NOT the test job's tree: on a v* tag `build-release`
+# compiles the three binaries afresh, with no cache and no tests run first.
 
 on:
   push:
   workflow_dispatch:
 
 permissions:
-  contents: write # create the Release and upload assets
+  contents: read
 
 env:
   # E2E fixtures share vendored packages and their mutable prebuild outputs.
@@ -33,10 +44,12 @@ jobs:
         run: git config --global core.autocrlf false
 
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Install LLVM/clang (>= 19)
         run: choco upgrade llvm -y --no-progress
@@ -91,7 +104,7 @@ jobs:
           exit 0
 
       - name: Upload Windows binaries (workflow artifact)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: cplus-x86_64-pc-windows-msvc
           path: |
@@ -103,18 +116,67 @@ jobs:
           # binary upload was the main churn (one ~3.7 MB artifact every run).
           retention-days: 14
 
-      - name: Attach binaries to the GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+  build-release:
+    name: Release binaries (clean build, tags only)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-test
+    runs-on: windows-latest
+    steps:
+      - name: Preserve fixture line endings
+        run: git config --global core.autocrlf false
+
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+
+      # No rust-cache and no tests: these are the bytes that get published.
+      - name: Build release binaries
+        run: cargo build --release -p cpc -p cpc-lsp -p cpc-bindgen
+
+      - name: Zip
         shell: pwsh
+        run: |
+          Compress-Archive -Force -DestinationPath cplus-x86_64-pc-windows-msvc.zip -Path `
+            target\release\cpc.exe, target\release\cpc-lsp.exe, target\release\cpc-bindgen.exe
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: release-windows-x86_64
+          path: cplus-x86_64-pc-windows-msvc.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    name: Attach the .zip to the GitHub Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the Release and upload the asset
+      id-token: write # sign the provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-windows-x86_64
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: cplus-x86_64-pc-windows-msvc.zip
+
+      - name: Upload to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
         run: |
-          $tag = "${{ github.ref_name }}"
-          $asset = "cplus-x86_64-pc-windows-msvc.zip"
-          Compress-Archive -Force -DestinationPath $asset -Path `
-            target\release\cpc.exe, target\release\cpc-lsp.exe, target\release\cpc-bindgen.exe
-          # Idempotent across the parallel release jobs (macOS/Linux/Windows all
-          # fire on the same tag): create if absent, then clobber-upload.
-          gh release create $tag --title $tag --notes "Prebuilt binaries for $tag." 2>$null
-          gh release upload $tag $asset --clobber
-          if ($LASTEXITCODE -ne 0) { throw "release upload failed" }
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $TAG" >&2; exit 1; }
+          # Idempotent across the parallel release workflows: create if absent
+          # (another may win the race). No --clobber: an asset is never replaced.
+          gh release create "$TAG" --title "$TAG" --notes "Prebuilt binaries for $TAG." \
+            || gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" cplus-x86_64-pc-windows-msvc.zip
