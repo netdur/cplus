@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 51364;
+const DEX_LEN: usize = 53060;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -319,6 +319,19 @@ fn loaded() -> bool { return LOADER != 0; }
 // must be parented to it or the app's own classes become invisible to it.
 fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     if LOADER != 0 { return; }
+    let ctx: jni::jobject = env.call_object_0(
+        any_view, #str_ptr("android/view/View\0"), #str_ptr("getContext\0"),
+        #str_ptr("()Landroid/content/Context;\0"));
+    ensure_loaded_from(env, ctx);
+    env.delete_local_ref(ctx);
+    return;
+}
+
+// The same, from any Context — the entry loads it here, before the app's
+// `run()`, so a package reaching FacetFiles from there (filepicker's FileRef
+// opening a content:// URI) finds the class rather than a zero.
+fn ensure_loaded_from(env: rt::Env, ctx: jni::jobject) {
+    if LOADER != 0 { return; }
     // MERGED FIRST. An app whose build fed this package's `facet_android.dex`
     // to `d8` alongside its own classes already HAS these classes in its own
     // classes.dex — and its loader is the one that supplied `FacetActivity`,
@@ -328,13 +341,10 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 51364] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 53060] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
-    let ctx: jni::jobject = env.call_object_0(
-        any_view, #str_ptr("android/view/View\0"), #str_ptr("getContext\0"),
-        #str_ptr("()Landroid/content/Context;\0"));
     let app_loader: jni::jobject = env.call_object_0(
         ctx, #str_ptr("android/content/Context\0"), #str_ptr("getClassLoader\0"),
         #str_ptr("()Ljava/lang/ClassLoader;\0"));
@@ -382,7 +392,6 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     env.delete_local_ref(loader);
     env.delete_local_ref(imdcl);
     env.delete_local_ref(app_loader);
-    env.delete_local_ref(ctx);
     env.delete_local_ref(buffer);
     return;
 }
@@ -1488,6 +1497,55 @@ fn share_file(env: rt::Env, activity: jni::jobject, path: jni::jstring) -> i32 {
     let r: i32 = { (*(*env.raw())).CallStaticIntMethodA(env.raw(), { C_FILES as *u8 }, mid,
                                                         #addr_of(args[0])) };
     if env.has_pending_exception() { env.clear_exception(); return 3; }
+    return r;
+}
+
+// See FacetFiles.copyFromUri / copyToUri: 0 done, 2 nothing there, 3 failed;
+// 1 when the dex is not loaded.
+fn copy_from_uri(env: rt::Env, ctx: jni::jobject, uri: jni::jstring, dst: jni::jstring) -> i32 {
+    return files_copy(env, #str_ptr("copyFromUri\0"), ctx, uri, dst);
+}
+
+fn copy_to_uri(env: rt::Env, ctx: jni::jobject, src: jni::jstring, uri: jni::jstring) -> i32 {
+    return files_copy(env, #str_ptr("copyToUri\0"), ctx, src, uri);
+}
+
+fn files_copy(env: rt::Env, name: *u8, ctx: jni::jobject, a: jni::jstring, b: jni::jstring) -> i32 {
+    if C_FILES == 0 { return 1; }
+    let mid: jni::jmethodID = env.method_id_static({ C_FILES as *u8 }, name,
+        #str_ptr("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)I\0"));
+    if mid == (0 as jni::jmethodID) { env.clear_exception(); return 1; }
+    var args: [jni::JValue; 3] = [jni::arg_object(ctx), jni::arg_object(a), jni::arg_object(b)];
+    let r: i32 = { (*(*env.raw())).CallStaticIntMethodA(env.raw(), { C_FILES as *u8 }, mid,
+                                                        #addr_of(args[0])) };
+    if env.has_pending_exception() { env.clear_exception(); return 3; }
+    return r;
+}
+
+// FacetFiles.displayName: a local String ref, or 0 when the provider has none.
+fn display_name(env: rt::Env, ctx: jni::jobject, uri: jni::jstring) -> jni::jobject {
+    if C_FILES == 0 { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static({ C_FILES as *u8 },
+        #str_ptr("displayName\0"), #str_ptr("(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;\0"));
+    if mid == (0 as jni::jmethodID) { env.clear_exception(); return 0 as jni::jobject; }
+    var args: [jni::JValue; 2] = [jni::arg_object(ctx), jni::arg_object(uri)];
+    let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), { C_FILES as *u8 }, mid,
+                                                                    #addr_of(args[0])) };
+    if env.has_pending_exception() { env.clear_exception(); return 0 as jni::jobject; }
+    return r;
+}
+
+// FacetFiles.scratchFile: a fresh empty file in the app's cache, as a local
+// String ref, or 0.
+fn scratch_file(env: rt::Env, ctx: jni::jobject) -> jni::jobject {
+    if C_FILES == 0 { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static({ C_FILES as *u8 },
+        #str_ptr("scratchFile\0"), #str_ptr("(Landroid/content/Context;)Ljava/lang/String;\0"));
+    if mid == (0 as jni::jmethodID) { env.clear_exception(); return 0 as jni::jobject; }
+    var args: [jni::JValue; 1] = [jni::arg_object(ctx)];
+    let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), { C_FILES as *u8 }, mid,
+                                                                    #addr_of(args[0])) };
+    if env.has_pending_exception() { env.clear_exception(); return 0 as jni::jobject; }
     return r;
 }
 

@@ -28,6 +28,7 @@ import "facet/facet" as core;
 import "./facet_android" as backend;
 import "./window" as window;
 import "./env" as e;
+import "./dex" as dex;
 import "./mainthread" as mainthread;
 import "./log" as log;
 
@@ -122,6 +123,7 @@ export extern fn Java_cplus_facet_FacetActivity_nativeCreateView(
     // files go. The Activity itself is recorded later, at attach.
     mainthread::remember_vm(env);
     e::set_app_context(env, activity);
+    dex::ensure_loaded_from(env, activity);
     backend::install();
 
     // ONCE PER PROCESS. The Activity is recreated on rotation with the same

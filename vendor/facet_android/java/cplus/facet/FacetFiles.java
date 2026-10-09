@@ -52,4 +52,70 @@ public final class FacetFiles {
             return 3;
         }
     }
+
+    // filepicker's FileRef (spendwise S46 E): a picked or chosen document is a
+    // content:// URI, which only a ContentResolver opens. A file is the
+    // exchange medium, so the native side never marshals a byte array.
+    // 0 done, 2 nothing there (FileNotFound), 3 failed. The Application context
+    // is enough — no Activity is needed for a URI this process holds a grant on.
+    public static int copyFromUri(android.content.Context ctx, String uri, String dst) {
+        if (ctx == null || uri == null || dst == null) return 3;
+        try (java.io.InputStream in = ctx.getContentResolver().openInputStream(android.net.Uri.parse(uri));
+             java.io.OutputStream out = new java.io.FileOutputStream(dst)) {
+            if (in == null) return 3;
+            copy(in, out);
+            return 0;
+        } catch (java.io.FileNotFoundException e) {
+            return 2;
+        } catch (Throwable t) {
+            android.util.Log.w("facet", "copyFromUri failed", t);
+            return 3;
+        }
+    }
+
+    // "wt": write and TRUNCATE. A plain "w" leaves the old tail behind on some
+    // providers when the new content is shorter.
+    public static int copyToUri(android.content.Context ctx, String src, String uri) {
+        if (ctx == null || uri == null || src == null) return 3;
+        try (java.io.InputStream in = new java.io.FileInputStream(src);
+             java.io.OutputStream out = ctx.getContentResolver().openOutputStream(android.net.Uri.parse(uri), "wt")) {
+            if (out == null) return 3;
+            copy(in, out);
+            return 0;
+        } catch (java.io.FileNotFoundException e) {
+            return 2;
+        } catch (Throwable t) {
+            android.util.Log.w("facet", "copyToUri failed", t);
+            return 3;
+        }
+    }
+
+    // The name the provider shows for the document (OpenableColumns.DISPLAY_NAME),
+    // or null when it has none.
+    public static String displayName(android.content.Context ctx, String uri) {
+        if (ctx == null || uri == null) return null;
+        try (android.database.Cursor c = ctx.getContentResolver().query(android.net.Uri.parse(uri),
+                new String[] { android.provider.OpenableColumns.DISPLAY_NAME }, null, null, null)) {
+            if (c != null && c.moveToFirst() && !c.isNull(0)) return c.getString(0);
+        } catch (Throwable t) {
+            android.util.Log.w("facet", "displayName failed", t);
+        }
+        return null;
+    }
+
+    // A fresh empty file in the app's cache, for a URI's bytes to pass through.
+    public static String scratchFile(android.content.Context ctx) {
+        if (ctx == null) return null;
+        try {
+            return java.io.File.createTempFile("facet", ".tmp", ctx.getCacheDir()).getAbsolutePath();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static void copy(java.io.InputStream in, java.io.OutputStream out) throws java.io.IOException {
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+    }
 }
