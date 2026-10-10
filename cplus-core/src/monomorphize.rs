@@ -1831,7 +1831,7 @@ impl ExprRewriter for MonoRewriter<'_> {
             // discipline as InferredStructLit.
             ExprKind::InterpStr { parts } => {
                 use crate::ast::InterpStrPart;
-                ExprKind::InterpStr {
+                let joined = ExprKind::InterpStr {
                     parts: parts
                         .iter()
                         .map(|p| match p {
@@ -1865,7 +1865,14 @@ impl ExprRewriter for MonoRewriter<'_> {
                             }
                         })
                         .collect(),
-                }
+                };
+                template_literal_or(joined, expr.span, self.mono)
+            }
+            // A plain literal passed to a `Template` parameter — see
+            // `template_literal_or`. Any other plain literal has nothing to
+            // rewrite.
+            ExprKind::StrLit(_) if self.mono.template_literals.contains(&expr.span) => {
+                template_literal_or(expr.kind.clone(), expr.span, self.mono)
             }
             // Value-turbofish `f::[T]` (a fn-pointer VALUE): lower to the address
             // of the concrete instantiation — the SAME symbol the turbofish CALL
@@ -2340,6 +2347,49 @@ impl ExprRewriter for MonoRewriter<'_> {
             kind,
             span: expr.span,
         })
+    }
+}
+
+/// A literal sema recorded as delivered to a `#[lang("template")]` parameter
+/// (`MonoInfo::template_literals`) is wrapped in the internal
+/// `#template_literal` intrinsic, which codegen lowers to the unjoined
+/// `Template { parts, args }`. The name is reachable only from here: sema
+/// runs before this pass and answers E0905 to anyone who spells it.
+/// Everything else keeps `kind` unchanged.
+///
+/// The wrapped interpolation is normalized to the `Template` shape here, so
+/// codegen reads it straight across: literal segments and args strictly
+/// alternate, starting and ending with a literal (adjacent literals merged,
+/// an empty one between adjacent args and at either open end). Normalizing
+/// before codegen's literal pre-pass is what puts every segment — merged or
+/// empty — in its string table.
+fn template_literal_or(kind: ExprKind, span: crate::lexer::Span, mono: &MonoInfo) -> ExprKind {
+    if !mono.template_literals.contains(&span) {
+        return kind;
+    }
+    let kind = match kind {
+        ExprKind::InterpStr { parts } => {
+            let mut out: Vec<InterpStrPart> = Vec::with_capacity(parts.len() + 2);
+            let mut lit = String::new();
+            for p in parts {
+                match p {
+                    InterpStrPart::Lit(s) => lit.push_str(&s),
+                    InterpStrPart::Expr(e) => {
+                        out.push(InterpStrPart::Lit(std::mem::take(&mut lit)));
+                        out.push(InterpStrPart::Expr(e));
+                    }
+                }
+            }
+            out.push(InterpStrPart::Lit(lit));
+            ExprKind::InterpStr { parts: out }
+        }
+        other => other,
+    };
+    ExprKind::Intrinsic {
+        name: "template_literal".to_string(),
+        type_args: Vec::new(),
+        args: vec![Expr { kind, span }],
+        ret_ty: None,
     }
 }
 

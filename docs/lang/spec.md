@@ -698,6 +698,30 @@ a bare `$` not part of `${...}` or `$$` is a literal `$`. Interpolation
 lowers to a single allocation that concatenates the parts (§18).
 `c"..."` produces a NUL-terminated `*u8` for FFI.
 
+**Templates.** A string literal — plain or interpolated — written directly as
+the argument to a parameter of the `#[lang("template")]` type
+(`stdlib/template`'s `Template`) is not joined. The parameter receives the
+literal's parts and its arguments separately:
+
+```cplus
+fn tr(t: template::Template) -> Text { ... }
+tr("Hello, ${name}!");   // parts "Hello, " and "!"; one Arg::Str
+```
+
+- There is always one more part than there are arguments; a part may be empty.
+- Each argument arrives as a `template::Arg`, widened by kind: signed integers
+  as `Int(i64)`, unsigned as `UInt(u64)`, floats as `Float(f64)`, `bool` as
+  `Bool`, and `str`, `Text` and `ToText` values as `Str(str)`.
+- Only a literal converts. A `str` or `Text` value where a `Template` is
+  expected is **E0302** — a value no longer has parts. A `Template` value
+  passes on unchanged, and a literal for a `ref` parameter does not convert.
+- A `Template` is a view of the statement that built it. It cannot be an
+  `async fn` parameter (**E0900**), and binding or returning one that a call
+  hands back is **E0513**.
+- Building one does not allocate, except for a `ToText` user type, whose
+  `.to_text()` result is dropped at the end of the statement. A `#[no_alloc]`
+  function may pass any other template literal.
+
 ---
 
 ## 12. Compile-time intrinsics and builtins

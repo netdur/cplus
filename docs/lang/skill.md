@@ -806,8 +806,9 @@ literal**: the lexer ends the outer literal at the inner quote, so
 `"${f("x")}"` is E0001 pointing at a `"` for no stated reason. Hoist the call
 into a local and interpolate that. An interpolated literal passed *directly* to
 `io::print`/`println`/`eprintln` never materialises a `Text`; since those sinks
-are `#[no_alloc]`, real-time code may log this way. Any other position builds an
-owned `Text`.
+are `#[no_alloc]`, real-time code may log this way. A literal passed to a
+`template::Template` parameter is not joined at all: the callee gets the parts
+and typed arguments (spec §11). Any other position builds an owned `Text`.
 
 `str` is forbidden in `async fn` signatures (E0900) — pass `Text`.
 

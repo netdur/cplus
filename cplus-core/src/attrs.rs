@@ -414,6 +414,7 @@ pub const LANG_ITEMS: &[&str] = &[
     "join_handle",
     "rc",
     "mutex_guard",
+    "template",
 ];
 
 /// Single-file entry point. Mirrors `sema::check`.

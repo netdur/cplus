@@ -29253,3 +29253,134 @@ fn a_take_this_method_on_an_enum_drops_what_it_owns() {
         assert_eq!(run.code(), Some(*expected), "[{name}] drop total");
     }
 }
+
+// ---------------------------------------------------------------------------
+// `stdlib/template` (plans/plan.i18n.md P1): a literal passed to a `Template`
+// parameter arrives unjoined — its literal parts and its typed args.
+// ---------------------------------------------------------------------------
+
+const TEMPLATE_PROBE: &str = "import \"stdlib/io\" as io;\n\
+     import \"stdlib/text\" as text;\n\
+     import \"stdlib/str\" as _;\n\
+     import \"stdlib/option\" as option;\n\
+     import \"stdlib/template\" as template;\n\
+     \n\
+     struct P { x: i32 }\n\
+     impl P: ToText { fn to_text(this) -> text::Text { return \"P${this.x}\"; } }\n\
+     fn made() -> text::Text { return \"made\".to_text(); }\n\
+     \n\
+     fn show(t: template::Template) -> i32 {\n\
+         var i: usize = 0;\n\
+         while i < t.part_count() {\n\
+             match t.part(i) {\n\
+                 option::Option[str]::Some(s) => { io::println(\"part [${s}]\"); }\n\
+                 option::Option[str]::None => {}\n\
+             }\n\
+             match t.arg(i) {\n\
+                 option::Option[template::Arg]::Some(a) => {\n\
+                     match a {\n\
+                         template::Arg::Int(v) => { io::println(\"int ${v}\"); }\n\
+                         template::Arg::UInt(v) => { io::println(\"uint ${v}\"); }\n\
+                         template::Arg::Float(v) => { io::println(\"float ${v}\"); }\n\
+                         template::Arg::Bool(v) => { io::println(\"bool ${v}\"); }\n\
+                         template::Arg::Str(v) => { io::println(\"str ${v}\"); }\n\
+                     }\n\
+                 }\n\
+                 option::Option[template::Arg]::None => {}\n\
+             }\n\
+             i = i + (1 as usize);\n\
+         }\n\
+         return t.arg_count() as i32;\n\
+     }\n\
+     \n\
+     fn main() -> i32 {\n\
+         let owned: text::Text = \"own\".to_text();\n\
+         let p: P = P { x: 7 };\n\
+         let n: i32 = 0 - 3;\n\
+         let u: u16 = 9;\n\
+         let f: f32 = 1.5;\n\
+         var total: i32 = 0;\n\
+         for k in 0..2 {\n\
+             total = total + show(\"a ${owned} b ${made()} c ${p} d ${n} e ${u} f ${f} g ${k == 1}\");\n\
+         }\n\
+         io::println(\"total ${total} owned ${owned}\");\n\
+         return 0;\n\
+     }\n";
+
+/// Every arg kind, including the two that carry an owned temporary — a
+/// `Text`-returning call and a user `ToText` — run under ASan: the temporary
+/// must outlive the call that reads its view and be freed after it.
+#[test]
+fn a_template_literal_arrives_unjoined_with_typed_args() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    for sanitizer in &["", "--asan"] {
+        let dir = tempdir();
+        std::fs::write(
+            dir.join("Cplus.toml"),
+            "[package]\nname = \"tplrun\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        symlink_dir(
+            format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+            dir.join("vendor"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("src/main.cplus"), TEMPLATE_PROBE).unwrap();
+        let mut cmd = Command::new(cpc);
+        cmd.arg("build").current_dir(&dir);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        let out = cmd.output().expect("invoke cpc build");
+        assert!(
+            out.status.success(),
+            "template probe must build ({sanitizer}): {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = Command::new(dir.join("target/debug/tplrun"))
+            .output()
+            .expect("run tplrun");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!stderr.contains("AddressSanitizer"), "ASan ({sanitizer}): {stderr}");
+        let one = |last: &str| {
+            format!(
+                "part [a ]\nstr own\npart [ b ]\nstr made\npart [ c ]\nstr P7\n\
+                 part [ d ]\nint -3\npart [ e ]\nuint 9\npart [ f ]\nfloat 1.5\n\
+                 part [ g ]\nbool {last}\npart []\n"
+            )
+        };
+        let want = format!("{}{}total 14 owned own\n", one("false"), one("true"));
+        assert_eq!(String::from_utf8_lossy(&run.stdout), want, "({sanitizer})");
+    }
+}
+
+/// bugs/closed/a-view-returned-from-a-temporary-argument-dangles.md against
+/// the real stdlib: both shapes were heap-use-after-free under ASan.
+#[test]
+fn a_view_returned_from_a_temporary_argument_rejected_e0513() {
+    for (name, body) in [
+        (
+            "str_from_interpolation",
+            "fn keep_str(s: str) -> str { return s; }\n\
+             fn main() -> i32 { let v: str = keep_str(\"a ${made()}\"); io::println(v); return 0; }\n",
+        ),
+        (
+            "template_from_literal",
+            "fn keep(t: template::Template) -> template::Template { return t; }\n\
+             fn main() -> i32 { let t: template::Template = keep(\"a ${made()} b\"); return t.arg_count() as i32; }\n",
+        ),
+    ] {
+        let src = format!(
+            "import \"stdlib/io\" as io;\n\
+             import \"stdlib/text\" as text;\n\
+             import \"stdlib/str\" as _;\n\
+             import \"stdlib/template\" as template;\n\
+             fn made() -> text::Text {{ return \"made\".to_text(); }}\n{body}"
+        );
+        let (ok, all) = try_build_stdlib_project(name, &src);
+        assert!(!ok, "{name} must be refused: {all}");
+        assert!(all.contains("E0513"), "{name}: expected E0513, got: {all}");
+    }
+}

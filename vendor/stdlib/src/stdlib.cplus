@@ -35,6 +35,7 @@ import "./reactor" as reactor;
 import "./executor" as executor;
 import "./flags" as flags;
 import "./slice" as slice;
+import "./template" as template;
 import "./time" as time;
 import "./date" as date;
 import "./process" as process;

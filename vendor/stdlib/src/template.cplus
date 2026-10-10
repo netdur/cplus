@@ -1,0 +1,234 @@
+// stdlib/template.cplus — a string literal, delivered unjoined.
+//
+// Anywhere else, `"Hello, ${name}"` builds one owned `Text` and the receiver
+// sees only the result. A parameter typed `Template` receives the literal
+// written at the call instead: its literal PARTS and its interpolated ARGS,
+// separately. A receiver that needs the shape of the string — a translation
+// lookup keyed on `"Hello, %@"`, a query that binds `${id}` as a parameter —
+// gets it, and the values arrive with their types.
+//
+// Only a literal converts. A `str` or `Text` value passed where a `Template`
+// is expected is a type mismatch: by the time a value exists, its parts are
+// gone. A `Template` already in hand passes on like any other value.
+//
+// `part_count() == arg_count() + 1`, always: the literal text before the
+// first argument, between each pair, and after the last. A part can be
+// empty (`"${a}${b}"` has three empty parts). A literal with no `${}` is one
+// part and no args.
+//
+// A `Template` is a view: its parts point at the literal's static bytes and
+// its args at stack storage the call site owns. It lives for the statement
+// that built it — a receiver copies what it keeps. Like `str`, it cannot be
+// an `async fn` parameter (E0900).
+//
+// Building one allocates nothing, with one exception: an argument whose type
+// implements `ToText` through a user `impl` is converted with `.to_text()`,
+// and that `Text` is dropped when the statement ends.
+
+import "./option" as option;
+
+// `#[lang("template")]` designates this struct as the one a literal lowers
+// to. Codegen builds it by field POSITION — the order below is load-bearing.
+// The fields are private; the accessors below are the surface, so the
+// representation stays free to change.
+#[lang("template")]
+struct Template {
+    _parts: str[],
+    _args: Arg[],
+}
+
+// One interpolated value, widened to the type that holds every value of its
+// kind: every signed integer width arrives as `Int`, every unsigned one as
+// `UInt`, every float as `Float`. `str`, `Text` and `ToText` values arrive as
+// `Str` — a view that lives as long as the `Template` does.
+enum Arg {
+    Int(i64),
+    UInt(u64),
+    Float(f64),
+    Bool(bool),
+    Str(str),
+}
+
+impl Template {
+    // The literal segments: one more than the args.
+    fn part_count(this) -> usize {
+        return #slice_len(this._parts);
+    }
+
+    // The interpolated values, in the order they were written.
+    fn arg_count(this) -> usize {
+        return #slice_len(this._args);
+    }
+
+    // The literal segment at `at` (before arg `at`, after arg `at - 1`), or
+    // None past the end.
+    fn part(this, at: usize) -> option::Option[str] {
+        if at >= #slice_len(this._parts) {
+            return option::Option[str]::None;
+        }
+        let p: *str = { #slice_ptr(this._parts) + at };
+        return option::Option[str]::Some({ *p });
+    }
+
+    // The interpolated value at `at`, or None past the end.
+    fn arg(this, at: usize) -> option::Option[Arg] {
+        if at >= #slice_len(this._args) {
+            return option::Option[Arg]::None;
+        }
+        let p: *Arg = { #slice_ptr(this._args) + at };
+        return option::Option[Arg]::Some({ *p });
+    }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+fn part_count(t: Template) -> usize {
+    return t.part_count();
+}
+
+fn arg_count(t: Template) -> usize {
+    return t.arg_count();
+}
+
+fn part_at(t: Template, at: usize) -> str {
+    match t.part(at) {
+        option::Option[str]::Some(s) => { return s; }
+        option::Option[str]::None => { return "<none>"; }
+    }
+}
+
+fn int_at(t: Template, at: usize) -> i64 {
+    match t.arg(at) {
+        option::Option[Arg]::Some(a) => {
+            match a {
+                Arg::Int(v) => { return v; }
+                _ => { return -1 as i64; }
+            }
+        }
+        option::Option[Arg]::None => { return -2 as i64; }
+    }
+}
+
+fn uint_at(t: Template, at: usize) -> u64 {
+    match t.arg(at) {
+        option::Option[Arg]::Some(a) => {
+            match a {
+                Arg::UInt(v) => { return v; }
+                _ => { return 0 as u64; }
+            }
+        }
+        option::Option[Arg]::None => { return 1 as u64; }
+    }
+}
+
+fn float_at(t: Template, at: usize) -> f64 {
+    match t.arg(at) {
+        option::Option[Arg]::Some(a) => {
+            match a {
+                Arg::Float(v) => { return v; }
+                _ => { return -1.0; }
+            }
+        }
+        option::Option[Arg]::None => { return -2.0; }
+    }
+}
+
+fn bool_at(t: Template, at: usize) -> bool {
+    match t.arg(at) {
+        option::Option[Arg]::Some(a) => {
+            match a {
+                Arg::Bool(v) => { return v; }
+                _ => { return false; }
+            }
+        }
+        option::Option[Arg]::None => { return false; }
+    }
+}
+
+fn str_at(t: Template, at: usize) -> str {
+    match t.arg(at) {
+        option::Option[Arg]::Some(a) => {
+            match a {
+                Arg::Str(v) => { return v; }
+                _ => { return "<not a str>"; }
+            }
+        }
+        option::Option[Arg]::None => { return "<none>"; }
+    }
+}
+
+// A receiver that hands its `Template` on: the value passes like any other.
+fn forwarded_part_count(t: Template) -> usize {
+    return part_count(t);
+}
+
+#[test]
+fn a_plain_literal_is_one_part_and_no_args() {
+    assert part_count("hello") == (1 as usize);
+    assert arg_count("hello") == (0 as usize);
+    assert part_at("hello", 0 as usize) == "hello";
+}
+
+#[test]
+fn an_empty_literal_is_one_empty_part() {
+    assert part_count("") == (1 as usize);
+    assert part_at("", 0 as usize) == "";
+}
+
+#[test]
+fn reads_past_the_end_are_none() {
+    let n: i32 = 1;
+    assert part_at("a ${n}", 2 as usize) == "<none>";
+    assert int_at("a ${n}", 1 as usize) == (-2 as i64);
+    assert int_at("plain", 0 as usize) == (-2 as i64);
+}
+
+#[test]
+fn parts_surround_every_arg() {
+    let name: str = "Adel";
+    assert part_count("Hello, ${name}!") == (2 as usize);
+    assert arg_count("Hello, ${name}!") == (1 as usize);
+    assert part_at("Hello, ${name}!", 0 as usize) == "Hello, ";
+    assert part_at("Hello, ${name}!", 1 as usize) == "!";
+    assert str_at("Hello, ${name}!", 0 as usize) == "Adel";
+}
+
+#[test]
+fn adjacent_args_leave_empty_parts() {
+    let a: i32 = 1;
+    let b: i32 = 2;
+    assert part_count("${a}${b}") == (3 as usize);
+    assert part_at("${a}${b}", 0 as usize) == "";
+    assert part_at("${a}${b}", 1 as usize) == "";
+    assert part_at("${a}${b}", 2 as usize) == "";
+    assert int_at("${a}${b}", 0 as usize) == (1 as i64);
+    assert int_at("${a}${b}", 1 as usize) == (2 as i64);
+}
+
+#[test]
+fn integers_widen_by_signedness() {
+    let small: i8 = -5;
+    let big: i64 = 9000000000;
+    let byte: u8 = 250;
+    let count: usize = 42;
+    assert int_at("${small}", 0 as usize) == (-5 as i64);
+    assert int_at("${big}", 0 as usize) == (9000000000 as i64);
+    assert uint_at("${byte}", 0 as usize) == (250 as u64);
+    assert uint_at("${count}", 0 as usize) == (42 as u64);
+}
+
+#[test]
+fn floats_and_bools_keep_their_kind() {
+    let half: f32 = 0.5;
+    let pi: f64 = 3.25;
+    let yes: bool = true;
+    assert float_at("${half}", 0 as usize) == 0.5;
+    assert float_at("${pi}", 0 as usize) == 3.25;
+    assert bool_at("${yes}", 0 as usize);
+}
+
+#[test]
+fn a_template_value_passes_on() {
+    let n: i32 = 3;
+    assert forwarded_part_count("a ${n} b") == (2 as usize);
+}

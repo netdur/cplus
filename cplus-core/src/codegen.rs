@@ -2522,6 +2522,9 @@ struct StructInfo {
     /// `is_lang_string`: identity comes from a marker, not from a substring.
     is_lang_iterator: bool,
     is_lang_future: bool,
+    /// `#[lang("template")]`: the unjoined-literal struct
+    /// `#template_literal` builds (see `gen_template_literal`).
+    is_lang_template: bool,
     /// OBS.1: this struct carries `#[watch]`. Every field store through a
     /// safe owned place is followed by a call to its `on_value(ref this,
     /// field: str)` hook. Re-derived from the post-mono AST rather than
@@ -2801,6 +2804,7 @@ fn collect_types(
                 // instantiation, so `Iterator__i32` arrives here marked.
                 let is_lang_iterator = lang_item("iterator");
                 let is_lang_future = lang_item("future");
+                let is_lang_template = lang_item("template");
                 // OBS.1: presence-only, same shape as the `repr` read in sema.
                 let is_watched = s.attributes.iter().any(|a| a.path.name == "watch");
                 // v0.0.28: sema has already accepted these (E0926/E0927), so
@@ -2835,6 +2839,7 @@ fn collect_types(
                     is_lang_string,
                     is_lang_iterator,
                     is_lang_future,
+                    is_lang_template,
                     is_watched,
                 });
                 t.struct_by_name.insert(s.name.name.clone(), id);
@@ -13777,6 +13782,9 @@ impl<'a> FnState<'a> {
                 };
                 Some((if on { "true" } else { "false" }.to_string(), Ty::Bool))
             }
+            // Internal: inserted by monomorphize around a literal passed to a
+            // `#[lang("template")]` parameter. Sema never sees the name.
+            "template_literal" => Some(self.gen_template_literal(&args[0])),
             "size_of" => Some(self.gen_intrinsic_size_of(type_args)),
             "align_of" => Some(self.gen_intrinsic_align_of(type_args)),
             // v0.0.12 G-028: `#zero::[T]()` — alloca a fresh T-sized slot,
@@ -19765,6 +19773,171 @@ impl<'a> FnState<'a> {
             self.emit(&format!("call void @free(ptr {f})"));
         }
         Some((st, status_ty))
+    }
+
+    /// Lower `#template_literal(lit)` — a literal delivered to a
+    /// `#[lang("template")]` parameter — to `Template { parts, args }`
+    /// without joining it. Monomorphize has normalized `lit` to a plain
+    /// `StrLit` (one part, no args) or an `InterpStr` whose literal segments
+    /// and `${...}` args strictly alternate, starting and ending with a
+    /// literal, so the parts and args read straight across.
+    ///
+    /// `parts` is a stack array of `str` headers pointing at the literals'
+    /// `@.str.N` globals; `args` a stack array of tagged `Arg` values, each
+    /// widened to its variant's payload: signed → `Int(i64)`, unsigned →
+    /// `UInt(u64)`, float → `Float(f64)`, `bool` → `Bool`, `str` and `Text` →
+    /// `Str`. A `Text` arrives as a view of its buffer; a CALL-produced one
+    /// (a function result, or a user `ToText` part monomorphize rewrote into
+    /// `.to_text()`) is registered as a statement temp, so the buffer outlives
+    /// the call that reads it and is freed after. Nothing else touches the
+    /// heap. Tags are looked up BY NAME on the enum the struct's `args` field
+    /// names, so reordering `Arg`'s variants cannot silently retag a value.
+    fn gen_template_literal(&mut self, lit: &Expr) -> (String, Ty) {
+        use crate::ast::InterpStrPart;
+        let us = usize_llvm_ty();
+        // A body rewritten twice wraps twice; the outer wraps add nothing.
+        let mut lit = lit;
+        while let ExprKind::Intrinsic { name, args, .. } = &lit.kind {
+            if name != "template_literal" {
+                break;
+            }
+            lit = &args[0];
+        }
+        let tid = self
+            .types
+            .struct_defs
+            .iter()
+            .position(|d| d.is_lang_template)
+            .map(|i| StructId(i as u32))
+            .expect("sema recorded a template literal, so `#[lang(\"template\")]` is in the build");
+        let tpl_ty = Ty::Struct(tid);
+        let (parts_fty, args_fty) = {
+            let f = &self.types.struct_defs[tid.0 as usize].fields;
+            (f[0].1.clone(), f[1].1.clone())
+        };
+        let Ty::Slice(arg_elem) = &args_fty else {
+            unreachable!("`Template.args` is a slice")
+        };
+        let arg_ty = (**arg_elem).clone();
+        let Ty::Enum(arg_id) = arg_ty else {
+            unreachable!("`Template.args` is a slice of the `Arg` enum")
+        };
+        let (lits, exprs): (Vec<String>, Vec<&Expr>) = match &lit.kind {
+            ExprKind::StrLit(s) => (vec![s.clone()], Vec::new()),
+            ExprKind::InterpStr { parts } => {
+                let mut lits = Vec::new();
+                let mut exprs = Vec::new();
+                for p in parts {
+                    match p {
+                        InterpStrPart::Lit(s) => lits.push(s.clone()),
+                        InterpStrPart::Expr(e) => exprs.push(&**e),
+                    }
+                }
+                (lits, exprs)
+            }
+            _ => unreachable!("monomorphize wraps only string literals"),
+        };
+        debug_assert_eq!(lits.len(), exprs.len() + 1, "monomorphize normalized the parts");
+
+        // A slice header over `n` elements at `base` (null when empty).
+        let slice_value = |cg: &mut Self, base: &str, n: usize| -> String {
+            let t1 = cg.next_tmp();
+            cg.emit(&format!("{t1} = insertvalue {{ ptr, {us} }} undef, ptr {base}, 0"));
+            let t2 = cg.next_tmp();
+            cg.emit(&format!("{t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {n}, 1"));
+            t2
+        };
+
+        // parts
+        let parts_arr_ty = Ty::Array(Box::new(Ty::Str), lits.len() as u32);
+        let parts_arr = self.alloca_anon(parts_arr_ty.clone());
+        let parts_lty = self.lty(&parts_arr_ty);
+        for (k, s) in lits.iter().enumerate() {
+            let (symbol, len) = self
+                .str_lits
+                .get(s)
+                .expect("template part missing from str_lits table")
+                .clone();
+            let p = slice_value(self, &symbol, len);
+            let at = self.next_tmp();
+            self.emit(&format!(
+                "{at} = getelementptr inbounds {parts_lty}, ptr {parts_arr}, i64 0, i64 {k}"
+            ));
+            self.gen_store(&Ty::Str, &p, &at);
+        }
+        let parts_val = slice_value(self, &parts_arr, lits.len());
+
+        // args
+        let args_val = if exprs.is_empty() {
+            slice_value(self, "null", 0)
+        } else {
+            let args_arr_ty = Ty::Array(Box::new(arg_ty.clone()), exprs.len() as u32);
+            let args_arr = self.alloca_anon(args_arr_ty.clone());
+            let args_lty = self.lty(&args_arr_ty);
+            for (k, e) in exprs.iter().enumerate() {
+                let (v, t) = self.gen_expr(e).expect("template arg has a value");
+                let base = match &t {
+                    Ty::Distinct { base, .. } => (**base).clone(),
+                    other => other.clone(),
+                };
+                let is_text = matches!(&base, Ty::Struct(id)
+                    if self.types.struct_defs[id.0 as usize].is_lang_string);
+                let (variant, pv, pt) = if is_text {
+                    let core = Self::trivial_block_tail(e).unwrap_or(e);
+                    if matches!(core.kind, ExprKind::Call { .. } | ExprKind::Await(_)) {
+                        let slot = self.alloca_anon(base.clone());
+                        self.gen_store(&base, &v, &slot);
+                        self.register_temp(slot, base.clone());
+                    }
+                    let agg = self.lty(&base);
+                    let pp = self.next_tmp();
+                    self.emit(&format!("{pp} = extractvalue {agg} {v}, 0"));
+                    let lp = self.next_tmp();
+                    self.emit(&format!("{lp} = extractvalue {agg} {v}, 1"));
+                    let t1 = self.next_tmp();
+                    self.emit(&format!("{t1} = insertvalue {{ ptr, {us} }} undef, ptr {pp}, 0"));
+                    let t2 = self.next_tmp();
+                    self.emit(&format!("{t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {lp}, 1"));
+                    ("Str", t2, Ty::Str)
+                } else {
+                    match &base {
+                        Ty::Str => ("Str", v, Ty::Str),
+                        Ty::Bool => ("Bool", v, Ty::Bool),
+                        Ty::F64 => ("Float", v, Ty::F64),
+                        Ty::F16 | Ty::F32 => {
+                            let w = self.next_tmp();
+                            self.emit(&format!("{w} = fpext {} {v} to double", self.lty(&base)));
+                            ("Float", w, Ty::F64)
+                        }
+                        // `gen_tagged_construct` widens to the declared
+                        // payload (`i64` / `u64`) by the source's signedness.
+                        rt if rt.is_signed_int() => ("Int", v, base.clone()),
+                        rt if rt.is_unsigned_int() => ("UInt", v, base.clone()),
+                        _ => unreachable!("sema validated template arg type"),
+                    }
+                };
+                let tag = *self.types.enum_defs[arg_id.0 as usize]
+                    .variants
+                    .get(variant)
+                    .unwrap_or_else(|| panic!("`Arg` has no `{variant}` variant"));
+                let (ev, _) = self.gen_tagged_construct(arg_id, tag, &[(pv, pt)]);
+                let at = self.next_tmp();
+                self.emit(&format!(
+                    "{at} = getelementptr inbounds {args_lty}, ptr {args_arr}, i64 0, i64 {k}"
+                ));
+                self.gen_store(&arg_ty, &ev, &at);
+            }
+            slice_value(self, &args_arr, exprs.len())
+        };
+
+        let slot = self.alloca_anon(tpl_ty.clone());
+        let (p0, _) = self.field_addr(tid, 0, &slot);
+        self.gen_store(&parts_fty, &parts_val, &p0);
+        let (p1, _) = self.field_addr(tid, 1, &slot);
+        self.gen_store(&args_fty, &args_val, &p1);
+        let v = self.next_tmp();
+        self.gen_load(&v, &tpl_ty, &slot);
+        (v, tpl_ty)
     }
 
     fn gen_interp_str(&mut self, parts: &[crate::ast::InterpStrPart]) -> (String, Ty) {

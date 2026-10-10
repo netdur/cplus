@@ -856,6 +856,14 @@ pub struct MonoInfo {
     /// primitives, `str`, and `Text`, and previously hit its
     /// unreachable-arm ICE on a bare struct part.
     pub interp_totext_parts: std::collections::HashSet<ByteSpan>,
+    /// Spans of string literals — plain or interpolated — passed directly
+    /// to a parameter of the `#[lang("template")]` type. Monomorphize wraps
+    /// each in the internal `#template_literal` intrinsic, which codegen
+    /// lowers to the unjoined `Template { parts, args }` value instead of a
+    /// `str` or a joined `Text`. Keyed by the literal's own span: a const
+    /// is re-spanned to its use site AND wrapped in a cast, so it is never a
+    /// bare literal here and cannot share an entry.
+    pub template_literals: std::collections::HashSet<ByteSpan>,
     /// v0.0.8 Phase 4: per-call-site `env!("NAME")` lookup. Resolved at
     /// sema time (read from the compiler's process environment via
     /// `std::env::var`). Value is the env var's value as a UTF-8 string.
@@ -1150,6 +1158,7 @@ fn check_with_files_inner(
         structs: Vec::new(),
         struct_by_name: HashMap::new(),
         designated_string_struct: None,
+        designated_template_struct: None,
         lang: LangItems::default(),
         builtin_methods: HashMap::new(),
         builtin_impl_origin: HashMap::new(),
@@ -1211,6 +1220,8 @@ fn check_with_files_inner(
         compile_time_blobs_table: HashMap::new(),
         inferred_struct_lit_table: HashMap::new(),
         interp_totext_part_table: std::collections::HashSet::new(),
+        template_literal_table: std::collections::HashSet::new(),
+        template_literal_allocating: std::collections::HashSet::new(),
         env_vars_table: HashMap::new(),
         statics_table: HashMap::new(),
         selectors_table: std::collections::BTreeSet::new(),
@@ -1554,6 +1565,7 @@ fn check_with_files_inner(
         compile_time_blobs: std::mem::take(&mut cx.compile_time_blobs_table),
         inferred_struct_lits: std::mem::take(&mut cx.inferred_struct_lit_table),
         interp_totext_parts: std::mem::take(&mut cx.interp_totext_part_table),
+        template_literals: std::mem::take(&mut cx.template_literal_table),
         env_vars: std::mem::take(&mut cx.env_vars_table),
         statics: cx
             .statics_table
@@ -1601,6 +1613,11 @@ struct SemaCx<'a> {
     /// collected (e.g. a program that doesn't import `stdlib/text`). A string
     /// literal in this type's context lowers to its `from_str` constructor.
     designated_string_struct: Option<StructId>,
+    /// The `StructId` of the struct tagged `#[lang("template")]`
+    /// (`stdlib/template`'s `Template`). A string literal passed directly to
+    /// a parameter of this type is delivered unjoined — see
+    /// `is_lit_to_template`. `None` when the build does not include it.
+    designated_template_struct: Option<StructId>,
     /// issue-06: the `#[lang("...")]` generic templates. See [`LangItems`].
     lang: LangItems,
     /// STRM (v0.0.27): methods declared by the single blessed
@@ -1937,6 +1954,12 @@ struct SemaCx<'a> {
     /// Spans of struct-typed `${...}` parts that need the mono-time
     /// `.to_text()` rewrite — see [`MonoInfo::interp_totext_parts`].
     interp_totext_part_table: std::collections::HashSet<ByteSpan>,
+    /// Literals lowered to a `Template` — see [`MonoInfo::template_literals`].
+    template_literal_table: std::collections::HashSet<ByteSpan>,
+    /// The subset of `template_literal_table` that allocates after all: a
+    /// part converted through a user `impl X: ToText`. Every other template
+    /// literal is heap-free, and `#[no_alloc]` admits it.
+    template_literal_allocating: std::collections::HashSet<ByteSpan>,
     /// v0.0.8 Phase 4: resolved `env!("NAME")` lookups, keyed by the
     /// macro call's source span. Sema populates; codegen reads from
     /// `MonoInfo::env_vars` (built by `mem::take` at hand-off).
@@ -3361,6 +3384,24 @@ impl SemaCx<'_> {
                             );
                         } else {
                             self.designated_string_struct = Some(id);
+                        }
+                    }
+                    let is_lang_template = s.attributes.iter().any(|a| {
+                        a.path.name == "lang"
+                            && matches!(a.args.first(), Some(AttrArg::Str(v, _)) if v == "template")
+                    });
+                    if is_lang_template {
+                        if let Some(prev) = self.designated_template_struct {
+                            self.err(
+                                "E0301",
+                                format!(
+                                    "duplicate `#[lang(\"template\")]` — already on `{}`",
+                                    self.structs[prev.0 as usize].name
+                                ),
+                                s.name.span,
+                            );
+                        } else {
+                            self.designated_template_struct = Some(id);
                         }
                     }
                     self.structs.push(StructDef {
@@ -7763,7 +7804,14 @@ impl SemaCx<'_> {
             self.check_no_alloc_call(callee_raw, *span, caller, fn_table);
         }
         // Allocating language constructs (string interpolation → malloc).
+        // A literal delivered as a `Template` is not joined, so it allocates
+        // only when a part converts through a user `ToText`.
         for span in &effects.interps {
+            if self.template_literal_table.contains(span)
+                && !self.template_literal_allocating.contains(span)
+            {
+                continue;
+            }
             self.err(
                 "E0901",
                 format!(
@@ -8547,13 +8595,16 @@ impl SemaCx<'_> {
             //   - `ref x: NonCopyT` (pointer-passed by Phase-6 ABI)
             if f.is_async {
                 let pty = &psig.ty;
-                let is_borrow_shape = matches!(pty, Ty::Str | Ty::Slice(_));
+                // A `Template` is a view too: its parts and args point at the
+                // call site's literal and stack.
+                let is_borrow_shape = matches!(pty, Ty::Str | Ty::Slice(_))
+                    || matches!(pty, Ty::Struct(id) if self.designated_template_struct == Some(*id));
                 let is_mut_pointer_passed = param.is_ref && !param.is_take && !self.is_copy(pty);
                 if is_borrow_shape {
                     self.err(
                         "E0900",
                         format!(
-                            "parameter `{}` has borrow-shaped type `{}`, which an `async fn` cannot take: a coroutine frame outlives the call that created it, so a borrow in one has no owner left to point at. Use an owned type instead (`Text` for `str`, `Vec[T]` for `T[]`).",
+                            "parameter `{}` has borrow-shaped type `{}`, which an `async fn` cannot take: a coroutine frame outlives the call that created it, so a borrow in one has no owner left to point at. Use an owned type instead (`Text` for `str` or `Template`, `Vec[T]` for `T[]`).",
                             param.name.name, ty_display(pty),
                         ),
                         param.span,
@@ -9460,6 +9511,15 @@ impl SemaCx<'_> {
                 );
                 if matches!(exp, Ty::Distinct { .. }) || matches!(actual, Ty::Distinct { .. }) {
                     msg.push_str(" — distinct types convert only via an explicit `as` cast");
+                }
+                if matches!(exp, Ty::Struct(id) if self.designated_template_struct == Some(id))
+                    && (matches!(actual, Ty::Str)
+                        || matches!(actual, Ty::Struct(id) if self.designated_string_struct == Some(id)))
+                {
+                    msg.push_str(
+                        " — a `Template` is built only from a string literal written at the call; \
+                         a value has already lost its parts",
+                    );
                 }
                 self.err("E0302", msg, e.span);
             }
@@ -15648,6 +15708,39 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// imported it — the doc used to say `Ty::String`, the legacy internal
     /// type this stopped producing in v0.0.24.
     fn check_interp_str(&mut self, parts: &[crate::ast::InterpStrPart], span: ByteSpan) -> Ty {
+        self.check_interp_parts(parts);
+        // Future: if the literal has *zero* Expr parts after sub-parsing,
+        // could downgrade to Ty::Str. The lexer already returns a plain
+        // Str token in that case, so we don't reach here.
+        // TEXT.R2 / v0.0.19 import-gating: interpolation produces the designated
+        // owned-string type `Text`, available only when the file imports
+        // `stdlib/text` (the `#[lang("string")]` struct). With no such struct in
+        // scope, owned strings are unavailable — E0613 rather than silently
+        // minting the legacy `Ty::String`. (A plain string with no `${...}`
+        // segments is a `str` and never reaches here.)
+        match self.designated_string_struct {
+            Some(id) => Ty::Struct(id),
+            None => {
+                self.err(
+                    "E0613",
+                    "string interpolation produces an owned string, which requires \
+                     the `Text` type — add `import \"stdlib/text\" as text;` and \
+                     write the type as `text::Text`"
+                        .to_string(),
+                    span,
+                );
+                Ty::Error
+            }
+        }
+    }
+
+    /// Check every `${...}` part of an interpolated literal: its type must
+    /// satisfy `ToText` — a blessed primitive, `str`, an owned `Text`, or a
+    /// user struct with `impl X: ToText` (recorded for the mono-time
+    /// `.to_text()` rewrite). Shared by the joined lowering
+    /// (`check_interp_str`) and the unjoined one (`check_template_literal`),
+    /// so a part admitted by one is admitted by the other.
+    fn check_interp_parts(&mut self, parts: &[crate::ast::InterpStrPart]) {
         use crate::ast::InterpStrPart;
         for part in parts {
             if let InterpStrPart::Expr(e) = part {
@@ -15687,29 +15780,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         e.span,
                     );
                 }
-            }
-        }
-        // Future: if the literal has *zero* Expr parts after sub-parsing,
-        // could downgrade to Ty::Str. The lexer already returns a plain
-        // Str token in that case, so we don't reach here.
-        // TEXT.R2 / v0.0.19 import-gating: interpolation produces the designated
-        // owned-string type `Text`, available only when the file imports
-        // `stdlib/text` (the `#[lang("string")]` struct). With no such struct in
-        // scope, owned strings are unavailable — E0613 rather than silently
-        // minting the legacy `Ty::String`. (A plain string with no `${...}`
-        // segments is a `str` and never reaches here.)
-        match self.designated_string_struct {
-            Some(id) => Ty::Struct(id),
-            None => {
-                self.err(
-                    "E0613",
-                    "string interpolation produces an owned string, which requires \
-                     the `Text` type — add `import \"stdlib/text\" as text;` and \
-                     write the type as `text::Text`"
-                        .to_string(),
-                    span,
-                );
-                Ty::Error
             }
         }
     }
@@ -17767,6 +17837,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     }
 
     fn check_arg_with_move(&mut self, arg: &Expr, expected: &ParamSig) -> Ty {
+        if !expected.is_ref && self.is_lit_to_template(arg, &expected.ty) {
+            return self.check_template_literal(arg, &expected.ty);
+        }
         if self.arg_bypasses_check(arg, expected) {
             return expected.ty.clone();
         }
@@ -17788,6 +17861,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// no sense (no place to mutate / borrow) and still needs `from_str`.
     fn arg_bypasses_check(&self, arg: &Expr, expected: &ParamSig) -> bool {
         if self.bound_ref_arg_spans.contains(&arg.span) {
+            return true;
+        }
+        if !expected.is_ref && self.is_lit_to_template(arg, &expected.ty) {
             return true;
         }
         !expected.is_ref
@@ -18762,6 +18838,36 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// (reports/bug-12). Each site still decides WHETHER the rule applies to it
     /// (a `ref`/`take` parameter is excluded — see `arg_bypasses_check`), but
     /// none of them restates WHAT the rule is.
+    /// A string literal — plain or interpolated — written directly where the
+    /// `#[lang("template")]` type is expected. It is delivered unjoined: its
+    /// literal parts and typed args, never a `str` or a joined `Text`. Only a
+    /// literal converts; a `str`/`Text` VALUE in the same position is an
+    /// ordinary E0302 mismatch (with a note — see `check_expr`), because a
+    /// value no longer has parts.
+    fn is_lit_to_template(&self, value: &Expr, target_ty: &Ty) -> bool {
+        matches!(value.kind, ExprKind::StrLit(_) | ExprKind::InterpStr { .. })
+            && matches!(target_ty, Ty::Struct(id) if self.designated_template_struct == Some(*id))
+    }
+
+    /// Type-check a literal that `is_lit_to_template` accepted: every `${...}`
+    /// part follows the interpolation rules, and the span is recorded so
+    /// monomorphize hands codegen the unjoined lowering. Nothing is consumed —
+    /// the parts are read, the way any interpolation reads them.
+    fn check_template_literal(&mut self, value: &Expr, target_ty: &Ty) -> Ty {
+        if let ExprKind::InterpStr { parts } = &value.kind {
+            self.check_interp_parts(parts);
+            let converts = parts.iter().any(|p| {
+                matches!(p, crate::ast::InterpStrPart::Expr(e)
+                    if self.interp_totext_part_table.contains(&e.span))
+            });
+            if converts {
+                self.template_literal_allocating.insert(value.span);
+            }
+        }
+        self.template_literal_table.insert(value.span);
+        target_ty.clone()
+    }
+
     fn is_str_lit_to_lang_string(&self, value: &Expr, target_ty: &Ty) -> bool {
         matches!(value.kind, ExprKind::StrLit(_))
             && matches!(target_ty, Ty::Struct(id) if self.designated_string_struct == Some(*id))
@@ -26773,6 +26879,141 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn main() -> i32 { return take(\"x\"); }",
         );
         assert!(codes.contains(&"E0302"));
+    }
+
+    // ---- `#[lang("template")]`: a literal delivered unjoined ----
+
+    const TEMPLATE_DECL: &str = "#[lang(\"template\")] struct Template { _parts: str[], _args: Arg[] }\n\
+         enum Arg { Int(i64), UInt(u64), Float(f64), Bool(bool), Str(str) }\n";
+
+    #[test]
+    fn template_takes_plain_and_interpolated_literals() {
+        // No `Text` in the build: a template literal is never joined, so the
+        // E0613 an ordinary interpolation gets here does not apply.
+        assert_clean(&format!(
+            "{TEMPLATE_DECL}\
+             fn f(t: Template) -> i32 {{ return 0; }}\n\
+             fn main() -> i32 {{\n\
+                 let n: i32 = 3;\n\
+                 let s: str = \"x\";\n\
+                 let a: i32 = f(\"plain\");\n\
+                 return f(\"n=${{n}} s=${{s}} b=${{true}}\") + a;\n\
+             }}"
+        ));
+    }
+
+    #[test]
+    fn template_literal_records_the_literal_span() {
+        let src = format!(
+            "{TEMPLATE_DECL}\
+             fn f(t: Template) -> i32 {{ return 0; }}\n\
+             fn g(s: str) -> i32 {{ return 0; }}\n\
+             fn main() -> i32 {{ let n: i32 = 1; return f(\"a ${{n}}\") + f(\"b\") + g(\"c\"); }}"
+        );
+        let toks = tokenize(&src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let (diags, mono) = check_multi_with_mono(
+            &prog,
+            PathBuf::from("test.cplus"),
+            &src,
+            std::collections::BTreeMap::new(),
+        );
+        assert!(diags.iter().all(|d| d.severity != Severity::Error), "{diags:?}");
+        // The two literals passed to `f`, not the one passed to `g`.
+        assert_eq!(mono.template_literals.len(), 2, "{:?}", mono.template_literals);
+        let at = |needle: &str| src.find(needle).unwrap() as u32;
+        let starts: std::collections::BTreeSet<u32> =
+            mono.template_literals.iter().map(|s| s.start).collect();
+        assert!(starts.contains(&at("\"a ${n}\"")), "{starts:?}");
+        assert!(starts.contains(&at("\"b\"")), "{starts:?}");
+        assert!(!starts.contains(&at("\"c\"")), "{starts:?}");
+    }
+
+    #[test]
+    fn template_from_a_value_is_a_mismatch_that_says_why() {
+        let src = format!(
+            "{TEMPLATE_DECL}\
+             fn f(t: Template) -> i32 {{ return 0; }}\n\
+             fn main() -> i32 {{ let s: str = \"x\"; return f(s); }}"
+        );
+        let diags = check_src(&src);
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0302")
+            .unwrap_or_else(|| panic!("expected E0302, got {diags:?}"));
+        assert!(
+            d.message.contains("built only from a string literal"),
+            "{}",
+            d.message
+        );
+    }
+
+    #[test]
+    fn template_value_forwards_unchanged() {
+        assert_clean(&format!(
+            "{TEMPLATE_DECL}\
+             fn inner(t: Template) -> i32 {{ return 0; }}\n\
+             fn outer(t: Template) -> i32 {{ return inner(t); }}\n\
+             fn main() -> i32 {{ return outer(\"x\"); }}"
+        ));
+    }
+
+    #[test]
+    fn template_literal_for_a_ref_param_mismatches() {
+        // Nothing to write back through: a `ref` param gets no conversion.
+        let codes = errors(&format!(
+            "{TEMPLATE_DECL}\
+             fn f(ref t: Template) -> i32 {{ return 0; }}\n\
+             fn main() -> i32 {{ return f(\"x\"); }}"
+        ));
+        assert!(codes.contains(&"E0302"), "got {codes:?}");
+    }
+
+    #[test]
+    fn template_part_without_totext_e0612() {
+        let codes = errors(&format!(
+            "{TEMPLATE_DECL}\
+             struct P {{ x: i32 }}\n\
+             fn f(t: Template) -> i32 {{ return 0; }}\n\
+             fn main() -> i32 {{ let p: P = P {{ x: 1 }}; return f(\"${{p}}\"); }}"
+        ));
+        assert!(codes.contains(&"E0612"), "got {codes:?}");
+    }
+
+    #[test]
+    fn template_async_param_e0900() {
+        let codes = errors(&format!(
+            "{TEMPLATE_DECL}\
+             #[lang(\"future\")] struct Future[T] {{ opaque h: *u8 }}\n\
+             async fn f(t: Template) -> i32 {{ return 0; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(codes.contains(&"E0900"), "got {codes:?}");
+    }
+
+    #[test]
+    fn template_literal_is_admitted_by_no_alloc() {
+        assert_clean(&format!(
+            "{TEMPLATE_DECL}\
+             #[no_alloc] fn sink(t: Template) {{ }}\n\
+             #[no_alloc] fn f(x: i32, s: str) {{ sink(\"x=${{x}} s=${{s}}\"); }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+    }
+
+    #[test]
+    fn template_literal_with_a_totext_part_is_rejected_by_no_alloc() {
+        // The user `ToText` runs `.to_text()`, which allocates.
+        let codes = errors(&format!(
+            "{TEMPLATE_DECL}\
+             #[lang(\"string\")] struct Text {{ opaque ptr: *u8, len: usize, cap: usize }}\n\
+             struct P {{ x: i32 }}\n\
+             impl P: ToText {{ fn to_text(this) -> Text {{ return \"p\"; }} }}\n\
+             #[no_alloc] fn sink(t: Template) {{ }}\n\
+             #[no_alloc] fn f(p: P) {{ sink(\"p=${{p}}\"); }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(codes.contains(&"E0901"), "got {codes:?}");
     }
 
     #[test]

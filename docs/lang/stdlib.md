@@ -27,6 +27,7 @@ import "stdlib/str" as _;      // extensions only — no name bound
 | `result` | `Result[T, E]`, `IoError` | `Ok(T)` / `Err(E)`; `IoError` is the blessed I/O error enum |
 | `status` | `Status` | `Ok` `OutOfMemory` `OutOfBounds` `InvalidInput` `Shared` `Cancelled` |
 | `vec` | `Vec[T]` | `new` `with_capacity` `collect` · `append` `insert` `remove` `remove_last` `swap_remove` `truncate` `set` `at` `first` `last` `as_slice` `each_ref` `fold_ref` `iter` |
+| `template` | `Template`, `Arg` | a string literal delivered unjoined to a `Template` parameter: `part_count` `arg_count` `part(at)` `arg(at)`; `Arg` is `Int` `UInt` `Float` `Bool` `Str` (spec §11) |
 
 `str` is the one imported `as _`: it carries the blessed `impl str` block,
 and a file that reads a string without importing it gets "no such method"

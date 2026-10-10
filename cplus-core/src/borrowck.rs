@@ -4474,7 +4474,9 @@ impl<'a> ViewRules<'a> {
         if !(ret_is_view || ret_carries_view || ret_is_frame) {
             return;
         }
-        if ret_is_view {
+        // A carrier returned from a temporary dangles the same way a view
+        // does — `return keep("${mk()}")` hands back what the `;` frees.
+        if ret_is_view || ret_carries_view {
             self.check_view_of_temp(e);
         }
         // A root the return MOVES out does not die here — its storage
@@ -4835,6 +4837,19 @@ impl<'a> ViewRules<'a> {
     /// to a call is sound (the temporary outlives the call) and never
     /// routes here.
     fn check_view_of_temp(&mut self, value: &Expr) {
+        if let Some((what, callee)) = self.temp_arg_of_returned_view(value) {
+            let msg = if what == Self::TEMPLATE_LITERAL {
+                format!(
+                    "cannot bind the view returned by `{callee}`: it points into a template literal passed as its argument, whose parts and args live only for this statement, so the view would dangle. Use the `Template` inside the call that receives it, and copy out what has to outlive the statement"
+                )
+            } else {
+                format!(
+                    "cannot bind the view returned by `{callee}`: it points into {what} passed as its argument, which is freed at the end of this statement, so the view would dangle. Bind the owner to a named local first and pass that"
+                )
+            };
+            self.err("E0513", msg, value.span);
+            return;
+        }
         let Some((tyname, m)) = self.temp_view_origin(value) else {
             return;
         };
@@ -5283,6 +5298,74 @@ impl<'a> ViewRules<'a> {
             _ => return None,
         };
         Some((tyname, name.name.clone()))
+    }
+
+    /// `temp_arg_of_returned_view`'s answer for a literal handed to a
+    /// view-carrying parameter — named once so the message choice keys on it.
+    const TEMPLATE_LITERAL: &'static str = "a template literal";
+
+    /// The PARAMETER half of `temp_view_origin`: `keep(mk())` where `keep`
+    /// returns a view rooted at its parameter (`return_borrow` names it).
+    /// The callee is sound — a parameter's storage is the caller's — and the
+    /// caller is not, when what it passed is a temporary that the statement
+    /// frees at the `;`. `view_source_roots` follows the same `return_borrow`
+    /// to tie a NAMED owner; a temporary has no root to collect, so the tie
+    /// came up empty and nothing fired.
+    /// bugs/a-view-returned-from-a-temporary-argument-dangles.md
+    ///
+    /// Answers `(what the argument was, the callee as written)`. An argument
+    /// is a temporary when `rvalue_owner_desc` says so, when it is itself a
+    /// view of one (either half of this rule, one call deeper), or when it is
+    /// a string literal handed to a view-CARRYING parameter — a template
+    /// literal, whose parts and args live only for the statement.
+    fn temp_arg_of_returned_view(&self, e: &Expr) -> Option<(String, String)> {
+        let core = Self::trivial_tail(e);
+        let ExprKind::Call { callee, args, .. } = &core.kind else {
+            return None;
+        };
+        let (entry, shown) = match &callee.kind {
+            ExprKind::Ident(f) => (self.sigs.fns.get(f)?, display_name(f).to_string()),
+            ExprKind::Field { receiver, name } => {
+                let ty = self.infer_ty(receiver)?;
+                let base = match &ty.kind {
+                    TypeKind::Path(n) => n.clone(),
+                    TypeKind::Generic { name, .. } => name.clone(),
+                    _ => return None,
+                };
+                (self.sigs.method_entry(&base, &name.name)?, format!(".{}()", name.name))
+            }
+            _ => return None,
+        };
+        let sources: Vec<u32> = match entry.return_borrow.as_ref()? {
+            ReturnBorrowSource::Param(i) => vec![*i],
+            ReturnBorrowSource::MultiParam(is) => is.clone(),
+            ReturnBorrowSource::SelfReceiver => return None,
+        };
+        for i in sources {
+            let Some(arg) = args.get(i as usize) else {
+                continue;
+            };
+            let arg_core = Self::trivial_tail(arg);
+            let carrier_param = entry
+                .param_tys
+                .get(i as usize)
+                .is_some_and(|t| !Self::is_view_ty(t) && self.carries_view(t));
+            if carrier_param
+                && matches!(arg_core.kind, ExprKind::StrLit(_) | ExprKind::InterpStr { .. })
+            {
+                return Some((Self::TEMPLATE_LITERAL.to_string(), shown));
+            }
+            if let Some(what) = self.rvalue_owner_desc(arg) {
+                return Some((what, shown));
+            }
+            if let Some((what, _)) = self.temp_arg_of_returned_view(arg) {
+                return Some((what, shown));
+            }
+            if let Some((tyname, _)) = self.temp_view_origin(arg) {
+                return Some((format!("a temporary `{}`", display_name(&tyname)), shown));
+            }
+        }
+        None
     }
 
     /// Does a `match` OWN the value it destructures, so that a payload
@@ -13644,6 +13727,76 @@ impl Cell[T] {
             .map(|(name, _)| *name)
             .collect();
         assert!(denied.is_empty(), "must not be denied, but were: {denied:?}");
+    }
+
+    // bugs/a-view-returned-from-a-temporary-argument-dangles.md — a call whose
+    // returned view is rooted at a PARAMETER, handed a temporary there.
+    const RETURNED_VIEW_PRELUDE: &str = "\
+fn keep_str(s: str) -> str { return s; }
+fn first(a: str, b: str) -> str { if true { return a; } return b; }
+struct Tpl { s: str }
+fn keep_tpl(t: Tpl) -> Tpl { return t; }
+fn count_tpl(t: Tpl) -> i32 { return 0; }
+";
+
+    #[test]
+    fn a_view_returned_from_a_temporary_argument_denied_e0513() {
+        // Every one of these was clean, and the `str` and `Template` shapes
+        // are heap-use-after-free under ASan: the statement frees the
+        // argument at the `;` and the binding keeps pointing into it.
+        let cases: &[(&str, &str)] = &[
+            ("interpolation", "fn f() { let n: i32 = 1; let v: str = keep_str(\"x ${n}\"); peek(v); return; }"),
+            ("rvalue_owner", "fn f() { let v: str = keep_str(mk()); peek(v); return; }"),
+            ("braced_rvalue_owner", "fn f() { let v: str = keep_str({ mk() }); peek(v); return; }"),
+            ("view_of_a_temporary", "fn f() { let v: str = keep_str(mk().view()); peek(v); return; }"),
+            ("one_call_deeper", "fn f() { let v: str = keep_str(keep_str(mk())); peek(v); return; }"),
+            ("one_of_several_sources", "fn f() { let v: str = first(\"a\", mk()); peek(v); return; }"),
+            // Not here: `p.pick(mk())`. A METHOD returning a view of its
+            // parameter records no `return_borrow` at all, so not even a named
+            // owner is tied — bugs/a-method-returning-a-view-of-its-parameter-ties-nothing.md.
+            ("assignment", "fn f() { var v: str = \"a\"; v = keep_str(mk()); peek(v); return; }"),
+            ("returned", "fn g() -> str { return keep_str(mk()); }"),
+            ("captured_in_a_carrier", "fn f() { let s: Slot = Slot { s: keep_str(mk()), n: 1 }; return; }"),
+            ("template_literal", "fn f() { let t: Tpl = keep_tpl(\"a\"); return; }"),
+            ("template_interpolation", "fn f() { let n: i32 = 1; let t: Tpl = keep_tpl(\"a ${n}\"); return; }"),
+            ("template_returned", "fn g() -> Tpl { return keep_tpl(\"a\"); }"),
+        ];
+        let missed: Vec<&str> = cases
+            .iter()
+            .filter(|(_, tail)| {
+                let codes = check_src(&format!(
+                    "{LANG_STR_PRELUDE}{COERCE_PRELUDE}{RETURNED_VIEW_PRELUDE}{tail}"
+                ));
+                !codes.iter().any(|c| c == "E0513")
+            })
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(missed.is_empty(), "expected E0513, not raised for: {missed:?}");
+    }
+
+    #[test]
+    fn a_returned_view_whose_argument_has_a_lifetime_stays_clean() {
+        // A named owner outlives the statement (the tie judges it later), a
+        // literal's bytes are 'static, and a result passed straight on is
+        // used before the `;` frees anything.
+        let clean: &[(&str, &str)] = &[
+            ("named_owner", "fn f() { let o: LStr = mk(); let v: str = keep_str(o); peek(v); return; }"),
+            ("named_owner_view", "fn f() { let o: LStr = mk(); let v: str = keep_str(o.view()); peek(v); return; }"),
+            ("literal", "fn f() { let v: str = keep_str(\"lit\"); peek(v); return; }"),
+            ("passed_straight_on", "fn f() { let r: i32 = peek(keep_str(mk())); return; }"),
+            ("template_passed_straight_on", "fn f() { let n: i32 = 1; let r: i32 = count_tpl(keep_tpl(\"a ${n}\")); return; }"),
+            ("parameter_forwarded", "fn g(s: str) -> str { return keep_str(s); }"),
+        ];
+        let flagged: Vec<(&str, Vec<String>)> = clean
+            .iter()
+            .filter_map(|(name, tail)| {
+                let codes = check_src(&format!(
+                    "{LANG_STR_PRELUDE}{COERCE_PRELUDE}{RETURNED_VIEW_PRELUDE}{tail}"
+                ));
+                (!codes.is_empty()).then_some((*name, codes))
+            })
+            .collect();
+        assert!(flagged.is_empty(), "expected clean, got: {flagged:?}");
     }
 
     // ── bugs/tied-binding-returned-past-its-owner.md: the tie a CALL
