@@ -27,6 +27,7 @@ every Facet property is implemented.
 | Other gallery hosts | Circle/square page dots, table document container, swipe actions through drag reveal and native context menu, with image/named icons, destructive foreground/reset, stable interleaved insertion order, and clicked/invoked callbacks. WebView2 source/user-agent updates, history/back/forward, reload, script execution, navigation and process-failure callbacks. |
 | Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. |
 | Window buttons | Three native WinUI buttons drive their own window's AppWindow minimize/maximize/restore and Window.close. Live spacing changes intrinsic size. OnHover watches the containing bar; keyboard/programmatic focus also reveals the group. Maximize glyph and accessible name follow current window state. |
+| Closing | A user close (caption, Alt+F4, outside `WM_CLOSE`, the window buttons) is asked through AppWindow.Closing and can be refused. Through the facade it asks the window's `on_should_close`, and for the last open window also `on_should_quit`. Closes made in code are not asked twice. `tools/test_facet_runtime_winui.py` covers refusal, allowance and a non-last window. |
 | Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close) and `app::set_activate_fn` are installed. |
 | Chrome | `screen::Chrome` width/height (ResizeClient, corrected to the delivered client area), min/max size, minimizable/maximizable/resizable, and the bar: Native (dark DWM caption), Blended with `window_buttons()` (no system caption; app buttons are the only set), Blended without (ExtendsContentIntoTitleBar), Hidden/Custom (no border, no caption). `.window_drag()` moves a captionless window. |
 | Dialogs | `facet_winui/dialogs`: alert/choose/prompt as keyed facet sheets on a window's modal layer (scrim + card), answers on a later turn, Return/Escape in alert and prompt, initial focus on the primary button or field, blocking `alert` through a nested message loop. |
@@ -38,8 +39,7 @@ every Facet property is implemented.
 ## Limits
 
 - `facet_runtime` defaults to Win32; WinUI is an opt-in (`facet_runtime/winui`).
-  Through the facade, the app menu (`App::menu`) is not rendered, a window's
-  close does not ask `on_should_quit` (`app.quit()` does), density-change
+  Through the facade, the app menu (`App::menu`) is not rendered, density-change
   observation registers nothing, and the clipboard and file pickers are the
   shared Win32 calls. Jobs/worker-thread dispatch, general gesture/key readers
   and host focus commands remain separate work. `run_on_main` currently queues

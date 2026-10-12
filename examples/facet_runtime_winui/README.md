@@ -19,6 +19,10 @@ manifest lists `facet_winui`, `winui` and `winrt` because of it.
 
 Closing the last window ends `app.run`, and the process exits 0.
 
+`tools/test_facet_runtime_winui.py` drives this sample from outside. It sets
+`CPLUS_RUNTIME_WINUI_PROBE=1`, which makes `src/probe.cplus` open Settings at
+launch and refuse the first `on_should_quit`, and then posts `WM_CLOSE`s.
+
 ```powershell
 # From the repository root:
 & examples/facet_runtime_winui/build.ps1

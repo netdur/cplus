@@ -151,7 +151,8 @@
     "Microsoft.UI.Xaml.Controls.SymbolIcon",
     "Microsoft.UI.Xaml.Controls.Viewbox",
     "Microsoft.UI.Windowing.AppWindow",
-    "Microsoft.UI.Windowing.OverlappedPresenter"
+    "Microsoft.UI.Windowing.OverlappedPresenter",
+    "Microsoft.UI.Windowing.AppWindowClosingEventArgs"
   ],
   "sources": [
     {
@@ -3372,6 +3373,26 @@
       "name": "AppWindow"
     },
     {
+      "iid": "0e09d90b-2261-590b-9ad1-8504991d8754",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Windowing.AppWindowClosingEventArgs",
+      "methods": [
+        {
+          "name": "get_Cancel",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Cancel",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "AppWindowClosingEventArgs"
+    },
+    {
       "iid": "bc3042c2-c6c6-5632-8989-ff0ec6d3b40d",
       "kind": "Class",
       "metadata": "Microsoft.UI.Windowing.AppWindowPresenter",
@@ -3668,6 +3689,26 @@
         }
       ],
       "name": "IAppWindow4"
+    },
+    {
+      "iid": "0e09d90b-2261-590b-9ad1-8504991d8754",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IAppWindowClosingEventArgs",
+      "methods": [
+        {
+          "name": "get_Cancel",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Cancel",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAppWindowClosingEventArgs"
     },
     {
       "iid": "bc3042c2-c6c6-5632-8989-ff0ec6d3b40d",

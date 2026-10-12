@@ -1,0 +1,44 @@
+// What tools/test_facet_runtime_winui.py drives. Nothing here runs unless
+// CPLUS_RUNTIME_WINUI_PROBE is set, so the sample is unchanged when launched
+// by hand. Each marker is one flushed stdout line the test waits for.
+//
+//   CPLUS_RUNTIME_WINUI_PROBE=1   also open "settings" at launch, refuse the
+//                                 FIRST on_should_quit and allow the next.
+import "stdlib/env" as env;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "facet_runtime/runtime" as runtime;
+
+extern fn fflush(stream: *u8) -> i32;
+
+static ASKED: i32 = 0;
+
+fn enabled() -> bool {
+    match env::var("CPLUS_RUNTIME_WINUI_PROBE") {
+        option::Option[text::Text]::Some(v) => { return v.view() == "1"; }
+        option::Option[text::Text]::None => { return false; }
+    }
+}
+
+fn say(line: str) { io::println(line); let _f: i32 = fflush(0 as *u8); }
+
+fn install(app: runtime::App) {
+    if !enabled() { return; }
+    app.on_launch(launched);
+    app.on_should_quit(should_quit);
+    app.on_quit(quitting);
+}
+
+fn launched(ctx: *u8) {
+    let _w = runtime::app().open_window("settings");
+}
+
+fn should_quit(ctx: *u8) -> bool {
+    ASKED = ASKED + 1;
+    let n: i32 = ASKED;
+    say("PROBE should_quit ${n}");
+    return n > 1;
+}
+
+fn quitting(ctx: *u8) { say("PROBE quit"); }

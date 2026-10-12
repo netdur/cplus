@@ -5096,6 +5096,36 @@ impl AppWindow {
     }
 }
 
+// Microsoft.UI.Windowing.AppWindowClosingEventArgs
+fn app_window_closing_event_args_iid() -> rt::Guid { return rt::Guid { a: 235526411u32, b: 8801 as u16, c: 22795 as u16, d: [154 as u8, 209 as u8, 133 as u8, 4 as u8, 153 as u8, 29 as u8, 135 as u8, 84 as u8] }; }
+struct AppWindowClosingEventArgs { _object: rt::Object }
+impl AppWindowClosingEventArgs {
+    fn query(value: rt::Object) -> result::Result[AppWindowClosingEventArgs, rt::Error] {
+        match value.query(app_window_closing_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[AppWindowClosingEventArgs, rt::Error]::Ok(AppWindowClosingEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[AppWindowClosingEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> AppWindowClosingEventArgs { return AppWindowClosingEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_Cancel
+    fn cancel(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: put_Cancel
+    fn set_cancel(this, value_0: bool) -> rt::Status {
+        let call: fn(*u8, bool) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, bool) -> i32;
+        let hr: i32 = call(this._object.raw(), value_0);
+        return rt::Status { code: hr };
+    }
+}
+
 // Microsoft.UI.Windowing.AppWindowPresenter
 fn app_window_presenter_iid() -> rt::Guid { return rt::Guid { a: 3157279426u32, b: 50886 as u16, c: 22066 as u16, d: [137 as u8, 137 as u8, 255 as u8, 14 as u8, 198 as u8, 211 as u8, 180 as u8, 13 as u8] }; }
 struct AppWindowPresenter { _object: rt::Object }
@@ -5544,6 +5574,38 @@ impl IAppWindow4 {
         var copy_0: IconId = icon_id_0;
         let call: fn(*u8, u64) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, u64) -> i32;
         let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64));
+        return rt::Status { code: hr };
+    }
+}
+
+// Microsoft.UI.Windowing.IAppWindowClosingEventArgs
+const i_app_window_closing_event_args_get_cancel_slot: usize = 6;
+const i_app_window_closing_event_args_put_cancel_slot: usize = 7;
+fn i_app_window_closing_event_args_iid() -> rt::Guid { return rt::Guid { a: 235526411u32, b: 8801 as u16, c: 22795 as u16, d: [154 as u8, 209 as u8, 133 as u8, 4 as u8, 153 as u8, 29 as u8, 135 as u8, 84 as u8] }; }
+struct IAppWindowClosingEventArgs { _object: rt::Object }
+impl IAppWindowClosingEventArgs {
+    fn query(value: rt::Object) -> result::Result[IAppWindowClosingEventArgs, rt::Error] {
+        match value.query(i_app_window_closing_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[IAppWindowClosingEventArgs, rt::Error]::Ok(IAppWindowClosingEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IAppWindowClosingEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IAppWindowClosingEventArgs { return IAppWindowClosingEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_Cancel
+    fn cancel(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: put_Cancel
+    fn set_cancel(this, value_0: bool) -> rt::Status {
+        let call: fn(*u8, bool) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, bool) -> i32;
+        let hr: i32 = call(this._object.raw(), value_0);
         return rt::Status { code: hr };
     }
 }

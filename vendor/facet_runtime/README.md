@@ -75,9 +75,10 @@ Application starts), `screen::Chrome` (size, minimum/maximum, bar, buttons),
 `runtime::alert` / `choose` / `prompt` / `alert_blocking` as keyed facet
 sheets on the active window (`alert:title`, `alert:primary`, ...), the window
 verbs, frame/density/activity reads and the active/inactive/size observers.
-Closing the last window ends `run`. Not on WinUI yet: the app menu
-(`App::menu`; menus inside a screen's tree do render), `on_should_quit` on a
-window close, density-change observation, and the agent surface beyond the
+Closing the last window ends `run`. A user close (caption button, Alt+F4) asks the window's `on_should_close`, and
+closing the last window also asks `on_should_quit`, as `app.quit()` does.
+Not on WinUI yet: the app menu (`App::menu`; menus inside a screen's tree do
+render), density-change observation, and the agent surface beyond the
 first window - see [facet_winui's MANIFEST](../facet_winui/MANIFEST.md).
 `examples/facet_runtime_winui` is a two-window app on this path. The neutral runtime reports no
 backend. Shared window ownership lives in `windows.cplus`; retained content

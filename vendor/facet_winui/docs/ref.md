@@ -35,7 +35,9 @@ fn start(on_launch: fn(*u8), on_launch_ctx: *u8 = 0 as *u8,
          on_stopped: fn(*u8) = 0 as fn(*u8), on_stopped_ctx: *u8 = 0 as *u8) -> rt::Status;
 fn open_window(root: *core::Node, take chrome: screen::Chrome,
                will_close: fn(*u8) = 0 as fn(*u8), will_close_ctx: *u8 = 0 as *u8,
-               owned: bool = false) -> *u8;
+               owned: bool = false,
+               should_close: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
+               should_close_ctx: *u8 = 0 as *u8) -> *u8;
 fn launched() -> bool;
 fn window_count() -> usize;
 fn close_window_of(root: *core::Node) -> bool;
@@ -51,6 +53,11 @@ The answer is an opaque window handle, also recorded as the root's
 
 `open_window` borrows `root` unless `owned` is true, in which case the root
 is a `box::Box[core::Node]` raw pointer the host frees after unmounting.
+`should_close` is asked before a close the user starts: a caption button,
+Alt+F4, a `WM_CLOSE` from outside (all raise AppWindow.Closing) or the
+`window_buttons()` close. False cancels the close and the tree stays mounted.
+A close made in code (`close_window_of`, `close`, the `facet/window` seam's
+`close`) is not asked again, because its caller already decided.
 `will_close` runs on Window.Closed while the views still exist; the tree is
 unmounted after it returns. Closing any window unmounts only its tree; closing
 the last one retires the process-wide services and returns from `start`, after

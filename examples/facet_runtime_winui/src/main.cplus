@@ -6,6 +6,7 @@ import "facet_runtime/runtime" as runtime;
 import "facet_runtime/winui" as winui;
 import "./home" as home;
 import "./settings" as settings;
+import "./probe" as probe;
 
 fn main() -> i32 {
     let app: runtime::App = runtime::App::new("facet_runtime_winui");
@@ -24,6 +25,7 @@ fn main() -> i32 {
     app.window("about", settings::About::boxed, chrome: screen::Chrome::new(
         title: "About", width: 360.0f64, height: 220.0f64,
         min_width: 0.0f64, min_height: 0.0f64, bar: screen::Bar::Blended));
+    probe::install(app);
     winui::select();
     if app.run("main") == status::Status::Ok { return 0; }
     return 1;

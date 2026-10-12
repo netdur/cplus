@@ -76,3 +76,34 @@ fn sheet_heights_follow_the_message() {
     assert dialogs::capped(900.0f64) == 560.0f64;
     return;
 }
+
+static TM_ASKED: i32 = 0;
+fn tm_refuse(ctx: *u8) -> bool { TM_ASKED = TM_ASKED + 1; return false; }
+fn tm_allow(ctx: *u8) -> bool { TM_ASKED = TM_ASKED + 1; return true; }
+
+#[test]
+fn a_close_is_asked_through_the_window_policy() {
+    // The question AppWindow.Closing and the window buttons put. With no
+    // policy the answer is yes; a refusal is the policy's own answer.
+    var h: host::Host = #zero::[host::Host]();
+    assert host::ask_should_close(#addr_of(h));
+    TM_ASKED = 0;
+    h.should_close = tm_refuse;
+    assert !host::ask_should_close(#addr_of(h));
+    h.should_close = tm_allow;
+    assert host::ask_should_close(#addr_of(h));
+    assert TM_ASKED == 2;
+    return;
+}
+
+#[test]
+fn a_close_request_without_an_open_window_is_refused() {
+    // NEGATIVE: no window is open, so nothing is asked and nothing closes.
+    var h: host::Host = #zero::[host::Host]();
+    TM_ASKED = 0;
+    h.should_close = tm_allow;
+    assert !host::request_close(0 as *host::Host);
+    assert !host::request_close(#addr_of(h));
+    assert TM_ASKED == 0;
+    return;
+}

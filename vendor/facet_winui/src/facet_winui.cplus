@@ -86,6 +86,9 @@ struct Host {
     loaded_object: rt::Object,
     mounted: bool,
     closing: bool,
+    // A close facet already approved (`Window::close`, `app.quit()`, the
+    // window buttons): the native Closing it raises is not asked again.
+    approved: bool,
     // Bar::Blended with the app's own window_buttons, or Hidden/Custom: the
     // system caption is gone and `.window_drag()` regions move the window.
     captionless: bool,
@@ -94,6 +97,10 @@ struct Host {
     strip: f64,
     will_close: fn(*u8),
     opaque will_close_ctx: *u8,
+    // Asked before a close the user started; false keeps the window.
+    should_close: fn(*u8) -> bool,
+    opaque should_close_ctx: *u8,
+    closing_token: ui::EventRegistrationToken,
 }
 
 // Process state: the Application run is one per process. Every Host lives in
@@ -199,7 +206,7 @@ fn window_state_of(host: *Host) -> i32 {
 }
 fn window_action_of(host: *Host, action: i32) {
     if host.is_null() || (*host).closing {return;}
-    if action==2 {let window=native::must::[ui::IWindow](ui::IWindow::query((*host).window));native::check(window.close());return;}
+    if action==2 { let _c: bool=request_close(host); return; }
     let p=presenter_of(host);if action==0 {native::check(p.minimize());}else if window_state_of(host)==ui::overlapped_presenter_state_maximized {native::check(p.restore());}else {native::check(p.maximize());}
 }
 fn button_action(action: i32, view: *u8) { window_action_of(host_of_view(view),action); }
@@ -408,6 +415,36 @@ fn pressed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     let _m: i64=SendMessageW((*host).hwnd,0x0112,0xF012,0);   // WM_SYSCOMMAND, SC_MOVE|HTCAPTION
     return rt::Status {code:0};
 }
+// THE APP IS ASKED BEFORE THE WINDOW GOES. AppWindow.Closing is the
+// cancellable request a caption button, Alt+F4 or a WM_CLOSE from outside
+// raises; Window.Closed afterwards is not cancellable. So the question rides
+// Closing, and a refusal cancels it and leaves the tree mounted.
+fn ask_should_close(host: *Host) -> bool {
+    let ask=(*host).should_close;
+    if ask.is_null() { return true; }
+    return ask((*host).should_close_ctx);
+}
+fn closing_requested(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let host: *Host=context as *Host;
+    if !live(host) || (*host).closing || (*host).approved { return rt::Status {code:0}; }
+    if ask_should_close(host) { (*host).approved=true; return rt::Status {code:0}; }
+    let event=native::must::[ui::IAppWindowClosingEventArgs](ui::IAppWindowClosingEventArgs::query(args));
+    native::check(event.set_cancel(true));
+    return rt::Status {code:0};
+}
+// Ask, then close: a close facet's own controls start (the window buttons,
+// `runtime::window_close`). False when the answer was no.
+fn request_close(host: *Host) -> bool {
+    if host.is_null() || !live(host) || (*host).closing { return false; }
+    if !ask_should_close(host) { return false; }
+    close_approved(host); return true;
+}
+// Close without asking: the caller already did.
+fn close_approved(host: *Host) {
+    (*host).approved=true;
+    let window=native::must::[ui::IWindow](ui::IWindow::query((*host).window));
+    native::check(window.close());
+}
 fn closed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     let host: *Host=context as *Host;
     if live(host) && !(*host).closing { close_host(host); }
@@ -456,6 +493,7 @@ fn close_host(host: *Host) {
         let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*host).window));
         native::check(window.remove_size_changed((*host).size_token));native::check(window.remove_closed((*host).close_token));native::check(window.remove_activated((*host).activated_token));
         let shell=native::must::[ui::IUIElement](ui::IUIElement::query((*host).shell));native::check(shell.remove_pointer_pressed((*host).pressed_token));
+        native::check(app_window_of(host).remove_closing((*host).closing_token));
         unmount_layer(host,true);
         let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*host).loaded_object));
         native::check(element.remove_loaded((*host).loaded_token));(*host).loaded_object=rt::Object::empty();
@@ -481,13 +519,15 @@ fn close_host(host: *Host) {
 // after launch (see the header): null before, for an unsupported tree, or on
 // a native failure. `will_close` runs on Window.Closed before the tree is
 // unmounted. `owned` hands a boxed root to the host to free.
-fn open_window(root: *core::Node, take chrome: screen::Chrome, will_close: fn(*u8)=0 as fn(*u8), will_close_ctx: *u8=0 as *u8, owned: bool=false) -> *u8 {
+fn open_window(root: *core::Node, take chrome: screen::Chrome, will_close: fn(*u8)=0 as fn(*u8), will_close_ctx: *u8=0 as *u8, owned: bool=false,
+               should_close: fn(*u8) -> bool=0 as fn(*u8) -> bool, should_close_ctx: *u8=0 as *u8) -> *u8 {
     if !LAUNCHED || root.is_null() || !views::supports(root) { return 0 as *u8; }
     let window: ui::Window=native::must::[ui::Window](ui::Window::new());
     let owner: box::Box[Host]=match box::new::[Host](Host {root:root,owned:owned,chrome:chrome,window:window.object(),shell:rt::Object::empty(),commands:rt::Object::empty(),
         layer:rt::Object::empty(),layer_card:rt::Object::empty(),layer_root:0 as *core::Node,layer_width:0.0f64,layer_height:0.0f64,layer_key:0 as fn(i32,*u8)->bool,layer_key_ctx:0 as *u8,layer_key_token:#zero::[ui::EventRegistrationToken](),hwnd:0 as *u8,
         size_token:#zero::[ui::EventRegistrationToken](),close_token:#zero::[ui::EventRegistrationToken](),activated_token:#zero::[ui::EventRegistrationToken](),loaded_token:#zero::[ui::EventRegistrationToken](),pressed_token:#zero::[ui::EventRegistrationToken](),
-        loaded_object:rt::Object::empty(),mounted:false,closing:false,captionless:false,width:900.0f64,height:600.0f64,strip:0.0f64,will_close:will_close,will_close_ctx:will_close_ctx}) {
+        loaded_object:rt::Object::empty(),mounted:false,closing:false,approved:false,captionless:false,width:900.0f64,height:600.0f64,strip:0.0f64,will_close:will_close,will_close_ctx:will_close_ctx,
+        should_close:should_close,should_close_ctx:should_close_ctx,closing_token:#zero::[ui::EventRegistrationToken]()}) {
         option::Option::Some(v)=>{v}, option::Option::None=>{return 0 as *u8;}
     };
     let host: *Host=owner.into_raw() as *Host;
@@ -503,6 +543,8 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome, will_close: fn(*u
     (*host).size_token=native::must::[ui::EventRegistrationToken](window.add_size_changed(size_handler.object()));
     (*host).close_token=native::must::[ui::EventRegistrationToken](window.add_closed(close_handler.object()));
     (*host).activated_token=native::must::[ui::EventRegistrationToken](window.add_activated(activated_handler.object()));
+    let closing_handler=native::must::[ui::TypedEventHandler_Microsoft_UI_Windowing_AppWindow_Microsoft_UI_Windowing_AppWindowClosingEventArgs](ui::TypedEventHandler_Microsoft_UI_Windowing_AppWindow_Microsoft_UI_Windowing_AppWindowClosingEventArgs::new(closing_requested,host as *u8));
+    (*host).closing_token=native::must::[ui::EventRegistrationToken](app_window_of(host).add_closing(closing_handler.object()));
     assert mount::mount(root); (*host).mounted=true;
     app::set_window_native(root,host as *u8);
     let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(views::object(core::view_of(root))));
@@ -536,8 +578,7 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome, will_close: fn(*u
 fn close_window_of(root: *core::Node) -> bool {
     let host=host_of_root(root);
     if host.is_null() || (*host).closing || (*host).root!=root { return false; }
-    let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*host).window));
-    native::check(window.close()); return true;
+    close_approved(host); return true;
 }
 // Every open window, newest first. Each one's Closed runs as if the user had
 // closed it; the last ends the Application run.
@@ -548,7 +589,7 @@ fn close() -> rt::Status {
     i=0;
     while i<targets.count() {
         if let option::Option::Some(h)=targets.at(i) {
-            if live(h) && !(*h).closing { let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*h).window)); let s: rt::Status=window.close(); if s.is_err() { return s; } }
+            if live(h) && !(*h).closing { (*h).approved=true; let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*h).window)); let s: rt::Status=window.close(); if s.is_err() { return s; } }
         }
         i=i+1;
     }

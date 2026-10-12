@@ -65,10 +65,21 @@ fn open_now(n: nav_model::Navigator) -> bool {
     let s = nav_model::session(n.owner, n.id);
     if root.is_null() || s.is_null() { return false; }
     let w = host::open_window(root, windows::chrome(n),
-        will_close: windows::closing, will_close_ctx: s as *u8);
+        will_close: windows::closing, will_close_ctx: s as *u8,
+        should_close: window_should_close, should_close_ctx: s as *u8);
     if w.is_null() { return false; }
     windows::named(n);
     return true;
+}
+
+// A close the user started (caption button, Alt+F4, the window buttons). The
+// window's own policy (`Window::on_should_close`) is asked first; closing the
+// LAST window ends the run, so that one is also the app's quit and asks
+// `on_should_quit` - the question `app.quit()` asks, at the same moment.
+fn window_should_close(ctx: *u8) -> bool {
+    if !windows::should_close(ctx) { return false; }
+    if host::window_count() > (1 as usize) { return true; }
+    return facade::screen_should_close(ctx);
 }
 
 fn launched(ctx: *u8) {
