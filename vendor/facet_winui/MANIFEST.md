@@ -28,6 +28,7 @@ every Facet property is implemented.
 | Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. `run_on_main` from any thread: a worker posts through DispatcherQueue.TryEnqueue, so `services::run_job` runs off the UI thread and applies on it (`tools/test_facet_runtime_winui.py`, `home:load`). After the run ends a hop is dropped. |
 | Window buttons | Three native WinUI buttons drive their own window's AppWindow minimize/maximize/restore and Window.close. Live spacing changes intrinsic size. OnHover watches the containing bar; keyboard/programmatic focus also reveals the group. Maximize glyph and accessible name follow current window state. |
 | Input | `facet_winui/input`: the gesture band on any node over XAML routed events, so a handler's `true` marks the event Handled and `false` lets it bubble to the next node - facet's decline chain. Tapped (click), DoubleTapped (double click; falls back to on_click), RightTapped, PointerPressed/Released, PointerEntered/Exited (hover), PointerMoved, a pan past a 4-DIP slop, a swipe on release beyond `swipe_threshold`, a long press after `long_press_seconds` (or touch Holding) that swallows the click, Ctrl+wheel pinch, KeyDown for `on_key`. Bands are armed only for the verbs a node names. `gestures::KeyReader` reads the KeyDown args (VirtualKey code, named keys, live modifiers). `C_FOCUS`/`C_BLUR` take and give up the keyboard (blur hands it to the window's content root); every view's element is tagged, so global focus changes write `is_focused` and fire `on_focus`/`on_blur` on the node. `tools/test_facet_runtime_winui.py` (`run_gestures`) drives a plain container with the real mouse and keyboard. |
+| Appearance | Light and dark. `runtime::set_app_appearance` wins; `Unspecified` follows the system's `AppsUseLightTheme`, re-read at window activation. Every element's RequestedTheme, the window shell and strips, the DWM caption and the neutral colour roles (ink, surfaces, fills, separators) follow; a change restyles every open window (C_RESTYLE) and then calls the app's `on_appearance_change`. `run_appearance` checks Light at start and a live switch to Dark through the caption attribute and the inspector's `native_theme`. |
 | Adopted views | `adopt_native` / `adopt_native_with` leaves: the app's HWND becomes a WS_CHILD (no popup, frame, topmost or taskbar bits) of the WinUI window and is moved over its node after every layout pass, hidden with it; on removal it is hidden and unparented, and the app's release destroys it. Camera's preview takes this path. `run_adopted_view` checks parentage, placement and release. |
 | App menu | `App::menu` (plus the primary screen's `menu_items`) is a MenuBar across the top of every window, above the command strip: a MenuBarItem per group in first-seen order, items and separators. A `key` is a Ctrl (+Shift/+Alt) KeyboardAccelerator on the bar, so it works with the menu closed; the item shows the chord. `is_enabled`/`title_of` are answered when the bar is entered or focused, when its window activates, and again on invocation. `on_click` wins; otherwise quit (the facade's `app.quit()`), close window (asked), and undo/redo/cut/copy/paste/select-all on the text field that last had the keyboard in that window. AutomationIds `menu`, `menu:<group>`, `menu:<group>:<title>`. `tools/test_facet_runtime_winui.py` covers click, live enabled state, Ctrl+, Ctrl+Q, edit actions and quit. |
 | Closing | A user close (caption, Alt+F4, outside `WM_CLOSE`, the window buttons) is asked through AppWindow.Closing and can be refused. Through the facade it asks the window's `on_should_close`, and for the last open window also `on_should_quit`. Closes made in code are not asked twice. `tools/test_facet_runtime_winui.py` covers refusal, allowance and a non-last window. |
@@ -42,8 +43,7 @@ every Facet property is implemented.
 ## Limits
 
 - Through the facade the clipboard and file pickers are the shell's Win32
-  calls (`facet_runtime/shell`). `set_app_appearance` is recorded and read
-  back, but the backend draws dark whatever it says. An adopted native window
+  calls (`facet_runtime/shell`). An adopted native window
   draws above the XAML it overlaps (airspace) and does not follow a scrolling
   ancestor's offset. The app menu's find tokens (`menu_action_find*`) have no WinUI
   default and do nothing. A focused text field keeps the chords it handles
@@ -136,8 +136,9 @@ every Facet property is implemented.
 - Labels still use trailing ellipsis for head/middle truncation and native
   wrapping for both word/character wrap. Buttons and text buttons implement
   the distinct modes through the caption fitting path documented below.
-- Appearance is dark; OS appearance changes, native system palette tracking,
-  3D transforms, per-corner composition clipping and inherited container enable
+- A system light/dark flip is picked up when a window next activates (the
+  setting is re-read then), not the moment it happens. Native system palette
+  tracking (accent colour), 3D transforms, per-corner composition clipping and inherited container enable
   state are not complete.
   Shadows use rectangular masks on children with a native panel parent;
   root-window shadows and arbitrary shape masks are not mapped.

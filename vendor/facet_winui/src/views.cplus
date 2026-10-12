@@ -248,7 +248,7 @@ fn configure(record: *View, n: *core::Node) {
     native::check(element.set_is_hit_test_visible(!(*data).common.input_transparent));
     native::check(element.set_visibility(if (*data).common.is_visible {0 as i32} else {1 as i32}));
     let framework: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));
-    native::check(framework.set_requested_theme(ui::element_theme_dark));
+    native::check(framework.set_requested_theme(style::element_theme()));
     if (*data).common.flow_direction!=vocab::FlowDirection::MatchParent {native::check(framework.set_flow_direction(if (*data).common.flow_direction==vocab::FlowDirection::RightToLeft {ui::flow_direction_right_to_left} else {ui::flow_direction_left_to_right}));}
     if (*record).kind==props::K_TABS || (*record).kind==props::K_TABLE || (*record).kind==props::K_CONTEXT_MENU || (*record).kind==props::K_SWIPEABLE || (*record).kind==core::K_NODE || (*record).kind==split::K_SPLIT || (*record).kind==props::K_BOX || (*record).kind==props::K_BORDERED {
         let border: ui::IBorder=native::must::[ui::IBorder](ui::IBorder::query(value));

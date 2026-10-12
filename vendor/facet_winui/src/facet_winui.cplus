@@ -37,6 +37,7 @@ import "./native_slot" as native_slot;
 import "./scheduler" as scheduler;
 import "facet/theme" as theme;
 import "facet/vocabulary" as vocab;
+import "facet/props" as props;
 import "./style" as style;
 import "./presentation" as presentation;
 import "./time_popup" as time_popup;
@@ -342,8 +343,45 @@ fn apply_chrome(host: *Host) {
         }
     }
     // The caption follows the appearance: DWMWA_USE_IMMERSIVE_DARK_MODE.
-    if style::dark() && (*host).hwnd.is_not_null() {var on: i32=1;let _r: i32=DwmSetWindowAttribute((*host).hwnd,20,#addr_of(on) as *u8,4);}
+    caption_appearance(host);
 }
+
+// The caption follows the appearance (DWMWA_USE_IMMERSIVE_DARK_MODE), and the
+// window's own XAML - shell, strips, menu bar - takes its theme from the shell.
+fn caption_appearance(host: *Host) {
+    if (*host).hwnd.is_null() { return; }
+    var on: i32=if style::dark() {1} else {0};
+    let _r: i32=DwmSetWindowAttribute((*host).hwnd,20,#addr_of(on) as *u8,4);
+}
+fn surfaces(host: *Host) {
+    let background=vocab::Color::window_background();
+    native::check(native::must::[ui::IPanel](ui::IPanel::query((*host).shell.clone())).set_background(style::brush(background)));
+    native::check(native::must::[ui::IPanel](ui::IPanel::query((*host).commands.clone())).set_background(style::brush(background)));
+    native::check(native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*host).shell.clone())).set_requested_theme(style::element_theme()));
+}
+// THE APPEARANCE CHANGED (the app's override, a system flip seen at
+// activation, or a theme set): every window's caption and surfaces, then every
+// node re-styled - every fact and no verb, so focus is not re-issued.
+fn restyle(n: *core::Node) {
+    core::touch(n,props::C_RESTYLE);
+    var i: usize=0;
+    while i<core::child_count_of(n) { if let option::Option::Some(c)=core::child_of(n,i) { restyle(c); } i=i+1; }
+}
+fn theme_changed() {
+    var i: usize=0;
+    while i<HOSTS.count() {
+        if let option::Option::Some(h)=HOSTS.at(i) {
+            if !(*h).closing {
+                caption_appearance(h); surfaces(h); restyle((*h).root);
+                if (*h).layer_root.is_not_null() { restyle((*h).layer_root); }
+            }
+        }
+        i=i+1;
+    }
+    schedule(0 as *u8);
+}
+// Flip and tell: the backend's repaint, then the app's handler.
+fn appearance_flipped() { theme::notify_appearance_changed(); }
 
 // ---- layout ----------------------------------------------------------------------
 fn relayout(host: *Host) {
@@ -461,7 +499,12 @@ fn activated(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     if !live(host) || (*host).closing { return rt::Status {code:0}; }
     // WindowActivatedEventArgs is not in the generated selection; the
     // foreground window says which way it went.
-    if GetForegroundWindow()==(*host).hwnd { ACTIVE_HOST=host; app_menu::refresh_bar((*host).menu); fire(OBS_ACTIVE,host); } else { fire(OBS_INACTIVE,host); }
+    if GetForegroundWindow()==(*host).hwnd {
+        ACTIVE_HOST=host; app_menu::refresh_bar((*host).menu);
+        // A system light/dark flip made while the app was elsewhere.
+        if style::refresh_system() && style::override()==vocab::Appearance::Unspecified { appearance_flipped(); }
+        fire(OBS_ACTIVE,host);
+    } else { fire(OBS_INACTIVE,host); }
     return rt::Status {code:0};
 }
 fn is_active(host: *Host) -> bool { return host.is_not_null() && !(*host).closing && GetForegroundWindow()==(*host).hwnd; }
@@ -665,6 +708,7 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome, will_close: fn(*u
     (*host).menu=app_menu::build(host as *u8);
     if (*host).menu.is_not_null() { native::check(children.append(app_menu::object((*host).menu))); }
     if !commands::supports(core::kind_of(root)) {native::check(children.append(views::object(core::view_of(root))));native_slot::bind(core::view_of(root) as *record::View,shell.object(),native_slot::PANEL);}
+    native::check(native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(shell.object())).set_requested_theme(style::element_theme()));
     let layer=native::must::[ui::Canvas](ui::Canvas::new());(*host).layer=layer.object();
     native::check(native::must::[ui::IPanel](ui::IPanel::query(layer.object())).set_background(style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.45f64))));
     native::check(native::must::[ui::IUIElement](ui::IUIElement::query(layer.object())).set_visibility(ui::visibility_collapsed));
@@ -932,10 +976,14 @@ fn window_frame_of(root: *core::Node) -> vocab::Rect { return wh_frame(root); }
 fn set_window_frame_of(root: *core::Node, frame: vocab::Rect) { wh_set_frame(root,frame); }
 fn density_of(root: *core::Node) -> f64 { return density_of_host(host_of_root(root)); }
 // The app's explicit light/dark choice (`Unspecified` gives the system
-// back). Recorded and answered; facet_winui still draws dark whatever it says
-// (MANIFEST, Limits).
+// back). It decides light or dark
+// (`style::dark`).
 static APPEARANCE: vocab::Appearance=#zero::[vocab::Appearance]();   // Unspecified
-fn set_app_appearance(a: vocab::Appearance) { APPEARANCE=a; }
+fn set_app_appearance(a: vocab::Appearance) {
+    let was: bool=style::dark();
+    APPEARANCE=a; style::set_override(a);
+    if LAUNCHED && style::dark()!=was { appearance_flipped(); }
+}
 fn app_appearance() -> vocab::Appearance { return APPEARANCE; }
 fn is_window_active(root: *core::Node) -> bool { let host=host_of_root(root); return if host.is_null() {is_active(active())} else {is_active(host)}; }
 
@@ -947,7 +995,7 @@ fn app_launched(app_object: rt::Object, context: *u8) -> rt::Status {
     adopted::set_window_fn(window_of_record);
     gestures::install_key_reader(input::key_reader());
     window_buttons::install(button_action,button_state);
-    theme::set_is_dark_fn(style::dark);
+    theme::set_is_dark_fn(style::dark); theme::set_theme_changed_fn(theme_changed);
     mount::install(mount::Renderer {ctx:0 as *u8,create:views::create,view_release:views::release,apply:views::apply,
         insert:views::insert,remove:views::remove,schedule:schedule,redeclare:0 as fn(*u8,*core::Node,u32)});
     views::install_readers();
@@ -994,7 +1042,7 @@ fn start(on_launch: fn(*u8), on_launch_ctx: *u8=0 as *u8, on_ready: fn(*u8)=0 as
             match HOSTS.at(HOSTS.count()-1) { option::Option::Some(h)=>{ close_host(h); }, option::Option::None=>{ break; } }
         }
         begin_shutdown(); refresh_retirement::shutdown(); scheduler::shutdown();
-        theme::set_is_dark_fn(0 as fn()->bool); mount::uninstall(); component::uninstall_sender_readers();
+        theme::set_is_dark_fn(0 as fn()->bool); theme::set_theme_changed_fn(0 as fn()); mount::uninstall(); component::uninstall_sender_readers();
         app_window::uninstall_host(); app::set_activate_fn(0 as fn(*u8));
         QUEUE=rt::Object::empty(); APP=rt::Object::empty(); LAUNCHED=false; ON_LAUNCH=0 as fn(*u8);
         rt::untrack_events(); scheduler::set_origin_fns(0 as fn()->*u8,0 as fn(*u8)->*u8); ORIGIN=0 as *Host;
@@ -1059,6 +1107,14 @@ fn client_rect_of_view(view: *u8, hwnd: **u8) -> vocab::Rect {
     let size=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(visual));
     *hwnd=(*host).hwnd;
     return vocab::Rect::of(at.x as f64,at.y as f64,native::must::[f64](size.actual_width()),native::must::[f64](size.actual_height()));
+}
+// The theme WinUI resolved for a mounted view: "Light" or "Dark".
+fn theme_of_view(view: *u8) -> text::Text {
+    if view.is_null() { return text::new(); }
+    match ui::IFrameworkElement::query(record::visual(view as *record::View)) {
+        result::Result::Ok(e)=>{ let t: i32=native::must::[i32](e.actual_theme()); return text::from_str(if t==ui::element_theme_light {"Light"} else if t==ui::element_theme_dark {"Dark"} else {"Default"}); },
+        result::Result::Err(_)=>{ return text::new(); }
+    }
 }
 // The XAML runtime class of a mounted view ("Microsoft.UI.Xaml.Controls.Button").
 fn class_name_of_view(view: *u8) -> text::Text {

@@ -554,6 +554,65 @@ def run_inspector():
     print('PASS: inspector (highlight framed where the control is; inspect names the XAML class)')
 
 
+def run_appearance():
+    """runtime::set_app_appearance on WinUI: Light before the run, Dark live -
+    the caption (DWM dark mode, read from outside) and every element's
+    resolved theme (the inspector's native_theme) follow."""
+    import http.client
+    import json
+    dwm = c.WinDLL('dwmapi')
+    log = RUNTIME / 'appearance.log'
+    env = {**os.environ, 'CPLUS_RUNTIME_WINUI_PROBE': '0', 'CPLUS_RUNTIME_WINUI_AGENT': '1',
+           'CPLUS_RUNTIME_WINUI_APPEARANCE': 'light'}
+    output = log.open('w', encoding='utf-8')
+    process = subprocess.Popen([str(EXE)], cwd=RUNTIME, env=env, stdout=output,
+                               stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+    conn = None
+
+    def caption_dark(hwnd):
+        value = c.c_int(-1)
+        assert dwm.DwmGetWindowAttribute(w.HWND(hwnd), 20, c.byref(value), 4) == 0
+        return value.value
+
+    try:
+        content = wait_for(log, 'AGENT PORT', process)
+        port = int(content.split('AGENT PORT ')[1].split()[0])
+        wait_for(log, 'facet: agent surface on', process)
+        main = window('WinUI runtime', process)
+        assert shows(main, 'home:open-settings')
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+
+        def rpc(method, params=None):
+            conn.request('POST', '/', json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method,
+                                                  'params': params or {}}).encode(),
+                         {'Content-Type': 'application/json'})
+            value = json.loads(conn.getresponse().read())
+            assert 'error' not in value, value
+            return value['result']
+
+        def theme_of(key):
+            rpc('describe_tree')
+            found = json.dumps(rpc('inspect', {'id': key}))
+            return 'Light' if '"Light"' in found else 'Dark' if '"Dark"' in found else found
+
+        rpc('initialize', {'protocolVersion': '2024-11-05', 'capabilities': {},
+                           'clientInfo': {'name': 'operator', 'version': '1'}})
+        assert 'PROBE appearance dark' not in read(log), 'too slow to see the light side'
+        assert caption_dark(main) == 0, 'the caption is not light'
+        assert theme_of('home:open-settings') == 'Light'
+        wait_for(log, 'PROBE appearance dark', process, 10)
+        time.sleep(.5)
+        assert caption_dark(main) == 1, 'the caption did not follow to dark'
+        assert theme_of('home:open-settings') == 'Dark'
+    finally:
+        if conn is not None:
+            conn.close()
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: appearance (Light before the run, Dark live: caption and resolved theme follow)')
+
+
 def run_adopted_view():
     """An application's own window (`adopt_native`) is hosted on WinUI: a child
     of the window, placed over its node, and released by the app."""
@@ -629,4 +688,5 @@ if __name__ == '__main__':
     run_gestures()
     run_inspector()
     run_adopted_view()
+    run_appearance()
     run_win32_opt_out()

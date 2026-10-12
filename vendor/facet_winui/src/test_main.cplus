@@ -17,6 +17,8 @@ import "./scheduler" as scheduler;
 import "./app_menu" as app_menu;
 import "winui/application" as application;
 import "./input" as input;
+import "./style" as style;
+import "facet/vocabulary" as vocab;
 import "facet/gestures" as gestures;
 import "./shortcuts" as shortcuts;
 import "winui/winui" as ui;
@@ -296,5 +298,26 @@ fn a_timer_asked_for_before_launch_is_parked_not_dropped() {
     scheduler::cancel(token);
     assert scheduler::PARKED.count() == (0 as usize);
     assert TM_FIRED == 0;
+    return;
+}
+
+#[test]
+fn the_apps_choice_wins_and_unspecified_follows_the_system() {
+    assert style::dark_for(vocab::Appearance::Dark, false);
+    assert !style::dark_for(vocab::Appearance::Light, true);
+    assert style::dark_for(vocab::Appearance::Unspecified, true);
+    assert !style::dark_for(vocab::Appearance::Unspecified, false);
+    return;
+}
+
+#[test]
+fn neutral_roles_swap_sides_with_the_appearance() {
+    // Ink is light on dark and dark on light; the window surface the reverse.
+    assert style::neutral(1 as u32, true) > 0.8f64;
+    assert style::neutral(1 as u32, false) < 0.2f64;
+    assert style::neutral(11 as u32, true) < 0.2f64;
+    assert style::neutral(11 as u32, false) > 0.9f64;
+    // NEGATIVE: secondary ink stays readable, never the surface's own grey.
+    assert style::neutral(2 as u32, false) != style::neutral(11 as u32, false);
     return;
 }

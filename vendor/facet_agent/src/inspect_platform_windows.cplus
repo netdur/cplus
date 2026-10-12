@@ -303,6 +303,9 @@ fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     // vocabulary and the platform disagree.
     let _c: status::Status = out.append(insp::Prop::read_only(
         "native_class", insp::Value::Str(host::class_name_of_view(v))));
+    // Light or Dark, as WinUI resolved it for this element.
+    let _t: status::Status = out.append(insp::Prop::read_only(
+        "native_theme", insp::Value::Str(host::theme_of_view(v))));
     return out;
 }
 

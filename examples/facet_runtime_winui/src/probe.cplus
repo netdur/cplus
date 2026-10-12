@@ -6,6 +6,8 @@
 //                                 FIRST on_should_quit and allow the next,
 //                                 and report density changes: app-wide, and
 //                                 Settings' own window.
+//   CPLUS_RUNTIME_WINUI_APPEARANCE=light   start Light, then switch to Dark
+//                                 two seconds after launch.
 //   CPLUS_RUNTIME_WINUI_AGENT=1   serve the agent surface over loopback HTTP
 //                                 (facet_agent + app.agent_mcp) and print its port.
 import "stdlib/env" as env;
@@ -14,6 +16,7 @@ import "stdlib/text" as text;
 import "stdlib/io" as io;
 import "facet/services" as services;
 import "facet/window" as window;
+import "facet/vocabulary" as vocab;
 import "facet_runtime/runtime" as runtime;
 import "facet_agent/agent" as agent;
 import "agent_mcp/agent_mcp" as mcp;
@@ -26,6 +29,7 @@ static APP_DENSITY: services::Cancellable = #zero::[services::Cancellable]();
 static SETTINGS_DENSITY: services::Cancellable = #zero::[services::Cancellable]();
 static ACTIVATED: services::Cancellable = #zero::[services::Cancellable]();
 static EARLY: services::Cancellable = #zero::[services::Cancellable]();
+static TO_DARK: services::Cancellable = #zero::[services::Cancellable]();
 
 fn enabled() -> bool {
     match env::var("CPLUS_RUNTIME_WINUI_PROBE") {
@@ -37,6 +41,9 @@ fn enabled() -> bool {
 fn say(line: str) { io::println(line); let _f: i32 = fflush(0 as *u8); }
 
 fn install(app: runtime::App) {
+    if env::has_var("CPLUS_RUNTIME_WINUI_APPEARANCE") {
+        runtime::set_app_appearance(vocab::Appearance::Light);
+    }
     if env::has_var("CPLUS_RUNTIME_WINUI_AGENT") {
         // The ordinary path every facet app takes: enable, then name the surface.
         agent::enable();
@@ -51,6 +58,8 @@ fn install(app: runtime::App) {
 }
 
 fn agent_ready(ctx: *u8) {
+    // Scheduled here, not before `run`: there is no scheduler before App::run.
+    if env::has_var("CPLUS_RUNTIME_WINUI_APPEARANCE") { TO_DARK = services::after(2.0f64, to_dark); }
     let port: u16 = mcp::loopback_port(mcp::current_pid());
     say("AGENT PORT ${port}");
     if enabled() { launched(ctx); }
@@ -80,6 +89,7 @@ fn first_activation(ctx: *u8) {
 }
 
 fn early_fired(ctx: *u8) { say("PROBE early timer"); }
+fn to_dark(ctx: *u8) { runtime::set_app_appearance(vocab::Appearance::Dark); say("PROBE appearance dark"); }
 
 fn app_density_changed(ctx: *u8) {
     let d: f64 = runtime::display_density();
