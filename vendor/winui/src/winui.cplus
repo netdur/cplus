@@ -6404,7 +6404,9 @@ impl ApplicationInitializationCallback {
     fn dispatch(self: *u8, p0: *u8) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -10226,7 +10228,9 @@ impl CalendarViewDayItemChangingEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -11715,7 +11719,9 @@ impl ContextMenuOpeningEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -12222,7 +12228,9 @@ impl DragItemsStartingEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -30944,7 +30952,9 @@ impl ItemClickEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -32921,7 +32931,9 @@ impl DragCompletedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -32998,7 +33010,9 @@ impl DragDeltaEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -33036,7 +33050,9 @@ impl DragStartedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -35506,7 +35522,9 @@ impl RangeBaseValueChangedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -37170,7 +37188,9 @@ impl SelectionChangedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -39772,7 +39792,9 @@ impl TextChangedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -39810,7 +39832,9 @@ impl TextControlPasteEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -41526,7 +41550,9 @@ impl DependencyPropertyChangedCallback {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -41565,7 +41591,9 @@ impl DependencyPropertyChangedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -43231,7 +43259,9 @@ impl DragEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -43390,7 +43420,9 @@ impl ExceptionRoutedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -49644,7 +49676,9 @@ impl DoubleTappedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -49800,7 +49834,9 @@ impl HoldingEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -50820,7 +50856,9 @@ impl KeyEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -51102,7 +51140,9 @@ impl ManipulationCompletedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -51140,7 +51180,9 @@ impl ManipulationDeltaEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -51178,7 +51220,9 @@ impl ManipulationInertiaStartingEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -51230,7 +51274,9 @@ impl ManipulationStartedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -51268,7 +51314,9 @@ impl ManipulationStartingEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -51306,7 +51354,9 @@ impl PointerEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -51421,7 +51471,9 @@ impl RightTappedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -51459,7 +51511,9 @@ impl TappedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -55982,7 +56036,9 @@ impl DownloadProgressEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -57545,7 +57601,9 @@ impl RoutedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -58709,7 +58767,9 @@ impl SizeChangedEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -60618,7 +60678,9 @@ impl UnhandledExceptionEventHandler {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -65802,7 +65864,9 @@ impl DataProviderHandler {
     fn dispatch(self: *u8, p0: *u8) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66120,7 +66184,9 @@ impl AsyncOperationCompletedHandler_Bool {
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66157,7 +66223,9 @@ impl AsyncOperationCompletedHandler_Microsoft_UI_Xaml_Controls_ContentDialogResu
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66194,7 +66262,9 @@ impl AsyncOperationCompletedHandler_Microsoft_UI_Xaml_Data_LoadMoreItemsResult {
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66231,7 +66301,9 @@ impl AsyncOperationCompletedHandler_Microsoft_UI_Xaml_Input_FocusMovementResult 
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66268,7 +66340,9 @@ impl AsyncOperationCompletedHandler_Microsoft_Web_WebView2_Core_CoreWebView2Comp
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66305,7 +66379,9 @@ impl AsyncOperationCompletedHandler_Microsoft_Web_WebView2_Core_CoreWebView2Cont
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66342,7 +66418,9 @@ impl AsyncOperationCompletedHandler_Microsoft_Web_WebView2_Core_CoreWebView2Envi
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66379,7 +66457,9 @@ impl AsyncOperationCompletedHandler_Microsoft_Web_WebView2_Core_CoreWebView2Exec
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66416,7 +66496,9 @@ impl AsyncOperationCompletedHandler_Microsoft_Web_WebView2_Core_CoreWebView2Prin
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66453,7 +66535,9 @@ impl AsyncOperationCompletedHandler_Microsoft_Web_WebView2_Core_CoreWebView2Save
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66490,7 +66574,9 @@ impl AsyncOperationCompletedHandler_String {
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66527,7 +66613,9 @@ impl AsyncOperationCompletedHandler_Windows_ApplicationModel_DataTransfer_DataPa
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66564,7 +66652,9 @@ impl AsyncOperationCompletedHandler_Windows_Foundation_Collections_IVectorView_M
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66601,7 +66691,9 @@ impl AsyncOperationCompletedHandler_Windows_Foundation_Collections_IVectorView_S
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66638,7 +66730,9 @@ impl AsyncOperationCompletedHandler_Windows_Foundation_IReference_Windows_Founda
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -66675,7 +66769,9 @@ impl AsyncOperationCompletedHandler_Windows_Storage_Streams_IRandomAccessStream 
     fn dispatch(self: *u8, p0: *u8, p1: i32) -> i32 {
         let v0: rt::Object = rt::Object::retain(p0);
         let callback: fn(rt::Object, i32, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, i32, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, p1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -70910,7 +71006,9 @@ impl VectorChangedEventHandler_Microsoft_UI_Xaml_Controls_GroupStyle {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -71018,7 +71116,9 @@ impl EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangedEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -71056,7 +71156,9 @@ impl EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangingEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -71094,7 +71196,9 @@ impl EventHandler_Microsoft_UI_Xaml_Controls_TimePickerValueChangedEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -71132,7 +71236,9 @@ impl EventHandler_Microsoft_UI_Xaml_Input_FocusManagerGotFocusEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -71170,7 +71276,9 @@ impl EventHandler_Microsoft_UI_Xaml_Input_FocusManagerLostFocusEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -71208,7 +71316,9 @@ impl EventHandler_Microsoft_UI_Xaml_Input_GettingFocusEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -71246,7 +71356,9 @@ impl EventHandler_Microsoft_UI_Xaml_Input_LosingFocusEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -71284,7 +71396,9 @@ impl EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -71322,7 +71436,9 @@ impl EventHandler_Object {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73356,7 +73472,9 @@ impl TypedEventHandler_Microsoft_UI_Dispatching_DispatcherQueue_Microsoft_UI_Dis
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73395,7 +73513,9 @@ impl TypedEventHandler_Microsoft_UI_Dispatching_DispatcherQueue_Object {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73433,7 +73553,9 @@ impl TypedEventHandler_Microsoft_UI_Dispatching_DispatcherQueueTimer_Object {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73471,7 +73593,9 @@ impl TypedEventHandler_Microsoft_UI_Windowing_AppWindow_Microsoft_UI_Windowing_A
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73510,7 +73634,9 @@ impl TypedEventHandler_Microsoft_UI_Windowing_AppWindow_Microsoft_UI_Windowing_A
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73549,7 +73675,9 @@ impl TypedEventHandler_Microsoft_UI_Windowing_AppWindow_Object {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73587,7 +73715,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_CalendarDatePicker_Microsoft_U
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73626,7 +73756,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_ComboBox_Microsoft_UI_Xaml_Con
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73665,7 +73797,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_ContentDialog_Microsoft_UI_Xam
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73704,7 +73838,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_ContentDialog_Microsoft_UI_Xam
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73743,7 +73879,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_ContentDialog_Microsoft_UI_Xam
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73782,7 +73920,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_ContentDialog_Microsoft_UI_Xam
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73821,7 +73961,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_Control_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73860,7 +74002,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_Control_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73899,7 +74043,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_ListViewBase_Microsoft_UI_Xaml
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73938,7 +74084,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_ListViewBase_Microsoft_UI_Xaml
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -73977,7 +74125,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_ListViewBase_Microsoft_UI_Xaml
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74016,7 +74166,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_ListViewBase_Microsoft_UI_Xaml
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74055,7 +74207,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_NumberBox_Microsoft_UI_Xaml_Co
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74094,7 +74248,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_PasswordBox_Microsoft_UI_Xaml_
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74133,7 +74289,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_Primitives_FlyoutBase_Microsof
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74172,7 +74330,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_RefreshContainer_Microsoft_UI_
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74211,7 +74371,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_RefreshVisualizer_Microsoft_UI
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74250,7 +74412,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_RefreshVisualizer_Microsoft_UI
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74289,7 +74453,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_ScrollViewer_Microsoft_UI_Xaml
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74328,7 +74494,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabView_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74367,7 +74535,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabView_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74406,7 +74576,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabView_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74445,7 +74617,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabView_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74484,7 +74658,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabView_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74523,7 +74699,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabView_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74562,7 +74740,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabView_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74601,7 +74781,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabView_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74640,7 +74822,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabView_Object {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74678,7 +74862,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabView_Windows_Foundation_Col
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74717,7 +74903,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TabViewItem_Microsoft_UI_Xaml_
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74756,7 +74944,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBlock_Microsoft_UI_Xaml_Co
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74795,7 +74985,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBox_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74834,7 +75026,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBox_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74873,7 +75067,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBox_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74912,7 +75108,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBox_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74951,7 +75149,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBox_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -74990,7 +75190,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBox_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75029,7 +75231,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBox_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75068,7 +75272,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBox_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75107,7 +75313,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBox_Microsoft_UI_Xaml_Cont
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75146,7 +75354,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TimePicker_Microsoft_UI_Xaml_C
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75185,7 +75395,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TimePickerFlyout_Microsoft_UI_
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75224,7 +75436,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Con
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75263,7 +75477,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Con
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75302,7 +75518,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Con
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75341,7 +75559,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Con
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75380,7 +75600,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Con
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75419,7 +75641,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Con
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75458,7 +75682,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_UI_Xaml_Con
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75497,7 +75723,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75536,7 +75764,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75575,7 +75805,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75614,7 +75846,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Controls_WebView2_Microsoft_Web_WebView
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75653,7 +75887,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Documents_TextElement_Microsoft_UI_Xaml
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75692,7 +75928,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Documents_TextElement_Microsoft_UI_Xaml
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75731,7 +75969,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Documents_TextElement_Microsoft_UI_Xaml
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75770,7 +76010,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_FrameworkElement_Microsoft_UI_Xaml_Data
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75809,7 +76051,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_FrameworkElement_Microsoft_UI_Xaml_Effe
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75848,7 +76092,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_FrameworkElement_Object {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75886,7 +76132,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_Input_KeyboardAccelerator_Microsoft_UI_
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75925,7 +76173,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_BringIntoVi
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -75964,7 +76214,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_DragStartin
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76003,7 +76255,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_DropComplet
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76042,7 +76296,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_Input_Acces
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76081,7 +76337,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_Input_Acces
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76120,7 +76378,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_Input_Acces
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76159,7 +76419,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_Input_Chara
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76198,7 +76460,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_Input_Conte
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76237,7 +76501,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_Input_Getti
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76276,7 +76542,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_Input_Losin
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76315,7 +76583,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_Input_NoFoc
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76354,7 +76624,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_Input_Proce
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76393,7 +76665,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_RoutedEvent
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76432,7 +76706,9 @@ impl TypedEventHandler_Microsoft_UI_Xaml_XamlRoot_Microsoft_UI_Xaml_XamlRootChan
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76471,7 +76747,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76510,7 +76788,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76549,7 +76829,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76588,7 +76870,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76627,7 +76911,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76666,7 +76952,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76705,7 +76993,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76744,7 +77034,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76783,7 +77075,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76822,7 +77116,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76861,7 +77157,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76900,7 +77198,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76939,7 +77239,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -76978,7 +77280,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77017,7 +77321,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77056,7 +77362,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77095,7 +77403,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77134,7 +77444,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77173,7 +77485,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77212,7 +77526,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77251,7 +77567,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77290,7 +77608,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77329,7 +77649,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Microsoft_Web_We
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77368,7 +77690,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2_Object {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77406,7 +77730,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2Environment_Micro
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77445,7 +77771,9 @@ impl TypedEventHandler_Microsoft_Web_WebView2_Core_CoreWebView2Environment_Objec
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77483,7 +77811,9 @@ impl TypedEventHandler_Object_Microsoft_UI_Composition_CompositionBatchCompleted
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77521,7 +77851,9 @@ impl TypedEventHandler_Object_Microsoft_UI_Xaml_ResourceManagerRequestedEventArg
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77559,7 +77891,9 @@ impl TypedEventHandler_Object_Microsoft_UI_Xaml_WindowActivatedEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77597,7 +77931,9 @@ impl TypedEventHandler_Object_Microsoft_UI_Xaml_WindowEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77635,7 +77971,9 @@ impl TypedEventHandler_Object_Microsoft_UI_Xaml_WindowSizeChangedEventArgs {
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77673,7 +78011,9 @@ impl TypedEventHandler_Object_Microsoft_UI_Xaml_WindowVisibilityChangedEventArgs
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77711,7 +78051,9 @@ impl TypedEventHandler_Windows_ApplicationModel_DataTransfer_DataPackage_Object 
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77749,7 +78091,9 @@ impl TypedEventHandler_Windows_ApplicationModel_DataTransfer_DataPackage_Windows
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke
@@ -77788,7 +78132,9 @@ impl TypedEventHandler_Windows_ApplicationModel_DataTransfer_DataPackage_Windows
         let v0: rt::Object = rt::Object::retain(p0);
         let v1: rt::Object = rt::Object::retain(p1);
         let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let outer: usize = rt::event_enter(p0);
         let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        rt::event_leave(outer);
         return status.code;
     }
     // ABI slot 3: Invoke

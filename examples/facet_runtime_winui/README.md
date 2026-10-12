@@ -11,7 +11,9 @@ manifest lists `facet_winui`, `winui` and `winrt` because of it.
 - **settings** keeps the native (dark) caption, 420x280, with no minimise or
   maximise button. `Open settings` opens it with
   `runtime::app().open_window("settings")`; `Done` closes it with
-  `runtime::window_close(sender)` and the main window keeps running.
+  `runtime::window_close(sender)` and the main window keeps running. Its
+  `Show alert` and `Alert in 1.5 s` put the sheet over Settings, the window
+  that asked, even when main is the active window by then.
 - `Show alert`, `Prompt` and `Choose` call `runtime::alert`, `prompt` and
   `choose`. Each is a keyed facet sheet over the window (`alert:title`,
   `alert:primary`, `prompt:value`, `choose:opt:2`, ...), reachable by UI

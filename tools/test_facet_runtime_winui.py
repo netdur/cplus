@@ -18,8 +18,26 @@ u.FindWindowW.argtypes = [w.LPCWSTR, w.LPCWSTR]
 u.FindWindowW.restype = w.HWND
 u.PostMessageW.argtypes = [w.HWND, w.UINT, w.WPARAM, w.LPARAM]
 u.IsWindow.argtypes = [w.HWND]
+u.GetForegroundWindow.restype = w.HWND
 u.GetWindowThreadProcessId.argtypes = [w.HWND, c.POINTER(w.DWORD)]
 WM_CLOSE = 0x0010
+UIA = REPO / 'tools/winui_uia.ps1'
+
+
+def uia(action, hwnd, key):
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(UIA),
+                             action, str(hwnd), key], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def shows(hwnd, key, seconds=10):
+    end = time.time() + seconds
+    while time.time() < end:
+        if uia('find', hwnd, key) == '1':
+            return True
+        time.sleep(.2)
+    return False
 
 
 def read(log):
@@ -100,5 +118,52 @@ def run_close_question():
     print('PASS: close question (non-last window not asked, refusal holds, allow ends the run)')
 
 
+def activate(hwnd, key):
+    assert uia('focus', hwnd, key) == 'focused'
+    end = time.time() + 5
+    while u.GetForegroundWindow() != hwnd and time.time() < end:
+        time.sleep(.05)
+    assert u.GetForegroundWindow() == hwnd, f'could not activate {key}'
+    time.sleep(.3)
+
+
+def run_alert_window():
+    """An alert opens over the window whose control asked, not the active one."""
+    log = RUNTIME / 'alert_window.log'
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        main = window('WinUI runtime', process)
+        assert shows(settings, 'settings:alert-later')
+        # Settings asks for an alert 1.5 s from now (the press activates it);
+        # main is made the active window before it fires.
+        assert uia('invoke', settings, 'settings:alert-later') == 'invoked'
+        activate(main, 'home:prompt')
+        assert shows(settings, 'alert:title'), 'the alert is not on the window that asked'
+        assert uia('find', main, 'alert:title') == '0', 'the alert went to the active window'
+        assert uia('invoke', settings, 'alert:primary') == 'invoked'
+        end = time.time() + 10
+        while uia('find', settings, 'alert:title') == '1' and time.time() < end:
+            time.sleep(.2)
+        assert uia('find', settings, 'alert:title') == '0', 'the alert did not answer'
+        # An immediate alert from a press goes to the pressed window.
+        activate(main, 'home:prompt')
+        assert uia('invoke', settings, 'settings:alert') == 'invoked'
+        assert shows(settings, 'alert:title')
+        assert uia('find', main, 'alert:title') == '0'
+        assert uia('invoke', settings, 'alert:primary') == 'invoked'
+        # NEGATIVE: the main window's own button keeps it on main.
+        assert uia('invoke', main, 'home:alert') == 'invoked'
+        assert shows(main, 'alert:title')
+        assert uia('find', settings, 'alert:title') == '0'
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: alert window (a deferred alert stays on the window that asked; each window keeps its own)')
+
+
 if __name__ == '__main__':
     run_close_question()
+    run_alert_window()

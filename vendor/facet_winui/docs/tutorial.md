@@ -46,6 +46,6 @@ app.run("main");
 ```
 
 `runtime::app().open_window("settings")` then opens a second WinUI window and
-`runtime::alert(...)` shows a keyed sheet in the active one.
+`runtime::alert(...)` shows a keyed sheet in the window that asked.
 [facet_runtime_winui](../../../examples/facet_runtime_winui/README.md) is that
 app, with a build script that stages the runtime the same way.

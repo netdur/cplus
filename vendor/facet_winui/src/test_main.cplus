@@ -107,3 +107,30 @@ fn a_close_request_without_an_open_window_is_refused() {
     assert TM_ASKED == 0;
     return;
 }
+
+#[test]
+fn a_deferred_callback_runs_for_the_window_it_was_scheduled_from() {
+    // The scheduler's pair nests: entering answers the window to restore.
+    var a: host::Host = #zero::[host::Host]();
+    var b: host::Host = #zero::[host::Host]();
+    let outer: *u8 = host::enter_origin(#addr_of(a) as *u8);
+    assert outer.is_null();
+    let inner: *u8 = host::enter_origin(#addr_of(b) as *u8);
+    assert inner == (#addr_of(a) as *u8);
+    assert host::enter_origin(inner) == (#addr_of(b) as *u8);
+    assert host::enter_origin(outer) == (#addr_of(a) as *u8);
+    return;
+}
+
+#[test]
+fn a_window_that_is_not_open_never_answers_who_asked() {
+    // NEGATIVE: an origin that is not an open window (closed, or never
+    // opened) is ignored, and with no event and no window nothing asked.
+    var gone: host::Host = #zero::[host::Host]();
+    let outer: *u8 = host::enter_origin(#addr_of(gone) as *u8);
+    assert host::origin().is_null();
+    assert host::capture_origin().is_null();
+    assert host::asking_host().is_null();
+    let _o: *u8 = host::enter_origin(outer);
+    return;
+}

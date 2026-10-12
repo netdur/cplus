@@ -92,13 +92,18 @@ fn dismiss_layer(window: *u8);
 fn set_layer_gone(f: fn(*u8));
 fn focus_when_loaded(n: *core::Node);
 fn active_host() -> *u8;
+fn asking_host() -> *u8;
 ```
 
 One facet tree shown over a window's content, centred on a card above a scrim
 that takes every press. The tree is mounted like a window, so `find` and the
 agent reach its keys. `on_key` sees virtual keys pressed in the card that no
 control handled. `set_layer_gone` is told when a window closes under its
-layer. `active_host` is the most recently activated window.
+layer. `active_host` is the most recently activated window. `asking_host` is
+the window that asked for what is running now: the window a deferred callback
+was scheduled from (`scheduler::after` carries it), else the window of the
+event being delivered (its sender's XamlRoot), else `active_host`. The
+dialogs present on `asking_host`.
 
 `facet_winui/dialogs` builds the facade's dialogs on it, with the trees every
 other backend uses:

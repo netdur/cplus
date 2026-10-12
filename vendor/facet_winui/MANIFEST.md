@@ -30,7 +30,7 @@ every Facet property is implemented.
 | Closing | A user close (caption, Alt+F4, outside `WM_CLOSE`, the window buttons) is asked through AppWindow.Closing and can be refused. Through the facade it asks the window's `on_should_close`, and for the last open window also `on_should_quit`. Closes made in code are not asked twice. `tools/test_facet_runtime_winui.py` covers refusal, allowance and a non-last window. |
 | Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close) and `app::set_activate_fn` are installed. |
 | Chrome | `screen::Chrome` width/height (ResizeClient, corrected to the delivered client area), min/max size, minimizable/maximizable/resizable, and the bar: Native (dark DWM caption), Blended with `window_buttons()` (no system caption; app buttons are the only set), Blended without (ExtendsContentIntoTitleBar), Hidden/Custom (no border, no caption). `.window_drag()` moves a captionless window. |
-| Dialogs | `facet_winui/dialogs`: alert/choose/prompt as keyed facet sheets on a window's modal layer (scrim + card), answers on a later turn, Return/Escape in alert and prompt, initial focus on the primary button or field, blocking `alert` through a nested message loop. |
+| Dialogs | `facet_winui/dialogs`: alert/choose/prompt as keyed facet sheets on the modal layer (scrim + card) of the window that asked: the window a deferred callback was scheduled from, else the window of the event being delivered, else the active one (`tools/test_facet_runtime_winui.py`), answers on a later turn, Return/Escape in alert and prompt, initial focus on the primary button or field, blocking `alert` through a nested message loop. |
 | Facade | `facet_runtime/winui` fills runtime_windows' backend seam: driver open/run with pre-launch queueing, dialogs, window verbs, frame/density/active reads, active/inactive/size observers. |
 | Agent integration | Optional lifecycle/apply/release hooks; `facet_agent_winui` connects keyed controls and privacy policies to `agent_winui`. In-app sessions and UI-dispatched MCP requests. |
 | Accessibility | Native WinUI peers, stable control AutomationIds, explicit accessibility name/help text with native-default restoration, heading levels 1–9 and attached Unicode tooltips with live updates/removal. |
@@ -47,8 +47,6 @@ every Facet property is implemented.
 - The agent surface (`facet_agent_winui`) serves one window: the first one
   opened, then the next open one after it closes. Sheets on that window are
   visible to it; other windows are not.
-- An alert goes to the most recently activated window, not necessarily the one
-  whose control asked for it (the facade's `alert` carries no sender).
 - `.window_drag()` starts the system move loop; double-click-to-maximize and
   snap layouts on the drag region are not provided. `Chrome.subtitle_text`
   and the zoom fields are not mapped.

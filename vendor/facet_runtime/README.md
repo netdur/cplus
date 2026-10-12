@@ -73,7 +73,7 @@ Selected, WinUI serves the whole facade surface `App` uses: one native window
 per `open_window` (sessions opened before launch are queued until the XAML
 Application starts), `screen::Chrome` (size, minimum/maximum, bar, buttons),
 `runtime::alert` / `choose` / `prompt` / `alert_blocking` as keyed facet
-sheets on the active window (`alert:title`, `alert:primary`, ...), the window
+sheets on the window that asked (`alert:title`, `alert:primary`, ...), the window
 verbs, frame/density/activity reads and the active/inactive/size observers.
 Closing the last window ends `run`. A user close (caption button, Alt+F4) asks the window's `on_should_close`, and
 closing the last window also asks `on_should_quit`, as `app.quit()` does.

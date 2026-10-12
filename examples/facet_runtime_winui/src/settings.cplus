@@ -3,17 +3,27 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/nav" as nav;
+import "facet/services" as services;
 import "facet/screen" as screen;
 import "facet/vocabulary" as vocab;
 import "flex_layout/flex_layout" as flex;
 import "facet_runtime/runtime" as runtime;
 
-struct Settings { context: nav::Context }
+struct Settings { context: nav::Context, later: services::Cancellable }
 
 impl Settings {
-    fn new() -> Settings { return Settings { context: nav::Context::none() }; }
+    fn new() -> Settings { return Settings { context: nav::Context::none(), later: services::Cancellable::none() }; }
     fn boxed() -> screen::ScreenBox { return screen::screen_box::[Settings](Settings::new()); }
     fn on_done(ref this, sender: *u8) { runtime::window_close(sender); }
+    // The sheet opens over THIS window, even when another one is active.
+    fn on_alert(ref this, sender: *u8) {
+        runtime::alert("Settings alert", "Shown over the window that asked.", "OK");
+    }
+    // Later, when another window may be active: still over THIS one.
+    fn on_alert_later(ref this, sender: *u8) {
+        this.later = services::after(1.5f64, this.alert_now);
+    }
+    fn alert_now(ref this) { this.on_alert(0 as *u8); }
 }
 
 impl Settings: component::Component {
@@ -24,7 +34,12 @@ impl Settings: component::Component {
                 label("A second window of the same App. Closing it leaves the first running.",
                       key: "settings:body", font_size: 13.0f64,
                       line_break: vocab::LineBreak::WordWrap, max_lines: 0)
-                button("Done", key: "settings:done", on_click: this.on_done)
+                row(key: "settings:actions") {
+                    button("Show alert", key: "settings:alert", on_click: this.on_alert)
+                    button("Alert in 1.5 s", key: "settings:alert-later", on_click: this.on_alert_later)
+                    button("Done", key: "settings:done", on_click: this.on_done)
+                }
+                    .gap(8.0f64)
             }
                 .grow(1.0f64)
                 .padding(24.0f64)

@@ -50,7 +50,8 @@ winui::select();          // before app.run(...)
 
 `App::run` then opens one WinUI window per `open_window`, queuing the ones
 opened before launch, and `runtime::alert`, `choose`, `prompt` and
-`alert_blocking` become facet sheets on the active window's modal layer, keyed
+`alert_blocking` become facet sheets on the modal layer of the window that
+asked (the window whose control or deferred callback called them), keyed
 as on every backend (`alert:title`, `alert:primary`, `prompt:value`, ...), so
 an agent answers them the same way. The app lists `facet_winui`, `winui` and
 `winrt` itself; Win32-only apps never compile them. See

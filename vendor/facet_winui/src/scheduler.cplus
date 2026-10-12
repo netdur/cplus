@@ -6,12 +6,19 @@ import "facet/services" as services;
 import "winui/winui" as ui;
 import "winrt/runtime" as rt;
 import "./native" as native;
-struct Timer { id: u64, object: rt::Object, token: ui::EventRegistrationToken, call: fn(*u8), opaque ctx: *u8 }
+// `origin` is the window the callback was scheduled from (see facet_winui's
+// `asking`): opaque here, captured and re-entered through the two hooks the
+// host installs, so this module needs no view of windows.
+struct Timer { id: u64, object: rt::Object, token: ui::EventRegistrationToken, call: fn(*u8), opaque ctx: *u8, opaque origin: *u8 }
 struct Observer { id: u64, opaque node: *core::Node, call: fn(*u8), opaque ctx: *u8, width: f64, height: f64 }
 static QUEUE: rt::Object=#zero::[rt::Object]();
 static TIMERS: vec::Vec[Timer]=#zero::[vec::Vec[Timer]]();
 static OBSERVERS: vec::Vec[Observer]=#zero::[vec::Vec[Observer]]();
 static NEXT: u64=1;
+static CAPTURE: fn()->*u8=0 as fn()->*u8;
+static ENTER: fn(*u8)->*u8=0 as fn(*u8)->*u8;
+fn set_origin_fns(capture: fn()->*u8,enter: fn(*u8)->*u8) {CAPTURE=capture;ENTER=enter;return;}
+fn captured() -> *u8 {let f=CAPTURE;if f.is_null() {return 0 as *u8;}return f();}
 fn id() -> u64 {let n: u64=NEXT;NEXT=NEXT+1;return n;}
 fn cancel(token: u64) {
     var i: usize=0;
@@ -27,7 +34,9 @@ fn tick(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     let token: u64=context as usize as u64; var i: usize=0;
     while i<TIMERS.count() {
         match TIMERS.at_ptr(i) {option::Option::Some(p)=>{if (*p).id==token {
-            let call: fn(*u8)=(*p).call;let ctx: *u8=(*p).ctx;cancel(token);call(ctx);return rt::Status {code:0};
+            let call: fn(*u8)=(*p).call;let ctx: *u8=(*p).ctx;let origin: *u8=(*p).origin;cancel(token);
+            let enter=ENTER;if enter.is_null() || origin.is_null() {call(ctx);return rt::Status {code:0};}
+            let outer: *u8=enter(origin);call(ctx);let _o: *u8=enter(outer);return rt::Status {code:0};
         }},option::Option::None=>{}} i=i+1;
     }
     return rt::Status {code:0};
@@ -42,7 +51,7 @@ fn after(seconds: f64,call: fn(*u8),ctx: *u8) -> u64 {
     let event: ui::EventRegistrationToken=native::must::[ui::EventRegistrationToken](timer.add_tick(callback.object()));
     native::check(timer.set_is_repeating(false));
     native::check(timer.set_interval(ui::TimeSpan {duration:if seconds>0.001f64 {(seconds*10000000.0f64) as i64} else {10000 as i64}}));
-    let added: status::Status=TIMERS.append(Timer {id:token,object:value,token:event,call:call,ctx:ctx});assert added==status::Status::Ok;
+    let added: status::Status=TIMERS.append(Timer {id:token,object:value,token:event,call:call,ctx:ctx,origin:captured()});assert added==status::Status::Ok;
     native::check(timer.start()); return token;
 }
 fn run_on_main(call: fn(*u8),ctx: *u8) {let token: u64=after(0.0f64,call,ctx);return;}
