@@ -19,6 +19,8 @@ u.FindWindowW.restype = w.HWND
 u.PostMessageW.argtypes = [w.HWND, w.UINT, w.WPARAM, w.LPARAM]
 u.IsWindow.argtypes = [w.HWND]
 u.GetForegroundWindow.restype = w.HWND
+u.GetDpiForWindow.argtypes = [w.HWND]
+u.SetWindowPos.argtypes = [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT]
 u.GetWindowThreadProcessId.argtypes = [w.HWND, c.POINTER(w.DWORD)]
 WM_CLOSE = 0x0010
 UIA = REPO / 'tools/winui_uia.ps1'
@@ -191,7 +193,39 @@ def run_worker_hop():
     print('PASS: worker hop (run_job runs off the UI thread and applies on it, twice)')
 
 
+def run_density():
+    """Density reads the window's real scale; a resize is not a density change.
+
+    A real change needs a move between monitors of different scale, which one
+    display cannot give: WinUI ignores a synthetic WM_DPICHANGED.
+    """
+    log = RUNTIME / 'density.log'
+    process, output = launch(log, '1')
+    try:
+        content = wait_for(log, 'PROBE density read', process)
+        wait_for(log, 'PROBE settings observed', process)
+        main = window('WinUI runtime', process)
+        expected = u.GetDpiForWindow(main) / 96
+        read_value = float(content.split('PROBE density read ')[1].split()[0])
+        assert abs(read_value - expected) < 1e-6, (read_value, expected)
+        # Resizing raises XamlRoot.Changed with the scale unchanged: neither
+        # the app-wide nor Settings' own density observer may fire.
+        for width in (900, 700, 800):
+            assert u.SetWindowPos(main, None, 60, 60, width, 560, 0x0014)
+            time.sleep(.4)
+        assert process.poll() is None, read(log)
+        content = read(log)
+        assert 'PROBE density 1' not in content and 'PROBE density 2' not in content, content
+        assert 'PROBE settings density' not in content, content
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print(f'PASS: density (reads {expected}; resizing reports no density change)')
+
+
 if __name__ == '__main__':
     run_close_question()
     run_alert_window()
     run_worker_hop()
+    run_density()

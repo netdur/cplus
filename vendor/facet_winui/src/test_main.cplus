@@ -148,3 +148,45 @@ fn a_hop_with_no_dispatcher_is_dropped_not_run() {
     assert TM_HOPPED == 0;
     return;
 }
+
+static TM_APP_WIDE: i32 = 0;
+static TM_OWN: i32 = 0;
+fn tm_app_wide(ctx: *u8) { TM_APP_WIDE = TM_APP_WIDE + 1; }
+fn tm_own(ctx: *u8) { TM_OWN = TM_OWN + 1; }
+
+#[test]
+fn a_window_observer_hears_only_its_own_window() {
+    // App-wide observers hear every window; a window's own hear only it.
+    var a: host::Host = #zero::[host::Host]();
+    var b: host::Host = #zero::[host::Host]();
+    TM_APP_WIDE = 0; TM_OWN = 0;
+    let wide: u64 = host::observe(4, tm_app_wide);
+    let own: u64 = host::observe_window(4, tm_own, 0 as *u8, #addr_of(a));
+    host::fire(4, #addr_of(b));
+    assert TM_APP_WIDE == 1;
+    assert TM_OWN == 0;
+    host::fire(4, #addr_of(a));
+    assert TM_APP_WIDE == 2;
+    assert TM_OWN == 1;
+    // Another kind reaches neither.
+    host::fire(3, #addr_of(a));
+    assert TM_APP_WIDE == 2;
+    assert TM_OWN == 1;
+    host::cancel_observe(wide);
+    host::cancel_observe(own);
+    return;
+}
+
+#[test]
+fn a_closed_window_takes_its_observers_with_it() {
+    // NEGATIVE: once its window has gone, a window's observer never fires,
+    // even for a later window at the same address.
+    var a: host::Host = #zero::[host::Host]();
+    TM_OWN = 0;
+    let own: u64 = host::observe_window(4, tm_own, 0 as *u8, #addr_of(a));
+    host::forget_observers_of(#addr_of(a));
+    host::fire(4, #addr_of(a));
+    assert TM_OWN == 0;
+    host::cancel_observe(own);   // already gone: a no-op
+    return;
+}

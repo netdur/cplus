@@ -48,8 +48,8 @@ These test real pointer/keyboard/wheel input, text readback and programmatic
 updates, length limits and read-only fields, scrolling, resize, control
 replacement during its callback, and cleanup. `facet_runtime` still
 defaults to Win32 on Windows; an app opts into this backend with
-`facet_runtime/winui`. The app menu and density-change observation are not
-served through the facade yet ([MANIFEST](MANIFEST.md)).
+`facet_runtime/winui`. The app menu is not served through the facade yet
+([MANIFEST](MANIFEST.md)).
 
 The parity probe checks UTF-16 selection and selection-only events, Enter and
 Ctrl+Enter submission, WebView history/reload/script execution and user-agent

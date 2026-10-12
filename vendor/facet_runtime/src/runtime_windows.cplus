@@ -182,7 +182,7 @@ struct Backend {
     is_window_active: fn(*core::Node) -> bool,
     window_frame: fn(*core::Node) -> vocab::Rect,
     set_window_frame: fn(*core::Node, vocab::Rect),
-    // kind: 1 activated, 2 deactivated, 3 resized. Answers a token for
+    // kind: 1 activated, 2 deactivated, 3 resized, 4 density. Answers a token for
     // `cancel_observe`, or 0 when nothing was armed.
     observe: fn(i32, fn(*u8), *u8) -> u64,
     cancel_observe: fn(u64),
@@ -366,6 +366,7 @@ fn display_density() -> f64 {
 // different scale, which is the whole of what "the density changed" means on a
 // desktop.
 fn observe_display_density(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    if SELECTED.observe.is_not_null() { return observe_selected(4, cb, ctx); }
     return services::Cancellable::of(host::observe_density(cb, ctx), host::cancel_observe);
 }
 

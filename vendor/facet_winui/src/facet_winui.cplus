@@ -85,6 +85,11 @@ struct Host {
     loaded_token: ui::EventRegistrationToken,
     pressed_token: ui::EventRegistrationToken,
     loaded_object: rt::Object,
+    // The content's XamlRoot once loaded, and the rasterization scale last
+    // seen on it: a change is the window's density changing.
+    xaml_root: rt::Object,
+    root_token: ui::EventRegistrationToken,
+    scale: f64,
     mounted: bool,
     closing: bool,
     // A close facet already approved (`Window::close`, `app.quit()`, the
@@ -387,24 +392,36 @@ fn schedule(context: *u8) {
 const OBS_ACTIVE: i32=1;
 const OBS_INACTIVE: i32=2;
 const OBS_SIZE: i32=3;
-struct Observer { id: u64, kind: i32, call: fn(*u8), opaque ctx: *u8 }
+const OBS_DENSITY: i32=4;
+// `host` scopes an observer to one window (the facet/window seam); null is
+// every window (the facade's app-wide observers).
+struct Observer { id: u64, kind: i32, call: fn(*u8), opaque ctx: *u8, opaque host: *Host }
 static OBSERVERS: vec::Vec[Observer]=#zero::[vec::Vec[Observer]]();
 static NEXT_OBSERVER: u64=1;
-fn observe(kind: i32, call: fn(*u8), ctx: *u8=0 as *u8) -> u64 {
+fn observe(kind: i32, call: fn(*u8), ctx: *u8=0 as *u8) -> u64 { return observe_window(kind,call,ctx,0 as *Host); }
+fn observe_window(kind: i32, call: fn(*u8), ctx: *u8, host: *Host) -> u64 {
     if call.is_null() { return 0; }
     let id: u64=NEXT_OBSERVER; NEXT_OBSERVER=NEXT_OBSERVER+1;
-    let added: status::Status=OBSERVERS.append(Observer {id:id,kind:kind,call:call,ctx:ctx}); assert added==status::Status::Ok;
+    let added: status::Status=OBSERVERS.append(Observer {id:id,kind:kind,call:call,ctx:ctx,host:host}); assert added==status::Status::Ok;
     return id;
+}
+// A closing window's own observers go with it: a later window may be given
+// the same address.
+fn forget_observers_of(host: *Host) {
+    var i: usize=0;
+    while i<OBSERVERS.count() { if let option::Option::Some(p)=OBSERVERS.at_ptr(i) { if (*p).host==host { let gone: option::Option[Observer]=OBSERVERS.remove(i); continue; } } i=i+1; }
 }
 fn cancel_observe(id: u64) {
     var i: usize=0;
     while i<OBSERVERS.count() { if let option::Option::Some(p)=OBSERVERS.at_ptr(i) { if (*p).id==id { let gone: option::Option[Observer]=OBSERVERS.remove(i); return; } } i=i+1; }
     return;
 }
-fn fire(kind: i32) {
+// `host` is the window it happened to: app-wide observers and that window's
+// own hear it.
+fn fire(kind: i32, host: *Host) {
     // Collect first: a callback may cancel observers.
     var ids: vec::Vec[u64]=vec::new::[u64]();var i: usize=0;
-    while i<OBSERVERS.count() { if let option::Option::Some(p)=OBSERVERS.at_ptr(i) { if (*p).kind==kind { let a: status::Status=ids.append((*p).id); } } i=i+1; }
+    while i<OBSERVERS.count() { if let option::Option::Some(p)=OBSERVERS.at_ptr(i) { if (*p).kind==kind && ((*p).host.is_null() || (*p).host==host) { let a: status::Status=ids.append((*p).id); } } i=i+1; }
     i=0;
     while i<ids.count() {
         if let option::Option::Some(id)=ids.at(i) {
@@ -422,14 +439,14 @@ fn resized(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     let event: ui::IWindowSizeChangedEventArgs=native::must::[ui::IWindowSizeChangedEventArgs](ui::IWindowSizeChangedEventArgs::query(args));
     let size: ui::Size=native::must::[ui::Size](event.size());
     (*host).width=size.width as f64; (*host).height=size.height as f64;
-    relayout(host); fire(OBS_SIZE); return rt::Status {code:0};
+    relayout(host); fire(OBS_SIZE,host); return rt::Status {code:0};
 }
 fn activated(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     let host: *Host=context as *Host;
     if !live(host) || (*host).closing { return rt::Status {code:0}; }
     // WindowActivatedEventArgs is not in the generated selection; the
     // foreground window says which way it went.
-    if GetForegroundWindow()==(*host).hwnd { ACTIVE_HOST=host; fire(OBS_ACTIVE); } else { fire(OBS_INACTIVE); }
+    if GetForegroundWindow()==(*host).hwnd { ACTIVE_HOST=host; fire(OBS_ACTIVE,host); } else { fire(OBS_INACTIVE,host); }
     return rt::Status {code:0};
 }
 fn is_active(host: *Host) -> bool { return host.is_not_null() && !(*host).closing && GetForegroundWindow()==(*host).hwnd; }
@@ -499,7 +516,30 @@ fn closed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     if live(host) && !(*host).closing { close_host(host); }
     return rt::Status {code:0};
 }
+// DENSITY IS THE XAMLROOT'S SCALE. A window moved to a monitor of another
+// scale raises XamlRoot.Changed with a new RasterizationScale; WinUI lays the
+// content out again itself, and this tells the observers.
+fn root_changed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let host: *Host=context as *Host;
+    if !live(host) || (*host).closing || (*host).xaml_root.is_null() { return rt::Status {code:0}; }
+    let root=native::must::[ui::IXamlRoot](ui::IXamlRoot::query((*host).xaml_root));
+    let now: f64=native::must::[f64](root.rasterization_scale());
+    if now==(*host).scale { return rt::Status {code:0}; }
+    (*host).scale=now; fire(OBS_DENSITY,host);
+    return rt::Status {code:0};
+}
+fn track_root(host: *Host) {
+    if !live(host) || (*host).closing || !(*host).xaml_root.is_null() { return; }
+    let xr=xaml_root_of((*host).shell);
+    if xr.is_null() { return; }
+    let root=native::must::[ui::IXamlRoot](ui::IXamlRoot::query(xr));
+    let handler=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_XamlRoot_Microsoft_UI_Xaml_XamlRootChangedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_XamlRoot_Microsoft_UI_Xaml_XamlRootChangedEventArgs::new(root_changed,host as *u8));
+    (*host).root_token=native::must::[ui::EventRegistrationToken](root.add_changed(handler.object()));
+    (*host).scale=native::must::[f64](root.rasterization_scale());
+    (*host).xaml_root=xr;
+}
 fn loaded(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    track_root(context as *Host);
     schedule(0 as *u8);
     let call: fn(*u8)=ON_READY; let ctx: *u8=ON_READY_CTX;
     ON_READY=0 as fn(*u8);
@@ -543,6 +583,7 @@ fn close_host(host: *Host) {
         native::check(window.remove_size_changed((*host).size_token));native::check(window.remove_closed((*host).close_token));native::check(window.remove_activated((*host).activated_token));
         let shell=native::must::[ui::IUIElement](ui::IUIElement::query((*host).shell));native::check(shell.remove_pointer_pressed((*host).pressed_token));
         native::check(app_window_of(host).remove_closing((*host).closing_token));
+        if !(*host).xaml_root.is_null() { native::check(native::must::[ui::IXamlRoot](ui::IXamlRoot::query((*host).xaml_root)).remove_changed((*host).root_token)); (*host).xaml_root=rt::Object::empty(); }
         unmount_layer(host,true);
         let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*host).loaded_object));
         native::check(element.remove_loaded((*host).loaded_token));(*host).loaded_object=rt::Object::empty();
@@ -553,6 +594,7 @@ fn close_host(host: *Host) {
     while i<HOSTS.count() { if let option::Option::Some(h)=HOSTS.at(i) { if h==host { let gone: option::Option[*Host]=HOSTS.remove(i); break; } } i=i+1; }
     if ACTIVE_HOST==host { ACTIVE_HOST=0 as *Host; }
     if ORIGIN==host { ORIGIN=0 as *Host; }
+    forget_observers_of(host);
     if AGENT_HOST.is_null() && !last {
         let next=first_host();
         if next.is_not_null() { AGENT_HOST=next; agent_hooks::opened((*next).window); }
@@ -576,7 +618,7 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome, will_close: fn(*u
     let owner: box::Box[Host]=match box::new::[Host](Host {root:root,owned:owned,chrome:chrome,window:window.object(),shell:rt::Object::empty(),commands:rt::Object::empty(),
         layer:rt::Object::empty(),layer_card:rt::Object::empty(),layer_root:0 as *core::Node,layer_width:0.0f64,layer_height:0.0f64,layer_key:0 as fn(i32,*u8)->bool,layer_key_ctx:0 as *u8,layer_key_token:#zero::[ui::EventRegistrationToken](),hwnd:0 as *u8,
         size_token:#zero::[ui::EventRegistrationToken](),close_token:#zero::[ui::EventRegistrationToken](),activated_token:#zero::[ui::EventRegistrationToken](),loaded_token:#zero::[ui::EventRegistrationToken](),pressed_token:#zero::[ui::EventRegistrationToken](),
-        loaded_object:rt::Object::empty(),mounted:false,closing:false,approved:false,captionless:false,width:900.0f64,height:600.0f64,strip:0.0f64,will_close:will_close,will_close_ctx:will_close_ctx,
+        loaded_object:rt::Object::empty(),xaml_root:rt::Object::empty(),root_token:#zero::[ui::EventRegistrationToken](),scale:0.0f64,mounted:false,closing:false,approved:false,captionless:false,width:900.0f64,height:600.0f64,strip:0.0f64,will_close:will_close,will_close_ctx:will_close_ctx,
         should_close:should_close,should_close_ctx:should_close_ctx,closing_token:#zero::[ui::EventRegistrationToken]()}) {
         option::Option::Some(v)=>{v}, option::Option::None=>{return 0 as *u8;}
     };
@@ -598,7 +640,7 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome, will_close: fn(*u
     assert mount::mount(root); (*host).mounted=true;
     app::set_window_native(root,host as *u8);
     let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(views::object(core::view_of(root))));
-    let loaded_handler: ui::RoutedEventHandler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(loaded));
+    let loaded_handler: ui::RoutedEventHandler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(loaded,host as *u8));
     (*host).loaded_token=native::must::[ui::EventRegistrationToken](element.add_loaded(loaded_handler.object()));
     (*host).loaded_object=views::object(core::view_of(root));
     let shell=native::must::[ui::Canvas](ui::Canvas::new());(*host).shell=shell.object();
@@ -713,7 +755,26 @@ fn wh_set_frame(root: *core::Node, frame: vocab::Rect) {
     let _r: i32=SetWindowPos((*host).hwnd,0 as *u8,frame.x as i32,frame.y as i32,frame.width as i32,frame.height as i32,0x0014);   // NOZORDER|NOACTIVATE
 }
 fn wh_is_active(root: *core::Node) -> bool { return is_active(host_of_root(root)); }
-fn wh_density(root: *core::Node) -> f64 { let host=host_of_root(root); return if host.is_null() {1.0f64} else {scale_of(host)}; }
+// The scale WinUI draws the window's content at; before it has loaded, the
+// window's DPI.
+fn density_of_host(host: *Host) -> f64 {
+    if host.is_null() { return 1.0f64; }
+    if (*host).scale>0.0f64 { return (*host).scale; }
+    return scale_of(host);
+}
+fn wh_density(root: *core::Node) -> f64 { return density_of_host(host_of_root(root)); }
+// The facet/window seam's per-window observers: each fires for its own window.
+fn wh_observe(kind: i32, root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+    let host=host_of_root(root);
+    if host.is_null() || (*host).closing { return services::Cancellable::none(); }
+    let id: u64=observe_window(kind,cb,ctx,host);
+    if id==0 { return services::Cancellable::none(); }
+    return services::Cancellable::of(id,cancel_observe);
+}
+fn wh_observe_resize(root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable { return wh_observe(OBS_SIZE,root,cb,ctx); }
+fn wh_observe_active(root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable { return wh_observe(OBS_ACTIVE,root,cb,ctx); }
+fn wh_observe_inactive(root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable { return wh_observe(OBS_INACTIVE,root,cb,ctx); }
+fn wh_observe_density(root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable { return wh_observe(OBS_DENSITY,root,cb,ctx); }
 fn wh_title(root: *core::Node) -> text::Text {
     let host=host_of_root(root);
     if host.is_null() { return text::new(); }
@@ -735,12 +796,14 @@ fn window_host() -> app_window::WindowHost {
     var h: app_window::WindowHost=app_window::empty_host();
     h.frame=wh_frame; h.set_frame=wh_set_frame; h.is_active=wh_is_active; h.density=wh_density;
     h.title=wh_title; h.set_title=wh_set_title; h.close=wh_close;
+    h.observe_resize=wh_observe_resize; h.observe_active=wh_observe_active;
+    h.observe_inactive=wh_observe_inactive; h.observe_density=wh_observe_density;
     return h;
 }
 // The facade's reads, for the app's newest window.
 fn window_frame_of(root: *core::Node) -> vocab::Rect { return wh_frame(root); }
 fn set_window_frame_of(root: *core::Node, frame: vocab::Rect) { wh_set_frame(root,frame); }
-fn density_of(root: *core::Node) -> f64 { let host=host_of_root(root); return if host.is_null() {1.0f64} else {scale_of(host)}; }
+fn density_of(root: *core::Node) -> f64 { return density_of_host(host_of_root(root)); }
 fn is_window_active(root: *core::Node) -> bool { let host=host_of_root(root); return if host.is_null() {is_active(active())} else {is_active(host)}; }
 
 // ---- the run -----------------------------------------------------------------------

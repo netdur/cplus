@@ -28,10 +28,10 @@ every Facet property is implemented.
 | Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. `run_on_main` from any thread: a worker posts through DispatcherQueue.TryEnqueue, so `services::run_job` runs off the UI thread and applies on it (`tools/test_facet_runtime_winui.py`, `home:load`). After the run ends a hop is dropped. |
 | Window buttons | Three native WinUI buttons drive their own window's AppWindow minimize/maximize/restore and Window.close. Live spacing changes intrinsic size. OnHover watches the containing bar; keyboard/programmatic focus also reveals the group. Maximize glyph and accessible name follow current window state. |
 | Closing | A user close (caption, Alt+F4, outside `WM_CLOSE`, the window buttons) is asked through AppWindow.Closing and can be refused. Through the facade it asks the window's `on_should_close`, and for the last open window also `on_should_quit`. Closes made in code are not asked twice. `tools/test_facet_runtime_winui.py` covers refusal, allowance and a non-last window. |
-| Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close) and `app::set_activate_fn` are installed. |
+| Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close, and per-window resize/active/inactive/density observers) and `app::set_activate_fn` are installed. Density is the content's XamlRoot.RasterizationScale; its change fires density observers, app-wide and the window's own. |
 | Chrome | `screen::Chrome` width/height (ResizeClient, corrected to the delivered client area), min/max size, minimizable/maximizable/resizable, and the bar: Native (dark DWM caption), Blended with `window_buttons()` (no system caption; app buttons are the only set), Blended without (ExtendsContentIntoTitleBar), Hidden/Custom (no border, no caption). `.window_drag()` moves a captionless window. |
 | Dialogs | `facet_winui/dialogs`: alert/choose/prompt as keyed facet sheets on the modal layer (scrim + card) of the window that asked: the window a deferred callback was scheduled from, else the window of the event being delivered, else the active one (`tools/test_facet_runtime_winui.py`), answers on a later turn, Return/Escape in alert and prompt, initial focus on the primary button or field, blocking `alert` through a nested message loop. |
-| Facade | `facet_runtime/winui` fills runtime_windows' backend seam: driver open/run with pre-launch queueing, dialogs, window verbs, frame/density/active reads, active/inactive/size observers. |
+| Facade | `facet_runtime/winui` fills runtime_windows' backend seam: driver open/run with pre-launch queueing, dialogs, window verbs, frame/density/active reads, active/inactive/size/density observers. |
 | Agent integration | Optional lifecycle/apply/release hooks; `facet_agent_winui` connects keyed controls and privacy policies to `agent_winui`. In-app sessions and UI-dispatched MCP requests. |
 | Accessibility | Native WinUI peers, stable control AutomationIds, explicit accessibility name/help text with native-default restoration, heading levels 1–9 and attached Unicode tooltips with live updates/removal. |
 | Ownership | Native records owned by nodes, event removal before freeing callback contexts, row unrealise before drop, timers cancelled on release, zero view/subscription assertions on shutdown. |
@@ -39,9 +39,12 @@ every Facet property is implemented.
 ## Limits
 
 - `facet_runtime` defaults to Win32; WinUI is an opt-in (`facet_runtime/winui`).
-  Through the facade, the app menu (`App::menu`) is not rendered, density-change
-  observation registers nothing, and the clipboard and file pickers are the
-  shared Win32 calls. General gesture/key readers and host focus commands
+  Through the facade, the app menu (`App::menu`) is not rendered, and the
+  clipboard and file pickers are the shared Win32 calls.
+- A density change is observed as a change of XamlRoot.RasterizationScale.
+  The e2e checks the read and that a resize reports no change; a real change
+  (a move between monitors of different scale) has not been exercised on a
+  one-display machine, and WinUI ignores a synthetic WM_DPICHANGED. General gesture/key readers and host focus commands
   remain separate work.
 - The agent surface (`facet_agent_winui`) serves one window: the first one
   opened, then the next open one after it closes. Sheets on that window are

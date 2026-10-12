@@ -3,16 +3,24 @@
 // by hand. Each marker is one flushed stdout line the test waits for.
 //
 //   CPLUS_RUNTIME_WINUI_PROBE=1   also open "settings" at launch, refuse the
-//                                 FIRST on_should_quit and allow the next.
+//                                 FIRST on_should_quit and allow the next,
+//                                 and report density changes: app-wide, and
+//                                 Settings' own window.
 import "stdlib/env" as env;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/io" as io;
+import "facet/services" as services;
+import "facet/window" as window;
 import "facet_runtime/runtime" as runtime;
 
 extern fn fflush(stream: *u8) -> i32;
 
+
 static ASKED: i32 = 0;
+static APP_DENSITY: services::Cancellable = #zero::[services::Cancellable]();
+static SETTINGS_DENSITY: services::Cancellable = #zero::[services::Cancellable]();
+static ACTIVATED: services::Cancellable = #zero::[services::Cancellable]();
 
 fn enabled() -> bool {
     match env::var("CPLUS_RUNTIME_WINUI_PROBE") {
@@ -31,8 +39,32 @@ fn install(app: runtime::App) {
 }
 
 fn launched(ctx: *u8) {
+    APP_DENSITY = runtime::observe_display_density(app_density_changed);
+    ACTIVATED = runtime::observe_window_active(first_activation);
     let _w = runtime::app().open_window("settings");
 }
+
+// Windows exist only once WinUI has launched, so Settings' own observer is
+// armed at the first activation rather than here.
+fn first_activation(ctx: *u8) {
+    if SETTINGS_DENSITY.pending() { return; }
+    match window::find("settings") {
+        option::Option[window::Window]::Some(w) => {
+            SETTINGS_DENSITY = w.on_density(settings_density_changed);
+            if SETTINGS_DENSITY.pending() { say("PROBE settings observed"); }
+            let d: f64 = runtime::display_density();
+            say("PROBE density read ${d}");
+        }
+        option::Option[window::Window]::None => { }
+    }
+}
+
+fn app_density_changed(ctx: *u8) {
+    let d: f64 = runtime::display_density();
+    say("PROBE density ${d}");
+}
+
+fn settings_density_changed(ctx: *u8) { say("PROBE settings density"); }
 
 fn should_quit(ctx: *u8) -> bool {
     ASKED = ASKED + 1;
@@ -41,4 +73,9 @@ fn should_quit(ctx: *u8) -> bool {
     return n > 1;
 }
 
-fn quitting(ctx: *u8) { say("PROBE quit"); }
+fn quitting(ctx: *u8) {
+    APP_DENSITY.cancel();
+    ACTIVATED.cancel();
+    SETTINGS_DENSITY.cancel();
+    say("PROBE quit");
+}
