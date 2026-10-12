@@ -15,6 +15,7 @@ import "./facet_winui" as host;
 import "./dialogs" as dialogs;
 import "./scheduler" as scheduler;
 import "./app_menu" as app_menu;
+import "winui/application" as application;
 import "./input" as input;
 import "facet/gestures" as gestures;
 import "./shortcuts" as shortcuts;
@@ -270,5 +271,13 @@ fn virtual_keys_have_facets_names() {
     assert input::named_key(40 as i64) == gestures::key_arrow_down();
     // A printable key has no name; key_code carries it.
     assert input::named_key(65 as i64) == gestures::key_none();
+    return;
+}
+
+#[test]
+fn a_test_binary_has_no_runtime_beside_it() {
+    // NEGATIVE: nothing is staged next to the test executable, so a run
+    // would take the installed runtime - the default deployment.
+    assert !application::staged_beside_exe();
     return;
 }

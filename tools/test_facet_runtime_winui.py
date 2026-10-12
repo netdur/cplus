@@ -11,8 +11,10 @@ import subprocess
 import time
 
 REPO = Path(__file__).resolve().parents[1]
-RUNTIME = REPO / 'examples/facet_runtime_winui/out/runtime'
-EXE = RUNTIME / 'facet_runtime_winui.exe'
+# The staged build by default; CPLUS_RUNTIME_WINUI_DIR names another (a plain
+# `cpc build` output, which runs on the installed Windows App Runtime).
+RUNTIME = Path(os.environ.get('CPLUS_RUNTIME_WINUI_DIR', REPO / 'examples/facet_runtime_winui/out/runtime'))
+EXE = RUNTIME / os.environ.get('CPLUS_RUNTIME_WINUI_EXE', 'facet_runtime_winui.exe')
 u = c.WinDLL('user32', use_last_error=True)
 u.FindWindowW.argtypes = [w.LPCWSTR, w.LPCWSTR]
 u.FindWindowW.restype = w.HWND

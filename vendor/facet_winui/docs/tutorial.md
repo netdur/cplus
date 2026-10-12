@@ -4,9 +4,11 @@ See [guide.md](guide.md) for lifetime rules and [ref.md](ref.md) for signatures.
 
 For the full gallery, use [facet_gallery_winui](../../../examples/facet_gallery_winui/README.md).
 For a smaller example, use [facet_winui_smoke](../../../examples/facet_winui_smoke/README.md).
-Its build script stages the SDK runtime, embeds activation and DPI declarations,
-and creates a local dependency junction. A plain executable without those
-deployment steps cannot activate WinUI reliably.
+A plain `cpc build` output runs wherever the Windows App Runtime 2 (x64) is
+installed: at start it joins the installed runtime framework to the process
+(Windows 11's dynamic dependency API) - see [Deployment](../README.md#deployment).
+The examples' build scripts instead stage the runtime beside the executable
+with an activation manifest (self-contained), which needs no installation.
 
 Build a normal retained tree with `facet/elements`, then transfer it to the host:
 

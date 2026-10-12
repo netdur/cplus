@@ -153,3 +153,81 @@ fn run(on_launched: fn(rt::Object,*u8)->rt::Status, on_launched_ctx: *u8=0 as *u
     if status.is_ok() && launch_error<0 { return rt::Status {code:launch_error}; }
     return status;
 }
+
+// ---- the runtime: beside the exe, or installed ------------------------------------
+//
+// SELF-CONTAINED: the Windows App Runtime's DLLs are staged beside the exe and
+// an activation manifest names their classes (the examples' build scripts do
+// this). FRAMEWORK-DEPENDENT: nothing is staged; the installed runtime
+// framework package (`Microsoft.WindowsAppRuntime.2`, the release these
+// bindings were generated from) joins the process's package graph through
+// Windows 11's dynamic dependency API, after which its DLLs load by name and its
+// classes activate - what the SDK's bootstrapper does, without shipping the
+// bootstrapper DLL. A plain `cpc build` output therefore runs wherever the
+// runtime is installed.
+//
+// `use_runtime` picks: the staged runtime when its DLL sits beside the exe,
+// otherwise the installed one. Call it once, before any activation.
+extern fn GetModuleFileNameW(module: *u8, buffer: *u16, size: u32) -> u32;
+extern fn GetFileAttributesW(path: *u16) -> u32;
+extern fn LoadLibraryW(name: *u16) -> *u8;
+extern fn GetProcAddress(module: *u8, name: *u8) -> *u8;
+
+const RUNTIME_FAMILY: str = "Microsoft.WindowsAppRuntime.2_8wekyb3d8bbwe";
+// PACKAGE_VERSION 2.5.1.0: major<<48 | minor<<32 | build<<16 | revision.
+const RUNTIME_MIN_VERSION: u64 = 0x0002000500010000u64;
+fn runtime_dll() -> str { return "Microsoft.WindowsAppRuntime.dll"; }
+
+// A NUL-terminated UTF-16 copy of ASCII `s` in `out` (which must hold it).
+fn _wide(s: str, out: *u16) {
+    var i: usize = 0;
+    while i < #str_len(s) { *(out + i) = *(#str_ptr(s) + i) as u16; i = i + 1; }
+    *(out + i) = 0;
+}
+// Is the runtime staged beside this executable?
+fn staged_beside_exe() -> bool {
+    var path: [u16; 1024] = [0 as u16; 1024];
+    let n: u32 = GetModuleFileNameW(0 as *u8, #addr_of(path) as *u16, 1024);
+    if n == 0 || n >= 1000 { return false; }
+    var cut: usize = n as usize;
+    while cut > 0 && path[cut - 1] != (92 as u16) && path[cut - 1] != (47 as u16) { cut = cut - 1; }
+    let name: str = runtime_dll();
+    if cut + #str_len(name) + 1 >= 1024 { return false; }
+    _wide(name, (#addr_of(path) as *u16) + cut);
+    return GetFileAttributesW(#addr_of(path) as *u16) != 0xFFFFFFFFu32;
+}
+// Add the installed runtime framework to this process's package graph.
+// 0x80073D53 (APPMODEL_ERROR_DYNAMIC_PROPERTY... "not found") or another
+// failure HRESULT when it is not installed; E_NOTIMPL before Windows 11.
+fn depend_on_installed_runtime() -> rt::Status {
+    var kernel: [u16; 16] = [0 as u16; 16];
+    _wide("kernelbase.dll", #addr_of(kernel) as *u16);
+    let module: *u8 = LoadLibraryW(#addr_of(kernel) as *u16);
+    if module.is_null() { return rt::Status { code: 0x80004001 as i32 }; }
+    let create: *u8 = GetProcAddress(module, #str_ptr("TryCreatePackageDependency\0"));
+    let add: *u8 = GetProcAddress(module, #str_ptr("AddPackageDependency\0"));
+    if create.is_null() || add.is_null() { return rt::Status { code: 0x80004001 as i32 }; }
+    var family: [u16; 64] = [0 as u16; 64];
+    _wide(RUNTIME_FAMILY, #addr_of(family) as *u16);
+    // (user, family, minVersion, architectures X64, lifetime Process, artifact,
+    // options, out id)
+    let try_create: fn(*u8, *u16, u64, i32, i32, *u16, i32, *usize) -> i32 =
+        create as fn(*u8, *u16, u64, i32, i32, *u16, i32, *usize) -> i32;
+    var id: usize = 0;
+    let made: i32 = try_create(0 as *u8, #addr_of(family) as *u16, RUNTIME_MIN_VERSION, 4, 0, 0 as *u16, 0, #addr_of(id));
+    if made < 0 { return rt::Status { code: made }; }
+    // (id, rank, options, out context, out full name)
+    let add_dependency: fn(*u16, i32, i32, *usize, *usize) -> i32 = add as fn(*u16, i32, i32, *usize, *usize) -> i32;
+    var context: usize = 0; var full_name: usize = 0;
+    let added: i32 = add_dependency(id as *u16, 0, 0, #addr_of(context), #addr_of(full_name));
+    // The id and name are the process heap's; the dependency lives for the
+    // process, so neither is needed again and both are left to it.
+    return rt::Status { code: added };
+}
+fn use_runtime() -> rt::Status {
+    if !staged_beside_exe() {
+        let joined: rt::Status = depend_on_installed_runtime();
+        if joined.is_err() { return joined; }
+    }
+    return rt::load_runtime(runtime_dll());
+}

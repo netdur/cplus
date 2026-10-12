@@ -964,7 +964,13 @@ fn start(on_launch: fn(*u8), on_launch_ctx: *u8=0 as *u8, on_ready: fn(*u8)=0 as
     if STARTED { return rt::Status {code:0x8000ffff as i32}; }
     STARTED=true;
     ON_LAUNCH=on_launch; ON_LAUNCH_CTX=on_launch_ctx; ON_READY=on_ready; ON_READY_CTX=on_ready_ctx;
-    native::check(rt::load_runtime("Microsoft.WindowsAppRuntime.dll"));
+    // The staged runtime beside the exe, or the installed one (application::use_runtime).
+    let runtime: rt::Status=application::use_runtime();
+    if runtime.is_err() {
+        let code: i32=runtime.code;
+        io::eprintln("facet_winui: the Windows App Runtime 2 (x64) could not be loaded (HRESULT ${code}). Install it from https://aka.ms/windowsappsdk/2/latest/windowsappruntimeinstall-x64.exe, or stage it beside the executable.");
+        return runtime;
+    }
     let apartment: rt::Apartment=native::must::[rt::Apartment](rt::Apartment::sta());
     var status: rt::Status=rt::Status {code:0};
     {

@@ -22,6 +22,28 @@ import "facet_winui/facet_winui" as host;
 // host::run(tree, "My application") owns the tree through native shutdown.
 ```
 
+## Deployment
+
+Two ways to have the Windows App Runtime, chosen at start
+(`winui/application::use_runtime`):
+
+- **Installed (framework-dependent), the default.** A plain `cpc build` output
+  runs on any Windows 11 x64 machine with the Windows App Runtime 2 installed
+  (`Microsoft.WindowsAppRuntime.2`, 2.5.1 or later; the installer is
+  https://aka.ms/windowsappsdk/2/latest/windowsappruntimeinstall-x64.exe). At
+  start the process adds the installed framework to its package graph with
+  `TryCreatePackageDependency`/`AddPackageDependency` - the SDK
+  bootstrapper's job, done without shipping its DLL. Nothing is staged and no
+  activation manifest is needed. An application installer installs the
+  runtime the way it would any redistributable.
+- **Self-contained.** When `Microsoft.WindowsAppRuntime.dll` sits beside the
+  executable, that copy is used: the examples' `build.ps1` stage the SDK
+  runtime (`examples/winui_standalone/prepare_runtime.py`) and embed its
+  activation manifest. This also runs on Windows 10, where the dynamic
+  dependency API does not exist.
+
+When neither is available the run ends with a message naming the installer.
+
 Any number of windows run in the one WinUI Application: `host::start` and
 `host::open_window` open them, each honours `screen::Chrome` (size, limits,
 bar, buttons), and closing the last ends the run. A `runtime::App` runs here
