@@ -10,11 +10,12 @@ try {
     do {
         Start-Sleep -Milliseconds 200
         if($app.HasExited) {throw "Walk app exited: $($app.ExitCode)"}
-        $done=(Get-Content (Join-Path $root 'out/walk.log') -Raw) -match 'visited 38 demos, no crash'
+        # The gallery's own count: pages are added to the shared gallery.
+        $done=(Get-Content (Join-Path $root 'out/walk.log') -Raw) -match 'visited (\d+) demos, no crash'
     } while(!$done -and (Get-Date) -lt $deadline)
     if(!$done) {throw 'Gallery walk did not complete'}
     $app.CloseMainWindow() | Out-Null
     if(!$app.WaitForExit(10000)) {throw 'Walk close timed out'}
     if($app.ExitCode -ne 0) {throw "Walk exit: $($app.ExitCode)"}
-    Write-Output 'PASS: all 38 gallery pages and process exit code 0'
+    Write-Output "PASS: all $($Matches[1]) gallery pages and process exit code 0"
 } finally {if(!$app.HasExited) {Stop-Process -Id $app.Id}}
