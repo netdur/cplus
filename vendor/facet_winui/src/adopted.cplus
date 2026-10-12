@@ -1,0 +1,127 @@
+// facet_winui/adopted - an application's own window inside a WinUI window:
+// what `facet::adopt_native` / `adopt_native_with` hand the renderer on
+// Windows (a camera preview, any HWND an app made).
+//
+// AN ADOPTED VIEW IS NOT A RECORD. The mount walk gives the renderer the
+// app's HWND where it gives a facet_winui record for every other node, so
+// `views` asks `is_record` before it touches a view and sends anything else
+// here. Nothing here owns the window: the app's `release` (paired by
+// adopt_native) destroys it, after the node is removed.
+//
+// A CHILD WINDOW ABOVE THE XAML CONTENT. XAML cannot contain an HWND; the
+// window becomes a WS_CHILD of the WinUI window's top-level HWND, and the
+// host moves it over its node's frame after every layout pass (`place`).
+// Like any child HWND over XAML it draws above the content it overlaps
+// ("airspace"), and it is not offset by a scrolling ancestor.
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "facet/facet" as core;
+
+extern fn GetWindowLongPtrW(hwnd: *u8, index: i32) -> i64;
+extern fn SetWindowLongPtrW(hwnd: *u8, index: i32, value: i64) -> i64;
+extern fn SetParent(child: *u8, parent: *u8) -> *u8;
+extern fn GetParent(hwnd: *u8) -> *u8;
+extern fn SetWindowPos(hwnd: *u8, after: *u8, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+extern fn ShowWindow(hwnd: *u8, cmd: i32) -> i32;
+extern fn IsWindow(hwnd: *u8) -> i32;
+
+struct Entry { hwnd: usize, opaque node: *core::Node, opaque parent: *u8 }
+static ENTRIES: vec::Vec[Entry] = #zero::[vec::Vec[Entry]]();
+// The host's: the top-level HWND of the window a record is shown in.
+static WINDOW_OF: fn(*u8) -> *u8 = 0 as fn(*u8) -> *u8;
+fn set_window_fn(f: fn(*u8) -> *u8) { WINDOW_OF = f; }
+fn window_of(record: *u8) -> *u8 { let f = WINDOW_OF; if f.is_null() { return 0 as *u8; } return f(record); }
+
+fn ws_child() -> i64 { return 0x40000000 as i64; }
+fn ws_popup() -> i64 { return 0x80000000 as i64; }
+fn ws_caption() -> i64 { return 0x00C00000 as i64; }
+fn ws_thickframe() -> i64 { return 0x00040000 as i64; }
+fn ws_clipsiblings() -> i64 { return 0x04000000 as i64; }
+fn ws_ex_topmost() -> i64 { return 0x00000008 as i64; }
+fn ws_ex_appwindow() -> i64 { return 0x00040000 as i64; }
+// The two style words a child must have, as arithmetic on what it arrived
+// with: WS_CHILD, without WS_POPUP (exclusive with it) or a frame, and not
+// topmost or in the taskbar. Without WS_CHILD, SetParent makes the window OWNED,
+// floating over everything and ignoring every move - facet_win32's lesson.
+fn child_style(style: i64) -> i64 {
+    return (style & ~(ws_popup() | ws_caption() | ws_thickframe())) | ws_child() | ws_clipsiblings();
+}
+fn child_exstyle(ex: i64) -> i64 { return ex & ~(ws_ex_topmost() | ws_ex_appwindow()); }
+
+fn count() -> usize { return ENTRIES.count(); }
+fn find(hwnd: *u8) -> option::Option[usize] {
+    var i: usize = 0;
+    while i < ENTRIES.count() { if let option::Option::Some(e) = ENTRIES.at_ptr(i) { if (*e).hwnd == hwnd as usize { return option::Option[usize]::Some(i); } } i = i + 1; }
+    return option::Option[usize]::None;
+}
+// The node `parent` holds whose view is `hwnd`.
+fn node_in(parent_node: *core::Node, hwnd: *u8) -> *core::Node {
+    var i: usize = 0;
+    while i < core::child_count_of(parent_node) {
+        if let option::Option::Some(c) = core::child_of(parent_node, i) { if core::view_of(c) == hwnd { return c; } }
+        i = i + 1;
+    }
+    return 0 as *core::Node;
+}
+
+// The renderer's insert, for an adopted view: track it and make it a child of
+// `top` (the WinUI window's HWND). Placement waits for the next layout pass.
+fn insert(parent: *u8, parent_node: *core::Node, hwnd: *u8) {
+    let top: *u8 = window_of(parent);
+    if hwnd.is_null() || IsWindow(hwnd) == 0 { return; }
+    match find(hwnd) { option::Option::Some(_) => { return; }, option::Option::None => {} }
+    let style: i64 = GetWindowLongPtrW(hwnd, -16);
+    let _s: i64 = SetWindowLongPtrW(hwnd, -16, child_style(style));
+    let ex: i64 = GetWindowLongPtrW(hwnd, -20);
+    let _e: i64 = SetWindowLongPtrW(hwnd, -20, child_exstyle(ex));
+    if top.is_not_null() && GetParent(hwnd) != top { let _p: *u8 = SetParent(hwnd, top); }
+    let added: status::Status = ENTRIES.append(Entry { hwnd: hwnd as usize, node: node_in(parent_node, hwnd), parent: parent });
+    assert added == status::Status::Ok;
+}
+// The renderer's remove: hidden and handed back parentless, so the app's
+// release destroys a window the closing WinUI window did not take with it.
+fn remove(hwnd: *u8) {
+    match find(hwnd) {
+        option::Option::Some(i) => { let gone: option::Option[Entry] = ENTRIES.remove(i); }
+        option::Option::None => { return; }
+    }
+    if IsWindow(hwnd) == 0 { return; }
+    let _h: i32 = ShowWindow(hwnd, 0);
+    let _p: *u8 = SetParent(hwnd, 0 as *u8);
+}
+// Move each adopted window shown in the window `top` over its node: `origin_y`
+// is the content's top in that window's client area (below the menu and
+// command strips), `scale` its DPI factor. Hidden when its node is.
+fn place(top: *u8, origin_y: f64, scale: f64) {
+    var i: usize = 0;
+    while i < ENTRIES.count() {
+        if let option::Option::Some(e) = ENTRIES.at_ptr(i) {
+            let hwnd: *u8 = (*e).hwnd as *u8;
+            let n: *core::Node = (*e).node;
+            if GetParent(hwnd) == top && n.is_not_null() {
+                let f = (*n).frame();
+                let shown: bool = (*core::node_data(n)).common.is_visible && f.width > 0.0f64 && f.height > 0.0f64;
+                // SWP_NOZORDER | SWP_NOACTIVATE, and SHOW or HIDE.
+                let flags: u32 = (0x0004 as u32) | (0x0010 as u32) | (if shown { 0x0040 as u32 } else { 0x0080 as u32 });
+                let _m: i32 = SetWindowPos(hwnd, 0 as *u8, (f.left * scale + 0.5f64) as i32, ((f.top + origin_y) * scale + 0.5f64) as i32,
+                                           (f.width * scale + 0.5f64) as i32, (f.height * scale + 0.5f64) as i32, flags);
+            }
+        }
+        i = i + 1;
+    }
+}
+
+#[test]
+fn an_adopted_window_becomes_a_frameless_child() {
+    // A popup with a caption, as a preview window is made: WS_CHILD in,
+    // WS_POPUP and the frame out; topmost and taskbar presence cleared.
+    let style: i64 = ws_popup() | ws_caption() | ws_thickframe() | (0x10000000 as i64);
+    let s: i64 = child_style(style);
+    assert (s & ws_child()) != 0;
+    assert (s & ws_popup()) == 0;
+    assert (s & ws_caption()) == 0;
+    assert (s & (0x10000000 as i64)) != 0;     // WS_VISIBLE is the app's to keep
+    assert child_exstyle(ws_ex_topmost() | ws_ex_appwindow() | (0x00000020 as i64)) == (0x00000020 as i64);
+    return;
+}

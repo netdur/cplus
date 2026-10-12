@@ -554,6 +554,42 @@ def run_inspector():
     print('PASS: inspector (highlight framed where the control is; inspect names the XAML class)')
 
 
+def run_adopted_view():
+    """An application's own window (`adopt_native`) is hosted on WinUI: a child
+    of the window, placed over its node, and released by the app."""
+    log = RUNTIME / 'adopted.log'
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        assert shows(settings, 'settings:pad-log')
+        u.FindWindowExW.argtypes = [w.HWND, w.HWND, w.LPCWSTR, w.LPCWSTR]
+        u.FindWindowExW.restype = w.HWND
+        child = None
+        end = time.time() + 5
+        while time.time() < end and not child:
+            child = u.FindWindowExW(settings, None, 'Static', 'Adopted native view')
+            time.sleep(.1)
+        assert child, 'the adopted window is not a child of its WinUI window'
+        assert u.IsWindowVisible(child)
+        scale = u.GetDpiForWindow(settings) / 96
+        r = w.RECT()
+        u.GetWindowRect(child, c.byref(r))
+        lx, ly, lw, lh = (int(v) for v in uia('rect', settings, 'settings:pad-log').split())
+        # 40 points tall, under the last label, at the column's left edge.
+        assert abs((r.bottom - r.top) - 40 * scale) <= 2, (r.top, r.bottom)
+        assert r.top >= ly + lh - 1, ((r.left, r.top), (lx, ly, lw, lh))
+        assert abs(r.left - lx) <= 2, (r.left, lx)
+        u.PostMessageW(settings, WM_CLOSE, 0, 0)
+        wait_for(log, 'PROBE native released', process, 10)
+        assert process.poll() is None
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: adopted view (a child of its window, placed over its node, released by the app)')
+
+
 def run_win32_opt_out():
     """`facet_runtime/win32::select()` still runs an app on the deprecated
     Win32 backend, and a close there asks on_should_quit again."""
@@ -592,4 +628,5 @@ if __name__ == '__main__':
     run_agent_windows()
     run_gestures()
     run_inspector()
+    run_adopted_view()
     run_win32_opt_out()

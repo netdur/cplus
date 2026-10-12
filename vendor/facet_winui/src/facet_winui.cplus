@@ -47,6 +47,7 @@ import "./command_strip" as commands;
 import "./window_buttons" as window_buttons;
 import "./app_menu" as app_menu;
 import "./input" as input;
+import "./adopted" as adopted;
 import "facet/gestures" as gestures;
 extern fn fflush(stream: *u8) -> i32;
 extern fn GetDpiForWindow(hwnd: *u8) -> u32;
@@ -191,6 +192,8 @@ fn active() -> *Host {
     return first_host();
 }
 fn active_host() -> *u8 { return active() as *u8; }
+// The top-level HWND of the window a record is shown in (`adopted`).
+fn window_of_record(view: *u8) -> *u8 { let h=host_of_view(view); return if h.is_null() {0 as *u8} else {(*h).hwnd}; }
 
 // THE WINDOW THAT ASKED. An alert belongs on the window whose control asked
 // for it, which is not always the active one: an agent presses a button in a
@@ -360,6 +363,7 @@ fn relayout(host: *Host) {
     views::place(root,(*root).frame());
     if !commands::supports(core::kind_of(root)) {native::check(canvas.set_top(views::object(core::view_of(root)),strip));}
     layout_layer(host);
+    if adopted::count()>0 { adopted::place((*host).hwnd,(*host).strip,scale_of(host)); }
     scheduler::notify_sizes(); return;
 }
 fn layout_layer(host: *Host) {
@@ -940,6 +944,7 @@ fn app_launched(app_object: rt::Object, context: *u8) -> rt::Status {
     LAUNCHED=true; APP=app_object.clone();
     rt::track_events(); scheduler::set_origin_fns(capture_origin,enter_origin);
     app_menu::set_dispatch_fn(menu_dispatch); watch_focus();
+    adopted::set_window_fn(window_of_record);
     gestures::install_key_reader(input::key_reader());
     window_buttons::install(button_action,button_state);
     theme::set_is_dark_fn(style::dark);

@@ -28,6 +28,7 @@ every Facet property is implemented.
 | Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. `run_on_main` from any thread: a worker posts through DispatcherQueue.TryEnqueue, so `services::run_job` runs off the UI thread and applies on it (`tools/test_facet_runtime_winui.py`, `home:load`). After the run ends a hop is dropped. |
 | Window buttons | Three native WinUI buttons drive their own window's AppWindow minimize/maximize/restore and Window.close. Live spacing changes intrinsic size. OnHover watches the containing bar; keyboard/programmatic focus also reveals the group. Maximize glyph and accessible name follow current window state. |
 | Input | `facet_winui/input`: the gesture band on any node over XAML routed events, so a handler's `true` marks the event Handled and `false` lets it bubble to the next node - facet's decline chain. Tapped (click), DoubleTapped (double click; falls back to on_click), RightTapped, PointerPressed/Released, PointerEntered/Exited (hover), PointerMoved, a pan past a 4-DIP slop, a swipe on release beyond `swipe_threshold`, a long press after `long_press_seconds` (or touch Holding) that swallows the click, Ctrl+wheel pinch, KeyDown for `on_key`. Bands are armed only for the verbs a node names. `gestures::KeyReader` reads the KeyDown args (VirtualKey code, named keys, live modifiers). `C_FOCUS`/`C_BLUR` take and give up the keyboard (blur hands it to the window's content root); every view's element is tagged, so global focus changes write `is_focused` and fire `on_focus`/`on_blur` on the node. `tools/test_facet_runtime_winui.py` (`run_gestures`) drives a plain container with the real mouse and keyboard. |
+| Adopted views | `adopt_native` / `adopt_native_with` leaves: the app's HWND becomes a WS_CHILD (no popup, frame, topmost or taskbar bits) of the WinUI window and is moved over its node after every layout pass, hidden with it; on removal it is hidden and unparented, and the app's release destroys it. Camera's preview takes this path. `run_adopted_view` checks parentage, placement and release. |
 | App menu | `App::menu` (plus the primary screen's `menu_items`) is a MenuBar across the top of every window, above the command strip: a MenuBarItem per group in first-seen order, items and separators. A `key` is a Ctrl (+Shift/+Alt) KeyboardAccelerator on the bar, so it works with the menu closed; the item shows the chord. `is_enabled`/`title_of` are answered when the bar is entered or focused, when its window activates, and again on invocation. `on_click` wins; otherwise quit (the facade's `app.quit()`), close window (asked), and undo/redo/cut/copy/paste/select-all on the text field that last had the keyboard in that window. AutomationIds `menu`, `menu:<group>`, `menu:<group>:<title>`. `tools/test_facet_runtime_winui.py` covers click, live enabled state, Ctrl+, Ctrl+Q, edit actions and quit. |
 | Closing | A user close (caption, Alt+F4, outside `WM_CLOSE`, the window buttons) is asked through AppWindow.Closing and can be refused. Through the facade it asks the window's `on_should_close`, and for the last open window also `on_should_quit`. Closes made in code are not asked twice. `tools/test_facet_runtime_winui.py` covers refusal, allowance and a non-last window. |
 | Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close, and per-window resize/active/inactive/density observers) and `app::set_activate_fn` are installed. Density is the content's XamlRoot.RasterizationScale; its change fires density observers, app-wide and the window's own. |
@@ -42,8 +43,9 @@ every Facet property is implemented.
 
 - Through the facade the clipboard and file pickers are the shell's Win32
   calls (`facet_runtime/shell`). `set_app_appearance` is recorded and read
-  back, but the backend draws dark whatever it says. Adopted native views
-  (camera preview, terminal) are not hosted: a tree containing one is refused. The app menu's find tokens (`menu_action_find*`) have no WinUI
+  back, but the backend draws dark whatever it says. An adopted native window
+  draws above the XAML it overlaps (airspace) and does not follow a scrolling
+  ancestor's offset. The app menu's find tokens (`menu_action_find*`) have no WinUI
   default and do nothing. A focused text field keeps the chords it handles
   itself: WinUI's TextBox takes Ctrl+Q, so an app's Ctrl+Q quit does not
   reach the menu from inside one.
@@ -140,7 +142,7 @@ every Facet property is implemented.
   Shadows use rectangular masks on children with a native panel parent;
   root-window shadows and arbitrary shape masks are not mapped.
 
-Initial unsupported trees/adopted views/children under leaf controls return
+Initial unsupported trees/children under leaf controls return
 E_NOTIMPL. Unsupported kinds added later and failed native HRESULTs produce a
 fatal diagnostic. Runtime error recovery is not yet implemented.
 

@@ -11,6 +11,7 @@ import "facet_runtime/runtime" as runtime;
 import "facet/label" as label;
 import "facet/button" as button;
 import "./pad" as pad;
+import "./native_view" as native_view;
 
 struct Settings { context: nav::Context, later: services::Cancellable, pad: pad::Pad }
 
@@ -42,6 +43,7 @@ impl Settings: component::Component {
                            line_break: vocab::LineBreak::WordWrap, max_lines: 0));
         b.add(core::row(actions, key: "settings:actions").gap(8.0f64));
         b.add(this.pad.build());
+        b.add(native_view::node("settings:native").height(40.0f64).shrink(0.0f64));
         var root: core::Node = core::column(b, key: "settings").grow(1.0f64).padding(24.0f64).gap(12.0f64);
         root.set_safe_area(vocab::SafeArea::None);
         return root;

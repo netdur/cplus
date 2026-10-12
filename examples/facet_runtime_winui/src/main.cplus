@@ -54,7 +54,7 @@ fn main() -> i32 {
         min_width: 480.0f64, min_height: 320.0f64, bar: screen::Bar::Blended));
     // A native caption, a fixed size and only a close button.
     app.window("settings", settings::Settings::boxed, chrome: screen::Chrome::new(
-        title: "Settings", width: 460.0f64, height: 420.0f64,
+        title: "Settings", width: 460.0f64, height: 480.0f64,
         min_width: 320.0f64, min_height: 220.0f64,
         maximizable: false, minimizable: false));
     // Blended WITHOUT window_buttons(): the content runs under the caption

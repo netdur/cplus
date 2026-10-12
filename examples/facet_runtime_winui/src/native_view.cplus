@@ -1,0 +1,34 @@
+// An application's own Win32 window inside a facet tree (`adopt_native`), the
+// way a camera preview arrives: made as a parentless popup, adopted, and
+// destroyed by its release. tools/test_facet_runtime_winui.py
+// (run_adopted_view) checks it is placed over its node and released.
+import "stdlib/io" as io;
+import "facet/facet" as core;
+
+extern fn CreateWindowExW(ex: u32, class: *u16, title: *u16, style: u32, x: i32, y: i32, w: i32, h: i32,
+                          parent: *u8, menu: *u8, instance: *u8, param: *u8) -> *u8;
+extern fn DestroyWindow(hwnd: *u8) -> i32;
+extern fn fflush(stream: *u8) -> i32;
+
+fn wide(s: str, out: *u16) {
+    var i: usize = 0;
+    while i < #str_len(s) { *(out + i) = *(#str_ptr(s) + i) as u16; i = i + 1; }
+    *(out + i) = 0;
+}
+// WS_POPUP | WS_CAPTION | WS_VISIBLE: a stand-alone window, as made.
+fn create() -> *u8 {
+    var class: [u16; 16] = [0 as u16; 16];
+    var title: [u16; 32] = [0 as u16; 32];
+    wide("STATIC", #addr_of(class) as *u16);
+    wide("Adopted native view", #addr_of(title) as *u16);
+    return CreateWindowExW(0, #addr_of(class) as *u16, #addr_of(title) as *u16, 0x80000000u32 | 0x00C00000u32 | 0x10000000u32,
+                           0, 0, 200, 60, 0 as *u8, 0 as *u8, 0 as *u8, 0 as *u8);
+}
+fn release(v: *u8) {
+    if v.is_null() { return; }
+    let _d: i32 = DestroyWindow(v);
+    io::println("PROBE native released"); let _f: i32 = fflush(0 as *u8);
+}
+fn node(key: str) -> core::Node {
+    return core::adopt_native(create(), release, key: key);
+}

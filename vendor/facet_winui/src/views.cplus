@@ -48,6 +48,7 @@ import "./divider" as divider;
 import "./agent_hooks" as agent_hooks;
 import "./browser" as browser;
 import "./hybrid" as hybrid;
+import "./adopted" as adopted;
 import "./input" as input;
 import "./pointer" as pointer;
 import "./buttons" as buttons;
@@ -59,6 +60,8 @@ static SUBSCRIPTIONS: i64=0;
 fn live_views() -> i64 { return LIVE; }
 fn live_subscriptions() -> i64 { return SUBSCRIPTIONS+outline::subscriptions()+choices::subscriptions()+editing::subscriptions()+pickers::subscriptions()+media::subscriptions()+items::subscriptions()+actions::subscriptions()+shortcuts::subscriptions()+divider::subscriptions()+presentation::subscriptions()+pointer::subscriptions()+refreshing::subscriptions()+tabs::subscriptions()+paging::subscriptions()+swipe::subscriptions()+window_buttons::subscriptions(); }
 fn supports(n: *core::Node) -> bool {
+    // An application's own window is a leaf `adopted` hosts.
+    if core::view_is_adopted(n) { return core::child_count_of(n)==0; }
     let kind: u32=core::kind_of(n); let count: usize=core::child_count_of(n);
     if kind!=chrome::K_WINDOW_BUTTONS && kind!=props::K_TABS && kind!=props::K_REFRESHABLE && kind!=props::K_TABLE && kind!=props::K_SWIPEABLE && kind!=props::K_CAROUSEL && kind!=core::K_NODE && kind!=props::K_LABEL && kind!=props::K_BUTTON && kind!=props::K_TEXT_FIELD && kind!=props::K_SCROLL && kind!=tree::K_TREE && kind!=split::K_SPLIT && !actions::supports(kind) && !menus::supports(kind) && kind!=props::K_CANVAS && kind!=props::K_BOX && kind!=props::K_BORDERED && !items::supports(kind) && !media::supports(kind) && !pickers::supports(kind) && !editing::supports(kind) && !choices::supports(kind) { return false; }
     if core::view_of(n).is_not_null() || (!menus::supports(kind) && kind!=props::K_TABS && kind!=props::K_REFRESHABLE && kind!=props::K_TABLE && kind!=props::K_SWIPEABLE && kind!=props::K_CAROUSEL && kind!=core::K_NODE && kind!=props::K_SCROLL && kind!=split::K_SPLIT && kind!=props::K_BORDERED && count!=0) { return false; }
@@ -414,11 +417,15 @@ fn release(view: *u8) {
     LIVE=LIVE-1;
     return;
 }
+// A view that is not one of this renderer's records is an application's own
+// window (`adopt_native`), hosted by `adopted`.
+fn is_record(v: *u8) -> bool { return v.is_not_null() && input::live_view(v as *View); }
 fn apply(ctx: *u8, n: *core::Node) {
-    let v: *u8=core::view_of(n); if v.is_not_null() { configure(v as *View,n); }
+    let v: *u8=core::view_of(n); if is_record(v) { configure(v as *View,n); }
     return;
 }
 fn insert(ctx: *u8, host: *u8, child: *u8, index: usize) {
+    if !is_record(child) { adopted::insert(host,(*(host as *View)).node,child); return; }
     (*(child as *View)).parent=host;if (*(child as *View)).kind==props::K_CONTEXT_MENU_ITEM {actions::apply(child as *View);}
     if (*(child as *View)).kind==chrome::K_WINDOW_BUTTONS {window_buttons::watch(child as *View,record::visual(host as *View));}
     if commands::supports((*(child as *View)).kind) {return;}
@@ -441,6 +448,7 @@ fn insert(ctx: *u8, host: *u8, child: *u8, index: usize) {
     return;
 }
 fn remove(ctx: *u8, host: *u8, child: *u8) {
+    if !is_record(child) { adopted::remove(child); return; }
     if (*(host as *View)).kind==props::K_TABS {tabs::remove(host as *View,child as *View);}
     tables::detached(host as *View,child as *View);
     presentation::detach(child as *View);
@@ -467,6 +475,8 @@ fn remove(ctx: *u8, host: *u8, child: *u8) {
 }
 fn place(n: *core::Node, parent: flex::Frame) {
     if actions::flyout_item(core::kind_of(n)) || commands::supports(core::kind_of(n)) {return;}
+    // An adopted window is moved by the host after the pass (`adopted::place`).
+    if core::view_is_adopted(n) {return;}
     let frame: flex::Frame=(*n).frame(); let value: rt::Object=object(core::view_of(n));
     if env::has_var("FACET_WINUI_TRACE") {
         let key: str=(*n).key(); let x: f64=frame.left; let y: f64=frame.top; let w: f64=frame.width; let h: f64=frame.height;
