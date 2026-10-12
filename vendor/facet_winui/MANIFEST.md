@@ -25,7 +25,7 @@ every Facet property is implemented.
 | Decorations | Semantic/theme colors in dark appearance, borders/corners, gradient strokes, DIP dash patterns/phase, caps, joins, miter limits, rounded/per-corner/ellipse stroke outlines, gradients, 2D transforms, frame-synchronized opacity/transform easing, composition rounded/ellipse clips and drop shadows. |
 | Menus and actions | Window command strip with native MenuFlyout launchers and toolbar buttons; context-menu hosts retain visible content. Menus sort by descending priority. Toolbar placement groups Sidebar/Primary/Default/Secondary, then descending priority; ties keep tree order. Secondary commands trail when space permits, and narrow strips wrap. Live text, icons, destructive foreground/reset, inherited visibility/enablement, accessible names, click handlers and safe callback removal. Context-item keyboard shortcuts register before the first menu opening; context actions are scoped. |
 | Other gallery hosts | Circle/square page dots, table document container, swipe actions through drag reveal and native context menu, with image/named icons, destructive foreground/reset, stable interleaved insertion order, and clicked/invoked callbacks. WebView2 source/user-agent updates, history/back/forward, reload, script execution, navigation and process-failure callbacks. |
-| Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. |
+| Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. `run_on_main` from any thread: a worker posts through DispatcherQueue.TryEnqueue, so `services::run_job` runs off the UI thread and applies on it (`tools/test_facet_runtime_winui.py`, `home:load`). After the run ends a hop is dropped. |
 | Window buttons | Three native WinUI buttons drive their own window's AppWindow minimize/maximize/restore and Window.close. Live spacing changes intrinsic size. OnHover watches the containing bar; keyboard/programmatic focus also reveals the group. Maximize glyph and accessible name follow current window state. |
 | Closing | A user close (caption, Alt+F4, outside `WM_CLOSE`, the window buttons) is asked through AppWindow.Closing and can be refused. Through the facade it asks the window's `on_should_close`, and for the last open window also `on_should_quit`. Closes made in code are not asked twice. `tools/test_facet_runtime_winui.py` covers refusal, allowance and a non-last window. |
 | Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close) and `app::set_activate_fn` are installed. |
@@ -41,9 +41,8 @@ every Facet property is implemented.
 - `facet_runtime` defaults to Win32; WinUI is an opt-in (`facet_runtime/winui`).
   Through the facade, the app menu (`App::menu`) is not rendered, density-change
   observation registers nothing, and the clipboard and file pickers are the
-  shared Win32 calls. Jobs/worker-thread dispatch, general gesture/key readers
-  and host focus commands remain separate work. `run_on_main` currently queues
-  only from the UI thread.
+  shared Win32 calls. General gesture/key readers and host focus commands
+  remain separate work.
 - The agent surface (`facet_agent_winui`) serves one window: the first one
   opened, then the next open one after it closes. Sheets on that window are
   visible to it; other windows are not.

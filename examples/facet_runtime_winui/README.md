@@ -19,6 +19,9 @@ manifest lists `facet_winui`, `winui` and `winrt` because of it.
   `alert:primary`, `prompt:value`, `choose:opt:2`, ...), reachable by UI
   Automation and the agent; the answer is shown in `home:answer`.
 
+`Load in background` runs a `services::run_job` whose `run` sleeps on a worker
+thread; its result is applied on the UI thread and shown in `home:loaded`.
+
 Closing the last window ends `app.run`, and the process exits 0.
 
 `tools/test_facet_runtime_winui.py` drives this sample from outside. It sets

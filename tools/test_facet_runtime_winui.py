@@ -164,6 +164,34 @@ def run_alert_window():
     print('PASS: alert window (a deferred alert stays on the window that asked; each window keeps its own)')
 
 
+def run_worker_hop():
+    """A job's worker hands its result back through run_on_main."""
+    log = RUNTIME / 'worker_hop.log'
+    process, output = launch(log, '0')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        main = window('WinUI runtime', process)
+        assert shows(main, 'home:load')
+        # Twice: the press writes "Loading...", so the second answer is a new hop.
+        for round in (1, 2):
+            assert uia('invoke', main, 'home:load') == 'invoked'
+            end = time.time() + 10
+            name = ''
+            while time.time() < end:
+                name = uia('name', main, 'home:loaded')
+                if name.startswith('Loaded'):
+                    break
+                time.sleep(.2)
+            assert name == 'Loaded 42 off the UI thread', f'round {round}: {name!r}\n{read(log)}'
+            assert process.poll() is None, read(log)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: worker hop (run_job runs off the UI thread and applies on it, twice)')
+
+
 if __name__ == '__main__':
     run_close_question()
     run_alert_window()
+    run_worker_hop()

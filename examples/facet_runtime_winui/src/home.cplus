@@ -7,15 +7,48 @@ import "facet/component" as component;
 import "facet/label" as label;
 import "facet/nav" as nav;
 import "facet/screen" as screen;
+import "facet/services" as services;
 import "facet/vocabulary" as vocab;
 import "facet/window_chrome" as window_chrome;
 import "flex_layout/flex_layout" as flex;
 import "facet_runtime/runtime" as runtime;
 
-struct Home { context: nav::Context }
+extern fn Sleep(milliseconds: u32);
+
+// A background job: `run` on a worker thread, `apply` back on the UI thread
+// (services::run_job), the way a real screen loads data.
+struct Loader { value: i64, ran_on_worker: bool, applied_on_ui: bool }
+
+impl Loader: services::Job {
+    fn run(ref this) {
+        Sleep(300);
+        this.value = 42;
+        this.ran_on_worker = !core::on_ui_thread();
+    }
+    fn apply(ref this) { this.applied_on_ui = core::on_ui_thread(); }
+}
+
+struct Home { context: nav::Context, loader: Loader }
 
 impl Home {
-    fn new() -> Home { return Home { context: nav::Context::none() }; }
+    fn new() -> Home {
+        return Home { context: nav::Context::none(),
+                      loader: Loader { value: 0, ran_on_worker: false, applied_on_ui: false } };
+    }
+
+    fn on_load(ref this, sender: *u8) {
+        this.put("home:loaded", "Loading...");
+        let _started: bool = services::run_job(this.loader, then: this.on_loaded);
+    }
+
+    fn on_loaded(ref this) {
+        let v: i64 = this.loader.value;
+        if this.loader.ran_on_worker && this.loader.applied_on_ui && core::on_ui_thread() {
+            this.put("home:loaded", "Loaded ${v} off the UI thread");
+        } else {
+            this.put("home:loaded", "Loaded on the wrong thread");
+        }
+    }
     fn boxed() -> screen::ScreenBox { return screen::screen_box::[Home](Home::new()); }
 
     fn on_open_settings(ref this, sender: *u8) {
@@ -87,10 +120,12 @@ impl Home: component::Component {
                         button("Prompt", key: "home:prompt", on_click: this.on_prompt)
                         button("Choose", key: "home:choose", on_click: this.on_choose)
                         button("About", key: "home:open-about", on_click: this.on_open_about)
+                        button("Load in background", key: "home:load", on_click: this.on_load)
                     }
                         .gap(8.0f64)
                     label("No answer yet", key: "home:answer", font_size: 13.0f64)
                     label("Nothing typed", key: "home:typed", font_size: 13.0f64)
+                    label("Nothing loaded", key: "home:loaded", font_size: 13.0f64)
                 }
                     .grow(1.0f64)
                     .padding(24.0f64)

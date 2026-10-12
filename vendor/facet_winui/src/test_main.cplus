@@ -13,6 +13,7 @@ import "facet/window_chrome" as chrome;
 import "facet/label" as label;
 import "./facet_winui" as host;
 import "./dialogs" as dialogs;
+import "./scheduler" as scheduler;
 
 fn tm_noop(ctx: *u8) { return; }
 
@@ -132,5 +133,18 @@ fn a_window_that_is_not_open_never_answers_who_asked() {
     assert host::capture_origin().is_null();
     assert host::asking_host().is_null();
     let _o: *u8 = host::enter_origin(outer);
+    return;
+}
+
+static TM_HOPPED: i32 = 0;
+fn tm_hop(ctx: *u8) { TM_HOPPED = TM_HOPPED + 1; }
+
+#[test]
+fn a_hop_with_no_dispatcher_is_dropped_not_run() {
+    // NEGATIVE: before any run has published a queue, a worker's hop is
+    // refused and its work never runs on the caller's thread.
+    TM_HOPPED = 0;
+    assert !scheduler::post(tm_hop, 0 as *u8);
+    assert TM_HOPPED == 0;
     return;
 }
