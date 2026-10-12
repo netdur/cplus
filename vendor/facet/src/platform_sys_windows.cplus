@@ -33,3 +33,5 @@ fn ui_thread_id() -> u64 { return { GetCurrentThreadId() } as u64; }
 fn yield_once() { let _r: i32 = { SwitchToThread() }; return; }
 
 fn prepare_worker_pipe(fd: i32) -> i32 { return 0; }
+// Windows pipes raise no SIGPIPE, so there is no policy to read back.
+fn worker_pipe_skips_sigpipe(fd: i32) -> bool { return true; }

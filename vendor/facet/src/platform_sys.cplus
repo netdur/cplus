@@ -50,3 +50,10 @@ fn prepare_worker_pipe(fd: i32) -> i32 {
     }
     return 0;
 }
+
+// The read-back of that policy, for the test that checks it was set. Here,
+// not in `services`: a `fcntl` declared there is a symbol every Windows build
+// of facet's tests has to resolve, and Windows has none.
+fn worker_pipe_skips_sigpipe(fd: i32) -> bool {
+    return { fcntl_worker(fd, 74, 0) } == 1; // F_GETNOSIGPIPE
+}
