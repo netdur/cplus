@@ -1,0 +1,77 @@
+// A gesture pad: a plain container with the whole gesture band, focus and
+// blur handlers, and a log label. tools/test_facet_runtime_winui.py drives it
+// with the real mouse and keyboard and reads `settings:pad-log` back.
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/gestures" as gestures;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+
+struct Pad { clicks: i64 }
+
+impl Pad {
+    fn new() -> Pad { return Pad { clicks: 0 }; }
+
+    fn log(ref this, line: str) {
+        match label::find("settings:pad-log") {
+            option::Option[label::Label]::Some(l) => { l.set_text(line); }
+            option::Option[label::Label]::None => { }
+        }
+    }
+    fn pad(ref this) -> *core::Node {
+        match mount::find_node("settings:pad") {
+            option::Option[*core::Node]::Some(n) => { return n; }
+            option::Option[*core::Node]::None => { return 0 as *core::Node; }
+        }
+    }
+
+    fn on_click(ref this, sender: *u8) -> bool { this.clicks = this.clicks + 1; let n: i64 = this.clicks; this.log("click ${n}"); return true; }
+    fn on_double(ref this, sender: *u8) -> bool { this.log("double"); return true; }
+    fn on_right(ref this, sender: *u8) -> bool { this.log("right"); return true; }
+    fn on_hover(ref this, sender: *u8) -> bool { this.log("hover"); return true; }
+    fn on_unhover(ref this, sender: *u8) -> bool { this.log("unhover"); return true; }
+    fn on_long(ref this, sender: *u8) -> bool { this.log("long"); return true; }
+    fn on_swipe(ref this, sender: *u8) -> bool { this.log("swipe"); return true; }
+    fn on_key(ref this, event: *u8) -> bool {
+        if gestures::key_named(event) == gestures::key_escape() { this.log("key escape"); return true; }
+        return false;
+    }
+    fn on_focus(ref this, sender: *u8) {
+        let n = this.pad();
+        let focused: bool = n.is_not_null() && core::is_focused(n);
+        this.log("focus ${focused}");
+    }
+    fn on_blur(ref this, sender: *u8) {
+        let n = this.pad();
+        let focused: bool = n.is_not_null() && core::is_focused(n);
+        this.log("blur ${focused}");
+    }
+    fn focus_pad(ref this, sender: *u8) { let n = this.pad(); if n.is_not_null() { core::focus(n); } }
+    fn blur_pad(ref this, sender: *u8) { let n = this.pad(); if n.is_not_null() { core::blur(n); } }
+
+    fn build(ref this) -> core::Node {
+        var inner: core::Builder = core::Builder::new();
+        inner.add(label::label("Gesture pad", key: "settings:pad-title"));
+        var pad: core::Node = core::column(inner, key: "settings:pad")
+            .height(70.0f64).padding(8.0f64)
+            .gesture(on_click: this.on_click, on_double_click: this.on_double,
+                     on_right_click: this.on_right, on_hover: this.on_hover,
+                     on_unhover: this.on_unhover, on_long_press: this.on_long,
+                     on_swipe: this.on_swipe, on_key: this.on_key,
+                     long_press_seconds: 0.6f64, swipe_threshold: 100.0f64);
+        pad.on_focus(this.on_focus);
+        pad.on_blur(this.on_blur);
+        var buttons: core::Builder = core::Builder::new();
+        buttons.add(button::button("Focus pad", key: "settings:focus-pad", on_click: this.focus_pad));
+        buttons.add(button::button("Blur pad", key: "settings:blur-pad", on_click: this.blur_pad));
+        var b: core::Builder = core::Builder::new();
+        b.add(pad);
+        b.add(core::row(buttons, key: "settings:pad-buttons").gap(8.0f64));
+        b.add(label::label("Nothing yet", key: "settings:pad-log"));
+        return core::column(b, key: "settings:pad-area").gap(6.0f64);
+    }
+}

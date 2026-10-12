@@ -15,6 +15,8 @@ import "./facet_winui" as host;
 import "./dialogs" as dialogs;
 import "./scheduler" as scheduler;
 import "./app_menu" as app_menu;
+import "./input" as input;
+import "facet/gestures" as gestures;
 import "./shortcuts" as shortcuts;
 import "winui/winui" as ui;
 
@@ -225,5 +227,48 @@ fn an_app_with_no_menu_gets_no_bar() {
     assert app_menu::build(0 as *u8).is_null();
     app_menu::uninstall();
     assert !app_menu::has_items();
+    return;
+}
+
+fn tm_take(sender: *u8, ctx: *u8) -> bool { return true; }
+
+#[test]
+fn a_gesture_set_arms_only_the_bands_it_names() {
+    var g: gestures::Gestures = gestures::Gestures::new();
+    assert input::bands_for(#addr_of(g)) == (0 as u32);
+    g.on_click = tm_take;
+    let click: u32 = input::bands_for(#addr_of(g));
+    // A click needs Tapped, and DoubleTapped for the second tap of a pair.
+    assert click == (input::B_TAPPED | input::B_DOUBLE);
+    g.on_pan = tm_take;
+    let pan: u32 = input::bands_for(#addr_of(g));
+    assert (pan & input::B_PRESSED) != (0 as u32) && (pan & input::B_MOVED) != (0 as u32) && (pan & input::B_RELEASED) != (0 as u32);
+    assert (pan & input::B_KEY) == (0 as u32);
+    g.on_key = tm_take;
+    assert (input::bands_for(#addr_of(g)) & input::B_KEY) != (0 as u32);
+    assert input::bands_for(0 as *gestures::Gestures) == (0 as u32);
+    return;
+}
+
+#[test]
+fn a_swipe_is_distance_and_a_pan_starts_past_the_slop() {
+    assert input::is_swipe(120.0f64, 0.0f64, 100.0f64);
+    assert !input::is_swipe(60.0f64, 60.0f64, 100.0f64);
+    // NEGATIVE: an unset threshold is the default 100, not zero.
+    assert !input::is_swipe(10.0f64, 0.0f64, 0.0f64);
+    assert !input::beyond_slop(2.0f64, 2.0f64);
+    assert input::beyond_slop(5.0f64, 0.0f64);
+    return;
+}
+
+#[test]
+fn virtual_keys_have_facets_names() {
+    assert input::named_key(27 as i64) == gestures::key_escape();
+    assert input::named_key(13 as i64) == gestures::key_return();
+    assert input::named_key(8 as i64) == gestures::key_delete();
+    assert input::named_key(46 as i64) == gestures::key_forward_delete();
+    assert input::named_key(40 as i64) == gestures::key_arrow_down();
+    // A printable key has no name; key_code carries it.
+    assert input::named_key(65 as i64) == gestures::key_none();
     return;
 }

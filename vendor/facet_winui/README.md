@@ -48,7 +48,8 @@ These test real pointer/keyboard/wheel input, text readback and programmatic
 updates, length limits and read-only fields, scrolling, resize, control
 replacement during its callback, and cleanup. `facet_runtime` still
 defaults to Win32 on Windows; an app opts into this backend with
-`facet_runtime/winui`; `App::menu` is a MenuBar in every window
+`facet_runtime/winui`; `.gesture(...)` works on any node, `focus()`/`blur()`
+move the keyboard and `is_focused` reads back; `App::menu` is a MenuBar in every window
 ([MANIFEST](MANIFEST.md)).
 
 The parity probe checks UTF-16 selection and selection-only events, Enter and

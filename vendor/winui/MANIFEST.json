@@ -156,7 +156,11 @@
     "Microsoft.UI.Xaml.Controls.MenuBar",
     "Microsoft.UI.Xaml.Controls.MenuBarItem",
     "Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator",
-    "Microsoft.UI.Xaml.Input.FocusManagerGotFocusEventArgs"
+    "Microsoft.UI.Xaml.Input.FocusManagerGotFocusEventArgs",
+    "Microsoft.UI.Xaml.Input.FocusManagerLostFocusEventArgs",
+    "Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs",
+    "Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs",
+    "Microsoft.UI.Xaml.Input.HoldingRoutedEventArgs"
   ],
   "sources": [
     {
@@ -2781,6 +2785,12 @@
       "metadata": "Microsoft.UI.IconId",
       "methods": [],
       "name": "IconId"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Input.HoldingState",
+      "methods": [],
+      "name": "HoldingState"
     },
     {
       "iid": "0d430ee6-252c-59a4-b2a2-d44264dc6a40",
@@ -31904,6 +31914,38 @@
       "name": "DoubleTappedEventHandler"
     },
     {
+      "iid": "32b9549d-11d8-53a5-a953-02409537a11f",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "DoubleTappedRoutedEventArgs"
+    },
+    {
       "iid": "7f88e76b-7417-5447-aed4-2fabd291bdc6",
       "kind": "Class",
       "metadata": "Microsoft.UI.Xaml.Input.FindNextElementOptions",
@@ -31987,6 +32029,26 @@
       "name": "FocusManagerGotFocusEventArgs"
     },
     {
+      "iid": "fdaf2c3f-a22e-5902-abce-b60758fbed1e",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.FocusManagerLostFocusEventArgs",
+      "methods": [
+        {
+          "name": "get_OldFocusedElement",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_CorrelationId",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "FocusManagerLostFocusEventArgs"
+    },
+    {
       "kind": "Enum",
       "metadata": "Microsoft.UI.Xaml.Input.FocusNavigationDirection",
       "methods": [],
@@ -32006,6 +32068,76 @@
         }
       ],
       "name": "HoldingEventHandler"
+    },
+    {
+      "iid": "8272a4b2-2221-551e-b0bb-16e29138ab20",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.HoldingRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_HoldingState",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        }
+      ],
+      "name": "HoldingRoutedEventArgs"
+    },
+    {
+      "iid": "32b9549d-11d8-53a5-a953-02409537a11f",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IDoubleTappedRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "IDoubleTappedRoutedEventArgs"
     },
     {
       "iid": "7f88e76b-7417-5447-aed4-2fabd291bdc6",
@@ -32089,6 +32221,26 @@
         }
       ],
       "name": "IFocusManagerGotFocusEventArgs"
+    },
+    {
+      "iid": "fdaf2c3f-a22e-5902-abce-b60758fbed1e",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IFocusManagerLostFocusEventArgs",
+      "methods": [
+        {
+          "name": "get_OldFocusedElement",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_CorrelationId",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IFocusManagerLostFocusEventArgs"
     },
     {
       "iid": "e73dce04-e23a-5fb3-96ab-7df04c51dff2",
@@ -32223,6 +32375,44 @@
         }
       ],
       "name": "IFocusManagerStatics"
+    },
+    {
+      "iid": "8272a4b2-2221-551e-b0bb-16e29138ab20",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IHoldingRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_HoldingState",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        }
+      ],
+      "name": "IHoldingRoutedEventArgs"
     },
     {
       "iid": "76ea58b1-e910-5176-9147-695cc95e7da2",
@@ -32511,6 +32701,38 @@
         }
       ],
       "name": "IPointerRoutedEventArgs"
+    },
+    {
+      "iid": "3972fafb-2915-5c62-bb6b-54ad84ff400d",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IRightTappedRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "IRightTappedRoutedEventArgs"
     },
     {
       "iid": "73f74b8c-3709-547e-8e0c-51c03c89126a",
@@ -32921,6 +33143,38 @@
         }
       ],
       "name": "RightTappedEventHandler"
+    },
+    {
+      "iid": "3972fafb-2915-5c62-bb6b-54ad84ff400d",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "RightTappedRoutedEventArgs"
     },
     {
       "callback": "emitted",

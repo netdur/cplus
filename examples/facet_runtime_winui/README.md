@@ -27,6 +27,11 @@ while Settings is open) - shown as a MenuBar in every window.
 (`facet_agent_winui`); one connection reaches both windows, as `main` and
 `settings`.
 
+Settings carries a gesture pad: a plain container with click, double click,
+right click, hover, long press, swipe and Escape handlers, focus/blur
+handlers, and `Focus pad` / `Blur pad` buttons; `settings:pad-log` says what
+it last heard.
+
 `Load in background` runs a `services::run_job` whose `run` sleeps on a worker
 thread; its result is applied on the UI thread and shown in `home:loaded`.
 

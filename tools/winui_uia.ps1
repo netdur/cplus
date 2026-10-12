@@ -6,11 +6,15 @@
 #   enabled <hwnd> <id>   prints True or False
 #   expand  <hwnd> <id>   opens it (ExpandCollapse pattern: a menu)
 #   focus   <hwnd> <id>   gives it the keyboard, which brings its window to the front
+#   rect    <hwnd> <id>   prints its bounds in physical screen pixels: x y width height
 # An open menu's items are in a popup, so an id starting `menu:` that is not
 # under the window is also looked for in the process's other top-level windows.
 # Run with: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/winui_uia.ps1 ...
 param([string]$Action, [long]$WindowHandle, [string]$Id)
 $ErrorActionPreference = 'Stop'
+# Physical pixels, the same space the test's cursor moves in.
+Add-Type -Namespace Win32 -Name Dpi -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr value);'
+$null = [Win32.Dpi]::SetProcessDpiAwarenessContext([IntPtr]-4)
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 $AE = [System.Windows.Automation.AutomationElement]
@@ -33,6 +37,7 @@ switch ($Action) {
     'value' { $found.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value }
     'enabled' { [string]$found.Current.IsEnabled }
     'expand' { $found.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand(); 'expanded' }
+    'rect' { $r = $found.Current.BoundingRectangle; "$([int]$r.X) $([int]$r.Y) $([int]$r.Width) $([int]$r.Height)" }
     'focus' { $found.SetFocus(); 'focused' }
     default { throw "Unknown action '$Action'" }
 }

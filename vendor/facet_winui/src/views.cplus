@@ -48,6 +48,7 @@ import "./divider" as divider;
 import "./agent_hooks" as agent_hooks;
 import "./browser" as browser;
 import "./hybrid" as hybrid;
+import "./input" as input;
 import "./pointer" as pointer;
 import "./buttons" as buttons;
 import "./refreshing" as refreshing;
@@ -289,6 +290,7 @@ fn configure(record: *View, n: *core::Node) {
     if editing::supports((*record).kind) { editing::apply(record); }
     if (*record).kind==props::K_SCROLL { configure_scroll(record,n); }
     if (*record).kind==props::K_LABEL || (*record).kind==props::K_BUTTON || (*record).kind==props::K_TEXT_FIELD { (*n).mark_content_changed(); }
+    input::apply(record,n);
     return;
 }
 fn create(ctx: *u8, n: *core::Node) -> *u8 {
@@ -312,7 +314,7 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     else if kind==tree::K_TREE { let v: ui::TreeView=native::must::[ui::TreeView](ui::TreeView::new()); value=v.object(); }
     else if kind==props::K_TABS || kind==props::K_TABLE || kind==props::K_CONTEXT_MENU || kind==props::K_SWIPEABLE || kind==core::K_NODE || kind==split::K_SPLIT || kind==props::K_BOX || kind==props::K_BORDERED { let v: ui::Border=native::must::[ui::Border](ui::Border::new()); value=v.object(); }
     else { io::eprintln("facet_winui unsupported node kind ${kind}"); assert false; return 0 as *u8; }
-    let record: box::Box[View]=match box::new::[View](View {object:value,wrapper:rt::Object::empty(),refresh:0 as *u8,reorder:0 as *u8,content:rt::Object::empty(),slot:rt::Object::empty(),slot_kind:0,click_attached:false,button_toggles:false,editor_secure:editing::secure(n),pending_focus:0,node:n,kind:kind,token:#zero::[ui::EventRegistrationToken](),token2:#zero::[ui::EventRegistrationToken](),token3:#zero::[ui::EventRegistrationToken](),token4:#zero::[ui::EventRegistrationToken](),measure_token:#zero::[ui::EventRegistrationToken](),measure_subscribed:false,subscribed:false,applying:false,scroll_pending:false,draw_pending:true,draw_width:0.0f64,draw_height:0.0f64,extra:0 as *u8,table_height:0 as *u8,table_gap:0 as *u8,shortcut:0 as *u8,presentation:0 as *u8,parent:0 as *u8,item_reader:0 as fn(*u8)->*u8,item_context:0 as *u8}) {
+    let record: box::Box[View]=match box::new::[View](View {object:value,wrapper:rt::Object::empty(),refresh:0 as *u8,reorder:0 as *u8,content:rt::Object::empty(),slot:rt::Object::empty(),slot_kind:0,click_attached:false,button_toggles:false,editor_secure:editing::secure(n),pending_focus:0,node:n,kind:kind,token:#zero::[ui::EventRegistrationToken](),token2:#zero::[ui::EventRegistrationToken](),token3:#zero::[ui::EventRegistrationToken](),token4:#zero::[ui::EventRegistrationToken](),measure_token:#zero::[ui::EventRegistrationToken](),measure_subscribed:false,subscribed:false,applying:false,scroll_pending:false,draw_pending:true,draw_width:0.0f64,draw_height:0.0f64,extra:0 as *u8,table_height:0 as *u8,table_gap:0 as *u8,shortcut:0 as *u8,input:0 as *u8,presentation:0 as *u8,parent:0 as *u8,item_reader:0 as fn(*u8)->*u8,item_context:0 as *u8}) {
         option::Option::Some(v)=>{v}, option::Option::None=>{assert false; return 0 as *u8;}
     };
     let p: *View=record.ptr();
@@ -346,6 +348,7 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     if kind==split::K_SPLIT {divider::attach(p);}
     if kind==props::K_WEB {browser::attach(p);}
     if kind==props::K_HYBRID_WEB {hybrid::attach(p);}
+    input::attach(p);
     configure(p,n);
     if pointer::supports(kind) {pointer::attach(p);}
     if media::supports(kind) {media::attach(p);}
@@ -378,6 +381,7 @@ fn release(view: *u8) {
     tables::restore(p);tables::restore_gap(p);
     if commands::supports((*p).kind) {commands::detach(p);}
     scheduler::forget((*p).node);
+    input::release(p);
     if (*p).measure_subscribed {let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*p).object));native::check(element.remove_loaded((*p).measure_token));(*p).measure_subscribed=false;SUBSCRIPTIONS=SUBSCRIPTIONS-1;}
     if pointer::supports((*p).kind) {pointer::release(p);}
     presentation::release(p);

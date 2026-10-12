@@ -24,6 +24,8 @@ u.SetWindowPos.argtypes = [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w
 u.GetWindowThreadProcessId.argtypes = [w.HWND, c.POINTER(w.DWORD)]
 WM_CLOSE = 0x0010
 UIA = REPO / 'tools/winui_uia.ps1'
+# Physical pixels, as winui_uia.ps1's `rect` answers, for the cursor.
+u.SetProcessDpiAwarenessContext(c.c_void_p(-4))
 
 
 def uia(action, hwnd, key):
@@ -419,6 +421,79 @@ def run_agent_windows():
     print('PASS: agent windows (every window on one connection, named as registered; a closed one leaves)')
 
 
+def run_gestures():
+    """The gesture band on a plain container, driven by the real mouse and
+    keyboard: hover, click, double click, right click, long press, swipe,
+    unhover, the key band, and the focus and blur commands with their
+    handlers and is_focused."""
+    log = RUNTIME / 'gestures.log'
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        # A container has no automation peer: find the pad by its title label
+        # and aim at the empty space under it, which only a hit-testable
+        # container answers.
+        assert shows(settings, 'settings:pad-title')
+        activate(settings, 'settings:focus-pad')
+        scale = u.GetDpiForWindow(settings) / 96
+        tx, ty, tw, th = (int(v) for v in uia('rect', settings, 'settings:pad-title').split())
+        x, y = tx - round(8 * scale), ty - round(8 * scale)
+        width, height = round(300 * scale), round(70 * scale)
+        cx, cy = x + width // 2, ty + th + round(14 * scale)
+
+        def says(expected, seconds=5):
+            assert wait_until(lambda: uia('name', settings, 'settings:pad-log') == expected, seconds),                 (expected, uia('name', settings, 'settings:pad-log'))
+
+        def mouse(flags):
+            u.mouse_event(flags, 0, 0, 0, 0)
+
+        def move_to(px, py):
+            # Through the input queue, as tools/test_facet_winui_pointer.py
+            # does: SetCursorPos does not always reach it (remote sessions).
+            u.mouse_event(0x8001, round(px * 65535 / (u.GetSystemMetrics(0) - 1)),
+                          round(py * 65535 / (u.GetSystemMetrics(1) - 1)), 0, 0)
+            time.sleep(.03)
+
+        move_to(cx, cy)
+        says('hover')
+        mouse(2); mouse(4)                               # left click
+        says('click 1')
+        time.sleep(.6)                                   # past the double-click time
+        mouse(2); mouse(4); time.sleep(.05); mouse(2); mouse(4)
+        says('double')
+        mouse(8); mouse(16)                              # right click
+        says('right')
+        mouse(2); time.sleep(1.0); mouse(4)              # held past long_press_seconds
+        says('long')
+        time.sleep(.6)
+        assert uia('name', settings, 'settings:pad-log') == 'long', 'a long press also clicked'
+        move_to(x + 20, cy)                       # a drag across the pad
+        mouse(2)
+        for step in range(1, 13):
+            move_to(x + 20 + step * 15, cy); time.sleep(.02)
+        mouse(4)
+        says('swipe')
+        time.sleep(.6)
+        assert uia('name', settings, 'settings:pad-log') == 'swipe', 'a swipe also clicked'
+        move_to(x + width // 2, y - 40)           # out of the pad
+        says('unhover')
+
+        # The focus command takes the keyboard; the node reports it.
+        assert uia('invoke', settings, 'settings:focus-pad') == 'invoked'
+        says('focus true')
+        chord(0x1B)                                      # Escape, to the focused pad
+        says('key escape')
+        assert uia('invoke', settings, 'settings:blur-pad') == 'invoked'
+        says('blur false')
+        assert process.poll() is None, read(log)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: gestures (hover, click, double, right, long press, swipe, unhover, key band, focus/blur)')
+
+
 if __name__ == '__main__':
     run_close_question()
     run_alert_window()
@@ -426,3 +501,4 @@ if __name__ == '__main__':
     run_density()
     run_app_menu()
     run_agent_windows()
+    run_gestures()

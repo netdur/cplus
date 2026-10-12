@@ -4169,6 +4169,11 @@ struct IconId {
 }
 const icon_id_size: usize = 8;
 const icon_id_alignment: usize = 8;
+// Microsoft.UI.Input.HoldingState
+type HoldingState = i32;
+const holding_state_started: HoldingState = 0 as i32;
+const holding_state_completed: HoldingState = 1 as i32;
+const holding_state_canceled: HoldingState = 2 as i32;
 // Microsoft.UI.Input.IPointerPoint
 const i_pointer_point_get_frame_id_slot: usize = 6;
 const i_pointer_point_get_is_in_contact_slot: usize = 7;
@@ -50043,6 +50048,61 @@ impl DoubleTappedEventHandler {
     }
 }
 
+// Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs
+fn double_tapped_routed_event_args_iid() -> rt::Guid { return rt::Guid { a: 851006621u32, b: 4568 as u16, c: 21413 as u16, d: [169 as u8, 83 as u8, 2 as u8, 64 as u8, 149 as u8, 55 as u8, 161 as u8, 31 as u8] }; }
+struct DoubleTappedRoutedEventArgs { _object: rt::Object }
+impl DoubleTappedRoutedEventArgs {
+    fn query(value: rt::Object) -> result::Result[DoubleTappedRoutedEventArgs, rt::Error] {
+        match value.query(double_tapped_routed_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[DoubleTappedRoutedEventArgs, rt::Error]::Ok(DoubleTappedRoutedEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[DoubleTappedRoutedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> DoubleTappedRoutedEventArgs { return DoubleTappedRoutedEventArgs { _object: this._object.clone() }; }
+    fn new() -> result::Result[DoubleTappedRoutedEventArgs, rt::Error] {
+        match rt::activate("Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs") {
+            result::Result::Ok(o) => { return DoubleTappedRoutedEventArgs::query(o); }
+            result::Result::Err(e) => { return result::Result[DoubleTappedRoutedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    // ABI slot 6: get_PointerDeviceType
+    fn pointer_device_type(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: get_Handled
+    fn handled(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: put_Handled
+    fn set_handled(this, value_0: bool) -> rt::Status {
+        let call: fn(*u8, bool) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, bool) -> i32;
+        let hr: i32 = call(this._object.raw(), value_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 9: GetPosition
+    fn get_position(this, relative_to_0: rt::Object) -> result::Result[Point, rt::Error] {
+        let q_0: rt::Object = match relative_to_0.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[Point, rt::Error]::Err(e); } };
+        var returned: Point = #zero::[Point]();
+        let call: fn(*u8, *u8, *Point) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, *u8, *Point) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Point, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Point, rt::Error]::Ok(returned);
+
+    }
+}
+
 // Microsoft.UI.Xaml.Input.FindNextElementOptions
 fn find_next_element_options_iid() -> rt::Guid { return rt::Guid { a: 2139678571u32, b: 29719 as u16, c: 21575 as u16, d: [174 as u8, 212 as u8, 47 as u8, 171 as u8, 210 as u8, 145 as u8, 189 as u8, 198 as u8] }; }
 struct FindNextElementOptions { _object: rt::Object }
@@ -50185,6 +50245,39 @@ impl FocusManagerGotFocusEventArgs {
     }
 }
 
+// Microsoft.UI.Xaml.Input.FocusManagerLostFocusEventArgs
+fn focus_manager_lost_focus_event_args_iid() -> rt::Guid { return rt::Guid { a: 4256115775u32, b: 41518 as u16, c: 22786 as u16, d: [171 as u8, 206 as u8, 182 as u8, 7 as u8, 88 as u8, 251 as u8, 237 as u8, 30 as u8] }; }
+struct FocusManagerLostFocusEventArgs { _object: rt::Object }
+impl FocusManagerLostFocusEventArgs {
+    fn query(value: rt::Object) -> result::Result[FocusManagerLostFocusEventArgs, rt::Error] {
+        match value.query(focus_manager_lost_focus_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[FocusManagerLostFocusEventArgs, rt::Error]::Ok(FocusManagerLostFocusEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[FocusManagerLostFocusEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> FocusManagerLostFocusEventArgs { return FocusManagerLostFocusEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_OldFocusedElement
+    fn old_focused_element(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_CorrelationId
+    fn correlation_id(this) -> result::Result[rt::Guid, rt::Error] {
+        var returned: rt::Guid = #zero::[rt::Guid]();
+        let call: fn(*u8, *rt::Guid) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *rt::Guid) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Guid, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Guid, rt::Error]::Ok(returned);
+
+    }
+}
+
 // Microsoft.UI.Xaml.Input.FocusNavigationDirection
 type FocusNavigationDirection = i32;
 const focus_navigation_direction_next: FocusNavigationDirection = 0 as i32;
@@ -50231,6 +50324,123 @@ impl HoldingEventHandler {
         let call: fn(*u8, *u8, *u8) -> i32 = rt::slot(this._object.raw(), 3) as fn(*u8, *u8, *u8) -> i32;
         let hr: i32 = call(this._object.raw(), sender_0.raw(), q_1.raw());
         return rt::Status { code: hr };
+    }
+}
+
+// Microsoft.UI.Xaml.Input.HoldingRoutedEventArgs
+fn holding_routed_event_args_iid() -> rt::Guid { return rt::Guid { a: 2188551346u32, b: 8737 as u16, c: 21790 as u16, d: [176 as u8, 187 as u8, 22 as u8, 226 as u8, 145 as u8, 56 as u8, 171 as u8, 32 as u8] }; }
+struct HoldingRoutedEventArgs { _object: rt::Object }
+impl HoldingRoutedEventArgs {
+    fn query(value: rt::Object) -> result::Result[HoldingRoutedEventArgs, rt::Error] {
+        match value.query(holding_routed_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[HoldingRoutedEventArgs, rt::Error]::Ok(HoldingRoutedEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[HoldingRoutedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> HoldingRoutedEventArgs { return HoldingRoutedEventArgs { _object: this._object.clone() }; }
+    fn new() -> result::Result[HoldingRoutedEventArgs, rt::Error] {
+        match rt::activate("Microsoft.UI.Xaml.Input.HoldingRoutedEventArgs") {
+            result::Result::Ok(o) => { return HoldingRoutedEventArgs::query(o); }
+            result::Result::Err(e) => { return result::Result[HoldingRoutedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    // ABI slot 6: get_PointerDeviceType
+    fn pointer_device_type(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: get_HoldingState
+    fn holding_state(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: get_Handled
+    fn handled(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 9: put_Handled
+    fn set_handled(this, value_0: bool) -> rt::Status {
+        let call: fn(*u8, bool) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, bool) -> i32;
+        let hr: i32 = call(this._object.raw(), value_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 10: GetPosition
+    fn get_position(this, relative_to_0: rt::Object) -> result::Result[Point, rt::Error] {
+        let q_0: rt::Object = match relative_to_0.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[Point, rt::Error]::Err(e); } };
+        var returned: Point = #zero::[Point]();
+        let call: fn(*u8, *u8, *Point) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, *u8, *Point) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Point, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Point, rt::Error]::Ok(returned);
+
+    }
+}
+
+// Microsoft.UI.Xaml.Input.IDoubleTappedRoutedEventArgs
+const i_double_tapped_routed_event_args_get_pointer_device_type_slot: usize = 6;
+const i_double_tapped_routed_event_args_get_handled_slot: usize = 7;
+const i_double_tapped_routed_event_args_put_handled_slot: usize = 8;
+const i_double_tapped_routed_event_args_get_position_slot: usize = 9;
+fn i_double_tapped_routed_event_args_iid() -> rt::Guid { return rt::Guid { a: 851006621u32, b: 4568 as u16, c: 21413 as u16, d: [169 as u8, 83 as u8, 2 as u8, 64 as u8, 149 as u8, 55 as u8, 161 as u8, 31 as u8] }; }
+struct IDoubleTappedRoutedEventArgs { _object: rt::Object }
+impl IDoubleTappedRoutedEventArgs {
+    fn query(value: rt::Object) -> result::Result[IDoubleTappedRoutedEventArgs, rt::Error] {
+        match value.query(i_double_tapped_routed_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[IDoubleTappedRoutedEventArgs, rt::Error]::Ok(IDoubleTappedRoutedEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IDoubleTappedRoutedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IDoubleTappedRoutedEventArgs { return IDoubleTappedRoutedEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_PointerDeviceType
+    fn pointer_device_type(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: get_Handled
+    fn handled(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: put_Handled
+    fn set_handled(this, value_0: bool) -> rt::Status {
+        let call: fn(*u8, bool) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, bool) -> i32;
+        let hr: i32 = call(this._object.raw(), value_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 9: GetPosition
+    fn get_position(this, relative_to_0: rt::Object) -> result::Result[Point, rt::Error] {
+        let q_0: rt::Object = match relative_to_0.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[Point, rt::Error]::Err(e); } };
+        var returned: Point = #zero::[Point]();
+        let call: fn(*u8, *u8, *Point) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, *u8, *Point) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Point, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Point, rt::Error]::Ok(returned);
+
     }
 }
 
@@ -50356,6 +50566,41 @@ impl IFocusManagerGotFocusEventArgs {
     fn clone(this) -> IFocusManagerGotFocusEventArgs { return IFocusManagerGotFocusEventArgs { _object: this._object.clone() }; }
     // ABI slot 6: get_NewFocusedElement
     fn new_focused_element(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_CorrelationId
+    fn correlation_id(this) -> result::Result[rt::Guid, rt::Error] {
+        var returned: rt::Guid = #zero::[rt::Guid]();
+        let call: fn(*u8, *rt::Guid) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *rt::Guid) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Guid, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Guid, rt::Error]::Ok(returned);
+
+    }
+}
+
+// Microsoft.UI.Xaml.Input.IFocusManagerLostFocusEventArgs
+const i_focus_manager_lost_focus_event_args_get_old_focused_element_slot: usize = 6;
+const i_focus_manager_lost_focus_event_args_get_correlation_id_slot: usize = 7;
+fn i_focus_manager_lost_focus_event_args_iid() -> rt::Guid { return rt::Guid { a: 4256115775u32, b: 41518 as u16, c: 22786 as u16, d: [171 as u8, 206 as u8, 182 as u8, 7 as u8, 88 as u8, 251 as u8, 237 as u8, 30 as u8] }; }
+struct IFocusManagerLostFocusEventArgs { _object: rt::Object }
+impl IFocusManagerLostFocusEventArgs {
+    fn query(value: rt::Object) -> result::Result[IFocusManagerLostFocusEventArgs, rt::Error] {
+        match value.query(i_focus_manager_lost_focus_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[IFocusManagerLostFocusEventArgs, rt::Error]::Ok(IFocusManagerLostFocusEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IFocusManagerLostFocusEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IFocusManagerLostFocusEventArgs { return IFocusManagerLostFocusEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_OldFocusedElement
+    fn old_focused_element(this) -> result::Result[rt::Object, rt::Error] {
         var returned: usize = 0;
         let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
         let hr: i32 = call(this._object.raw(), #addr_of(returned));
@@ -50601,6 +50846,69 @@ impl IFocusManagerStatics {
         let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
         if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
         return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Input.IHoldingRoutedEventArgs
+const i_holding_routed_event_args_get_pointer_device_type_slot: usize = 6;
+const i_holding_routed_event_args_get_holding_state_slot: usize = 7;
+const i_holding_routed_event_args_get_handled_slot: usize = 8;
+const i_holding_routed_event_args_put_handled_slot: usize = 9;
+const i_holding_routed_event_args_get_position_slot: usize = 10;
+fn i_holding_routed_event_args_iid() -> rt::Guid { return rt::Guid { a: 2188551346u32, b: 8737 as u16, c: 21790 as u16, d: [176 as u8, 187 as u8, 22 as u8, 226 as u8, 145 as u8, 56 as u8, 171 as u8, 32 as u8] }; }
+struct IHoldingRoutedEventArgs { _object: rt::Object }
+impl IHoldingRoutedEventArgs {
+    fn query(value: rt::Object) -> result::Result[IHoldingRoutedEventArgs, rt::Error] {
+        match value.query(i_holding_routed_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[IHoldingRoutedEventArgs, rt::Error]::Ok(IHoldingRoutedEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IHoldingRoutedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IHoldingRoutedEventArgs { return IHoldingRoutedEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_PointerDeviceType
+    fn pointer_device_type(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: get_HoldingState
+    fn holding_state(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: get_Handled
+    fn handled(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 9: put_Handled
+    fn set_handled(this, value_0: bool) -> rt::Status {
+        let call: fn(*u8, bool) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, bool) -> i32;
+        let hr: i32 = call(this._object.raw(), value_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 10: GetPosition
+    fn get_position(this, relative_to_0: rt::Object) -> result::Result[Point, rt::Error] {
+        let q_0: rt::Object = match relative_to_0.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[Point, rt::Error]::Err(e); } };
+        var returned: Point = #zero::[Point]();
+        let call: fn(*u8, *u8, *Point) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, *u8, *Point) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Point, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Point, rt::Error]::Ok(returned);
 
     }
 }
@@ -51077,6 +51385,59 @@ impl IPointerRoutedEventArgs {
         let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
         if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
         return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Input.IRightTappedRoutedEventArgs
+const i_right_tapped_routed_event_args_get_pointer_device_type_slot: usize = 6;
+const i_right_tapped_routed_event_args_get_handled_slot: usize = 7;
+const i_right_tapped_routed_event_args_put_handled_slot: usize = 8;
+const i_right_tapped_routed_event_args_get_position_slot: usize = 9;
+fn i_right_tapped_routed_event_args_iid() -> rt::Guid { return rt::Guid { a: 963836667u32, b: 10517 as u16, c: 23650 as u16, d: [187 as u8, 107 as u8, 84 as u8, 173 as u8, 132 as u8, 255 as u8, 64 as u8, 13 as u8] }; }
+struct IRightTappedRoutedEventArgs { _object: rt::Object }
+impl IRightTappedRoutedEventArgs {
+    fn query(value: rt::Object) -> result::Result[IRightTappedRoutedEventArgs, rt::Error] {
+        match value.query(i_right_tapped_routed_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[IRightTappedRoutedEventArgs, rt::Error]::Ok(IRightTappedRoutedEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IRightTappedRoutedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IRightTappedRoutedEventArgs { return IRightTappedRoutedEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_PointerDeviceType
+    fn pointer_device_type(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: get_Handled
+    fn handled(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: put_Handled
+    fn set_handled(this, value_0: bool) -> rt::Status {
+        let call: fn(*u8, bool) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, bool) -> i32;
+        let hr: i32 = call(this._object.raw(), value_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 9: GetPosition
+    fn get_position(this, relative_to_0: rt::Object) -> result::Result[Point, rt::Error] {
+        let q_0: rt::Object = match relative_to_0.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[Point, rt::Error]::Err(e); } };
+        var returned: Point = #zero::[Point]();
+        let call: fn(*u8, *u8, *Point) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, *u8, *Point) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Point, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Point, rt::Error]::Ok(returned);
 
     }
 }
@@ -51903,6 +52264,61 @@ impl RightTappedEventHandler {
         let call: fn(*u8, *u8, *u8) -> i32 = rt::slot(this._object.raw(), 3) as fn(*u8, *u8, *u8) -> i32;
         let hr: i32 = call(this._object.raw(), sender_0.raw(), q_1.raw());
         return rt::Status { code: hr };
+    }
+}
+
+// Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs
+fn right_tapped_routed_event_args_iid() -> rt::Guid { return rt::Guid { a: 963836667u32, b: 10517 as u16, c: 23650 as u16, d: [187 as u8, 107 as u8, 84 as u8, 173 as u8, 132 as u8, 255 as u8, 64 as u8, 13 as u8] }; }
+struct RightTappedRoutedEventArgs { _object: rt::Object }
+impl RightTappedRoutedEventArgs {
+    fn query(value: rt::Object) -> result::Result[RightTappedRoutedEventArgs, rt::Error] {
+        match value.query(right_tapped_routed_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[RightTappedRoutedEventArgs, rt::Error]::Ok(RightTappedRoutedEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[RightTappedRoutedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> RightTappedRoutedEventArgs { return RightTappedRoutedEventArgs { _object: this._object.clone() }; }
+    fn new() -> result::Result[RightTappedRoutedEventArgs, rt::Error] {
+        match rt::activate("Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs") {
+            result::Result::Ok(o) => { return RightTappedRoutedEventArgs::query(o); }
+            result::Result::Err(e) => { return result::Result[RightTappedRoutedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    // ABI slot 6: get_PointerDeviceType
+    fn pointer_device_type(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: get_Handled
+    fn handled(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: put_Handled
+    fn set_handled(this, value_0: bool) -> rt::Status {
+        let call: fn(*u8, bool) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, bool) -> i32;
+        let hr: i32 = call(this._object.raw(), value_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 9: GetPosition
+    fn get_position(this, relative_to_0: rt::Object) -> result::Result[Point, rt::Error] {
+        let q_0: rt::Object = match relative_to_0.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[Point, rt::Error]::Err(e); } };
+        var returned: Point = #zero::[Point]();
+        let call: fn(*u8, *u8, *Point) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, *u8, *Point) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Point, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Point, rt::Error]::Ok(returned);
+
     }
 }
 

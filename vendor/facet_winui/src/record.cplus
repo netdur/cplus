@@ -31,6 +31,8 @@ struct View {
     opaque table_height: *u8,
     opaque table_gap: *u8,
     opaque shortcut: *u8,
+    // `input`'s gesture band, or null until the node declares a gesture.
+    opaque input: *u8,
     opaque presentation: *u8,
     opaque parent: *u8,
     item_reader: fn(*u8)->*u8,

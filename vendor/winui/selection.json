@@ -155,6 +155,10 @@
     "Microsoft.UI.Xaml.Controls.MenuBar",
     "Microsoft.UI.Xaml.Controls.MenuBarItem",
     "Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator",
-    "Microsoft.UI.Xaml.Input.FocusManagerGotFocusEventArgs"
+    "Microsoft.UI.Xaml.Input.FocusManagerGotFocusEventArgs",
+    "Microsoft.UI.Xaml.Input.FocusManagerLostFocusEventArgs",
+    "Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs",
+    "Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs",
+    "Microsoft.UI.Xaml.Input.HoldingRoutedEventArgs"
   ]
 }

@@ -46,6 +46,8 @@ import "./refresh_retirement" as refresh_retirement;
 import "./command_strip" as commands;
 import "./window_buttons" as window_buttons;
 import "./app_menu" as app_menu;
+import "./input" as input;
+import "facet/gestures" as gestures;
 extern fn fflush(stream: *u8) -> i32;
 extern fn GetDpiForWindow(hwnd: *u8) -> u32;
 extern fn GetForegroundWindow() -> *u8;
@@ -753,6 +755,7 @@ fn menu_action(action: u32, host: *Host) {
 // Every focus change in the process: remember, per window, the last element
 // outside the menu (`Host.edit_target`).
 static FOCUS_TOKEN: ui::EventRegistrationToken=#zero::[ui::EventRegistrationToken]();
+static BLUR_TOKEN: ui::EventRegistrationToken=#zero::[ui::EventRegistrationToken]();
 static FOCUS_WATCHED: bool=false;
 // The window `element` belongs to when it sits in that window's content -
 // its ancestors reach the shell without passing through the menu bar. An
@@ -779,14 +782,23 @@ fn focus_moved(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status
     let event=native::must::[ui::IFocusManagerGotFocusEventArgs](ui::IFocusManagerGotFocusEventArgs::query(args));
     let element: rt::Object=match event.new_focused_element() { result::Result::Ok(o)=>{o}, result::Result::Err(_)=>{ return rt::Status {code:0}; } };
     if element.is_null() { return rt::Status {code:0}; }
+    input::focus_changed(element.clone(),true);
     let host=content_host(element.clone());
     if host.is_not_null() { (*host).edit_target=element; }
+    return rt::Status {code:0};
+}
+fn focus_left(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let event=native::must::[ui::IFocusManagerLostFocusEventArgs](ui::IFocusManagerLostFocusEventArgs::query(args));
+    let element: rt::Object=match event.old_focused_element() { result::Result::Ok(o)=>{o}, result::Result::Err(_)=>{ return rt::Status {code:0}; } };
+    if !element.is_null() { input::focus_changed(element,false); }
     return rt::Status {code:0};
 }
 fn watch_focus() {
     let focus=native::must::[ui::IFocusManagerStatics](ui::FocusManager::i_focus_manager_statics_factory());
     let handler=native::must::[ui::EventHandler_Microsoft_UI_Xaml_Input_FocusManagerGotFocusEventArgs](ui::EventHandler_Microsoft_UI_Xaml_Input_FocusManagerGotFocusEventArgs::new(focus_moved));
     FOCUS_TOKEN=native::must::[ui::EventRegistrationToken](focus.add_got_focus(handler.object()));
+    let lost=native::must::[ui::EventHandler_Microsoft_UI_Xaml_Input_FocusManagerLostFocusEventArgs](ui::EventHandler_Microsoft_UI_Xaml_Input_FocusManagerLostFocusEventArgs::new(focus_left));
+    BLUR_TOKEN=native::must::[ui::EventRegistrationToken](focus.add_lost_focus(lost.object()));
     FOCUS_WATCHED=true;
 }
 // While XAML is still up: as the last window closes. After Application.Start
@@ -796,6 +808,7 @@ fn unwatch_focus() {
     FOCUS_WATCHED=false;
     let focus=native::must::[ui::IFocusManagerStatics](ui::FocusManager::i_focus_manager_statics_factory());
     native::check(focus.remove_got_focus(FOCUS_TOKEN));
+    native::check(focus.remove_lost_focus(BLUR_TOKEN));
 }
 
 // ---- the modal layer ---------------------------------------------------------------
@@ -921,6 +934,7 @@ fn app_launched(app_object: rt::Object, context: *u8) -> rt::Status {
     LAUNCHED=true; APP=app_object.clone();
     rt::track_events(); scheduler::set_origin_fns(capture_origin,enter_origin);
     app_menu::set_dispatch_fn(menu_dispatch); watch_focus();
+    gestures::install_key_reader(input::key_reader());
     window_buttons::install(button_action,button_state);
     theme::set_is_dark_fn(style::dark);
     mount::install(mount::Renderer {ctx:0 as *u8,create:views::create,view_release:views::release,apply:views::apply,
@@ -965,6 +979,7 @@ fn start(on_launch: fn(*u8), on_launch_ctx: *u8=0 as *u8, on_ready: fn(*u8)=0 as
         QUEUE=rt::Object::empty(); APP=rt::Object::empty(); LAUNCHED=false; ON_LAUNCH=0 as fn(*u8);
         rt::untrack_events(); scheduler::set_origin_fns(0 as fn()->*u8,0 as fn(*u8)->*u8); ORIGIN=0 as *Host;
         app_menu::set_dispatch_fn(0 as fn(*u8,u32,fn(*u8,*u8),*u8)); app_menu::uninstall(); QUIT=0 as fn(); FOCUS_WATCHED=false;
+        gestures::uninstall_key_reader();
         OBSERVERS.remove_all();
         if on_stopped.is_not_null() { on_stopped(on_stopped_ctx); }
     }
@@ -1009,4 +1024,4 @@ fn root_of_window(window: rt::Object) -> *core::Node {
     return 0 as *core::Node;
 }
 fn live_views() -> i64 { return views::live_views(); }
-fn live_subscriptions() -> i64 { return views::live_subscriptions()+app_menu::subscriptions(); }
+fn live_subscriptions() -> i64 { return views::live_subscriptions()+app_menu::subscriptions()+input::subscriptions(); }
