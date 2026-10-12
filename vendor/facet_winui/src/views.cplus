@@ -392,7 +392,9 @@ fn release(view: *u8) {
     if pickers::supports((*p).kind) {pickers::release(p);}
     if (*p).subscribed && ((*p).kind==props::K_BUTTON || (*p).kind==props::K_SCROLL) {
         if (*p).kind==props::K_BUTTON {
-            let props: *props::ButtonProps=(*core::node_data((*p).node)).props as *props::ButtonProps;choices::click_release(p);
+            // Not the node's props: a button replaced from inside its own
+            // click is released after its node data has gone.
+            choices::click_release(p);
         } else if (*p).kind==props::K_SCROLL {
             let control=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*p).object));native::check(control.remove_view_changed((*p).token));SUBSCRIPTIONS=SUBSCRIPTIONS-1;
         }
