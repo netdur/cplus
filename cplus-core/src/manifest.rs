@@ -216,9 +216,13 @@ fn resolve_link_spec(
         .into_iter()
         .map(|p| root.join(p).to_string_lossy().into_owned())
         .collect();
+    // Library NAMES expand too: the same library is `openblas` on Linux and
+    // `libopenblas` (libopenblas.lib) in OpenBLAS's Windows release, and a
+    // platform-scoped `[link]` only adds to the base table, never replaces it.
+    let libs: Vec<String> = expand_link_entries(rl.libs, manifest_path)?;
     Ok(LinkSpec {
         frameworks: rl.frameworks,
-        libs: rl.libs,
+        libs,
         bundled: rl.bundled,
         extra_objects,
         search_paths,
@@ -553,8 +557,8 @@ pub enum ManifestError {
         path: PathBuf,
         found: String,
     },
-    /// v0.0.20 (E0865): a `${VAR}` reference in `[link].search-paths` or
-    /// `[link].extra-objects` could not be expanded — the variable is unset
+    /// v0.0.20 (E0865): a `${VAR}` reference in `[link].search-paths`,
+    /// `[link].extra-objects` or `[link].libs` could not be expanded — the variable is unset
     /// and no `:-default` fallback was given (or the `${...}` is malformed).
     /// Lets vendor manifests point at an external SDK via the environment
     /// instead of a hardcoded absolute path.
@@ -2730,6 +2734,31 @@ mod tests {
             }
             other => panic!("expected EnvExpansion, got {other:?}"),
         }
+        assert_eq!(err.to_diagnostic().code, DiagCode("E0865"));
+    }
+
+    #[test]
+    fn link_libs_expand_env_vars_with_a_default() {
+        // A library's NAME can differ by platform (openblas vs libopenblas):
+        // libs take `${VAR:-default}` like the paths beside them.
+        let text = "
+            [package]
+            name = \"cblas\"
+
+            [link]
+            libs = [\"${CPLUS_UNSET_BLAS_NAME_W4:-openblas}\", \"m\"]
+        ";
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        assert_eq!(m.link.unwrap().libs, vec!["openblas".to_string(), "m".to_string()]);
+        // NEGATIVE: no default and unset is E0865, as for a path.
+        let bad = "
+            [package]
+            name = \"cblas\"
+
+            [link]
+            libs = [\"${CPLUS_UNSET_BLAS_NAME_W4}\"]
+        ";
+        let err = parse_in(&std::env::temp_dir(), bad).unwrap_err();
         assert_eq!(err.to_diagnostic().code, DiagCode("E0865"));
     }
 

@@ -2639,7 +2639,7 @@ extra-objects = ["does-not-exist.o"]
 
 ### E0865 · `[link]` `${VAR}` not set and has no fallback
 
-A `${VAR}` reference in `[link].search-paths` or `[link].extra-objects` names an environment variable that is unset at manifest-parse time and the reference carries no `:-default` fallback.
+A `${VAR}` reference in `[link].search-paths`, `[link].extra-objects` or `[link].libs` names an environment variable that is unset at manifest-parse time and the reference carries no `:-default` fallback.
 
 ```toml
 [package]
