@@ -59,6 +59,12 @@ fn main() {
     let mut c_headers: Vec<String> = Vec::new();
     let mut c_links: Vec<String> = Vec::new();
     let mut c_search_paths: Vec<String> = Vec::new();
+    // `--skip NAME`: a C function to leave unbound (one the library does not
+    // export on this platform). `--variant PLATFORM`: write each module as
+    // `<module>_<platform>.cplus`, the resolver's platform override, beside an
+    // existing package rather than replacing it.
+    let mut c_skips: Vec<String> = Vec::new();
+    let mut c_variant: Option<String> = None;
     // `--java` binds JVM classes through `javap -s` — the Android/JVM analog
     // of --objc (clang AST) and --gobject (GIR).
     let mut java_mode = false;
@@ -167,6 +173,28 @@ fn main() {
             }
             if let Some(v) = a.strip_prefix("--search-path=") {
                 c_search_paths.push(v.to_string());
+                i += 1;
+                continue;
+            }
+            if a == "--skip" {
+                if let Some(v) = raw.get(i + 1) {
+                    c_skips.push(v.clone());
+                }
+                i += 2;
+                continue;
+            }
+            if let Some(v) = a.strip_prefix("--skip=") {
+                c_skips.push(v.to_string());
+                i += 1;
+                continue;
+            }
+            if a == "--variant" {
+                c_variant = raw.get(i + 1).cloned();
+                i += 2;
+                continue;
+            }
+            if let Some(v) = a.strip_prefix("--variant=") {
+                c_variant = Some(v.to_string());
                 i += 1;
                 continue;
             }
@@ -406,7 +434,8 @@ fn main() {
         if let Some(h) = header.take() {
             c_headers.push(h);
         }
-        match generate_c_package(dir, &pkg_configs, &c_headers, &c_links, &c_search_paths, &clang_args) {
+        match generate_c_package(dir, &pkg_configs, &c_headers, &c_links, &c_search_paths, &clang_args,
+                                 &c_skips, c_variant.as_deref()) {
             Ok(()) => std::process::exit(0),
             Err(e) => {
                 eprintln!("cpc-bindgen --cpackage: {e}");
@@ -538,7 +567,7 @@ fn main() {
 
 /// Bind one C header to a C+ module (clang JSON AST dump -> `Emitter`). Shared
 /// by the single-header path and the `--cpackage` package path.
-fn emit_c_header(header: &str, clang_args: &[String], llp64: bool) -> Result<String, String> {
+fn emit_c_header(header: &str, clang_args: &[String], llp64: bool, skips: &[String]) -> Result<String, String> {
     let mut cmd = Command::new("clang");
     cmd.arg("-Xclang").arg("-ast-dump=json").arg("-fsyntax-only").arg("-x").arg("c");
     for a in clang_args {
@@ -552,6 +581,11 @@ fn emit_c_header(header: &str, clang_args: &[String], llp64: bool) -> Result<Str
     let v: serde_json::Value =
         serde_json::from_slice(&out.stdout).map_err(|e| format!("clang JSON parse failed for {header}: {e}"))?;
     let mut emitter = Emitter::new(header, llp64);
+    // A skipped function counts as already bound, so the emitter's own
+    // duplicate check drops it.
+    for name in skips {
+        emitter.seen_fns.insert(name.clone());
+    }
     emitter.set_record_sizes(record_layout_sizes(header, clang_args));
     emitter.walk(&v);
     Ok(emitter.finish())
@@ -649,6 +683,8 @@ fn generate_c_package(
     explicit_links: &[String],
     explicit_search: &[String],
     extra_clang: &[String],
+    skips: &[String],
+    variant: Option<&str>,
 ) -> Result<(), String> {
     if headers.is_empty() {
         return Err("no headers — pass one or more `--header <path>` (or a bare header path)".into());
@@ -686,7 +722,7 @@ fn generate_c_package(
     let llp64 = target_is_llp64(&clang_args);
     let mut modules: Vec<String> = Vec::new();
     for header in headers {
-        let src = emit_c_header(header, &clang_args, llp64)?;
+        let src = emit_c_header(header, &clang_args, llp64, skips)?;
         let module = if single {
             pkg_name.clone()
         } else {
@@ -696,9 +732,19 @@ fn generate_c_package(
                 .unwrap_or("mod")
                 .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
         };
-        std::fs::write(srcdir.join(format!("{module}.cplus")), src)
-            .map_err(|e| format!("write {module}.cplus: {e}"))?;
+        let file = match variant {
+            Some(v) => format!("{module}_{v}.cplus"),
+            None => format!("{module}.cplus"),
+        };
+        std::fs::write(srcdir.join(&file), src).map_err(|e| format!("write {file}: {e}"))?;
         modules.push(module);
+    }
+    // A variant joins an existing package: its umbrella and manifest are the
+    // base generation's, so only the reproduce line is reported.
+    if let Some(v) = variant {
+        let repro = reproduce_cmd(out_dir, pkgs, headers, explicit_links, explicit_search, extra_clang, skips, variant);
+        eprintln!("cpc-bindgen --cpackage: wrote {} `_{v}` module(s) into {out_dir}/src\n  reproduce: {repro}", modules.len());
+        return Ok(());
     }
     // Umbrella that imports every module, when there is more than one.
     if !single {
@@ -717,7 +763,7 @@ fn generate_c_package(
         let sp = search.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
         link_block.push_str(&format!("search-paths = [{sp}]\n"));
     }
-    let repro = reproduce_cmd(out_dir, pkgs, headers, explicit_links, explicit_search, extra_clang);
+    let repro = reproduce_cmd(out_dir, pkgs, headers, explicit_links, explicit_search, extra_clang, skips, variant);
     let manifest = format!(
         "[package]\n\
          name    = \"{pkg_name}\"\n\
@@ -760,8 +806,13 @@ fn reproduce_cmd(
     links: &[String],
     search: &[String],
     extra_clang: &[String],
+    skips: &[String],
+    variant: Option<&str>,
 ) -> String {
     let mut s = format!("cpc-bindgen --cpackage --out {out_dir}");
+    if let Some(v) = variant {
+        s.push_str(&format!(" --variant {v}"));
+    }
     for p in pkgs {
         s.push_str(&format!(" --pkg {p}"));
     }
@@ -773,6 +824,9 @@ fn reproduce_cmd(
     }
     for p in search {
         s.push_str(&format!(" --search-path {p}"));
+    }
+    for k in skips {
+        s.push_str(&format!(" --skip {k}"));
     }
     if !extra_clang.is_empty() {
         s.push_str(" -- ");
@@ -2101,6 +2155,17 @@ pub(crate) fn sanitize_ident(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_skipped_c_function_is_not_bound_and_the_reproduce_line_says_so() {
+        let repro = super::reproduce_cmd("vendor/cuda", &[], &["cuda.h".into()], &["cudart".into()], &[], &[],
+                                         &["cudaDeviceGetNvSciSyncAttributes".into()], Some("windows"));
+        assert!(repro.contains("--variant windows"));
+        assert!(repro.contains("--skip cudaDeviceGetNvSciSyncAttributes"));
+        // No skip, no variant: the line is what it always was.
+        let plain = super::reproduce_cmd("vendor/cuda", &[], &["cuda.h".into()], &[], &[], &[], &[], None);
+        assert_eq!(plain, "cpc-bindgen --cpackage --out vendor/cuda --header cuda.h");
+    }
+
     use super::*;
 
     /// `typedef struct _BLENDFUNCTION {...} BLENDFUNCTION;` must not bind as a
