@@ -29,6 +29,8 @@ import "./inspect_tree" as tree;
 import "agent_mcp/inspect" as mcp;
 import "win32/winuser" as u;
 import "win32/wingdi" as gdi;
+import "facet/vocabulary" as vocab;
+import "facet_winui/facet_winui" as host;
 
 // ---- the main-thread hop ---------------------------------------------------------
 //
@@ -206,54 +208,39 @@ fn scale_of(v: *u8) -> f64 {
     return (d as f64) / (96.0f64);
 }
 
+// WinUI (netdu/cplus#20): a node's view is a facet_winui record, not a window.
+// XAML says where a mounted view is in its window (`client_rect_of_view`, in
+// DIPs, scrolling included); a VIEWLESS node - a span, a menu row - is placed
+// by its flex frame inside its nearest backed ancestor, whose frames are
+// relative to their parents, so the offsets accumulate up to it. Scaled to the
+// window's physical pixels for the overlay.
 fn place(n: *core::Node) -> Placed {
     if n == (0 as *core::Node) { return nothing_placed(); }
-
-    let own: *u8 = core::view_of(n);
-    if own != (0 as *u8) {
-        var b: u::tagRECT = #zero::[u::tagRECT]();
-        if { u::GetClientRect(own, #addr_of(b)) } == (0 as i32) { return nothing_placed(); }
-        return Placed {
-            view: own,
-            rect: Rect { x: 0.0f64, y: 0.0f64,
-                         w: (b.right -% b.left) as f64,
-                         h: (b.bottom -% b.top) as f64 },
-            found: true,
-        };
-    }
-
-    let f: flex::Frame = core::frame_of(n);
-    var x: f64 = f.left;
-    var y: f64 = f.top;
-    let w: f64 = f.width;
-    let h: f64 = f.height;
-
+    let own: flex::Frame = core::frame_of(n);
+    var x: f64 = 0.0f64;
+    var y: f64 = 0.0f64;
+    var w: f64 = own.width;
+    var h: f64 = own.height;
     var cur: *core::Node = n;
     // Bounded by the tree's own depth; a parent link always goes up.
     var steps: usize = 0;
     while steps < (256 as usize) {
-        let p: *core::Node = match mount::parent_of(cur) {
-            option::Option[*core::Node]::Some(q) => q,
-            option::Option::None => 0 as *core::Node,
-        };
-        if p == (0 as *core::Node) { return nothing_placed(); }
-        let pv: *u8 = core::view_of(p);
-        if pv != (0 as *u8) {
-            // NO FLIP TO UNDO. The AppKit half asks `is_flipped` because an
-            // unflipped NSView measures from the bottom edge; every Win32 client
-            // area has its origin at the TOP-LEFT, which is already flex's own,
-            // so the offsets carry across unchanged. Only the units change.
-            let s: f64 = scale_of(pv);
-            return Placed {
-                view: pv,
-                rect: Rect { x: x * s, y: y * s, w: w * s, h: h * s },
-                found: true,
-            };
+        let v: *u8 = core::view_of(cur);
+        if v != (0 as *u8) {
+            var hwnd: *u8 = 0 as *u8;
+            let r: vocab::Rect = host::client_rect_of_view(v, #addr_of(hwnd));
+            if hwnd == (0 as *u8) { return nothing_placed(); }
+            if cur == n { w = r.width; h = r.height; }
+            let s: f64 = scale_of(hwnd);
+            return Placed { view: hwnd, rect: Rect { x: (r.x + x) * s, y: (r.y + y) * s, w: w * s, h: h * s }, found: true };
         }
-        let pf: flex::Frame = core::frame_of(p);
-        x = x + pf.left;
-        y = y + pf.top;
-        cur = p;
+        let f: flex::Frame = core::frame_of(cur);
+        x = x + f.left;
+        y = y + f.top;
+        match mount::parent_of(cur) {
+            option::Option[*core::Node]::Some(q) => { cur = q; }
+            option::Option::None => { return nothing_placed(); }
+        }
         steps = steps +% (1 as usize);
     }
     return nothing_placed();
@@ -307,81 +294,17 @@ fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     let v: *u8 = core::view_of(n);
     if v == (0 as *u8) {
         // Not an absence of information — a fact about the node, and the one
-        // that explains why it has no frame of its own. The Android sibling
-        // says this in the same words, deliberately.
+        // that explains why it has no frame of its own.
         let _a: status::Status = out.append(insp::Prop::read_only(
             "native_class", insp::Value::Str(text::from_str("(drawn by an ancestor)"))));
         return out;
     }
+    // The XAML class WinUI made of it: the question you ask when facet's
+    // vocabulary and the platform disagree.
     let _c: status::Status = out.append(insp::Prop::read_only(
-        "native_class", insp::Value::Str(class_name_of(v))));
-    // The style word, in hex. It is the one number that explains an owner-drawn
-    // control, a missing WS_VISIBLE or a scroll bar nobody asked for — every
-    // one of which has cost this port an afternoon.
-    let _s: status::Status = out.append(insp::Prop::read_only(
-        "native_style", insp::Value::Str(hex32(
-            { u::GetWindowLongPtrA(v, (0 as i32) -% (16 as i32)) } as u32))));
-    let _e: status::Status = out.append(insp::Prop::read_only(
-        "native_ex_style", insp::Value::Str(hex32(
-            { u::GetWindowLongPtrA(v, (0 as i32) -% (20 as i32)) } as u32))));
+        "native_class", insp::Value::Str(host::class_name_of_view(v))));
     return out;
 }
-
-fn class_name_of(v: *u8) -> text::Text {
-    let cap: usize = 64 as usize;
-    let buf: *u8 = { np_malloc(cap) };
-    if buf.is_null() { return text::from_str("(out of memory)"); }
-    let got: i32 = { u::GetClassNameA(v, buf as *i8, cap as i32) };
-    var out: text::Text = text::from_str("(unnamed)");
-    // `#str_from_raw_parts` is stdlib's FFI door for exactly this: a C buffer
-    // and a length become a `str`, and `from_str` then COPIES it into the Text
-    // — so the borrowed view never outlives the malloc below.
-    if got > (0 as i32) {
-        out = text::from_str({ #str_from_raw_parts(buf, got as usize) });
-    }
-    { np_free(buf) };
-    return out;
-}
-
-fn hex32(v: u32) -> text::Text {
-    var out: text::Text = text::from_str("0x");
-    var shift: u32 = 28 as u32;
-    var leading: bool = true;
-    while true {
-        let nib: u32 = (v >> shift) & (0x0F as u32);
-        if !(leading && nib == (0 as u32) && shift != (0 as u32)) {
-            leading = false;
-            out = out.appending(nibble(nib));
-        }
-        if shift == (0 as u32) { break; }
-        shift = shift -% (4 as u32);
-    }
-    return out;
-}
-
-fn nibble(n: u32) -> str {
-    if n == (0 as u32) { return "0"; }
-    if n == (1 as u32) { return "1"; }
-    if n == (2 as u32) { return "2"; }
-    if n == (3 as u32) { return "3"; }
-    if n == (4 as u32) { return "4"; }
-    if n == (5 as u32) { return "5"; }
-    if n == (6 as u32) { return "6"; }
-    if n == (7 as u32) { return "7"; }
-    if n == (8 as u32) { return "8"; }
-    if n == (9 as u32) { return "9"; }
-    if n == (10 as u32) { return "A"; }
-    if n == (11 as u32) { return "B"; }
-    if n == (12 as u32) { return "C"; }
-    if n == (13 as u32) { return "D"; }
-    if n == (14 as u32) { return "E"; }
-    return "F";
-}
-
-#[link_name = "malloc"]
-extern fn np_malloc(n: usize) -> *u8;
-#[link_name = "free"]
-extern fn np_free(p: *u8);
 
 fn install() {
     tree::install_platform(highlight, clear_highlight);

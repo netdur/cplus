@@ -43,10 +43,7 @@ the client size delivered, measured after the caption is gone.
 
 An app written against `facet_runtime` keeps `runtime::App` and opts in:
 
-```cplus
-import "facet_runtime/winui" as winui;
-winui::select();          // before app.run(...)
-```
+WinUI is the default: an app on `facet_runtime` needs no call to reach it.
 
 `App::run` then opens one WinUI window per `open_window`, queuing the ones
 opened before launch, and `runtime::alert`, `choose`, `prompt` and

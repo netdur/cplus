@@ -23,6 +23,7 @@ u.IsWindow.argtypes = [w.HWND]
 u.GetForegroundWindow.restype = w.HWND
 u.GetDpiForWindow.argtypes = [w.HWND]
 u.SetWindowPos.argtypes = [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT]
+u.IsWindowVisible.argtypes = [w.HWND]
 u.GetWindowThreadProcessId.argtypes = [w.HWND, c.POINTER(w.DWORD)]
 WM_CLOSE = 0x0010
 UIA = REPO / 'tools/winui_uia.ps1'
@@ -208,6 +209,8 @@ def run_density():
     try:
         content = wait_for(log, 'PROBE density read', process)
         wait_for(log, 'PROBE settings observed', process)
+        # A timer the app scheduled in on_launch, before WinUI had a queue.
+        wait_for(log, 'PROBE early timer', process, 10)
         main = window('WinUI runtime', process)
         expected = u.GetDpiForWindow(main) / 96
         read_value = float(content.split('PROBE density read ')[1].split()[0])
@@ -383,7 +386,7 @@ def run_agent_windows():
         content = wait_for(log, 'AGENT PORT', process)
         port = int(content.split('AGENT PORT ')[1].split()[0])
         wait_for(log, 'READY: facet_winui', process)
-        wait_for(log, 'facet_agent_winui: MCP on', process)
+        wait_for(log, 'facet: agent surface on', process)
         settings = window('Settings', process)
         assert shows(settings, 'settings:alert')
         conn = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
@@ -496,6 +499,90 @@ def run_gestures():
     print('PASS: gestures (hover, click, double, right, long press, swipe, unhover, key band, focus/blur)')
 
 
+def run_inspector():
+    """The inspector's verbs on WinUI: `highlight` frames the node where it is
+    on screen, and `inspect` names the XAML class WinUI made of it."""
+    import http.client
+    import json
+    log = RUNTIME / 'inspector.log'
+    env = {**os.environ, 'CPLUS_RUNTIME_WINUI_PROBE': '0', 'CPLUS_RUNTIME_WINUI_AGENT': '1'}
+    output = log.open('w', encoding='utf-8')
+    process = subprocess.Popen([str(EXE)], cwd=RUNTIME, env=env, stdout=output,
+                               stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+    conn = None
+    try:
+        content = wait_for(log, 'AGENT PORT', process)
+        port = int(content.split('AGENT PORT ')[1].split()[0])
+        wait_for(log, 'facet: agent surface on', process)
+        main = window('WinUI runtime', process)
+        assert shows(main, 'home:open-settings')
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+
+        def rpc(method, params=None):
+            conn.request('POST', '/', json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method,
+                                                  'params': params or {}}).encode(),
+                         {'Content-Type': 'application/json'})
+            value = json.loads(conn.getresponse().read())
+            assert 'error' not in value, value
+            return value['result']
+
+        rpc('initialize', {'protocolVersion': '2024-11-05', 'capabilities': {},
+                           'clientInfo': {'name': 'operator', 'version': '1'}})
+        rpc('describe_tree')   # the snapshot keys resolve against
+        inspected = json.dumps(rpc('inspect', {'id': 'home:open-settings'}))
+        assert 'Microsoft.UI.Xaml.Controls.Button' in inspected, inspected
+        rpc('highlight', {'id': 'home:open-settings'})
+        u.FindWindowW.argtypes = [w.LPCWSTR, w.LPCWSTR]
+        overlay = None
+        end = time.time() + 5
+        while time.time() < end and not overlay:
+            overlay = u.FindWindowW('facet-inspect-overlay', None)
+            time.sleep(.1)
+        assert overlay and u.IsWindowVisible(overlay), 'no highlight shown'
+        r = w.RECT()
+        u.GetWindowRect(overlay, c.byref(r))
+        bx, by, bw, bh = (int(v) for v in uia('rect', main, 'home:open-settings').split())
+        got = (r.left, r.top, r.right - r.left, r.bottom - r.top)
+        assert all(abs(a - b) <= 4 for a, b in zip(got, (bx, by, bw, bh))), (got, (bx, by, bw, bh))
+        rpc('clear_highlight')
+    finally:
+        if conn is not None:
+            conn.close()
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: inspector (highlight framed where the control is; inspect names the XAML class)')
+
+
+def run_win32_opt_out():
+    """`facet_runtime/win32::select()` still runs an app on the deprecated
+    Win32 backend, and a close there asks on_should_quit again."""
+    exe = REPO / 'examples/facet_runtime_win32/target/debug/facet_runtime_win32.exe'
+    assert exe.exists(), 'build examples/facet_runtime_win32 first (cpc build)'
+    log = exe.parent / 'opt_out.log'
+    output = log.open('w', encoding='utf-8')
+    process = subprocess.Popen([str(exe)], cwd=exe.parent, stdout=output, stderr=subprocess.STDOUT,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        hwnd = window('Win32 opt-out', process)
+        # A WinUI window's class is WinUIDesktopWin32WindowClass; this is not one.
+        name = c.create_unicode_buffer(256)
+        u.GetClassNameW(hwnd, name, 256)
+        assert name.value and name.value != 'WinUIDesktopWin32WindowClass', name.value
+        assert u.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        wait_for(log, 'PROBE should_quit 1', process, 10)
+        time.sleep(.5)
+        assert u.IsWindow(hwnd) and process.poll() is None, 'the refused close still closed'
+        assert u.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        wait_for(log, 'PROBE should_quit 2', process, 10)
+        assert process.wait(15) == 0, read(log)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: win32 opt-out (selected backend runs; a close asks on_should_quit)')
+
+
 if __name__ == '__main__':
     run_close_question()
     run_alert_window()
@@ -504,3 +591,5 @@ if __name__ == '__main__':
     run_app_menu()
     run_agent_windows()
     run_gestures()
+    run_inspector()
+    run_win32_opt_out()

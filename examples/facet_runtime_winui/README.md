@@ -1,9 +1,8 @@
 # A runtime::App on WinUI
 
-Two windows of one `runtime::App`, run on `facet_winui` through the facade.
-The source is ordinary facade code; `winui::select()` in `main.cplus`
-(`import "facet_runtime/winui"`) is the only WinUI-specific line, and the
-manifest lists `facet_winui`, `winui` and `winrt` because of it.
+Two windows of one `runtime::App`, run on `facet_winui` - the Windows backend -
+through the facade. The source is ordinary facade code and names no backend;
+the manifest lists facet_runtime's Windows closure.
 
 - **main** is `Bar::Blended` and draws `window_buttons()` in its header, so
   WinUI removes the system caption and those three are the only buttons; the

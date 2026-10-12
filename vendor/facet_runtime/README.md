@@ -41,47 +41,56 @@ functions and the `runtime::Window` interface have been removed. Use
 `runtime_macos`, `runtime_linux`, `runtime_windows`, `runtime_ios`, and
 `runtime_android` install their backends.
 
-## Windows: Win32 or WinUI
+## Windows: WinUI, and the Win32 opt-out
 
-Windows has two backends, and the platform file variant only picks the OS.
-`runtime_windows` runs on `facet_win32` unless the app selects WinUI before
-`run`. `facet_win32` is deprecated (netdur/cplus#20): WinUI becomes the
-default once the gaps listed below are closed.
+`runtime_windows` runs the app on **WinUI** (`facet_winui`), the Windows
+backend (netdu/cplus#20). An app names no backend; its manifest lists
+facet_runtime's Windows closure:
 
-```cplus
-import "facet_runtime/winui" as winui;   // Windows only: there is no base file
-
-fn main() -> i32 {
-    let app = runtime::App::new("Notes");
-    app.window("main", home_factory, chrome: screen::Chrome::new(title: "Notes"));
-    winui::select();
-    if app.run("main").is_ok() { return 0; }
-    return 1;
-}
+```toml
+[windows.dependencies]
+facet_winui = "*"
+winui       = "*"
+winrt       = "*"
+win32       = "*"   # the shell services: clipboard and file pickers
 ```
 
-The app that does this lists `facet_winui`, `winui` and `winrt` under
-`[windows.dependencies]` beside `facet_win32` and `win32`. An app that never
-imports `facet_runtime/winui` lists none of them and never compiles the WinUI
-bindings: `runtime_windows` names no WinUI package and reaches it only through
-a seam (`runtime::Backend`, filled by `select()`). For that reason this
-package is source mode on Windows (`[windows.build] prebuild = false`): a
-prebuilt archive is compiled from every active module, `winui_windows`
-included, and would put WinUI into every Windows build.
+A plain `cpc build` output runs wherever the Windows App Runtime 2 is
+installed; see [facet_winui's Deployment](../facet_winui/README.md#deployment).
 
-Selected, WinUI serves the whole facade surface `App` uses: one native window
-per `open_window` (sessions opened before launch are queued until the XAML
-Application starts), `screen::Chrome` (size, minimum/maximum, bar, buttons),
-`runtime::alert` / `choose` / `prompt` / `alert_blocking` as keyed facet
-sheets on the window that asked (`alert:title`, `alert:primary`, ...), the window
-verbs, frame/density/activity reads and the active/inactive/size/density
-observers.
-Closing the last window ends `run`. A user close (caption button, Alt+F4) asks the window's `on_should_close`, and
-closing the last window also asks `on_should_quit`, as `app.quit()` does.
-`App::menu` is a MenuBar in every window, its `key`s Ctrl shortcuts, and
-`facet_agent_winui` serves every window through one connection - see
-[facet_winui's MANIFEST](../facet_winui/MANIFEST.md).
-`examples/facet_runtime_winui` is a two-window app on this path. The neutral runtime reports no
+WinUI serves the whole facade surface `App` uses: one native window per
+`open_window` (sessions opened before launch are queued until the XAML
+Application starts, and timers scheduled before launch are armed then),
+`screen::Chrome` (size, minimum/maximum, bar, buttons), `runtime::alert` /
+`choose` / `prompt` / `alert_blocking` as keyed facet sheets on the window that
+asked (`alert:title`, `alert:primary`, ...), the window verbs, frame/density/
+activity reads and the active/inactive/size/density observers. Closing the last
+window ends `run`. A user close (caption button, Alt+F4) asks the window's
+`on_should_close`, and closing the last window also asks `on_should_quit`, as
+`app.quit()` does. `App::menu` is a MenuBar in every window, its `key`s Ctrl
+shortcuts, and `facet_agent` serves every window through one connection - see
+[facet_winui's MANIFEST](../facet_winui/MANIFEST.md). The clipboard and the
+file and folder pickers are `src/shell_windows.cplus`, over `win32`, whichever
+backend draws. When WinUI cannot start (no runtime), `run` answers
+`InvalidInput` with a message naming the installer.
+
+The deprecated Win32 backend stays reachable as an explicit opt-out until it
+is removed:
+
+```cplus
+import "facet_runtime/win32" as win32;   // Windows only: there is no base file
+win32::select();                          // before app.run(...)
+```
+
+The app that does this lists `facet_win32` beside the closure above. An app
+that never imports `facet_runtime/win32` never compiles facet_win32:
+`runtime_windows` reaches it only through a seam (`runtime::Backend`, filled by
+`select()`). For that reason this package is source mode on Windows
+(`[windows.build] prebuild = false`): a prebuilt archive is compiled from every
+active module, `win32_windows` included. `facet_runtime/winui`'s `select()`, the
+old WinUI opt-in, still exists and does nothing.
+
+`examples/facet_runtime_winui` is a two-window app on WinUI; `examples/facet_runtime_win32` takes the opt-out. The neutral runtime reports no
 backend. Shared window ownership lives in `windows.cplus`; retained content
 navigation lives in `facet/navigation`.
 

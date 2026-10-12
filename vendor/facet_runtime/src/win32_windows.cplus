@@ -1,0 +1,97 @@
+// facet_runtime/win32 - run a `runtime::App` on the deprecated Win32 backend
+// instead of WinUI, the Windows default (netdu/cplus#20).
+//
+//     import "facet_runtime/win32" as win32;     // Windows only
+//     win32::select();
+//     app.run("main");
+//
+// `select()` fills runtime_windows' backend seam with facet_win32's driver,
+// dialogs and window reads; `App::run` then installs Win32 where it would have
+// installed WinUI, and everything else - definitions, `open_window`, routes,
+// `on_quit`, the clipboard and pickers - is the facade's, unchanged.
+//
+// DEPRECATED, and removed with facet_win32. An app that imports this lists
+// facet_win32 (and win32) in its manifest; an app that does not never
+// compiles facet_win32. That is why this module exists only as `_windows`
+// and why facet_runtime is source mode on Windows.
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/nav_model" as nav_model;
+import "facet/navigation" as navigation;
+import "facet/vocabulary" as vocab;
+import "./windows" as windows;
+import "./runtime" as facade;
+import "facet_win32/facet_win32" as backend;
+import "facet_win32/window" as host;
+import "facet_win32/dialogs" as dialogs;
+
+// Choose Win32 for the next `App::run`. Call before `run`.
+fn select() {
+    facade::select_backend(facade::Backend {
+        install: backend::install, open: open, run: run,
+        alert: alert, choose: choose, prompt: prompt, alert_blocking: dialogs::alert,
+        window_close: dialogs::window_close, window_minimize: dialogs::window_minimize, window_zoom: dialogs::window_zoom,
+        display_density: host::density_of, is_window_active: host::is_active,
+        window_frame: dialogs::window_frame_of, set_window_frame: dialogs::set_window_frame_of,
+        observe: observe, cancel_observe: host::cancel_observe,
+        set_appearance: host::set_app_appearance, appearance: host::app_appearance,
+    });
+}
+
+// Every native window has the same owner and teardown path, including the first.
+fn open(n: nav_model::Navigator) -> bool {
+    let root = navigation::root(n);
+    let s = nav_model::session(n.owner, n.id);
+    var bar = facade::menu_for(n);
+    host::install_app_menu(#addr_of(bar));
+    let w = host::open_window(root, windows::chrome(n),
+        should_close: should_close, should_close_ctx: s as *u8,
+        will_close: windows::closing, will_close_ctx: s as *u8);
+    if w.is_null() { return false; }
+    windows::named(n);
+    return true;
+}
+
+// WM_CLOSE asks the window's own policy, and for the last window the app's
+// `on_should_quit` - as on WinUI.
+fn should_close(ctx: *u8) -> bool {
+    if !windows::should_close(ctx) { return false; }
+    if host::open_window_count() > (1 as i64) { return true; }
+    return facade::screen_should_close(ctx);
+}
+
+fn run() { host::run_loop(); }
+
+fn alert(title: str, message: str, primary: str, secondary: str, on_answer: fn(i32, *u8), ctx: *u8) {
+    dialogs::alert_sheet(title, message, primary, secondary, on_answer, ctx);
+}
+fn choose(title: str, message: str, take options: vec::Vec[text::Text], on_answer: fn(i32, *u8), ctx: *u8) {
+    dialogs::choose_sheet(title, message, options, on_answer, ctx);
+}
+fn prompt(title: str, message: str, placeholder: str, primary: str, secondary: str,
+          on_typed: fn(str, *u8), on_typed_ctx: *u8, on_answer: fn(i32, *u8), on_answer_ctx: *u8) {
+    dialogs::prompt_sheet(title, message, placeholder, primary, secondary, on_typed, on_typed_ctx, on_answer, on_answer_ctx);
+}
+
+// Win32 says activation with one message, WM_ACTIVATE, whose wParam carries
+// the direction; the observer asks which way it went (`active_filter`).
+// Suspension has no desktop answer: those register and never fire.
+fn observe(kind: i32, cb: fn(*u8), ctx: *u8) -> u64 {
+    if kind == 1 { return host::observe_active(active_filter, cb as *u8); }
+    if kind == 2 { return host::observe_active(inactive_filter, cb as *u8); }
+    if kind == 3 { return host::observe_size_changed(cb, ctx); }
+    if kind == 4 { return host::observe_density(cb, ctx); }
+    return host::observe_suspended(never, cb as *u8);
+}
+fn active_filter(cb: *u8) {
+    if !facade::is_window_active() { return; }
+    let f: fn(*u8) = cb as fn(*u8);
+    if f.is_not_null() { f(0 as *u8); }
+}
+fn inactive_filter(cb: *u8) {
+    if facade::is_window_active() { return; }
+    let f: fn(*u8) = cb as fn(*u8);
+    if f.is_not_null() { f(0 as *u8); }
+}
+fn never(cb: *u8) { return; }

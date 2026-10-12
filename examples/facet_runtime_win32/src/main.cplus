@@ -1,0 +1,47 @@
+// One window on the deprecated Win32 backend, opted into with
+// `facet_runtime/win32`. tools/test_facet_runtime_winui.py (run_win32_opt_out)
+// closes it from outside: the first close is refused by on_should_quit, the
+// second ends the run.
+import "stdlib/io" as io;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/nav" as nav;
+import "facet_runtime/runtime" as runtime;
+import "facet_runtime/win32" as win32;
+
+extern fn fflush(stream: *u8) -> i32;
+
+struct Home { context: nav::Context }
+impl Home {
+    fn boxed() -> screen::ScreenBox { return screen::screen_box::[Home](Home { context: nav::Context::none() }); }
+}
+impl Home: component::Component {
+    fn build(ref this) -> core::Node {
+        return @ui { column(key: "home") { label("Win32, opted into", key: "home:title") } };
+    }
+}
+impl Home: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}
+impl Home: screen::Screen {
+    fn on_context(ref this, c: nav::Context) { this.context = c; }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
+
+static ASKED: i32 = 0;
+fn say(line: str) { io::println(line); let _f: i32 = fflush(0 as *u8); }
+fn should_quit(ctx: *u8) -> bool { ASKED = ASKED + 1; let n: i32 = ASKED; say("PROBE should_quit ${n}"); return n > 1; }
+
+fn main() -> i32 {
+    let app: runtime::App = runtime::App::new("facet_runtime_win32");
+    app.window("main", Home::boxed, chrome: screen::Chrome::new(title: "Win32 opt-out", width: 420.0f64, height: 240.0f64));
+    app.on_should_quit(should_quit);
+    win32::select();
+    if app.run("main") == status::Status::Ok { return 0; }
+    return 1;
+}

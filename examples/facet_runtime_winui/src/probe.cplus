@@ -7,7 +7,7 @@
 //                                 and report density changes: app-wide, and
 //                                 Settings' own window.
 //   CPLUS_RUNTIME_WINUI_AGENT=1   serve the agent surface over loopback HTTP
-//                                 (facet_agent_winui) and print its port.
+//                                 (facet_agent + app.agent_mcp) and print its port.
 import "stdlib/env" as env;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
@@ -15,7 +15,7 @@ import "stdlib/io" as io;
 import "facet/services" as services;
 import "facet/window" as window;
 import "facet_runtime/runtime" as runtime;
-import "facet_agent_winui/facet_agent_winui" as agent;
+import "facet_agent/agent" as agent;
 import "agent_mcp/agent_mcp" as mcp;
 
 extern fn fflush(stream: *u8) -> i32;
@@ -25,6 +25,7 @@ static ASKED: i32 = 0;
 static APP_DENSITY: services::Cancellable = #zero::[services::Cancellable]();
 static SETTINGS_DENSITY: services::Cancellable = #zero::[services::Cancellable]();
 static ACTIVATED: services::Cancellable = #zero::[services::Cancellable]();
+static EARLY: services::Cancellable = #zero::[services::Cancellable]();
 
 fn enabled() -> bool {
     match env::var("CPLUS_RUNTIME_WINUI_PROBE") {
@@ -37,7 +38,9 @@ fn say(line: str) { io::println(line); let _f: i32 = fflush(0 as *u8); }
 
 fn install(app: runtime::App) {
     if env::has_var("CPLUS_RUNTIME_WINUI_AGENT") {
-        agent::enable("facet-runtime-winui");
+        // The ordinary path every facet app takes: enable, then name the surface.
+        agent::enable();
+        app.agent_mcp("facet-runtime-winui");
         app.on_launch(agent_ready);
     }
     if !enabled() { return; }
@@ -54,6 +57,8 @@ fn agent_ready(ctx: *u8) {
 }
 
 fn launched(ctx: *u8) {
+    // Scheduled from on_launch, before WinUI has a queue: it must still fire.
+    EARLY = services::after(0.2f64, early_fired);
     APP_DENSITY = runtime::observe_display_density(app_density_changed);
     ACTIVATED = runtime::observe_window_active(first_activation);
     let _w = runtime::app().open_window("settings");
@@ -74,6 +79,8 @@ fn first_activation(ctx: *u8) {
     }
 }
 
+fn early_fired(ctx: *u8) { say("PROBE early timer"); }
+
 fn app_density_changed(ctx: *u8) {
     let d: f64 = runtime::display_density();
     say("PROBE density ${d}");
@@ -90,6 +97,7 @@ fn should_quit(ctx: *u8) -> bool {
 
 fn quitting(ctx: *u8) {
     APP_DENSITY.cancel();
+    EARLY.cancel();
     ACTIVATED.cancel();
     SETTINGS_DENSITY.cancel();
     say("PROBE quit");

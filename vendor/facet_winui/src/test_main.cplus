@@ -281,3 +281,20 @@ fn a_test_binary_has_no_runtime_beside_it() {
     assert !application::staged_beside_exe();
     return;
 }
+
+static TM_FIRED: i32 = 0;
+fn tm_fire(ctx: *u8) { TM_FIRED = TM_FIRED + 1; }
+
+#[test]
+fn a_timer_asked_for_before_launch_is_parked_not_dropped() {
+    // No queue yet: the timer gets a real token and waits for `install`.
+    TM_FIRED = 0;
+    let token: u64 = scheduler::after(0.5f64, tm_fire, 0 as *u8);
+    assert token != (0 as u64);
+    assert scheduler::PARKED.count() == (1 as usize);
+    // NEGATIVE: cancelled before launch, it is gone and never fires.
+    scheduler::cancel(token);
+    assert scheduler::PARKED.count() == (0 as usize);
+    assert TM_FIRED == 0;
+    return;
+}

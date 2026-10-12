@@ -927,6 +927,12 @@ fn window_host() -> app_window::WindowHost {
 fn window_frame_of(root: *core::Node) -> vocab::Rect { return wh_frame(root); }
 fn set_window_frame_of(root: *core::Node, frame: vocab::Rect) { wh_set_frame(root,frame); }
 fn density_of(root: *core::Node) -> f64 { return density_of_host(host_of_root(root)); }
+// The app's explicit light/dark choice (`Unspecified` gives the system
+// back). Recorded and answered; facet_winui still draws dark whatever it says
+// (MANIFEST, Limits).
+static APPEARANCE: vocab::Appearance=#zero::[vocab::Appearance]();   // Unspecified
+fn set_app_appearance(a: vocab::Appearance) { APPEARANCE=a; }
+fn app_appearance() -> vocab::Appearance { return APPEARANCE; }
 fn is_window_active(root: *core::Node) -> bool { let host=host_of_root(root); return if host.is_null() {is_active(active())} else {is_active(host)}; }
 
 // ---- the run -----------------------------------------------------------------------
@@ -952,6 +958,9 @@ fn app_launched(app_object: rt::Object, context: *u8) -> rt::Status {
     }
     return rt::Status {code:0};
 }
+// Before the run: facet's scheduling verbs work from here on, timers parked
+// until the queue exists. A facade calls this before it builds a first screen.
+fn prepare() { scheduler::install_parked(); }
 // Start the Application and run until its last window closes. `on_launch`
 // runs once XAML is up and opens the first windows with `open_window`;
 // `on_ready` runs when the first window's content has loaded. `on_stopped`
@@ -962,7 +971,7 @@ fn app_launched(app_object: rt::Object, context: *u8) -> rt::Status {
 fn start(on_launch: fn(*u8), on_launch_ctx: *u8=0 as *u8, on_ready: fn(*u8)=0 as fn(*u8), on_ready_ctx: *u8=0 as *u8,
          on_stopped: fn(*u8)=0 as fn(*u8), on_stopped_ctx: *u8=0 as *u8) -> rt::Status {
     if STARTED { return rt::Status {code:0x8000ffff as i32}; }
-    STARTED=true;
+    STARTED=true; prepare();
     ON_LAUNCH=on_launch; ON_LAUNCH_CTX=on_launch_ctx; ON_READY=on_ready; ON_READY_CTX=on_ready_ctx;
     // The staged runtime beside the exe, or the installed one (application::use_runtime).
     let runtime: rt::Status=application::use_runtime();
@@ -1028,6 +1037,35 @@ fn root_of_window(window: rt::Object) -> *core::Node {
     var i: usize=0;
     while i<HOSTS.count() { if let option::Option::Some(h)=HOSTS.at(i) { if !(*h).closing && identity_of((*h).window.clone())==identity_of(window.clone()) { return (*h).root; } } i=i+1; }
     return 0 as *core::Node;
+}
+// A mounted view's rect in its window's client area, in DIPs, as XAML laid it
+// out (scrolling, strips and sheets included), and that window's HWND through
+// `hwnd`. Width zero when the view is not in an open window.
+fn client_rect_of_view(view: *u8, hwnd: **u8) -> vocab::Rect {
+    *hwnd=0 as *u8;
+    if view.is_null() { return vocab::Rect::zero(); }
+    let host=host_of_view(view);
+    if host.is_null() || (*host).closing { return vocab::Rect::zero(); }
+    let visual=record::visual(view as *record::View);
+    let element=match ui::IUIElement::query(visual.clone()) { result::Result::Ok(e)=>{e}, result::Result::Err(_)=>{ return vocab::Rect::zero(); } };
+    let transform=match element.transform_to_visual(rt::Object::empty()) { result::Result::Ok(t)=>{t}, result::Result::Err(_)=>{ return vocab::Rect::zero(); } };
+    let general=native::must::[ui::IGeneralTransform](ui::IGeneralTransform::query(transform));
+    let at: ui::Point=match general.transform_point(ui::Point {x:0.0f32,y:0.0f32}) { result::Result::Ok(p)=>{p}, result::Result::Err(_)=>{ return vocab::Rect::zero(); } };
+    let size=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(visual));
+    *hwnd=(*host).hwnd;
+    return vocab::Rect::of(at.x as f64,at.y as f64,native::must::[f64](size.actual_width()),native::must::[f64](size.actual_height()));
+}
+// The XAML runtime class of a mounted view ("Microsoft.UI.Xaml.Controls.Button").
+fn class_name_of_view(view: *u8) -> text::Text {
+    if view.is_null() { return text::new(); }
+    let object=(*(view as *record::View)).object.clone();
+    if object.is_null() { return text::new(); }
+    // IInspectable::GetRuntimeClassName is slot 4.
+    let call: fn(*u8,*usize)->i32=rt::slot(object.raw(),4) as fn(*u8,*usize)->i32;
+    var name: usize=0;
+    if call(object.raw(),#addr_of(name))<0 || name==0 { return text::new(); }
+    let owned: rt::HString=rt::HString::adopt(name);
+    return match owned.to_text() { result::Result::Ok(t)=>{t}, result::Result::Err(_)=>{text::new()} };
 }
 fn live_views() -> i64 { return views::live_views(); }
 fn live_subscriptions() -> i64 { return views::live_subscriptions()+app_menu::subscriptions()+input::subscriptions(); }

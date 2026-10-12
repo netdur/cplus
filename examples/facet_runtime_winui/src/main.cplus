@@ -1,11 +1,10 @@
-// Two windows, one App, on WinUI. The app is written against the facade
-// alone; `winui::select()` is the whole of the backend choice.
+// Two windows, one App, on WinUI - the Windows backend. The app is written
+// against the facade alone and names no backend.
 import "facet/screen" as screen;
 import "facet/window" as window;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "facet_runtime/runtime" as runtime;
-import "facet_runtime/winui" as winui;
 import "./home" as home;
 import "./settings" as settings;
 import "./probe" as probe;
@@ -65,7 +64,6 @@ fn main() -> i32 {
         min_width: 0.0f64, min_height: 0.0f64, bar: screen::Bar::Blended));
     app.menu(menu);
     probe::install(app);
-    winui::select();
     if app.run("main") == status::Status::Ok { return 0; }
     return 1;
 }

@@ -468,9 +468,9 @@ activates a registered window without app-specific global storage or an
 one, `app()` returns the process default handle and opening a window is refused.
 See [accessing the running app](navigation.md#access-the-running-app-from-a-screen).
 
-On Windows the facade runs on Win32 unless the app calls
-`facet_runtime/winui`'s `select()` before `run`, which runs the same `App` on
-WinUI; see [facet_runtime](../../facet_runtime/README.md#windows-win32-or-winui).
+On Windows the facade runs on WinUI; `facet_runtime/win32`'s `select()` before
+`run` opts out to the deprecated Win32 backend; see
+[facet_runtime](../../facet_runtime/README.md#windows-winui-and-the-win32-opt-out).
 
 `App::new(name)` then:
 

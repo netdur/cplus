@@ -100,9 +100,12 @@ quartzcore  = "*"
 # these the build stops at `E0852: first segment win32 is not a declared
 # dependency`, naming an import in a package that does declare it.
 [windows.dependencies]
-facet_win32 = "*"
+# facet_agent/inspect_platform's Windows half places its overlay over
+# facet_winui's windows (netdu/cplus#20); win32 draws the overlay.
+facet_winui = "*"
+winui       = "*"
+winrt       = "*"
 win32       = "*"
-agent_win32 = "*"
 agent_inapp = "*"
 
 # The Android half. `serve_android.cplus` is only ever compiled by a build that

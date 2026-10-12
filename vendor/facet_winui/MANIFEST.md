@@ -2,8 +2,8 @@
 
 Windows x64, one WinUI Application run per process with any number of windows.
 The explicit host is `facet_winui/facet_winui` (`run`, or `start` +
-`open_window`); a `runtime::App` reaches it through `facet_runtime/winui`'s
-`select()`. The shared gallery's 38 pages mount; this is not a claim that
+`open_window`); a `runtime::App` runs on it by default - WinUI is the Windows
+backend. The shared gallery's 38 pages mount; this is not a claim that
 every Facet property is implemented.
 
 | Contract | Implemented scope |
@@ -33,16 +33,17 @@ every Facet property is implemented.
 | Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close, and per-window resize/active/inactive/density observers) and `app::set_activate_fn` are installed. Density is the content's XamlRoot.RasterizationScale; its change fires density observers, app-wide and the window's own. |
 | Chrome | `screen::Chrome` width/height (ResizeClient, corrected to the delivered client area), min/max size, minimizable/maximizable/resizable, and the bar: Native (dark DWM caption), Blended with `window_buttons()` (no system caption; app buttons are the only set), Blended without (ExtendsContentIntoTitleBar), Hidden/Custom (no border, no caption). `.window_drag()` moves a captionless window. |
 | Dialogs | `facet_winui/dialogs`: alert/choose/prompt as keyed facet sheets on the modal layer (scrim + card) of the window that asked: the window a deferred callback was scheduled from, else the window of the event being delivered, else the active one (`tools/test_facet_runtime_winui.py`), answers on a later turn, Return/Escape in alert and prompt, initial focus on the primary button or field, blocking `alert` through a nested message loop. |
-| Facade | `facet_runtime/winui` fills runtime_windows' backend seam: driver open/run with pre-launch queueing, dialogs, window verbs, frame/density/active reads, active/inactive/size/density observers. |
-| Agent integration | Optional lifecycle/apply/release hooks; `facet_agent_winui` connects keyed controls and privacy policies to `agent_winui`. In-app sessions and UI-dispatched MCP requests. |
+| Facade | `runtime_windows` drives WinUI directly: driver open/run with pre-launch window queueing and timers parked until launch (`prepare`), dialogs, window verbs, frame/density/active reads, active/inactive/size/density observers; a failed start makes `run` answer `InvalidInput`. Win32 is the opt-out (`facet_runtime/win32`). |
+| Agent integration | Lifecycle/apply/release hooks; `facet_agent`'s Windows facade connects keyed controls and privacy policies to `agent_winui` (`facet_agent_winui` forwards to it). In-app sessions and UI-dispatched MCP requests; the inspector's verbs are published, its highlight placed through XAML's TransformToVisual and `inspect` names the XAML class (`run_inspector`). |
 | Accessibility | Native WinUI peers, stable control AutomationIds, explicit accessibility name/help text with native-default restoration, heading levels 1–9 and attached Unicode tooltips with live updates/removal. |
 | Ownership | Native records owned by nodes, event removal before freeing callback contexts, row unrealise before drop, timers cancelled on release, zero view/subscription assertions on shutdown. |
 
 ## Limits
 
-- `facet_runtime` defaults to Win32; WinUI is an opt-in (`facet_runtime/winui`).
-  Through the facade the clipboard and file pickers are the shared Win32
-  calls. The app menu's find tokens (`menu_action_find*`) have no WinUI
+- Through the facade the clipboard and file pickers are the shell's Win32
+  calls (`facet_runtime/shell`). `set_app_appearance` is recorded and read
+  back, but the backend draws dark whatever it says. Adopted native views
+  (camera preview, terminal) are not hosted: a tree containing one is refused. The app menu's find tokens (`menu_action_find*`) have no WinUI
   default and do nothing. A focused text field keeps the chords it handles
   itself: WinUI's TextBox takes Ctrl+Q, so an app's Ctrl+Q quit does not
   reach the menu from inside one.

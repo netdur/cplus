@@ -66,9 +66,20 @@ android_view  = "*"
 jni           = "*"
 
 [windows.dependencies]
-agent_win32 = "*"
-# The toolkit itself, for `inspect_platform_windows`'s overlay — the same
-# reason `[macos.dependencies]` names `appkit` and `[linux.dependencies]` names
-# `gtk4`. The highlight is a layered popup and there is no way to place one
-# without user32.
-win32       = "*"
+# The WinUI reader (netdu/cplus#20): agent_winui walks the XAML tree, and
+# agent_winui_mcp is its UI-dispatched HTTP transport. facet_winui is where
+# the renderer's agent hooks live; winui/winrt its bindings.
+agent_winui     = "*"
+agent_winui_mcp = "*"
+facet_winui     = "*"
+winui           = "*"
+winrt           = "*"
+# The toolkit itself, for `inspect_platform_windows`'s overlay. The highlight
+# is a layered popup and there is no way to place one without user32.
+win32           = "*"
+
+# Source mode on Windows: facet_winui (itself source mode) owns the process's
+# renderer hooks, and this facade fills them, so it compiles in the app, as
+# facet_agent_winui did.
+[windows.build]
+prebuild = false

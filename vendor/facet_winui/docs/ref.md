@@ -3,9 +3,8 @@
 Import `"facet_winui/facet_winui" as host`.
 [Tutorial](tutorial.md) · [Guide](guide.md) · [Coverage](../MANIFEST.md)
 
-An application written against `facet_runtime` does not call this module: it
-selects WinUI with `facet_runtime/winui`'s `select()` and keeps using
-`runtime::App` (see the [guide](guide.md#through-facet_runtime)). The functions
+An application written against `facet_runtime` does not call this module: WinUI
+is the Windows backend and it keeps using `runtime::App` (see the [guide](guide.md#through-facet_runtime)). The functions
 below are the explicit host that driver is built on.
 
 ## One window

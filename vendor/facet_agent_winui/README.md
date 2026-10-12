@@ -1,6 +1,11 @@
 # facet_agent_winui
 
-Optional connector between `facet_winui`, `facet_agent` and `agent_winui`.
+**Now a forwarding door.** `facet_agent`'s Windows facade is the WinUI
+connector (netdu/cplus#20): `facet_agent/agent::enable()` serves agent_winui on
+every window. This package keeps its API for code written against it; every
+call forwards to `facet_agent`. New code imports `facet_agent/agent`.
+
+Originally the optional connector between `facet_winui`, `facet_agent` and `agent_winui`.
 The native agent package remains independently usable; ordinary WinUI and Facet
 WinUI apps do not pull in this connector unless they import it.
 

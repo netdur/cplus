@@ -1,47 +1,24 @@
 // facet runtime facade for Windows. `import "facet_runtime/runtime"` resolves
 // HERE on a Windows target, through the resolver's platform override on the
-// filename, and this file selects the Win32 backend - unless the app chose
-// WinUI through `facet_runtime/winui` (see "the selected backend"). macOS resolves to
-// runtime_macos.cplus and Linux to runtime_linux.cplus the same way; a target
-// with none of them lands on the neutral base runtime.cplus, which renders
-// nothing and says so — never some other platform's toolkit.
+// filename, and this file runs the app on WINUI (facet_winui) - unless it
+// opted out to the deprecated Win32 backend through `facet_runtime/win32`
+// (see "the Win32 opt-out"). macOS resolves to runtime_macos.cplus and Linux
+// to runtime_linux.cplus the same way; a target with none of them lands on the
+// neutral base runtime.cplus, which renders nothing and says so.
 //
-// This is one of the TWO files in facet that name a platform. Everything it
-// does is forward: the surface below is runtime.cplus's, verb for verb, so an
+// This is one of the files in facet that name a platform. Everything it does
+// is forward: the surface below is runtime.cplus's, verb for verb, so an
 // application type-checks identically on every target.
 //
-// WRITTEN BY COPYING THE LINUX FACADE, which is what the neutral base says to
-// do — "porting facet to a new platform starts by copying a real facade, not
-// this file: the shape of a real facade is one import line away from its
-// backend package". The LINUX one rather than the macOS one, because the two
-// differ on exactly the thing Windows agrees with Linux about (below), and
-// almost all of what survived the copy is about facet's own tiers (App,
-// routes, nav, screens, teardown) rather than about a toolkit.
+// WINUI IS THE DEFAULT (netdu/cplus#20). facet_win32 is deprecated and stays
+// reachable only as an explicit opt-out until it is removed. What WinUI does
+// not draw stays the shell's: the clipboard and the file pickers are
+// `./shell` over `win32`, whichever backend runs.
 //
-// What differs from the Linux facade, and it is only two things:
-//
-//   1. THE OBSERVERS. A GTK window carries its lifecycle as PROPERTIES, so
-//      each observation there is a `notify::` connection on a particular
-//      window. On Win32 they are MESSAGES arriving at one WNDPROC, so the
-//      table lives in `facet_win32/window` and an observation is app-wide
-//      rather than per-window. The facade cannot tell the difference: it hands
-//      over a callback and gets a token back either way.
-//
-//   2. `observe_suspended` REGISTERS AND NEVER FIRES. A Win32 desktop process
-//      has no suspended state — the lifecycle facet's `suspended` names is the
-//      mobile one — so the token is real and the callback is not called.
-//      Recorded in facet_win32/MANIFEST.md §1 rather than left to be
-//      discovered.
-//
-// What is the SAME as Linux, and is why this was the right file to copy:
-// THERE IS NO ⌘Q SEAM. `-[NSApplication terminate:]` never returns to the run
-// loop, so the macOS facade has to intercept it and restart the quit as an
-// ordinary unwind. Windows has no such call either: a quit IS closing the
-// windows, WM_CLOSE runs on each, and the loop ends when `PostQuitMessage`
-// breaks `GetMessage` after the last one goes. The ordinary unwind is the ONLY
-// unwind, so there is nothing to redirect and `app_should_terminate` has no
-// counterpart here either — `on_should_quit` rides the window's own close, the
-// same question at the same moment.
+// THERE IS NO QUIT SEAM to intercept, as on Linux: a quit is the windows
+// closing, and the run ends when the last one goes. `on_should_quit` is asked
+// when the last window is closed by the user (`window_should_close`) and by
+// `app.quit()`; `App::run` reaches `on_quit` after the loop returns.
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
@@ -62,10 +39,9 @@ import "facet/navigation" as navigation;
 import "facet/nav_model" as nav_model;
 import "facet/window" as window;
 import "facet/screen" as screen_mod;
-import "facet_win32/facet_win32" as backend;
-import "facet_win32/window" as host;
-import "facet_win32/dialogs" as dialogs;
-import "facet_win32/clipboard" as clipboard;
+import "facet_winui/facet_winui" as host;
+import "facet_winui/dialogs" as dialogs;
+import "./shell" as shell;
 
 type Node = flex::Node;
 type Builder = core::Builder;
@@ -148,21 +124,20 @@ fn drain_once() {
     return;
 }
 
-// ---- the selected backend -----------------------------------------------------
+// ---- the Win32 opt-out -----------------------------------------------------------
 //
-// TWO BACKENDS ON ONE OS. A platform file variant picks an OS, so this file
-// is Windows; which of the two Windows toolkits draws is chosen here, at run
-// time, by the application. Win32 is the default and needs nothing. WinUI is
-// selected by `facet_runtime/winui`'s `select()` before `App::run`, which
-// fills this seam with facet_winui's driver, dialogs and window reads.
+// TWO BACKENDS ON ONE OS. A platform file variant picks an OS; which toolkit
+// draws is chosen here, at run time. WinUI is the default and is called
+// directly below. The deprecated Win32 backend is selected by
+// `facet_runtime/win32`'s `select()` before `App::run`, which fills this seam
+// with facet_win32's driver, dialogs and window reads.
 //
-// The seam, not an import, is what keeps the choice free for apps that never
-// make it: this file names no WinUI package, so an app that stays on Win32
-// never lists facet_winui, winui or winrt and never compiles their bindings.
-// Only the opt-in module imports them, and only an app that imports it pays.
-// (That is also why this package is source mode on Windows - see Cplus.toml.)
+// The seam, not an import, keeps the opt-out free for apps that never take it:
+// this file names no Win32 backend package, so only an app that imports
+// `facet_runtime/win32` lists facet_win32 and compiles it. (That is also why
+// this package is source mode on Windows - see Cplus.toml.)
 //
-// Every slot may be null; a null slot falls through to the Win32 answer.
+// With no backend selected every slot is null and WinUI answers.
 struct Backend {
     // Called by `App::run` in place of facet_win32's `install`.
     install: fn(),
@@ -182,10 +157,13 @@ struct Backend {
     is_window_active: fn(*core::Node) -> bool,
     window_frame: fn(*core::Node) -> vocab::Rect,
     set_window_frame: fn(*core::Node, vocab::Rect),
-    // kind: 1 activated, 2 deactivated, 3 resized, 4 density. Answers a token for
-    // `cancel_observe`, or 0 when nothing was armed.
+    // kind: 1 activated, 2 deactivated, 3 resized, 4 density, 5 backgrounded,
+    // 6 resumed. Answers a token for `cancel_observe`, or 0 when nothing was
+    // armed.
     observe: fn(i32, fn(*u8), *u8) -> u64,
     cancel_observe: fn(u64),
+    set_appearance: fn(vocab::Appearance),
+    appearance: fn() -> vocab::Appearance,
 }
 
 static SELECTED: Backend = #zero::[Backend]();
@@ -197,7 +175,7 @@ fn select_backend(take b: Backend) {
     SELECTED = b;
 }
 
-// Is a backend other than Win32 selected?
+// Did the app opt out of WinUI?
 fn backend_selected() -> bool { return SELECTED.install.is_not_null(); }
 
 fn run_selected_loop() {
@@ -235,8 +213,7 @@ fn alert(title: str, message: str, primary: str, secondary: str = "",
          on_answer_ctx: *u8 = 0 as *u8) {
     let f: fn(str, str, str, str, fn(i32, *u8), *u8) = SELECTED.alert;
     if f.is_not_null() { f(title, message, primary, secondary, on_answer, on_answer_ctx); return; }
-    dialogs::alert_sheet(title, message, primary, secondary,
-                         on_answer, on_answer_ctx);
+    dialogs::alert_sheet(title, message, primary, secondary, on_answer, on_answer_ctx);
     return;
 }
 
@@ -282,68 +259,55 @@ fn alert_blocking(title: str, message: str, primary: str, secondary: str = "") -
     return dialogs::alert(title, message, primary, secondary);
 }
 
-fn choose_directory() -> option::Option[text::Text] { return dialogs::choose_directory(); }
-fn choose_file() -> option::Option[text::Text] { return dialogs::choose_file(); }
+fn choose_directory() -> option::Option[text::Text] { return shell::choose_directory(); }
+fn choose_file() -> option::Option[text::Text] { return shell::choose_file(); }
 fn choose_save_path(name: str = "", extension: str = "") -> option::Option[text::Text] {
-    return dialogs::choose_save_path(name, extension);
+    return shell::choose_save_path(name, extension);
 }
 
 // ---- clipboard ---------------------------------------------------------------
-// The portable half's contract, forwarded to the Win32 board. Both directions
-// are real here — see facet_win32/clipboard for why paste can answer content
+// The portable half's contract, forwarded to the Win32 board (`./shell`). Both
+// directions are real: Win32's read is synchronous, so paste answers content
 // where GTK's can only answer `None`.
-fn copy_text(s: str) -> bool { return clipboard::copy_text(s); }
-fn paste_text() -> option::Option[text::Text] { return clipboard::paste_text(); }
+fn copy_text(s: str) -> bool { return shell::copy_text(s); }
+fn paste_text() -> option::Option[text::Text] { return shell::paste_text(); }
 
 // ---- window verbs ------------------------------------------------------------
 
 fn window_close(sender: *u8) {
     let f: fn(*u8) = SELECTED.window_close;
     if f.is_not_null() { f(sender); return; }
-    dialogs::window_close(sender); return;
+    host::window_close(sender); return;
 }
 fn window_minimize(sender: *u8) {
     let f: fn(*u8) = SELECTED.window_minimize;
     if f.is_not_null() { f(sender); return; }
-    dialogs::window_minimize(sender); return;
+    host::window_minimize(sender); return;
 }
 fn window_zoom(sender: *u8) {
     let f: fn(*u8) = SELECTED.window_zoom;
     if f.is_not_null() { f(sender); return; }
-    dialogs::window_zoom(sender); return;
+    host::window_zoom(sender); return;
 }
 
 // The window gaining or losing key status — the app-level focus/blur pair.
 // Cancel through the returned handle, including by letting it drop, so hold it
-// in a field or the observation dies immediately.
-// BOTH RIDE ONE MESSAGE. Win32 says activation with WM_ACTIVATE, whose wParam
-// carries the DIRECTION — where AppKit has a named notification per direction.
-// So the observer asks which way it went, and a handler registered for the
-// direction it did not get would fire on both: the filter is here.
+// in a field or the observation dies immediately. App-wide, as on every
+// Windows backend: registration succeeds with no window up and the handle is
+// live; it fires once a window does.
+fn observe_kind(kind: i32, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+    if SELECTED.observe.is_not_null() { return observe_selected(kind, cb, ctx); }
+    let id: u64 = host::observe(kind, cb, ctx);
+    if id == (0 as u64) { return services::Cancellable::none(); }
+    return services::Cancellable::of(id, host::cancel_observe);
+}
+
 fn observe_window_active(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    if SELECTED.observe.is_not_null() { return observe_selected(1, cb, ctx); }
-    return services::Cancellable::of(host::observe_active(active_filter, cb as *u8),
-                                     host::cancel_observe);
+    return observe_kind(1, cb, ctx);
 }
 
 fn observe_window_inactive(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    if SELECTED.observe.is_not_null() { return observe_selected(2, cb, ctx); }
-    return services::Cancellable::of(host::observe_active(inactive_filter, cb as *u8),
-                                     host::cancel_observe);
-}
-
-fn active_filter(cb: *u8) {
-    if !is_window_active() { return; }
-    let f: fn(*u8) = cb as fn(*u8);
-    if f != (0 as fn(*u8)) { f(0 as *u8); }
-    return;
-}
-
-fn inactive_filter(cb: *u8) {
-    if is_window_active() { return; }
-    let f: fn(*u8) = cb as fn(*u8);
-    if f != (0 as fn(*u8)) { f(0 as *u8); }
-    return;
+    return observe_kind(2, cb, ctx);
 }
 
 // ---- the window tier's platform reads ----------------------------------------
@@ -366,8 +330,7 @@ fn display_density() -> f64 {
 // different scale, which is the whole of what "the density changed" means on a
 // desktop.
 fn observe_display_density(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    if SELECTED.observe.is_not_null() { return observe_selected(4, cb, ctx); }
-    return services::Cancellable::of(host::observe_density(cb, ctx), host::cancel_observe);
+    return observe_kind(4, cb, ctx);
 }
 
 // Window.IsActivated — the READ half of the pair whose observers already
@@ -377,52 +340,29 @@ fn observe_display_density(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancel
 fn is_window_active() -> bool {
     let f: fn(*core::Node) -> bool = SELECTED.is_window_active;
     if f.is_not_null() { return f(app::newest_window_root()); }
-    return host::is_active(app::newest_window_root());
+    return host::is_window_active(app::newest_window_root());
 }
 
 // Window.SizeChanged. The window's own resize, not a node's — `observe_size`
 // answers that one, and this is the row the ledger asked for.
 fn observe_window_size(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    if SELECTED.observe.is_not_null() { return observe_selected(3, cb, ctx); }
-    return services::Cancellable::of(host::observe_size_changed(cb, ctx),
-                                     host::cancel_observe);
+    return observe_kind(3, cb, ctx);
 }
 
 // Window.Backgrounding / Resumed / Stopped. On a desktop these are the app
-// being hidden, unhidden and terminated — the same three moments, under the
-// names the platform gives them.
-// "Backgrounded" HAS NO WIN32 ANSWER, and this is the one row where this facade
-// is honestly emptier than the other two. A desktop process is not suspended:
-// the lifecycle facet's `suspended` names is the mobile one (UIKit's background,
-// Android's onStop), and the nearest neighbours — minimised, or the session
-// locking — are different facts that would be a lie under this name.
-//
+// being hidden, unhidden and terminated.
+// "Backgrounded" HAS NO DESKTOP ANSWER: a desktop process is not suspended -
+// the lifecycle facet's `suspended` names is the mobile one - and minimised or
+// a locked session are different facts that would be a lie under this name.
 // The observation still REGISTERS and returns a live handle, because a facade
 // that refused here would make an application platform-shaped in the one place
-// it is meant not to be. It simply never fires. facet_win32/MANIFEST.md §1
-// carries the row.
+// it is meant not to be. It simply never fires.
 fn observe_backgrounding(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return services::Cancellable::of(host::observe_suspended(suspended_filter, cb as *u8),
-                                     host::cancel_observe);
+    return observe_kind(5, cb, ctx);
 }
 
 fn observe_resumed(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return services::Cancellable::of(host::observe_suspended(resumed_filter, cb as *u8),
-                                     host::cancel_observe);
-}
-
-fn suspended_filter(cb: *u8) {
-    if !host::is_suspended() { return; }
-    let f: fn(*u8) = cb as fn(*u8);
-    if f != (0 as fn(*u8)) { f(0 as *u8); }
-    return;
-}
-
-fn resumed_filter(cb: *u8) {
-    if host::is_suspended() { return; }
-    let f: fn(*u8) = cb as fn(*u8);
-    if f != (0 as fn(*u8)) { f(0 as *u8); }
-    return;
+    return observe_kind(6, cb, ctx);
 }
 
 // THE APP STOPPING IS NOT A NOTIFICATION HERE. AppKit posts
@@ -444,11 +384,15 @@ fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
 // system's. `Appearance::Unspecified` gives the system back, which is the
 // only way to undo an override and therefore not optional.
 fn set_app_appearance(a: vocab::Appearance) {
+    let f: fn(vocab::Appearance) = SELECTED.set_appearance;
+    if f.is_not_null() { f(a); return; }
     host::set_app_appearance(a);
     return;
 }
 
 fn app_appearance() -> vocab::Appearance {
+    let f: fn() -> vocab::Appearance = SELECTED.appearance;
+    if f.is_not_null() { return f(); }
     return host::app_appearance();
 }
 
@@ -457,13 +401,13 @@ fn app_appearance() -> vocab::Appearance {
 fn window_frame() -> vocab::Rect {
     let f: fn(*core::Node) -> vocab::Rect = SELECTED.window_frame;
     if f.is_not_null() { return f(app::newest_window_root()); }
-    return dialogs::window_frame_of(app::newest_window_root());
+    return host::window_frame_of(app::newest_window_root());
 }
 
 fn set_window_frame(frame: vocab::Rect) {
     let f: fn(*core::Node, vocab::Rect) = SELECTED.set_window_frame;
     if f.is_not_null() { f(app::newest_window_root(), frame); return; }
-    dialogs::set_window_frame_of(app::newest_window_root(), frame);
+    host::set_window_frame_of(app::newest_window_root(), frame);
     return;
 }
 
@@ -600,12 +544,18 @@ impl App {
             windows::install(windows::Driver { open: SELECTED.open, run: run_selected_loop,
                 external_loop: false, single_window: false });
         } else {
-            backend::install();
-            windows::install(windows::Driver { open: open_owned_window, run: run_owned_loop,
+            app::set_backend_name("facet_winui");
+            // The first screen is attached before WinUI launches; what it
+            // schedules then is parked, not dropped.
+            host::prepare();
+            windows::install(windows::Driver { open: open_winui_window, run: run_winui,
                 external_loop: false, single_window: false });
         }
         serve_agent_if_asked();
+        RUN_FAILED = false;
         let result = windows::App::of(this._p).run(initial, key);
+        // A WinUI that could not start (no runtime) ran no windows at all.
+        if result == status::Status::Ok && RUN_FAILED { return status::Status::InvalidInput; }
         return result;
     }
 
@@ -898,17 +848,80 @@ fn menu_for(n: nav_model::Navigator) -> AppMenu {
     return bar;
 }
 
-// Every native window has the same owner and teardown path, including the first.
-fn open_owned_window(n: nav_model::Navigator) -> bool {
+
+// ---- the WinUI driver ---------------------------------------------------------------
+//
+// THE FIRST WINDOW WAITS FOR LAUNCH. `App::run` opens its initial window
+// before it runs the loop, and a XAML window cannot exist before
+// Application.Start has launched. So `open_winui_window` queues a session that
+// arrives early and `winui_launched` opens the queue; from then on it opens at
+// once.
+static PENDING: vec::Vec[nav_model::Navigator] = #zero::[vec::Vec[nav_model::Navigator]]();
+static RUN_FAILED: bool = false;
+
+fn open_winui_window(n: nav_model::Navigator) -> bool {
+    if host::launched() { return open_winui_now(n); }
+    return PENDING.append(n) == status::Status::Ok;
+}
+
+fn open_winui_now(n: nav_model::Navigator) -> bool {
     let root = navigation::root(n);
     let s = nav_model::session(n.owner, n.id);
+    if root.is_null() || s.is_null() { return false; }
     var bar = menu_for(n);
     host::install_app_menu(#addr_of(bar));
     let w = host::open_window(root, windows::chrome(n),
-        will_close: windows::closing, will_close_ctx: s as *u8);
+        will_close: windows::closing, will_close_ctx: s as *u8,
+        should_close: window_should_close, should_close_ctx: s as *u8);
     if w.is_null() { return false; }
     windows::named(n);
     return true;
 }
 
-fn run_owned_loop() { host::run_loop(); settle_and_teardown(0 as *core::Node); }
+// A close the user started (caption button, Alt+F4, the window buttons). The
+// window's own policy (`Window::on_should_close`) is asked first; closing the
+// LAST window ends the run, so that one is also the app's quit and asks
+// `on_should_quit` - the question `app.quit()` asks, at the same moment.
+fn window_should_close(ctx: *u8) -> bool {
+    if !windows::should_close(ctx) { return false; }
+    if host::window_count() > (1 as usize) { return true; }
+    return screen_should_close(ctx);
+}
+
+fn winui_launched(ctx: *u8) {
+    var i: usize = 0 as usize;
+    while i < PENDING.count() {
+        match PENDING.at(i) {
+            option::Option[nav_model::Navigator]::Some(n) => {
+                if !open_winui_now(n) { io::eprintln("facet_runtime: a window could not be opened (unsupported tree?)"); }
+            }
+            option::Option[nav_model::Navigator]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    PENDING.remove_all();
+}
+
+// The menu's quit token: the same orderly quit `app.quit()` is.
+fn winui_quit() { let _q: bool = app().quit(); }
+
+fn run_winui() {
+    host::set_quit_fn(winui_quit);
+    let result = host::start(winui_launched, on_stopped: winui_stopped);
+    if result.is_err() {
+        RUN_FAILED = true;
+        let code: i32 = result.code;
+        io::eprintln("facet_runtime: the WinUI run ended with HRESULT ${code}");
+    }
+    PENDING.remove_all();
+    settle_and_teardown(0 as *core::Node);
+}
+
+// The last window has closed. Each session parked its release for the next
+// turn (`windows::closing`); drop them now, while XAML's thread is still up,
+// rather than after the apartment is gone. `App::run`'s own reclaim then finds
+// nothing left.
+fn winui_stopped(ctx: *u8) {
+    settle_and_teardown(0 as *core::Node);
+    let _left: usize = services::reclaim_settled();
+}

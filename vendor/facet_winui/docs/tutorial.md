@@ -43,8 +43,7 @@ let app = runtime::App::new("Notes");
 app.window("main", home_factory, chrome: screen::Chrome::new(title: "Notes",
     width: 640.0f64, height: 420.0f64, bar: screen::Bar::Blended));
 app.window("settings", settings_factory);
-winui::select();                      // import "facet_runtime/winui" as winui
-app.run("main");
+app.run("main");                      // WinUI: the Windows backend
 ```
 
 `runtime::app().open_window("settings")` then opens a second WinUI window and

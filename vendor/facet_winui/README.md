@@ -47,7 +47,7 @@ When neither is available the run ends with a message naming the installer.
 Any number of windows run in the one WinUI Application: `host::start` and
 `host::open_window` open them, each honours `screen::Chrome` (size, limits,
 bar, buttons), and closing the last ends the run. A `runtime::App` runs here
-unchanged after `facet_runtime/winui`'s `select()` - windows, routes,
+by default - WinUI is the Windows backend - windows, routes,
 `open_window` and keyed alert/choose/prompt sheets included; see
 [examples/facet_runtime_winui](../../examples/facet_runtime_winui/README.md).
 
@@ -68,9 +68,8 @@ python tools/verb_coverage.py winui --list --check
 
 These test real pointer/keyboard/wheel input, text readback and programmatic
 updates, length limits and read-only fields, scrolling, resize, control
-replacement during its callback, and cleanup. `facet_runtime` still
-defaults to Win32 on Windows; an app opts into this backend with
-`facet_runtime/winui`; `.gesture(...)` works on any node, `focus()`/`blur()`
+replacement during its callback, and cleanup. `facet_runtime` runs on this
+backend by default; `.gesture(...)` works on any node, `focus()`/`blur()`
 move the keyboard and `is_focused` reads back; `App::menu` is a MenuBar in every window
 ([MANIFEST](MANIFEST.md)).
 
