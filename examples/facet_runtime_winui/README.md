@@ -31,6 +31,12 @@ right click, hover, long press, swipe and Escape handlers, focus/blur
 handlers, and `Focus pad` / `Blur pad` buttons; `settings:pad-log` says what
 it last heard.
 
+Under it, drag and drop: `card:1` drags its key (`can_drag`, logging
+`drag start` / `drag end` to `settings:drag-log`), and `settings:drop` takes
+text and files (`allow_drop`, `allow_file_drop`). Its `on_drag_over` refuses a
+file whose path contains `refuse`; its `on_drop` writes what arrived and where
+to `settings:drop-log`.
+
 `Load in background` runs a `services::run_job` whose `run` sleeps on a worker
 thread; its result is applied on the UI thread and shown in `home:loaded`.
 

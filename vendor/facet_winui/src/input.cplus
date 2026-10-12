@@ -34,9 +34,8 @@
 // |                          | touch Holding                                          |
 // | on_pinch                 | Ctrl + wheel, as on Win32                              |
 // | on_key                   | KeyDown, on the focused element or bubbling through    |
-//
-// The drag-and-drop verbs are not in this module (facet_winui's collections
-// own their own drag; a general drop band is separate work).
+// | drag and drop            | DragEnter/Over/Leave, Drop, DragStarting, DropCompleted|
+// |                          | - armed here, handled in `dnd`                         |
 import "stdlib/box" as box;
 import "stdlib/option" as option;
 import "stdlib/result" as result;
@@ -52,6 +51,7 @@ import "./record" as record;
 import "./native" as native;
 import "./scheduler" as scheduler;
 import "./presentation" as presentation;
+import "./dnd" as dnd;
 
 extern fn GetKeyState(key: i32) -> i16;
 
@@ -67,7 +67,14 @@ const B_RIGHT: u32=128;
 const B_HOLDING: u32=256;
 const B_WHEEL: u32=512;
 const B_KEY: u32=1024;
-const BAND_COUNT: usize=11;
+// The drop target's four events and the source's two (`dnd`).
+const B_DRAG_ENTER: u32=2048;
+const B_DRAG_OVER: u32=4096;
+const B_DRAG_LEAVE: u32=8192;
+const B_DROP: u32=16384;
+const B_DRAG_STARTING: u32=32768;
+const B_DROP_COMPLETED: u32=65536;
+const BAND_COUNT: usize=17;
 // The slop a press may wander before it is a pan: every click jitters.
 const SLOP: f64=4.0f64;
 
@@ -88,6 +95,10 @@ fn bands_for(g: *gestures::Gestures) -> u32 {
     if long { b=b|B_HOLDING; }
     if set((*g).on_pinch) { b=b|B_WHEEL; }
     if set((*g).on_key) { b=b|B_KEY; }
+    // A zone that asked for drops is a target whether or not it has handlers:
+    // it accepts what it asked for (an `on_drag_over` can refuse).
+    if (*g).allow_drop || (*g).allow_file_drop { b=b|B_DRAG_ENTER|B_DRAG_OVER|B_DRAG_LEAVE|B_DROP; }
+    if (*g).can_drag { b=b|B_DRAG_STARTING|B_DROP_COMPLETED; }
     return b;
 }
 // A release this far from its press is a swipe. Pure, for the same reason.
@@ -100,7 +111,7 @@ fn beyond_slop(dx: f64, dy: f64) -> bool { return dx*dx+dy*dy>SLOP*SLOP; }
 struct Band {
     opaque view: *record::View,
     armed: u32,
-    tokens: [ui::EventRegistrationToken; 11],
+    tokens: [ui::EventRegistrationToken; 17],
     pressed: bool,
     moved: bool,
     long_fired: bool,
@@ -290,7 +301,7 @@ fn key_reader() -> gestures::KeyReader {
 fn element(r: *record::View) -> ui::IUIElement { return native::must::[ui::IUIElement](ui::IUIElement::query((*r).object.clone())); }
 fn band_for(r: *record::View) -> *Band {
     if (*r).input.is_not_null() { return band_of(r); }
-    let owner: box::Box[Band]=match box::new::[Band](Band {view:r,armed:0,tokens:#zero::[[ui::EventRegistrationToken; 11]](),
+    let owner: box::Box[Band]=match box::new::[Band](Band {view:r,armed:0,tokens:#zero::[[ui::EventRegistrationToken; 17]](),
         pressed:false,moved:false,long_fired:false,swallow_tap:false,x:0.0f64,y:0.0f64,timer:0}) {
         option::Option::Some(v)=>{v}, option::Option::None=>{ return 0 as *Band; }
     };
@@ -312,6 +323,15 @@ fn arm(b: *Band, bit: u32, index: usize) {
     if bit==B_HOLDING { token=native::must::[ui::EventRegistrationToken](e.add_holding(native::must::[ui::HoldingEventHandler](ui::HoldingEventHandler::new(holding,ctx)).object())); }
     if bit==B_WHEEL { token=native::must::[ui::EventRegistrationToken](e.add_pointer_wheel_changed(native::must::[ui::PointerEventHandler](ui::PointerEventHandler::new(wheel,ctx)).object())); }
     if bit==B_KEY { token=native::must::[ui::EventRegistrationToken](e.add_key_down(native::must::[ui::KeyEventHandler](ui::KeyEventHandler::new(key_down,ctx)).object())); }
+    // The drag events take the record, which `dnd` checks is still live: a
+    // read it started may finish after the band is gone.
+    let view: *u8=(*b).view as *u8;
+    if bit==B_DRAG_ENTER { native::check(e.set_allow_drop(true)); token=native::must::[ui::EventRegistrationToken](e.add_drag_enter(native::must::[ui::DragEventHandler](ui::DragEventHandler::new(dnd::drag_enter,view)).object())); }
+    if bit==B_DRAG_OVER { token=native::must::[ui::EventRegistrationToken](e.add_drag_over(native::must::[ui::DragEventHandler](ui::DragEventHandler::new(dnd::drag_over,view)).object())); }
+    if bit==B_DRAG_LEAVE { token=native::must::[ui::EventRegistrationToken](e.add_drag_leave(native::must::[ui::DragEventHandler](ui::DragEventHandler::new(dnd::drag_leave,view)).object())); }
+    if bit==B_DROP { token=native::must::[ui::EventRegistrationToken](e.add_drop(native::must::[ui::DragEventHandler](ui::DragEventHandler::new(dnd::drop,view)).object())); }
+    if bit==B_DRAG_STARTING { native::check(e.set_can_drag(true)); token=native::must::[ui::EventRegistrationToken](e.add_drag_starting(native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_DragStartingEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_DragStartingEventArgs::new(dnd::drag_starting,view)).object())); }
+    if bit==B_DROP_COMPLETED { token=native::must::[ui::EventRegistrationToken](e.add_drop_completed(native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_DropCompletedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_UIElement_Microsoft_UI_Xaml_DropCompletedEventArgs::new(dnd::drop_completed,view)).object())); }
     (*b).tokens[index]=token; (*b).armed=(*b).armed|bit; LIVE=LIVE+1;
 }
 fn disarm(b: *Band, bit: u32, index: usize) {
@@ -328,6 +348,12 @@ fn disarm(b: *Band, bit: u32, index: usize) {
     if bit==B_HOLDING { native::check(e.remove_holding(token)); }
     if bit==B_WHEEL { native::check(e.remove_pointer_wheel_changed(token)); }
     if bit==B_KEY { native::check(e.remove_key_down(token)); }
+    if bit==B_DRAG_ENTER { native::check(e.remove_drag_enter(token)); }
+    if bit==B_DRAG_OVER { native::check(e.remove_drag_over(token)); }
+    if bit==B_DRAG_LEAVE { native::check(e.remove_drag_leave(token)); }
+    if bit==B_DROP { native::check(e.remove_drop(token)); }
+    if bit==B_DRAG_STARTING { native::check(e.remove_drag_starting(token)); }
+    if bit==B_DROP_COMPLETED { native::check(e.remove_drop_completed(token)); }
     (*b).armed=(*b).armed&(~bit); LIVE=LIVE-1;
 }
 // Containers are Borders, which facet_winui always gives a brush (transparent
@@ -351,6 +377,7 @@ fn live_band(b: *Band) -> bool {
     return live_view(r) && (*r).input==(b as *u8);
 }
 fn attach(r: *record::View) {
+    dnd::set_live_fn(live_view);
     let added: status::Status=VIEWS.append(r as usize); assert added==status::Status::Ok;
     let f=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());
     let boxed=native::must::[rt::Object](f.create_u_int64(r as usize as u64));
@@ -401,6 +428,7 @@ fn blur(r: *record::View) {
 fn release(r: *record::View) {
     var i: usize=0; let want: usize=r as usize;
     while i<VIEWS.count() { if let option::Option::Some(v)=VIEWS.at(i) { if v==want { let gone: option::Option[usize]=VIEWS.swap_remove(i); break; } } i=i+1; }
+    dnd::forget(want);
     if (*r).input.is_null() { return; }
     let b=band_of(r);
     if (*b).timer!=0 { scheduler::cancel((*b).timer); (*b).timer=0; }
@@ -445,4 +473,19 @@ fn focus_changed(element: rt::Object, gained: bool) {
     if data.is_null() { return; }
     core::set_focused(n,gained);
     if gained { core::fire_focus_handler(n); } else { core::fire_blur_handler(n); }
+}
+
+#[test]
+fn a_drop_zone_and_a_drag_source_arm_their_events() {
+    var g: gestures::Gestures=gestures::Gestures::new();
+    assert bands_for(#addr_of(g))==0;
+    g.allow_file_drop=true;
+    assert bands_for(#addr_of(g))==(B_DRAG_ENTER|B_DRAG_OVER|B_DRAG_LEAVE|B_DROP);
+    g.allow_file_drop=false; g.allow_drop=true;
+    assert bands_for(#addr_of(g))==(B_DRAG_ENTER|B_DRAG_OVER|B_DRAG_LEAVE|B_DROP);
+    g.allow_drop=false; g.can_drag=true;
+    assert bands_for(#addr_of(g))==(B_DRAG_STARTING|B_DROP_COMPLETED);
+    // Every bit has a token slot.
+    assert (B_DROP_COMPLETED>>((BAND_COUNT-1) as u32))==1;
+    return;
 }

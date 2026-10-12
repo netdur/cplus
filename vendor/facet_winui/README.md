@@ -69,7 +69,8 @@ python tools/verb_coverage.py winui --list --check
 These test real pointer/keyboard/wheel input, text readback and programmatic
 updates, length limits and read-only fields, scrolling, resize, control
 replacement during its callback, and cleanup. `facet_runtime` runs on this
-backend by default; `.gesture(...)` works on any node, `focus()`/`blur()`
+backend by default; `.gesture(...)` works on any node, drag and drop
+included (text and files in, a node's key out), `focus()`/`blur()`
 move the keyboard and `is_focused` reads back; `App::menu` is a MenuBar in every window
 ([MANIFEST](MANIFEST.md)).
 

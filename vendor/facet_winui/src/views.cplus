@@ -50,6 +50,7 @@ import "./browser" as browser;
 import "./hybrid" as hybrid;
 import "./adopted" as adopted;
 import "./input" as input;
+import "./dnd" as dnd;
 import "./pointer" as pointer;
 import "./buttons" as buttons;
 import "./refreshing" as refreshing;
@@ -545,7 +546,10 @@ fn sender_item(sender: *u8) -> *u8 {
 }
 fn install_readers() {
     var readers: component::SenderReaders=component::sender_readers_none();
-    readers.key_of=sender_key; readers.item_of=sender_item; component::install_sender_readers(readers);
+    readers.key_of=sender_key; readers.item_of=sender_item;
+    readers.dropped_text=dnd::dropped_text; readers.dropped_files=dnd::dropped_files;
+    readers.drop_position=dnd::drop_position; readers.drag_targeted=dnd::drag_targeted;
+    component::install_sender_readers(readers);
     return;
 }
 

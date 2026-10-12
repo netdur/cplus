@@ -3,9 +3,8 @@ name = "facet_runtime_winui"
 version = "0.0.1"
 edition = "2026"
 
-# A `runtime::App` with two windows, run on WinUI through the facade.
-# main.cplus calls `facet_runtime/winui`'s `select()` before `app.run`; that
-# opt-in is the only line that differs from the same app on Win32.
+# A `runtime::App` with two windows, run on WinUI - the Windows backend -
+# through the facade. The source names no backend.
 #
 #   & examples/facet_runtime_winui/build.ps1
 #   & examples/facet_runtime_winui/out/runtime/facet_runtime_winui.exe

@@ -649,6 +649,108 @@ def run_adopted_view():
     print('PASS: adopted view (a child of its window, placed over its node, released by the app)')
 
 
+def drop_driver():
+    """tools/winui_drop_files.c, built once next to the sample."""
+    exe = RUNTIME / 'winui_drop_files.exe'
+    source = REPO / 'tools/winui_drop_files.c'
+    if not exe.exists() or exe.stat().st_mtime < source.stat().st_mtime:
+        subprocess.run(['clang', '-O1', str(source), '-o', str(exe), '-lole32', '-lshell32', '-luser32', '-luuid', '-lgdi32'],
+                       check=True, capture_output=True)
+    return exe
+
+
+def run_drag_and_drop():
+    """Drag and drop on plain containers: a card dragged onto a zone delivers
+    its key as text; files dropped from outside arrive as paths, with where
+    they landed; a file the zone's on_drag_over refuses is refused before the
+    drop; a drag that crosses the zone and leaves it is heard leaving."""
+    log = RUNTIME / 'dnd.log'
+    files = RUNTIME / 'dnd_files'
+    files.mkdir(exist_ok=True)
+    a, b, refuse = files / 'a.txt', files / 'b.txt', files / 'refuse.txt'
+    for f in (a, b, refuse):
+        f.write_text('dropped\n')
+    driver = drop_driver()
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        assert shows(settings, 'settings:drop-title')
+        activate(settings, 'settings:focus-pad')
+        scale = u.GetDpiForWindow(settings) / 96
+
+        def says(key, check, seconds=8):
+            assert wait_until(lambda: check(uia('name', settings, key)), seconds), (key, uia('name', settings, key))
+            return uia('name', settings, key)
+
+        def under(title_key):
+            # A container has no automation peer: aim at the empty space
+            # under its title, which only the container itself answers.
+            x, y, width, height = (int(v) for v in uia('rect', settings, title_key).split())
+            return x + width // 2, y + height + round(10 * scale)
+
+        def move_to(px, py):
+            u.mouse_event(0x8001, round(px * 65535 / (u.GetSystemMetrics(0) - 1)),
+                          round(py * 65535 / (u.GetSystemMetrics(1) - 1)), 0, 0)
+            time.sleep(.03)
+
+        zx, zy = under('settings:drop-title')
+        # The card, dragged by the real mouse: WinUI runs the drag itself.
+        cx, cy = under('settings:card-title')
+        move_to(cx, cy)
+        u.mouse_event(2, 0, 0, 0, 0)
+        for step in range(1, 31):
+            move_to(cx + (zx - cx) * step // 30, cy + (zy - cy) * step // 30)
+        for _ in range(10):
+            move_to(zx + 1, zy); move_to(zx, zy)
+        u.mouse_event(4, 0, 0, 0, 0)
+        dropped = says('settings:drop-log', lambda v: v.startswith('drop'))
+        assert dropped.startswith('drop text=card:1 at '), dropped
+        x, y = (int(v) for v in dropped.rsplit(' ', 1)[1].split(','))
+        assert 0 <= x <= 180 and 0 <= y <= 50, dropped           # in the zone's own space
+        says('settings:drag-log', lambda v: v == 'drag end')
+
+        # Files, from another process, through OLE as Explorer drops them.
+        def drop(*paths, at=(zx, zy), via=None):
+            args = [str(driver)] + (['--via', str(via[0]), str(via[1])] if via else [])
+            result = subprocess.run(args + [str(at[0]), str(at[1])] + [str(p) for p in paths],
+                                    capture_output=True, text=True, timeout=60)
+            assert result.returncode == 0, result.stderr
+            return result.stdout.strip()
+
+        assert drop(a, b) == '1'
+        dropped = says('settings:drop-log', lambda v: v.startswith('drop'))
+        assert dropped.startswith(f'drop file={a} file={b} at '), dropped
+
+        def heard_since(mark):
+            return [l[4:] for l in read(log)[mark:].splitlines() if l.startswith('DND ')]
+
+        # Refused while over the zone: the source is told no, and nothing
+        # drops - the zone hears the drag leave instead.
+        mark = len(read(log))
+        assert drop(refuse) == '0'
+        says('settings:drop-log', lambda v: v.startswith('leave'))
+        heard = heard_since(mark)
+        assert 'refused' in heard and not any(h.startswith('drop') for h in heard), heard
+
+        # Over the zone, then off it to the pad: the zone was the target while
+        # the files were over it, hears them leave, and is not the target
+        # when it does.
+        mark = len(read(log))
+        px, py = under('settings:pad-title')
+        assert drop(a, at=(px, py), via=(zx, zy)) == '0'
+        says('settings:drop-log', lambda v: v.startswith('leave'))
+        heard = heard_since(mark)
+        assert 'over 1 true' in heard and heard[-1] == 'leave false', heard
+        assert not any(h.startswith('drop') for h in heard), heard
+        assert process.poll() is None, read(log)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: drag and drop (card key as text, files with position, refusal on hover, leave)')
+
+
 def run_win32_opt_out():
     """`facet_runtime/win32::select()` still runs an app on the deprecated
     Win32 backend, and a close there asks on_should_quit again."""
@@ -688,5 +790,6 @@ if __name__ == '__main__':
     run_gestures()
     run_inspector()
     run_adopted_view()
+    run_drag_and_drop()
     run_appearance()
     run_win32_opt_out()

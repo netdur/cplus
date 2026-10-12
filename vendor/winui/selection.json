@@ -159,6 +159,12 @@
     "Microsoft.UI.Xaml.Input.FocusManagerLostFocusEventArgs",
     "Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs",
     "Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs",
-    "Microsoft.UI.Xaml.Input.HoldingRoutedEventArgs"
+    "Microsoft.UI.Xaml.Input.HoldingRoutedEventArgs",
+    "Microsoft.UI.Xaml.DragEventArgs",
+    "Microsoft.UI.Xaml.DragEventHandler",
+    "Microsoft.UI.Xaml.DragOperationDeferral",
+    "Windows.ApplicationModel.DataTransfer.DataPackageView",
+    "Windows.ApplicationModel.DataTransfer.StandardDataFormats",
+    "Windows.Storage.IStorageItem"
   ]
 }
