@@ -1,0 +1,262 @@
+// facet_winui/app_menu - `App::menu` as a native MenuBar across the top of
+// every window.
+//
+// The facade hands over the app's menu (App::menu plus the primary screen's
+// menu_items) as a screen::AppMenu. This keeps a DEEP COPY - the facade's is a
+// local, and facet_win32's `copy_app_menu` records the use-after-return that
+// holding its address became - and builds one MenuBar per window from it: a
+// MenuBarItem per `menu` group, in first-seen order, holding a MenuFlyoutItem
+// per item and a MenuFlyoutSeparator per separator.
+//
+// SHORTCUTS. A bare `key:` means the platform's command key, which is Ctrl
+// here; `shift`/`alt` add to it. Each is a KeyboardAccelerator on the MenuBar
+// itself, not on its item: an item of a closed menu is not in the visual tree,
+// so an accelerator there would only work once its menu had been opened. The
+// item shows the chord as its accelerator text.
+//
+// ENABLED AND TITLE are answered from `is_enabled` / `title_of` when the bar is
+// entered by the pointer or takes focus (Alt, F10) - before any of its menus
+// can open - and when its window is activated; and again when an item or its
+// shortcut is invoked: an item whose answer is now no does nothing.
+//
+// CLICK. A non-null `on_click` wins (sender null, ctx `click_ctx`, as on
+// Win32); otherwise the action token goes to the host's dispatcher (quit, close
+// this window, the edit actions). Both go through the host so a sheet the
+// handler opens lands on this window.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/screen" as screen;
+import "./native" as native;
+import "./shortcuts" as shortcuts;
+
+struct Entry {
+    opaque bar: *Bar,
+    index: usize,
+    item: rt::Object,
+    token: ui::EventRegistrationToken,
+    accelerator: rt::Object,
+    accelerator_token: ui::EventRegistrationToken,
+}
+struct Bar {
+    opaque window: *u8,
+    object: rt::Object,
+    entered_token: ui::EventRegistrationToken,
+    focused_token: ui::EventRegistrationToken,
+    entries: vec::Vec[*Entry],
+}
+
+static MENU: screen::AppMenu=#zero::[screen::AppMenu]();
+static HAS_MENU: bool=false;
+// The host's: run item `index`'s click or action for `window`.
+static DISPATCH: fn(*u8, u32, fn(*u8, *u8), *u8)=0 as fn(*u8, u32, fn(*u8, *u8), *u8);
+static LIVE: i64=0;
+
+fn set_dispatch_fn(f: fn(*u8, u32, fn(*u8, *u8), *u8)) { DISPATCH=f; }
+fn subscriptions() -> i64 { return LIVE; }
+
+fn copy(m: *screen::AppMenu) -> screen::AppMenu {
+    var out: screen::AppMenu=screen::empty_app_menu();
+    if m.is_null() { return out; }
+    out.title=(*m).title.clone();
+    var i: usize=0;
+    while i<(*m).items.count() {
+        if let option::Option::Some(it)=(*m).items.at_ptr(i) {
+            let added: status::Status=out.items.append(screen::MenuItem {
+                menu:(*it).menu.clone(), title:(*it).title.clone(), key:(*it).key.clone(),
+                shift:(*it).shift, alt:(*it).alt, action:(*it).action,
+                is_enabled:(*it).is_enabled, enabled_ctx:(*it).enabled_ctx,
+                title_of:(*it).title_of, title_ctx:(*it).title_ctx,
+                is_separator:(*it).is_separator, on_click:(*it).on_click, click_ctx:(*it).click_ctx });
+        }
+        i=i+1;
+    }
+    return out;
+}
+// Replace the menu every window shows. The host rebuilds each window's bar.
+fn install(m: *screen::AppMenu) { MENU=copy(m); HAS_MENU=true; }
+fn uninstall() { MENU=screen::empty_app_menu(); HAS_MENU=false; }
+// NO ITEMS IS NO BAR, as on Win32: an app that declares no menu gets no strip.
+fn has_items() -> bool { return HAS_MENU && MENU.items.count()>0; }
+fn item_count() -> usize { return if HAS_MENU {MENU.items.count()} else {0 as usize}; }
+
+fn item_at(index: usize) -> *screen::MenuItem {
+    match MENU.items.at_ptr(index) { option::Option::Some(p)=>{ return p; }, option::Option::None=>{ return 0 as *screen::MenuItem; } }
+}
+fn enabled(it: *screen::MenuItem) -> bool {
+    let ask=(*it).is_enabled;
+    if ask.is_null() { return true; }
+    return ask((*it).enabled_ctx);
+}
+fn title(it: *screen::MenuItem) -> text::Text {
+    let ask=(*it).title_of;
+    if ask.is_not_null() { let t: text::Text=ask((*it).title_ctx); if t.count()>0 { return t; } }
+    return (*it).title.clone();
+}
+// "Ctrl+Shift+N": the chord an item's accelerator text shows.
+fn chord(it: *screen::MenuItem) -> text::Text {
+    var out: text::Text=text::from_str("Ctrl+");
+    if (*it).shift { let _s=out.append("Shift+"); }
+    if (*it).alt { let _a=out.append("Alt+"); }
+    let _k=out.append(text::from_str((*it).key.view()).uppercased().view());
+    return out;
+}
+fn modifiers(it: *screen::MenuItem) -> u32 {
+    var m: u32=ui::virtual_key_modifiers_control;
+    if (*it).shift { m=m|ui::virtual_key_modifiers_shift; }
+    if (*it).alt { m=m|ui::virtual_key_modifiers_menu; }
+    return m;
+}
+
+// ---- events ------------------------------------------------------------------------
+fn run(e: *Entry) {
+    let it=item_at((*e).index);
+    if it.is_null() || (*it).is_separator || !enabled(it) { return; }
+    let f=DISPATCH;
+    if f.is_null() { return; }
+    // Copied first: the handler may replace the menu, and with it this entry.
+    let window: *u8=(*(*e).bar).window; let action: u32=(*it).action;
+    let click: fn(*u8, *u8)=(*it).on_click; let ctx: *u8=(*it).click_ctx;
+    f(window,action,click,ctx);
+}
+fn clicked(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status { run(context as *Entry); return rt::Status {code:0}; }
+fn shortcut(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let event=native::must::[ui::IKeyboardAcceleratorInvokedEventArgs](ui::IKeyboardAcceleratorInvokedEventArgs::query(args));
+    native::check(event.set_handled(true));
+    run(context as *Entry); return rt::Status {code:0};
+}
+fn refresh_now(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status { refresh(context as *Bar); return rt::Status {code:0}; }
+// The host's door: a window coming to the front re-answers its bar too.
+fn refresh_bar(bar: *u8) { if bar.is_not_null() { refresh(bar as *Bar); } }
+
+// Re-answer every item's enabled state and title.
+fn refresh(bar: *Bar) {
+    var i: usize=0;
+    while i<(*bar).entries.count() {
+        if let option::Option::Some(e)=(*bar).entries.at(i) {
+            let it=item_at((*e).index);
+            if it.is_not_null() && !(*it).is_separator {
+                let on: bool=enabled(it);
+                native::check(native::must::[ui::IControl](ui::IControl::query((*e).item)).set_is_enabled(on));
+                native::check(native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*e).item)).set_text(title(it).view()));
+                if !(*e).accelerator.is_null() { native::check(native::must::[ui::IKeyboardAccelerator](ui::IKeyboardAccelerator::query((*e).accelerator)).set_is_enabled(on)); }
+            }
+        }
+        i=i+1;
+    }
+}
+
+// ---- building ----------------------------------------------------------------------
+fn seen(made: *vec::Vec[text::Text], group: str) -> bool {
+    var i: usize=0;
+    while i<(*made).count() { if let option::Option::Some(t)=(*made).at_ptr(i) { if (*t).view()==group { return true; } } i=i+1; }
+    return false;
+}
+fn automation_id(element: rt::Object, id: str) {
+    let a=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());
+    native::check(a.set_automation_id(element,id));
+}
+fn add_item(bar: *Bar, entries: ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase, accelerators: ui::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator, index: usize) {
+    let it=item_at(index);
+    if (*it).is_separator {
+        let rule=native::must::[ui::MenuFlyoutSeparator](ui::MenuFlyoutSeparator::new());
+        native::check(entries.append(rule.object())); return;
+    }
+    let item=native::must::[ui::MenuFlyoutItem](ui::MenuFlyoutItem::new());
+    native::check(item.set_text(title(it).view()));
+    let group: str=(*it).menu.view(); let name: str=(*it).title.view();
+    let id: text::Text="menu:${group}:${name}";
+    automation_id(item.object(),id.view());
+    let e: *Entry=match box::new::[Entry](Entry {bar:bar,index:index,item:item.object(),token:#zero::[ui::EventRegistrationToken](),
+        accelerator:rt::Object::empty(),accelerator_token:#zero::[ui::EventRegistrationToken]()}) {
+        option::Option::Some(b)=>{ b.into_raw() as *Entry }, option::Option::None=>{ return; }
+    };
+    let handler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(clicked,e as *u8));
+    (*e).token=native::must::[ui::EventRegistrationToken](native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query(item.object())).add_click(handler.object()));
+    LIVE=LIVE+1;
+    let key: i32=shortcuts::key_code((*it).key.view());
+    if key!=0 {
+        let accelerator=native::must::[ui::KeyboardAccelerator](ui::KeyboardAccelerator::new());
+        let a=native::must::[ui::IKeyboardAccelerator](ui::IKeyboardAccelerator::query(accelerator.object()));
+        native::check(a.set_key(key)); native::check(a.set_modifiers(modifiers(it)));
+        let invoked=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Input_KeyboardAccelerator_Microsoft_UI_Xaml_Input_KeyboardAcceleratorInvokedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Input_KeyboardAccelerator_Microsoft_UI_Xaml_Input_KeyboardAcceleratorInvokedEventArgs::new(shortcut,e as *u8));
+        (*e).accelerator_token=native::must::[ui::EventRegistrationToken](a.add_invoked(invoked.object()));
+        (*e).accelerator=accelerator.object(); LIVE=LIVE+1;
+        native::check(accelerators.append(accelerator.object()));
+        native::check(native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query(item.object())).set_keyboard_accelerator_text_override(chord(it).view()));
+    }
+    let added: status::Status=(*bar).entries.append(e); assert added==status::Status::Ok;
+    native::check(entries.append(item.object()));
+}
+// A MenuBar for `window`, or null when the app declares no menu.
+fn build(window: *u8) -> *u8 {
+    if !has_items() { return 0 as *u8; }
+    let menu=native::must::[ui::MenuBar](ui::MenuBar::new());
+    let bar: *Bar=match box::new::[Bar](Bar {window:window,object:menu.object(),entered_token:#zero::[ui::EventRegistrationToken](),
+        focused_token:#zero::[ui::EventRegistrationToken](),entries:vec::new::[*Entry]()}) {
+        option::Option::Some(b)=>{ b.into_raw() as *Bar }, option::Option::None=>{ return 0 as *u8; }
+    };
+    automation_id(menu.object(),"menu");
+    let groups=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_MenuBarItem](ui::IVector_Microsoft_UI_Xaml_Controls_MenuBarItem::query(native::must::[rt::Object](native::must::[ui::IMenuBar](ui::IMenuBar::query(menu.object())).items())));
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query(menu.object()));
+    let accelerators=native::must::[ui::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator](ui::IVector_Microsoft_UI_Xaml_Input_KeyboardAccelerator::query(native::must::[rt::Object](visual.keyboard_accelerators())));
+    var made: vec::Vec[text::Text]=vec::new::[text::Text]();
+    var i: usize=0;
+    while i<MENU.items.count() {
+        let it=item_at(i);
+        let group: str=(*it).menu.view();
+        if !seen(#addr_of(made),group) {
+            let _m: status::Status=made.append(text::from_str(group));
+            let heading=native::must::[ui::MenuBarItem](ui::MenuBarItem::new());
+            native::check(native::must::[ui::IMenuBarItem](ui::IMenuBarItem::query(heading.object())).set_title(group));
+            let id: text::Text="menu:${group}";
+            automation_id(heading.object(),id.view());
+            let entries=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase](ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase::query(native::must::[rt::Object](native::must::[ui::IMenuBarItem](ui::IMenuBarItem::query(heading.object())).items())));
+            var j: usize=i;
+            while j<MENU.items.count() { if item_at(j).is_not_null() && (*item_at(j)).menu.view()==group { add_item(bar,entries,accelerators,j); } j=j+1; }
+            native::check(groups.append(heading.object()));
+        }
+        i=i+1;
+    }
+    let entered=native::must::[ui::PointerEventHandler](ui::PointerEventHandler::new(refresh_now,bar as *u8));
+    (*bar).entered_token=native::must::[ui::EventRegistrationToken](visual.add_pointer_entered(entered.object()));
+    let focused=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(refresh_now,bar as *u8));
+    (*bar).focused_token=native::must::[ui::EventRegistrationToken](visual.add_got_focus(focused.object()));
+    LIVE=LIVE+2;
+    refresh(bar);
+    return bar as *u8;
+}
+fn object(bar: *u8) -> rt::Object { return (*(bar as *Bar)).object.clone(); }
+// The bar's height at `width`, once its template has loaded; WinUI's
+// MenuBar height before that.
+fn measure(bar: *u8, width: f64) -> f64 {
+    let element=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*(bar as *Bar)).object));
+    native::check(element.set_width(width));
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*(bar as *Bar)).object));
+    let infinity: f32=#bitcast::[f32](0x7f800000u32);
+    native::check(visual.measure(ui::Size {width:width as f32,height:infinity}));
+    let h: f64=native::must::[ui::Size](visual.desired_size()).height as f64;
+    return if h>=1.0f64 {h} else {40.0f64};
+}
+// Detach every handler and free the records. The MenuBar itself goes with
+// its window's visual tree.
+fn release(raw: *u8) {
+    if raw.is_null() { return; }
+    let bar=raw as *Bar;
+    let visual=native::must::[ui::IUIElement](ui::IUIElement::query((*bar).object));
+    native::check(visual.remove_pointer_entered((*bar).entered_token)); native::check(visual.remove_got_focus((*bar).focused_token)); LIVE=LIVE-2;
+    var i: usize=0;
+    while i<(*bar).entries.count() {
+        if let option::Option::Some(e)=(*bar).entries.at(i) {
+            native::check(native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*e).item)).remove_click((*e).token)); LIVE=LIVE-1;
+            if !(*e).accelerator.is_null() { native::check(native::must::[ui::IKeyboardAccelerator](ui::IKeyboardAccelerator::query((*e).accelerator)).remove_invoked((*e).accelerator_token)); LIVE=LIVE-1; }
+            let record: box::Box[Entry]=box::from_raw::[Entry](e as *u8);
+        }
+        i=i+1;
+    }
+    let owner: box::Box[Bar]=box::from_raw::[Bar](raw);
+}

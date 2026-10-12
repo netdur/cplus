@@ -14,6 +14,9 @@ import "facet/label" as label;
 import "./facet_winui" as host;
 import "./dialogs" as dialogs;
 import "./scheduler" as scheduler;
+import "./app_menu" as app_menu;
+import "./shortcuts" as shortcuts;
+import "winui/winui" as ui;
 
 fn tm_noop(ctx: *u8) { return; }
 
@@ -188,5 +191,39 @@ fn a_closed_window_takes_its_observers_with_it() {
     host::fire(4, #addr_of(a));
     assert TM_OWN == 0;
     host::cancel_observe(own);   // already gone: a no-op
+    return;
+}
+
+fn tm_click(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn the_app_menu_is_copied_and_its_chords_are_ctrl_based() {
+    var m: screen::AppMenu = screen::app_menu("probe");
+    m.add_command("File", "Settings", key: ",", on_click: tm_click);
+    m.add_item("Edit", "Redo", "z", screen::menu_action_redo(), shift: true);
+    m.add_separator("Edit");
+    app_menu::install(#addr_of(m));
+    // A deep copy: the facade's menu is a local that dies after install.
+    m.add_item("Edit", "Copy", "c", screen::menu_action_copy());
+    assert app_menu::item_count() == (3 as usize);
+    assert app_menu::has_items();
+    let redo = app_menu::item_at(1 as usize);
+    assert app_menu::chord(redo).view() == "Ctrl+Shift+Z";
+    assert app_menu::modifiers(redo) == (ui::virtual_key_modifiers_control | ui::virtual_key_modifiers_shift);
+    assert shortcuts::key_code(",") == 188;
+    assert shortcuts::key_code("q") == 81;
+    app_menu::uninstall();
+    return;
+}
+
+#[test]
+fn an_app_with_no_menu_gets_no_bar() {
+    // NEGATIVE, as on Win32: no items, no MenuBar - and no XAML is touched.
+    var m: screen::AppMenu = screen::empty_app_menu();
+    app_menu::install(#addr_of(m));
+    assert !app_menu::has_items();
+    assert app_menu::build(0 as *u8).is_null();
+    app_menu::uninstall();
+    assert !app_menu::has_items();
     return;
 }

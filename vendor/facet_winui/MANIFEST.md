@@ -27,6 +27,7 @@ every Facet property is implemented.
 | Other gallery hosts | Circle/square page dots, table document container, swipe actions through drag reveal and native context menu, with image/named icons, destructive foreground/reset, stable interleaved insertion order, and clicked/invoked callbacks. WebView2 source/user-agent updates, history/back/forward, reload, script execution, navigation and process-failure callbacks. |
 | Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. `run_on_main` from any thread: a worker posts through DispatcherQueue.TryEnqueue, so `services::run_job` runs off the UI thread and applies on it (`tools/test_facet_runtime_winui.py`, `home:load`). After the run ends a hop is dropped. |
 | Window buttons | Three native WinUI buttons drive their own window's AppWindow minimize/maximize/restore and Window.close. Live spacing changes intrinsic size. OnHover watches the containing bar; keyboard/programmatic focus also reveals the group. Maximize glyph and accessible name follow current window state. |
+| App menu | `App::menu` (plus the primary screen's `menu_items`) is a MenuBar across the top of every window, above the command strip: a MenuBarItem per group in first-seen order, items and separators. A `key` is a Ctrl (+Shift/+Alt) KeyboardAccelerator on the bar, so it works with the menu closed; the item shows the chord. `is_enabled`/`title_of` are answered when the bar is entered or focused, when its window activates, and again on invocation. `on_click` wins; otherwise quit (the facade's `app.quit()`), close window (asked), and undo/redo/cut/copy/paste/select-all on the text field that last had the keyboard in that window. AutomationIds `menu`, `menu:<group>`, `menu:<group>:<title>`. `tools/test_facet_runtime_winui.py` covers click, live enabled state, Ctrl+, Ctrl+Q, edit actions and quit. |
 | Closing | A user close (caption, Alt+F4, outside `WM_CLOSE`, the window buttons) is asked through AppWindow.Closing and can be refused. Through the facade it asks the window's `on_should_close`, and for the last open window also `on_should_quit`. Closes made in code are not asked twice. `tools/test_facet_runtime_winui.py` covers refusal, allowance and a non-last window. |
 | Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close, and per-window resize/active/inactive/density observers) and `app::set_activate_fn` are installed. Density is the content's XamlRoot.RasterizationScale; its change fires density observers, app-wide and the window's own. |
 | Chrome | `screen::Chrome` width/height (ResizeClient, corrected to the delivered client area), min/max size, minimizable/maximizable/resizable, and the bar: Native (dark DWM caption), Blended with `window_buttons()` (no system caption; app buttons are the only set), Blended without (ExtendsContentIntoTitleBar), Hidden/Custom (no border, no caption). `.window_drag()` moves a captionless window. |
@@ -39,8 +40,11 @@ every Facet property is implemented.
 ## Limits
 
 - `facet_runtime` defaults to Win32; WinUI is an opt-in (`facet_runtime/winui`).
-  Through the facade, the app menu (`App::menu`) is not rendered, and the
-  clipboard and file pickers are the shared Win32 calls.
+  Through the facade the clipboard and file pickers are the shared Win32
+  calls. The app menu's find tokens (`menu_action_find*`) have no WinUI
+  default and do nothing. A focused text field keeps the chords it handles
+  itself: WinUI's TextBox takes Ctrl+Q, so an app's Ctrl+Q quit does not
+  reach the menu from inside one.
 - A density change is observed as a change of XamlRoot.RasterizationScale.
   The e2e checks the read and that a resize reports no change; a real change
   (a move between monitors of different scale) has not been exercised on a

@@ -45,6 +45,7 @@ import "./browser" as browser;
 import "./refresh_retirement" as refresh_retirement;
 import "./command_strip" as commands;
 import "./window_buttons" as window_buttons;
+import "./app_menu" as app_menu;
 extern fn fflush(stream: *u8) -> i32;
 extern fn GetDpiForWindow(hwnd: *u8) -> u32;
 extern fn GetForegroundWindow() -> *u8;
@@ -68,6 +69,12 @@ struct Host {
     window: rt::Object,
     shell: rt::Object,
     commands: rt::Object,
+    // The app menu's MenuBar (`app_menu`), or null when the app declares none.
+    opaque menu: *u8,
+    // The element that last had the keyboard in this window outside its menu:
+    // what the menu's edit actions act on. Opening a menu moves focus into it,
+    // so the focused element at click time is the menu item.
+    edit_target: rt::Object,
     // The modal layer above the content: a scrim Canvas holding one card.
     layer: rt::Object,
     layer_card: rt::Object,
@@ -340,14 +347,18 @@ fn relayout(host: *Host) {
     if !(*host).mounted || (*host).closing { return; }
     let root: *core::Node=(*host).root;
     views::prepare_layout(root);
-    let strip=commands::layout(root,(*host).commands,(*host).width);
+    let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());
+    var top: f64=0.0f64;
+    if (*host).menu.is_not_null() { top=app_menu::measure((*host).menu,(*host).width); }
+    native::check(canvas.set_top((*host).commands,top));
+    let strip=top+commands::layout(root,(*host).commands,(*host).width);
     (*host).strip=strip;
     let available=if (*host).height>strip {(*host).height-strip} else {0.0f64};
     (*root).calculate_layout(width:(*host).width,height:available);
     views::prepare_layout(root);
     (*root).calculate_layout(width:(*host).width,height:available);
     views::place(root,(*root).frame());
-    if !commands::supports(core::kind_of(root)) {let canvas=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_top(views::object(core::view_of(root)),strip));}
+    if !commands::supports(core::kind_of(root)) {native::check(canvas.set_top(views::object(core::view_of(root)),strip));}
     layout_layer(host);
     scheduler::notify_sizes(); return;
 }
@@ -446,7 +457,7 @@ fn activated(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     if !live(host) || (*host).closing { return rt::Status {code:0}; }
     // WindowActivatedEventArgs is not in the generated selection; the
     // foreground window says which way it went.
-    if GetForegroundWindow()==(*host).hwnd { ACTIVE_HOST=host; fire(OBS_ACTIVE,host); } else { fire(OBS_INACTIVE,host); }
+    if GetForegroundWindow()==(*host).hwnd { ACTIVE_HOST=host; app_menu::refresh_bar((*host).menu); fire(OBS_ACTIVE,host); } else { fire(OBS_INACTIVE,host); }
     return rt::Status {code:0};
 }
 fn is_active(host: *Host) -> bool { return host.is_not_null() && !(*host).closing && GetForegroundWindow()==(*host).hwnd; }
@@ -583,6 +594,7 @@ fn close_host(host: *Host) {
         native::check(window.remove_size_changed((*host).size_token));native::check(window.remove_closed((*host).close_token));native::check(window.remove_activated((*host).activated_token));
         let shell=native::must::[ui::IUIElement](ui::IUIElement::query((*host).shell));native::check(shell.remove_pointer_pressed((*host).pressed_token));
         native::check(app_window_of(host).remove_closing((*host).closing_token));
+        app_menu::release((*host).menu); (*host).menu=0 as *u8; (*host).edit_target=rt::Object::empty();
         if !(*host).xaml_root.is_null() { native::check(native::must::[ui::IXamlRoot](ui::IXamlRoot::query((*host).xaml_root)).remove_changed((*host).root_token)); (*host).xaml_root=rt::Object::empty(); }
         unmount_layer(host,true);
         let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*host).loaded_object));
@@ -599,7 +611,7 @@ fn close_host(host: *Host) {
         let next=first_host();
         if next.is_not_null() { AGENT_HOST=next; agent_hooks::opened((*next).window); }
     }
-    if last { refresh_retirement::shutdown(); scheduler::shutdown(); }
+    if last { unwatch_focus(); refresh_retirement::shutdown(); scheduler::shutdown(); }
     let root=(*host).root; let owned=(*host).owned;
     let record: box::Box[Host]=box::from_raw::[Host](host as *u8);
     if owned { let tree: box::Box[core::Node]=box::from_raw::[core::Node](root as *u8); }
@@ -615,7 +627,7 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome, will_close: fn(*u
                should_close: fn(*u8) -> bool=0 as fn(*u8) -> bool, should_close_ctx: *u8=0 as *u8) -> *u8 {
     if !LAUNCHED || root.is_null() || !views::supports(root) { return 0 as *u8; }
     let window: ui::Window=native::must::[ui::Window](ui::Window::new());
-    let owner: box::Box[Host]=match box::new::[Host](Host {root:root,owned:owned,chrome:chrome,window:window.object(),shell:rt::Object::empty(),commands:rt::Object::empty(),
+    let owner: box::Box[Host]=match box::new::[Host](Host {root:root,owned:owned,chrome:chrome,window:window.object(),shell:rt::Object::empty(),commands:rt::Object::empty(),menu:0 as *u8,edit_target:rt::Object::empty(),
         layer:rt::Object::empty(),layer_card:rt::Object::empty(),layer_root:0 as *core::Node,layer_width:0.0f64,layer_height:0.0f64,layer_key:0 as fn(i32,*u8)->bool,layer_key_ctx:0 as *u8,layer_key_token:#zero::[ui::EventRegistrationToken](),hwnd:0 as *u8,
         size_token:#zero::[ui::EventRegistrationToken](),close_token:#zero::[ui::EventRegistrationToken](),activated_token:#zero::[ui::EventRegistrationToken](),loaded_token:#zero::[ui::EventRegistrationToken](),pressed_token:#zero::[ui::EventRegistrationToken](),
         loaded_object:rt::Object::empty(),xaml_root:rt::Object::empty(),root_token:#zero::[ui::EventRegistrationToken](),scale:0.0f64,mounted:false,closing:false,approved:false,captionless:false,width:900.0f64,height:600.0f64,strip:0.0f64,will_close:will_close,will_close_ctx:will_close_ctx,
@@ -650,6 +662,8 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome, will_close: fn(*u
     let strip=native::must::[ui::Canvas](ui::Canvas::new());(*host).commands=strip.object();
     native::check(native::must::[ui::IPanel](ui::IPanel::query(strip.object())).set_background(style::brush(vocab::Color::window_background())));
     let children=commands::children(shell.object());native::check(children.append(strip.object()));
+    (*host).menu=app_menu::build(host as *u8);
+    if (*host).menu.is_not_null() { native::check(children.append(app_menu::object((*host).menu))); }
     if !commands::supports(core::kind_of(root)) {native::check(children.append(views::object(core::view_of(root))));native_slot::bind(core::view_of(root) as *record::View,shell.object(),native_slot::PANEL);}
     let layer=native::must::[ui::Canvas](ui::Canvas::new());(*host).layer=layer.object();
     native::check(native::must::[ui::IPanel](ui::IPanel::query(layer.object())).set_background(style::brush(vocab::Color::rgba(0.0f64,0.0f64,0.0f64,0.45f64))));
@@ -686,6 +700,108 @@ fn close() -> rt::Status {
         i=i+1;
     }
     return rt::Status {code:0};
+}
+
+// ---- the app menu ---------------------------------------------------------------
+// `App::menu` (see `app_menu`). Installing replaces the bar in every open
+// window, as facet_win32's `install_app_menu` does; later windows get it too.
+static QUIT: fn()=0 as fn();
+// What the app menu's quit token does: the facade's orderly quit. Without one,
+// every window is closed.
+fn set_quit_fn(f: fn()) { QUIT=f; }
+fn identity_of(value: rt::Object) -> usize { return native::must::[rt::Object](value.query(rt::unknown_iid())).raw() as usize; }
+fn rebuild_menu(host: *Host) {
+    if !live(host) || (*host).closing { return; }
+    let list=commands::children((*host).shell);
+    if (*host).menu.is_not_null() {
+        let target=identity_of(app_menu::object((*host).menu));
+        var i: u32=0;
+        while i<native::must::[u32](list.size()) { if identity_of(native::must::[rt::Object](list.get_at(i)))==target { native::check(list.remove_at(i)); break; } i=i+1; }
+        app_menu::release((*host).menu); (*host).menu=0 as *u8;
+    }
+    (*host).menu=app_menu::build(host as *u8);
+    if (*host).menu.is_not_null() { native::check(list.append(app_menu::object((*host).menu))); }
+    relayout(host);
+}
+fn install_app_menu(m: *screen::AppMenu) {
+    app_menu::install(m);
+    var i: usize=0;
+    while i<HOSTS.count() { if let option::Option::Some(h)=HOSTS.at(i) { rebuild_menu(h); } i=i+1; }
+}
+// An item's click, or its action token, for the window whose bar it is in.
+fn menu_dispatch(window: *u8, action: u32, click: fn(*u8, *u8), ctx: *u8) {
+    let host: *Host=window as *Host;
+    if !live(host) || (*host).closing { return; }
+    let outer: *u8=enter_origin(host as *u8);
+    if click.is_not_null() { click(0 as *u8,ctx); }
+    else { menu_action(action,host); }
+    let _o: *u8=enter_origin(outer);
+}
+fn menu_action(action: u32, host: *Host) {
+    if action==screen::menu_action_quit() { let q=QUIT; if q.is_not_null() { q(); } else { let _s: rt::Status=close(); } return; }
+    if action==screen::menu_action_close_window() { let _c: bool=request_close(host); return; }
+    // The edit actions go to the text field that had the keyboard in this
+    // window before the menu took it; anything else has no such verb.
+    if (*host).edit_target.is_null() { return; }
+    match ui::ITextBox::query((*host).edit_target.clone()) {
+        result::Result::Ok(field)=>{
+            if action==screen::menu_action_undo() { native::check(field.undo()); }
+            else if action==screen::menu_action_redo() { native::check(field.redo()); }
+            else if action==screen::menu_action_cut() { native::check(field.cut_selection_to_clipboard()); }
+            else if action==screen::menu_action_copy() { native::check(field.copy_selection_to_clipboard()); }
+            else if action==screen::menu_action_paste() { native::check(field.paste_from_clipboard()); }
+            else if action==screen::menu_action_select_all() { native::check(field.select_all()); }
+        },
+        result::Result::Err(_)=>{}
+    }
+}
+
+// Every focus change in the process: remember, per window, the last element
+// outside the menu (`Host.edit_target`).
+static FOCUS_TOKEN: ui::EventRegistrationToken=#zero::[ui::EventRegistrationToken]();
+static FOCUS_WATCHED: bool=false;
+// The window `element` belongs to when it sits in that window's content -
+// its ancestors reach the shell without passing through the menu bar. An
+// open menu's items, presenter and popup do not, so opening a menu leaves
+// the remembered element alone.
+fn content_host(element: rt::Object) -> *Host {
+    let host=host_of_element(element.clone());
+    if host.is_null() { return host; }
+    let shell=identity_of((*host).shell.clone());
+    let bar=if (*host).menu.is_null() {0 as usize} else {identity_of(app_menu::object((*host).menu))};
+    let tree=native::must::[ui::IVisualTreeHelperStatics](ui::VisualTreeHelper::i_visual_tree_helper_statics_factory());
+    var at: rt::Object=element.clone();
+    var depth: i32=0;
+    while !at.is_null() && depth<256 {
+        let id=identity_of(at.clone());
+        if id==shell { return host; }
+        if bar!=0 && id==bar { return 0 as *Host; }
+        at=match tree.get_parent(at) { result::Result::Ok(o)=>{o}, result::Result::Err(_)=>{ return 0 as *Host; } };
+        depth=depth+1;
+    }
+    return 0 as *Host;
+}
+fn focus_moved(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let event=native::must::[ui::IFocusManagerGotFocusEventArgs](ui::IFocusManagerGotFocusEventArgs::query(args));
+    let element: rt::Object=match event.new_focused_element() { result::Result::Ok(o)=>{o}, result::Result::Err(_)=>{ return rt::Status {code:0}; } };
+    if element.is_null() { return rt::Status {code:0}; }
+    let host=content_host(element.clone());
+    if host.is_not_null() { (*host).edit_target=element; }
+    return rt::Status {code:0};
+}
+fn watch_focus() {
+    let focus=native::must::[ui::IFocusManagerStatics](ui::FocusManager::i_focus_manager_statics_factory());
+    let handler=native::must::[ui::EventHandler_Microsoft_UI_Xaml_Input_FocusManagerGotFocusEventArgs](ui::EventHandler_Microsoft_UI_Xaml_Input_FocusManagerGotFocusEventArgs::new(focus_moved));
+    FOCUS_TOKEN=native::must::[ui::EventRegistrationToken](focus.add_got_focus(handler.object()));
+    FOCUS_WATCHED=true;
+}
+// While XAML is still up: as the last window closes. After Application.Start
+// has returned the statics answer RPC_E_WRONG_THREAD.
+fn unwatch_focus() {
+    if !FOCUS_WATCHED { return; }
+    FOCUS_WATCHED=false;
+    let focus=native::must::[ui::IFocusManagerStatics](ui::FocusManager::i_focus_manager_statics_factory());
+    native::check(focus.remove_got_focus(FOCUS_TOKEN));
 }
 
 // ---- the modal layer ---------------------------------------------------------------
@@ -810,6 +926,7 @@ fn is_window_active(root: *core::Node) -> bool { let host=host_of_root(root); re
 fn app_launched(app_object: rt::Object, context: *u8) -> rt::Status {
     LAUNCHED=true; APP=app_object.clone();
     rt::track_events(); scheduler::set_origin_fns(capture_origin,enter_origin);
+    app_menu::set_dispatch_fn(menu_dispatch); watch_focus();
     window_buttons::install(button_action,button_state);
     theme::set_is_dark_fn(style::dark);
     mount::install(mount::Renderer {ctx:0 as *u8,create:views::create,view_release:views::release,apply:views::apply,
@@ -853,6 +970,7 @@ fn start(on_launch: fn(*u8), on_launch_ctx: *u8=0 as *u8, on_ready: fn(*u8)=0 as
         app_window::uninstall_host(); app::set_activate_fn(0 as fn(*u8));
         QUEUE=rt::Object::empty(); APP=rt::Object::empty(); LAUNCHED=false; ON_LAUNCH=0 as fn(*u8);
         rt::untrack_events(); scheduler::set_origin_fns(0 as fn()->*u8,0 as fn(*u8)->*u8); ORIGIN=0 as *Host;
+        app_menu::set_dispatch_fn(0 as fn(*u8,u32,fn(*u8,*u8),*u8)); app_menu::uninstall(); QUIT=0 as fn(); FOCUS_WATCHED=false;
         OBSERVERS.remove_all();
         if on_stopped.is_not_null() { on_stopped(on_stopped_ctx); }
     }
@@ -891,4 +1009,4 @@ fn run_with(take tree: core::Node, take chrome: screen::Chrome, on_ready: fn(*u8
     return result;
 }
 fn live_views() -> i64 { return views::live_views(); }
-fn live_subscriptions() -> i64 { return views::live_subscriptions(); }
+fn live_subscriptions() -> i64 { return views::live_subscriptions()+app_menu::subscriptions(); }

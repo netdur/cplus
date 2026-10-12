@@ -224,8 +224,122 @@ def run_density():
     print(f'PASS: density (reads {expected}; resizing reports no density change)')
 
 
+def chord(*keys):
+    """Press keys together, as a person does: into the foreground window."""
+    for key in keys:
+        u.keybd_event(key, 0, 0, 0)
+    for key in reversed(keys):
+        u.keybd_event(key, 0, 2, 0)
+
+
+def type_text(value):
+    for ch in value.upper():
+        chord(ord(ch))
+
+
+def clipboard(value=None):
+    """Read the clipboard's text, or replace it with `value` first."""
+    k = c.WinDLL('kernel32')
+    k.GlobalAlloc.restype = c.c_void_p
+    k.GlobalLock.restype = c.c_void_p
+    k.GlobalLock.argtypes = k.GlobalUnlock.argtypes = [c.c_void_p]
+    u.GetClipboardData.restype = c.c_void_p
+    u.SetClipboardData.argtypes = [w.UINT, c.c_void_p]
+    assert u.OpenClipboard(None)
+    try:
+        if value is not None:
+            data = (value + '\0').encode('utf-16-le')
+            handle = k.GlobalAlloc(2, len(data))
+            c.memmove(k.GlobalLock(handle), data, len(data))
+            k.GlobalUnlock(handle)
+            u.EmptyClipboard()
+            u.SetClipboardData(13, handle)
+            return value
+        handle = u.GetClipboardData(13)
+        if not handle:
+            return None
+        text = c.wstring_at(k.GlobalLock(handle))
+        k.GlobalUnlock(handle)
+        return text
+    finally:
+        u.CloseClipboard()
+
+
+def wait_until(check, seconds=10):
+    end = time.time() + seconds
+    while time.time() < end:
+        if check():
+            return True
+        time.sleep(.1)
+    return False
+
+
+def run_app_menu():
+    """App::menu is a MenuBar in every window: clicks, live enabled state,
+    Ctrl shortcuts, the edit actions on the text field that had the keyboard,
+    and the quit token through on_should_quit."""
+    log = RUNTIME / 'app_menu.log'
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        main = window('WinUI runtime', process)
+        for hwnd in (main, settings):
+            assert shows(hwnd, 'menu:File') and shows(hwnd, 'menu:Edit')
+
+        # A click, and an item whose enabled state follows the app.
+        assert uia('expand', main, 'menu:Window') == 'expanded'
+        assert uia('enabled', main, 'menu:Window:Close Settings') == 'True'
+        assert uia('invoke', main, 'menu:Window:Close Settings') == 'invoked'
+        assert wait_until(lambda: not u.IsWindow(settings)), 'Close Settings did not close it'
+        assert uia('expand', main, 'menu:Window') == 'expanded'
+        assert uia('enabled', main, 'menu:Window:Close Settings') == 'False', 'stale enabled state'
+        chord(0x1B)
+
+        # A shortcut with the menu closed: Ctrl+, opens Settings again.
+        activate(main, 'home:prompt')
+        chord(0x11, 0xBC)
+        reopened = window('Settings', process)   # raises when Ctrl+, did nothing
+        u.PostMessageW(reopened, WM_CLOSE, 0, 0)
+        assert wait_until(lambda: not u.IsWindow(reopened))
+
+        # Edit > Select All, Edit > Copy from the menu act on the field that
+        # had the keyboard, although opening the menu took it.
+        activate(main, 'home:prompt')
+        assert uia('invoke', main, 'home:prompt') == 'invoked'
+        assert shows(main, 'prompt:value')
+        assert uia('focus', main, 'prompt:value') == 'focused'
+        type_text('hello')
+        assert wait_until(lambda: uia('value', main, 'prompt:value') == 'hello'), uia('value', main, 'prompt:value')
+        clipboard('sentinel')
+        for item in ('Select All', 'Copy'):
+            assert uia('expand', main, 'menu:Edit') == 'expanded'
+            assert uia('invoke', main, f'menu:Edit:{item}') == 'invoked'
+            time.sleep(.3)
+        assert wait_until(lambda: clipboard() == 'hello'), f'clipboard {clipboard()!r}'
+        assert uia('invoke', main, 'prompt:cancel') == 'invoked'
+
+        # The quit token asks on_should_quit (refused once), then Ctrl+Q ends the run.
+        assert uia('expand', main, 'menu:File') == 'expanded'
+        assert uia('invoke', main, 'menu:File:Quit') == 'invoked'
+        wait_for(log, 'PROBE should_quit 1', process, 10)
+        time.sleep(.5)
+        assert process.poll() is None, 'a refused quit ended the run'
+        activate(main, 'home:prompt')
+        chord(0x11, ord('Q'))
+        wait_for(log, 'PROBE should_quit 2', process, 10)
+        assert process.wait(15) == 0, read(log)
+        assert 'outlived the run' not in read(log), read(log)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: app menu (every window; click, live enabled state, Ctrl shortcut, edit actions, quit)')
+
+
 if __name__ == '__main__':
     run_close_question()
     run_alert_window()
     run_worker_hop()
     run_density()
+    run_app_menu()

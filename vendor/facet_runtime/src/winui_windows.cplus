@@ -64,6 +64,10 @@ fn open_now(n: nav_model::Navigator) -> bool {
     let root = navigation::root(n);
     let s = nav_model::session(n.owner, n.id);
     if root.is_null() || s.is_null() { return false; }
+    // The app menu, as the Win32 facade builds it: App::menu, then the primary
+    // screen's own items. Every window shows it.
+    var bar = facade::menu_for(n);
+    host::install_app_menu(#addr_of(bar));
     let w = host::open_window(root, windows::chrome(n),
         will_close: windows::closing, will_close_ctx: s as *u8,
         should_close: window_should_close, should_close_ctx: s as *u8);
@@ -96,7 +100,11 @@ fn launched(ctx: *u8) {
     PENDING.remove_all();
 }
 
+// The menu's quit token: the same orderly quit `app.quit()` is.
+fn quit_app() { let _q: bool = facade::app().quit(); }
+
 fn run() {
+    host::set_quit_fn(quit_app);
     let result = host::start(launched, on_stopped: stopped);
     if result.is_err() { let code: i32 = result.code; io::eprintln("facet_runtime/winui: the WinUI run ended with HRESULT ${code}"); }
 }

@@ -16,6 +16,8 @@ fn key_code(key: str) -> i32 {
         var number: i32=0;var i: usize=1;while i<value.count() {match value.byte_at(i) {option::Option::Some(c)=>{if c<48u8 || c>57u8 {return 0;}number=number*10+c as i32-48;},option::Option::None=>{return 0;}}i=i+1;}
         if number>=1 && number<=24 {return 111+number;}
     }
+    // Punctuation is the US layout's OEM key: Ctrl+, is Settings.
+    if value=="," {return 188;}if value=="." {return 190;}if value=="-" {return 189;}if value=="=" {return 187;}if value=="/" {return 191;}if value==";" {return 186;}if value=="[" {return 219;}if value=="]" {return 221;}
     if value=="enter" || value=="return" {return 13;}if value=="escape" || value=="esc" {return 27;}if value=="space" {return 32;}if value=="tab" {return 9;}
     if value=="backspace" {return 8;}if value=="delete" {return 46;}if value=="insert" {return 45;}if value=="home" {return 36;}if value=="end" {return 35;}
     if value=="left" {return 37;}if value=="up" {return 38;}if value=="right" {return 39;}if value=="down" {return 40;}if value=="pageup" {return 33;}if value=="pagedown" {return 34;}return 0;

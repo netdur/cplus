@@ -19879,6 +19879,189 @@ impl IListViewItemFactory {
     }
 }
 
+// Microsoft.UI.Xaml.Controls.IMenuBar
+const i_menu_bar_get_items_slot: usize = 6;
+fn i_menu_bar_iid() -> rt::Guid { return rt::Guid { a: 3130520375u32, b: 36638 as u16, c: 20801 as u16, d: [181 as u8, 63 as u8, 231 as u8, 122 as u8, 139 as u8, 163 as u8, 235 as u8, 189 as u8] }; }
+struct IMenuBar { _object: rt::Object }
+impl IMenuBar {
+    fn query(value: rt::Object) -> result::Result[IMenuBar, rt::Error] {
+        match value.query(i_menu_bar_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuBar, rt::Error]::Ok(IMenuBar { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuBar, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IMenuBar { return IMenuBar { _object: this._object.clone() }; }
+    // ABI slot 6: get_Items
+    fn items(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Controls.IMenuBarFactory
+const i_menu_bar_factory_create_instance_slot: usize = 6;
+fn i_menu_bar_factory_iid() -> rt::Guid { return rt::Guid { a: 1990887257u32, b: 1262 as u16, c: 23116 as u16, d: [185 as u8, 140 as u8, 208 as u8, 55 as u8, 66 as u8, 212 as u8, 124 as u8, 219 as u8] }; }
+struct IMenuBarFactory { _object: rt::Object }
+impl IMenuBarFactory {
+    fn query(value: rt::Object) -> result::Result[IMenuBarFactory, rt::Error] {
+        match value.query(i_menu_bar_factory_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuBarFactory, rt::Error]::Ok(IMenuBarFactory { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuBarFactory, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IMenuBarFactory { return IMenuBarFactory { _object: this._object.clone() }; }
+    // ABI slot 6: CreateInstance
+    fn create_instance(this) -> result::Result[rt::Object, rt::Error] {
+        var inner: *u8 = 0 as *u8;
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, **u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *u8, **u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), 0 as *u8, #addr_of(inner), #addr_of(returned));
+        let inner_owner: rt::Object = rt::Object::adopt(inner);
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Controls.IMenuBarItem
+const i_menu_bar_item_get_title_slot: usize = 6;
+const i_menu_bar_item_put_title_slot: usize = 7;
+const i_menu_bar_item_get_items_slot: usize = 8;
+fn i_menu_bar_item_iid() -> rt::Guid { return rt::Guid { a: 2811234688u32, b: 20940 as u16, c: 21277 as u16, d: [151 as u8, 197 as u8, 53 as u8, 107 as u8, 19 as u8, 87 as u8, 51 as u8, 152 as u8] }; }
+struct IMenuBarItem { _object: rt::Object }
+impl IMenuBarItem {
+    fn query(value: rt::Object) -> result::Result[IMenuBarItem, rt::Error] {
+        match value.query(i_menu_bar_item_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuBarItem, rt::Error]::Ok(IMenuBarItem { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuBarItem, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IMenuBarItem { return IMenuBarItem { _object: this._object.clone() }; }
+    // ABI slot 6: get_Title
+    fn title(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 7: put_Title
+    fn set_title(this, value_0: str) -> rt::Status {
+        let h_0: rt::HString = match rt::HString::new(value_0) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, usize) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, usize) -> i32;
+        let hr: i32 = call(this._object.raw(), h_0.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 8: get_Items
+    fn items(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Controls.IMenuBarItemFactory
+const i_menu_bar_item_factory_create_instance_slot: usize = 6;
+fn i_menu_bar_item_factory_iid() -> rt::Guid { return rt::Guid { a: 2278564210u32, b: 33739 as u16, c: 21593 as u16, d: [148 as u8, 15 as u8, 23 as u8, 63 as u8, 117 as u8, 1 as u8, 179 as u8, 0 as u8] }; }
+struct IMenuBarItemFactory { _object: rt::Object }
+impl IMenuBarItemFactory {
+    fn query(value: rt::Object) -> result::Result[IMenuBarItemFactory, rt::Error] {
+        match value.query(i_menu_bar_item_factory_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuBarItemFactory, rt::Error]::Ok(IMenuBarItemFactory { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuBarItemFactory, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IMenuBarItemFactory { return IMenuBarItemFactory { _object: this._object.clone() }; }
+    // ABI slot 6: CreateInstance
+    fn create_instance(this) -> result::Result[rt::Object, rt::Error] {
+        var inner: *u8 = 0 as *u8;
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, **u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *u8, **u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), 0 as *u8, #addr_of(inner), #addr_of(returned));
+        let inner_owner: rt::Object = rt::Object::adopt(inner);
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Controls.IMenuBarItemStatics
+const i_menu_bar_item_statics_get_title_property_slot: usize = 6;
+const i_menu_bar_item_statics_get_items_property_slot: usize = 7;
+fn i_menu_bar_item_statics_iid() -> rt::Guid { return rt::Guid { a: 3366141766u32, b: 11804 as u16, c: 23776 as u16, d: [188 as u8, 9 as u8, 69 as u8, 36 as u8, 230 as u8, 137 as u8, 65 as u8, 200 as u8] }; }
+struct IMenuBarItemStatics { _object: rt::Object }
+impl IMenuBarItemStatics {
+    fn query(value: rt::Object) -> result::Result[IMenuBarItemStatics, rt::Error] {
+        match value.query(i_menu_bar_item_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuBarItemStatics, rt::Error]::Ok(IMenuBarItemStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuBarItemStatics, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IMenuBarItemStatics { return IMenuBarItemStatics { _object: this._object.clone() }; }
+    // ABI slot 6: get_TitleProperty
+    fn title_property(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_ItemsProperty
+    fn items_property(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Controls.IMenuBarStatics
+const i_menu_bar_statics_get_items_property_slot: usize = 6;
+fn i_menu_bar_statics_iid() -> rt::Guid { return rt::Guid { a: 2041187204u32, b: 21844 as u16, c: 24444 as u16, d: [128 as u8, 217 as u8, 121 as u8, 112 as u8, 170 as u8, 3 as u8, 1 as u8, 37 as u8] }; }
+struct IMenuBarStatics { _object: rt::Object }
+impl IMenuBarStatics {
+    fn query(value: rt::Object) -> result::Result[IMenuBarStatics, rt::Error] {
+        match value.query(i_menu_bar_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuBarStatics, rt::Error]::Ok(IMenuBarStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuBarStatics, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IMenuBarStatics { return IMenuBarStatics { _object: this._object.clone() }; }
+    // ABI slot 6: get_ItemsProperty
+    fn items_property(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
 // Microsoft.UI.Xaml.Controls.IMenuFlyout
 const i_menu_flyout_get_items_slot: usize = 6;
 const i_menu_flyout_get_menu_flyout_presenter_style_slot: usize = 7;
@@ -20209,6 +20392,48 @@ impl IMenuFlyoutItemStatics {
         var returned: usize = 0;
         let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, *usize) -> i32;
         let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Controls.IMenuFlyoutSeparator
+fn i_menu_flyout_separator_iid() -> rt::Guid { return rt::Guid { a: 1051680725u32, b: 37726 as u16, c: 24279 as u16, d: [141 as u8, 5 as u8, 246 as u8, 186 as u8, 250 as u8, 147 as u8, 109 as u8, 37 as u8] }; }
+struct IMenuFlyoutSeparator { _object: rt::Object }
+impl IMenuFlyoutSeparator {
+    fn query(value: rt::Object) -> result::Result[IMenuFlyoutSeparator, rt::Error] {
+        match value.query(i_menu_flyout_separator_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuFlyoutSeparator, rt::Error]::Ok(IMenuFlyoutSeparator { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuFlyoutSeparator, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IMenuFlyoutSeparator { return IMenuFlyoutSeparator { _object: this._object.clone() }; }
+}
+
+// Microsoft.UI.Xaml.Controls.IMenuFlyoutSeparatorFactory
+const i_menu_flyout_separator_factory_create_instance_slot: usize = 6;
+fn i_menu_flyout_separator_factory_iid() -> rt::Guid { return rt::Guid { a: 638938268u32, b: 38383 as u16, c: 24149 as u16, d: [131 as u8, 66 as u8, 119 as u8, 63 as u8, 196 as u8, 59 as u8, 170 as u8, 195 as u8] }; }
+struct IMenuFlyoutSeparatorFactory { _object: rt::Object }
+impl IMenuFlyoutSeparatorFactory {
+    fn query(value: rt::Object) -> result::Result[IMenuFlyoutSeparatorFactory, rt::Error] {
+        match value.query(i_menu_flyout_separator_factory_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuFlyoutSeparatorFactory, rt::Error]::Ok(IMenuFlyoutSeparatorFactory { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuFlyoutSeparatorFactory, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IMenuFlyoutSeparatorFactory { return IMenuFlyoutSeparatorFactory { _object: this._object.clone() }; }
+    // ABI slot 6: CreateInstance
+    fn create_instance(this) -> result::Result[rt::Object, rt::Error] {
+        var inner: *u8 = 0 as *u8;
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, **u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *u8, **u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), 0 as *u8, #addr_of(inner), #addr_of(returned));
+        let inner_owner: rt::Object = rt::Object::adopt(inner);
         if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
         return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
 
@@ -31776,6 +32001,107 @@ const list_view_selection_mode_none: ListViewSelectionMode = 0 as i32;
 const list_view_selection_mode_single: ListViewSelectionMode = 1 as i32;
 const list_view_selection_mode_multiple: ListViewSelectionMode = 2 as i32;
 const list_view_selection_mode_extended: ListViewSelectionMode = 3 as i32;
+// Microsoft.UI.Xaml.Controls.MenuBar
+fn menu_bar_iid() -> rt::Guid { return rt::Guid { a: 3130520375u32, b: 36638 as u16, c: 20801 as u16, d: [181 as u8, 63 as u8, 231 as u8, 122 as u8, 139 as u8, 163 as u8, 235 as u8, 189 as u8] }; }
+struct MenuBar { _object: rt::Object }
+impl MenuBar {
+    fn query(value: rt::Object) -> result::Result[MenuBar, rt::Error] {
+        match value.query(menu_bar_iid()) {
+            result::Result::Ok(o) => { return result::Result[MenuBar, rt::Error]::Ok(MenuBar { _object: o }); }
+            result::Result::Err(e) => { return result::Result[MenuBar, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> MenuBar { return MenuBar { _object: this._object.clone() }; }
+    fn i_menu_bar_statics_factory() -> result::Result[IMenuBarStatics, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Controls.MenuBar", i_menu_bar_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuBarStatics, rt::Error]::Ok(IMenuBarStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuBarStatics, rt::Error]::Err(e); }
+        }
+    }
+    fn i_menu_bar_factory_factory() -> result::Result[IMenuBarFactory, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Controls.MenuBar", i_menu_bar_factory_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuBarFactory, rt::Error]::Ok(IMenuBarFactory { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuBarFactory, rt::Error]::Err(e); }
+        }
+    }
+    fn new() -> result::Result[MenuBar, rt::Error] {
+        match rt::compose("Microsoft.UI.Xaml.Controls.MenuBar", i_menu_bar_factory_iid(), 6, 0 as *u8) {
+            result::Result::Ok(c) => { return MenuBar::query(c.object()); }
+            result::Result::Err(e) => { return result::Result[MenuBar, rt::Error]::Err(e); }
+        }
+    }
+    // ABI slot 6: get_Items
+    fn items(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Controls.MenuBarItem
+fn menu_bar_item_iid() -> rt::Guid { return rt::Guid { a: 2811234688u32, b: 20940 as u16, c: 21277 as u16, d: [151 as u8, 197 as u8, 53 as u8, 107 as u8, 19 as u8, 87 as u8, 51 as u8, 152 as u8] }; }
+struct MenuBarItem { _object: rt::Object }
+impl MenuBarItem {
+    fn query(value: rt::Object) -> result::Result[MenuBarItem, rt::Error] {
+        match value.query(menu_bar_item_iid()) {
+            result::Result::Ok(o) => { return result::Result[MenuBarItem, rt::Error]::Ok(MenuBarItem { _object: o }); }
+            result::Result::Err(e) => { return result::Result[MenuBarItem, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> MenuBarItem { return MenuBarItem { _object: this._object.clone() }; }
+    fn i_menu_bar_item_statics_factory() -> result::Result[IMenuBarItemStatics, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Controls.MenuBarItem", i_menu_bar_item_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuBarItemStatics, rt::Error]::Ok(IMenuBarItemStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuBarItemStatics, rt::Error]::Err(e); }
+        }
+    }
+    fn i_menu_bar_item_factory_factory() -> result::Result[IMenuBarItemFactory, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Controls.MenuBarItem", i_menu_bar_item_factory_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuBarItemFactory, rt::Error]::Ok(IMenuBarItemFactory { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuBarItemFactory, rt::Error]::Err(e); }
+        }
+    }
+    fn new() -> result::Result[MenuBarItem, rt::Error] {
+        match rt::compose("Microsoft.UI.Xaml.Controls.MenuBarItem", i_menu_bar_item_factory_iid(), 6, 0 as *u8) {
+            result::Result::Ok(c) => { return MenuBarItem::query(c.object()); }
+            result::Result::Err(e) => { return result::Result[MenuBarItem, rt::Error]::Err(e); }
+        }
+    }
+    // ABI slot 6: get_Title
+    fn title(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 7: put_Title
+    fn set_title(this, value_0: str) -> rt::Status {
+        let h_0: rt::HString = match rt::HString::new(value_0) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, usize) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, usize) -> i32;
+        let hr: i32 = call(this._object.raw(), h_0.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 8: get_Items
+    fn items(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
 // Microsoft.UI.Xaml.Controls.MenuFlyout
 fn menu_flyout_iid() -> rt::Guid { return rt::Guid { a: 4106714220u32, b: 8101 as u16, c: 23941 as u16, d: [133 as u8, 89 as u8, 93 as u8, 2 as u8, 183 as u8, 212 as u8, 229 as u8, 231 as u8] }; }
 struct MenuFlyout { _object: rt::Object }
@@ -31999,6 +32325,33 @@ impl MenuFlyoutItemBase {
         match rt::activation_factory("Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase", i_menu_flyout_item_base_factory_iid()) {
             result::Result::Ok(o) => { return result::Result[IMenuFlyoutItemBaseFactory, rt::Error]::Ok(IMenuFlyoutItemBaseFactory { _object: o }); }
             result::Result::Err(e) => { return result::Result[IMenuFlyoutItemBaseFactory, rt::Error]::Err(e); }
+        }
+    }
+}
+
+// Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator
+fn menu_flyout_separator_iid() -> rt::Guid { return rt::Guid { a: 1051680725u32, b: 37726 as u16, c: 24279 as u16, d: [141 as u8, 5 as u8, 246 as u8, 186 as u8, 250 as u8, 147 as u8, 109 as u8, 37 as u8] }; }
+struct MenuFlyoutSeparator { _object: rt::Object }
+impl MenuFlyoutSeparator {
+    fn query(value: rt::Object) -> result::Result[MenuFlyoutSeparator, rt::Error] {
+        match value.query(menu_flyout_separator_iid()) {
+            result::Result::Ok(o) => { return result::Result[MenuFlyoutSeparator, rt::Error]::Ok(MenuFlyoutSeparator { _object: o }); }
+            result::Result::Err(e) => { return result::Result[MenuFlyoutSeparator, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> MenuFlyoutSeparator { return MenuFlyoutSeparator { _object: this._object.clone() }; }
+    fn i_menu_flyout_separator_factory_factory() -> result::Result[IMenuFlyoutSeparatorFactory, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator", i_menu_flyout_separator_factory_iid()) {
+            result::Result::Ok(o) => { return result::Result[IMenuFlyoutSeparatorFactory, rt::Error]::Ok(IMenuFlyoutSeparatorFactory { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IMenuFlyoutSeparatorFactory, rt::Error]::Err(e); }
+        }
+    }
+    fn new() -> result::Result[MenuFlyoutSeparator, rt::Error] {
+        match rt::compose("Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator", i_menu_flyout_separator_factory_iid(), 6, 0 as *u8) {
+            result::Result::Ok(c) => { return MenuFlyoutSeparator::query(c.object()); }
+            result::Result::Err(e) => { return result::Result[MenuFlyoutSeparator, rt::Error]::Err(e); }
         }
     }
 }
@@ -49799,6 +50152,39 @@ impl FocusManager {
     }
 }
 
+// Microsoft.UI.Xaml.Input.FocusManagerGotFocusEventArgs
+fn focus_manager_got_focus_event_args_iid() -> rt::Guid { return rt::Guid { a: 1353491265u32, b: 17689 as u16, c: 22991 as u16, d: [131 as u8, 177 as u8, 201 as u8, 196 as u8, 92 as u8, 253 as u8, 184 as u8, 22 as u8] }; }
+struct FocusManagerGotFocusEventArgs { _object: rt::Object }
+impl FocusManagerGotFocusEventArgs {
+    fn query(value: rt::Object) -> result::Result[FocusManagerGotFocusEventArgs, rt::Error] {
+        match value.query(focus_manager_got_focus_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[FocusManagerGotFocusEventArgs, rt::Error]::Ok(FocusManagerGotFocusEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[FocusManagerGotFocusEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> FocusManagerGotFocusEventArgs { return FocusManagerGotFocusEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_NewFocusedElement
+    fn new_focused_element(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_CorrelationId
+    fn correlation_id(this) -> result::Result[rt::Guid, rt::Error] {
+        var returned: rt::Guid = #zero::[rt::Guid]();
+        let call: fn(*u8, *rt::Guid) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *rt::Guid) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Guid, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Guid, rt::Error]::Ok(returned);
+
+    }
+}
+
 // Microsoft.UI.Xaml.Input.FocusNavigationDirection
 type FocusNavigationDirection = i32;
 const focus_navigation_direction_next: FocusNavigationDirection = 0 as i32;
@@ -49951,6 +50337,41 @@ impl IFocusManager {
     fn object(this) -> rt::Object { return this._object.clone(); }
     fn raw(this) -> *u8 { return this._object.raw(); }
     fn clone(this) -> IFocusManager { return IFocusManager { _object: this._object.clone() }; }
+}
+
+// Microsoft.UI.Xaml.Input.IFocusManagerGotFocusEventArgs
+const i_focus_manager_got_focus_event_args_get_new_focused_element_slot: usize = 6;
+const i_focus_manager_got_focus_event_args_get_correlation_id_slot: usize = 7;
+fn i_focus_manager_got_focus_event_args_iid() -> rt::Guid { return rt::Guid { a: 1353491265u32, b: 17689 as u16, c: 22991 as u16, d: [131 as u8, 177 as u8, 201 as u8, 196 as u8, 92 as u8, 253 as u8, 184 as u8, 22 as u8] }; }
+struct IFocusManagerGotFocusEventArgs { _object: rt::Object }
+impl IFocusManagerGotFocusEventArgs {
+    fn query(value: rt::Object) -> result::Result[IFocusManagerGotFocusEventArgs, rt::Error] {
+        match value.query(i_focus_manager_got_focus_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[IFocusManagerGotFocusEventArgs, rt::Error]::Ok(IFocusManagerGotFocusEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IFocusManagerGotFocusEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IFocusManagerGotFocusEventArgs { return IFocusManagerGotFocusEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_NewFocusedElement
+    fn new_focused_element(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_CorrelationId
+    fn correlation_id(this) -> result::Result[rt::Guid, rt::Error] {
+        var returned: rt::Guid = #zero::[rt::Guid]();
+        let call: fn(*u8, *rt::Guid) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *rt::Guid) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Guid, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Guid, rt::Error]::Ok(returned);
+
+    }
 }
 
 // Microsoft.UI.Xaml.Input.IFocusManagerStatics
@@ -68624,6 +69045,102 @@ impl IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation {
     // SKIPPED ReplaceAll: array or byref parameter is not yet projected
 }
 
+// Windows.Foundation.Collections.IVector<Microsoft.UI.Xaml.Controls.MenuBarItem>
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_get_at_slot: usize = 6;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_get_size_slot: usize = 7;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_get_view_slot: usize = 8;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_index_of_slot: usize = 9;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_set_at_slot: usize = 10;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_insert_at_slot: usize = 11;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_remove_at_slot: usize = 12;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_append_slot: usize = 13;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_remove_at_end_slot: usize = 14;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_clear_slot: usize = 15;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_get_many_slot: usize = 16;
+const i_vector_microsoft_ui_xaml_controls_menu_bar_item_replace_all_slot: usize = 17;
+fn i_vector_microsoft_ui_xaml_controls_menu_bar_item_iid() -> rt::Guid { return rt::Guid { a: 2495930319u32, b: 6898 as u16, c: 22049 as u16, d: [139 as u8, 153 as u8, 78 as u8, 86 as u8, 67 as u8, 209 as u8, 181 as u8, 47 as u8] }; }
+struct IVector_Microsoft_UI_Xaml_Controls_MenuBarItem { _object: rt::Object }
+impl IVector_Microsoft_UI_Xaml_Controls_MenuBarItem {
+    fn query(value: rt::Object) -> result::Result[IVector_Microsoft_UI_Xaml_Controls_MenuBarItem, rt::Error] {
+        match value.query(i_vector_microsoft_ui_xaml_controls_menu_bar_item_iid()) {
+            result::Result::Ok(o) => { return result::Result[IVector_Microsoft_UI_Xaml_Controls_MenuBarItem, rt::Error]::Ok(IVector_Microsoft_UI_Xaml_Controls_MenuBarItem { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IVector_Microsoft_UI_Xaml_Controls_MenuBarItem, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IVector_Microsoft_UI_Xaml_Controls_MenuBarItem { return IVector_Microsoft_UI_Xaml_Controls_MenuBarItem { _object: this._object.clone() }; }
+    // ABI slot 6: GetAt
+    fn get_at(this, index_0: u32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, u32, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, u32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_Size
+    fn size(this) -> result::Result[u32, rt::Error] {
+        var returned: u32 = #zero::[u32]();
+        let call: fn(*u8, *u32) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[u32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[u32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: GetView
+    fn get_view(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // SKIPPED IndexOf: additional out parameters: use a future multi-output projection
+    // ABI slot 10: SetAt
+    fn set_at(this, index_0: u32, value_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match value_1.query_nullable(rt::Guid { a: 2811234688u32, b: 20940 as u16, c: 21277 as u16, d: [151 as u8, 197 as u8, 53 as u8, 107 as u8, 19 as u8, 87 as u8, 51 as u8, 152 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, u32, *u8) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, u32, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, q_1.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 11: InsertAt
+    fn insert_at(this, index_0: u32, value_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match value_1.query_nullable(rt::Guid { a: 2811234688u32, b: 20940 as u16, c: 21277 as u16, d: [151 as u8, 197 as u8, 53 as u8, 107 as u8, 19 as u8, 87 as u8, 51 as u8, 152 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, u32, *u8) -> i32 = rt::slot(this._object.raw(), 11) as fn(*u8, u32, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, q_1.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 12: RemoveAt
+    fn remove_at(this, index_0: u32) -> rt::Status {
+        let call: fn(*u8, u32) -> i32 = rt::slot(this._object.raw(), 12) as fn(*u8, u32) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 13: Append
+    fn append(this, value_0: rt::Object) -> rt::Status {
+        let q_0: rt::Object = match value_0.query_nullable(rt::Guid { a: 2811234688u32, b: 20940 as u16, c: 21277 as u16, d: [151 as u8, 197 as u8, 53 as u8, 107 as u8, 19 as u8, 87 as u8, 51 as u8, 152 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8) -> i32 = rt::slot(this._object.raw(), 13) as fn(*u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 14: RemoveAtEnd
+    fn remove_at_end(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 14) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 15: Clear
+    fn clear(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 15) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // SKIPPED GetMany: additional out parameters: use a future multi-output projection
+    // SKIPPED ReplaceAll: array or byref parameter is not yet projected
+}
+
 // Windows.Foundation.Collections.IVector<Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase>
 const i_vector_microsoft_ui_xaml_controls_menu_flyout_item_base_get_at_slot: usize = 6;
 const i_vector_microsoft_ui_xaml_controls_menu_flyout_item_base_get_size_slot: usize = 7;
@@ -70177,6 +70694,45 @@ impl IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation {
     fn object(this) -> rt::Object { return this._object.clone(); }
     fn raw(this) -> *u8 { return this._object.raw(); }
     fn clone(this) -> IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation { return IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation { _object: this._object.clone() }; }
+    // ABI slot 6: GetAt
+    fn get_at(this, index_0: u32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, u32, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, u32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_Size
+    fn size(this) -> result::Result[u32, rt::Error] {
+        var returned: u32 = #zero::[u32]();
+        let call: fn(*u8, *u32) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[u32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[u32, rt::Error]::Ok(returned);
+
+    }
+    // SKIPPED IndexOf: additional out parameters: use a future multi-output projection
+    // SKIPPED GetMany: additional out parameters: use a future multi-output projection
+}
+
+// Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Controls.MenuBarItem>
+const i_vector_view_microsoft_ui_xaml_controls_menu_bar_item_get_at_slot: usize = 6;
+const i_vector_view_microsoft_ui_xaml_controls_menu_bar_item_get_size_slot: usize = 7;
+const i_vector_view_microsoft_ui_xaml_controls_menu_bar_item_index_of_slot: usize = 8;
+const i_vector_view_microsoft_ui_xaml_controls_menu_bar_item_get_many_slot: usize = 9;
+fn i_vector_view_microsoft_ui_xaml_controls_menu_bar_item_iid() -> rt::Guid { return rt::Guid { a: 3650787824u32, b: 55085 as u16, c: 20850 as u16, d: [135 as u8, 129 as u8, 61 as u8, 230 as u8, 238 as u8, 41 as u8, 39 as u8, 73 as u8] }; }
+struct IVectorView_Microsoft_UI_Xaml_Controls_MenuBarItem { _object: rt::Object }
+impl IVectorView_Microsoft_UI_Xaml_Controls_MenuBarItem {
+    fn query(value: rt::Object) -> result::Result[IVectorView_Microsoft_UI_Xaml_Controls_MenuBarItem, rt::Error] {
+        match value.query(i_vector_view_microsoft_ui_xaml_controls_menu_bar_item_iid()) {
+            result::Result::Ok(o) => { return result::Result[IVectorView_Microsoft_UI_Xaml_Controls_MenuBarItem, rt::Error]::Ok(IVectorView_Microsoft_UI_Xaml_Controls_MenuBarItem { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IVectorView_Microsoft_UI_Xaml_Controls_MenuBarItem, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IVectorView_Microsoft_UI_Xaml_Controls_MenuBarItem { return IVectorView_Microsoft_UI_Xaml_Controls_MenuBarItem { _object: this._object.clone() }; }
     // ABI slot 6: GetAt
     fn get_at(this, index_0: u32) -> result::Result[rt::Object, rt::Error] {
         var returned: usize = 0;

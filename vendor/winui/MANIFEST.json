@@ -152,7 +152,11 @@
     "Microsoft.UI.Xaml.Controls.Viewbox",
     "Microsoft.UI.Windowing.AppWindow",
     "Microsoft.UI.Windowing.OverlappedPresenter",
-    "Microsoft.UI.Windowing.AppWindowClosingEventArgs"
+    "Microsoft.UI.Windowing.AppWindowClosingEventArgs",
+    "Microsoft.UI.Xaml.Controls.MenuBar",
+    "Microsoft.UI.Xaml.Controls.MenuBarItem",
+    "Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator",
+    "Microsoft.UI.Xaml.Input.FocusManagerGotFocusEventArgs"
   ],
   "sources": [
     {
@@ -12696,6 +12700,108 @@
       "name": "IListViewItemFactory"
     },
     {
+      "iid": "ba97f337-8f1e-5141-b53f-e77a8ba3ebbd",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBar",
+      "methods": [
+        {
+          "name": "get_Items",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBar"
+    },
+    {
+      "iid": "76aa8759-04ee-5a4c-b98c-d03742d47cdb",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBarFactory",
+      "methods": [
+        {
+          "name": "CreateInstance",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBarFactory"
+    },
+    {
+      "iid": "a7900980-51cc-531d-97c5-356b13573398",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBarItem",
+      "methods": [
+        {
+          "name": "get_Title",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Title",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Items",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBarItem"
+    },
+    {
+      "iid": "87d02172-83cb-5459-940f-173f7501b300",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBarItemFactory",
+      "methods": [
+        {
+          "name": "CreateInstance",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBarItemFactory"
+    },
+    {
+      "iid": "c8a33f46-2e1c-5ce0-bc09-4524e68941c8",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBarItemStatics",
+      "methods": [
+        {
+          "name": "get_TitleProperty",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_ItemsProperty",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBarItemStatics"
+    },
+    {
+      "iid": "79aa0b84-5554-5f7c-80d9-7970aa030125",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBarStatics",
+      "methods": [
+        {
+          "name": "get_ItemsProperty",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBarStatics"
+    },
+    {
       "iid": "f4c77c6c-1fa5-5d85-8559-5d02b7d4e5e7",
       "kind": "Interface",
       "metadata": "Microsoft.UI.Xaml.Controls.IMenuFlyout",
@@ -12892,6 +12998,27 @@
         }
       ],
       "name": "IMenuFlyoutItemStatics"
+    },
+    {
+      "iid": "3eaf5fd5-935e-5ed7-8d05-f6bafa936d25",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuFlyoutSeparator",
+      "methods": [],
+      "name": "IMenuFlyoutSeparator"
+    },
+    {
+      "iid": "26156c9c-95ef-5e55-8342-773fc43baac3",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuFlyoutSeparatorFactory",
+      "methods": [
+        {
+          "name": "CreateInstance",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuFlyoutSeparatorFactory"
     },
     {
       "iid": "6959e683-16f6-5208-84e0-b0be92d9f6dd",
@@ -20233,6 +20360,46 @@
       "name": "ListViewSelectionMode"
     },
     {
+      "iid": "ba97f337-8f1e-5141-b53f-e77a8ba3ebbd",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Controls.MenuBar",
+      "methods": [
+        {
+          "name": "get_Items",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "MenuBar"
+    },
+    {
+      "iid": "a7900980-51cc-531d-97c5-356b13573398",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Controls.MenuBarItem",
+      "methods": [
+        {
+          "name": "get_Title",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Title",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Items",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "MenuBarItem"
+    },
+    {
       "iid": "f4c77c6c-1fa5-5d85-8559-5d02b7d4e5e7",
       "kind": "Class",
       "metadata": "Microsoft.UI.Xaml.Controls.MenuFlyout",
@@ -20356,6 +20523,13 @@
       "metadata": "Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase",
       "methods": [],
       "name": "MenuFlyoutItemBase"
+    },
+    {
+      "iid": "3eaf5fd5-935e-5ed7-8d05-f6bafa936d25",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator",
+      "methods": [],
+      "name": "MenuFlyoutSeparator"
     },
     {
       "iid": "c18eb0e9-29fb-525d-abbc-d6b2110f542e",
@@ -31793,6 +31967,26 @@
       "name": "FocusManager"
     },
     {
+      "iid": "50aca341-4519-59cf-83b1-c9c45cfdb816",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.FocusManagerGotFocusEventArgs",
+      "methods": [
+        {
+          "name": "get_NewFocusedElement",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_CorrelationId",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "FocusManagerGotFocusEventArgs"
+    },
+    {
       "kind": "Enum",
       "metadata": "Microsoft.UI.Xaml.Input.FocusNavigationDirection",
       "methods": [],
@@ -31875,6 +32069,26 @@
       "metadata": "Microsoft.UI.Xaml.Input.IFocusManager",
       "methods": [],
       "name": "IFocusManager"
+    },
+    {
+      "iid": "50aca341-4519-59cf-83b1-c9c45cfdb816",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IFocusManagerGotFocusEventArgs",
+      "methods": [
+        {
+          "name": "get_NewFocusedElement",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_CorrelationId",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IFocusManagerGotFocusEventArgs"
     },
     {
       "iid": "e73dce04-e23a-5fb3-96ab-7df04c51dff2",
@@ -43593,6 +43807,86 @@
       "name": "IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation"
     },
     {
+      "iid": "94c4dfcf-1af2-5621-8b99-4e5643d1b52f",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IVector<Microsoft.UI.Xaml.Controls.MenuBarItem>",
+      "methods": [
+        {
+          "name": "GetAt",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetView",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "IndexOf",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        },
+        {
+          "name": "SetAt",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "InsertAt",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "RemoveAt",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "Append",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "RemoveAtEnd",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "Clear",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 16,
+          "status": "skipped"
+        },
+        {
+          "name": "ReplaceAll",
+          "reason": "array or byref parameter is not yet projected",
+          "slot": 17,
+          "status": "skipped"
+        }
+      ],
+      "name": "IVector_Microsoft_UI_Xaml_Controls_MenuBarItem"
+    },
+    {
       "iid": "ebe273f7-4731-5ac8-8513-de764868fb9b",
       "kind": "Interface",
       "metadata": "Windows.Foundation.Collections.IVector<Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase>",
@@ -44903,6 +45197,38 @@
         }
       ],
       "name": "IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation"
+    },
+    {
+      "iid": "d99a99f0-d72d-5172-8781-3de6ee292749",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Controls.MenuBarItem>",
+      "methods": [
+        {
+          "name": "GetAt",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "IndexOf",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 8,
+          "status": "skipped"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        }
+      ],
+      "name": "IVectorView_Microsoft_UI_Xaml_Controls_MenuBarItem"
     },
     {
       "iid": "f817bdda-4853-503a-86c3-062db99d0419",

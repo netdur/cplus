@@ -208,8 +208,8 @@ with animation enabled, and checks an immediate settled offset when disabled.
 
 Only one backend and one WinUI Application run are supported per process.
 Through `facet_runtime` the clipboard and file pickers stay the shared Win32
-calls, which need no window of their own; the app menu (`App::menu`) is not
-rendered on WinUI yet.
+calls, which need no window of their own. The app menu (`App::menu`) is a
+MenuBar at the top of every window; see the MANIFEST's App menu row.
 
 Initial unsupported trees return E_NOTIMPL. Internal native failures abort with
 an HRESULT diagnostic instead of continuing with invalid handles. Full error

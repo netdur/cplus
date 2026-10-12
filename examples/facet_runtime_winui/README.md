@@ -19,6 +19,10 @@ manifest lists `facet_winui`, `winui` and `winrt` because of it.
   `alert:primary`, `prompt:value`, `choose:opt:2`, ...), reachable by UI
   Automation and the agent; the answer is shown in `home:answer`.
 
+`main.cplus` declares an app menu - File (Settings... Ctrl+,, About, Quit
+Ctrl+Q), Edit (the standard actions) and Window (Close Settings, enabled only
+while Settings is open) - shown as a MenuBar in every window.
+
 `Load in background` runs a `services::run_job` whose `run` sleeps on a worker
 thread; its result is applied on the UI thread and shown in `home:loaded`.
 

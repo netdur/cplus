@@ -1,12 +1,50 @@
 // Two windows, one App, on WinUI. The app is written against the facade
 // alone; `winui::select()` is the whole of the backend choice.
 import "facet/screen" as screen;
+import "facet/window" as window;
+import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "facet_runtime/runtime" as runtime;
 import "facet_runtime/winui" as winui;
 import "./home" as home;
 import "./settings" as settings;
 import "./probe" as probe;
+
+// The app menu: a MenuBar in every window on WinUI. Ctrl stands for the
+// command key a bare `key:` means.
+fn menu() -> screen::AppMenu {
+    var m: screen::AppMenu = runtime::app_menu("WinUI runtime");
+    m.add_command("File", "Settings...", key: ",", on_click: open_settings);
+    m.add_command("File", "About", on_click: open_about);
+    m.add_separator("File");
+    m.add_item("File", "Quit", "q", runtime::menu_action_quit());
+    m.add_item("Edit", "Undo", "z", runtime::menu_action_undo());
+    m.add_item("Edit", "Redo", "y", runtime::menu_action_redo());
+    m.add_separator("Edit");
+    m.add_item("Edit", "Cut", "x", runtime::menu_action_cut());
+    m.add_item("Edit", "Copy", "c", runtime::menu_action_copy());
+    m.add_item("Edit", "Paste", "v", runtime::menu_action_paste());
+    m.add_item("Edit", "Select All", "a", runtime::menu_action_select_all());
+    // Enabled only while Settings is open: answered as the menu is reached.
+    m.add_command("Window", "Close Settings", on_click: close_settings,
+                  is_enabled: settings_open);
+    return m;
+}
+
+fn open_settings(sender: *u8, ctx: *u8) { let _w = runtime::app().open_window("settings"); }
+fn open_about(sender: *u8, ctx: *u8) { let _w = runtime::app().open_window("about"); }
+fn settings_open(ctx: *u8) -> bool {
+    match window::find("settings") {
+        option::Option[window::Window]::Some(w) => { return w.is_live(); }
+        option::Option[window::Window]::None => { return false; }
+    }
+}
+fn close_settings(sender: *u8, ctx: *u8) {
+    match window::find("settings") {
+        option::Option[window::Window]::Some(w) => { let _c = w.close(); }
+        option::Option[window::Window]::None => { }
+    }
+}
 
 fn main() -> i32 {
     let app: runtime::App = runtime::App::new("facet_runtime_winui");
@@ -25,6 +63,7 @@ fn main() -> i32 {
     app.window("about", settings::About::boxed, chrome: screen::Chrome::new(
         title: "About", width: 360.0f64, height: 220.0f64,
         min_width: 0.0f64, min_height: 0.0f64, bar: screen::Bar::Blended));
+    app.menu(menu);
     probe::install(app);
     winui::select();
     if app.run("main") == status::Status::Ok { return 0; }
