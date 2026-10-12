@@ -45,7 +45,8 @@ functions and the `runtime::Window` interface have been removed. Use
 
 Windows has two backends, and the platform file variant only picks the OS.
 `runtime_windows` runs on `facet_win32` unless the app selects WinUI before
-`run`:
+`run`. `facet_win32` is deprecated (netdur/cplus#20): WinUI becomes the
+default once the gaps listed below are closed.
 
 ```cplus
 import "facet_runtime/winui" as winui;   // Windows only: there is no base file

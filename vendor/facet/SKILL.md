@@ -10,7 +10,7 @@ compile**. The compiler cannot catch a design error. This file is the part
 `cpc build` will never tell you.
 
 Backends include `facet_appkit` (macOS), `facet_uikit` (iOS), `facet_gtk` (Linux),
-`facet_win32` (Windows), and `facet_android` (Android). `App::run` installs the
+`facet_winui` (Windows; `facet_win32` is deprecated), and `facet_android` (Android). `App::run` installs the
 target backend; app compositions can share screens.
 
 ---

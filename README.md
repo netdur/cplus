@@ -264,7 +264,8 @@ component and application code is paired with native backends:
 - `facet_uikit` — iOS / UIKit
 - `facet_android` — Android
 - `facet_gtk` — Linux / GTK 4
-- `facet_win32` — Windows / Win32
+- `facet_winui` — Windows / WinUI 3
+- `facet_win32` — Windows / Win32 (deprecated; being replaced by `facet_winui`)
 
 `facet_runtime` owns application startup, windows, routes, and navigation.
 Capabilities remain packages rather than language features: HTTP, filesystem
