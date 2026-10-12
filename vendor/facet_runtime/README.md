@@ -78,8 +78,9 @@ verbs, frame/density/activity reads and the active/inactive/size/density
 observers.
 Closing the last window ends `run`. A user close (caption button, Alt+F4) asks the window's `on_should_close`, and
 closing the last window also asks `on_should_quit`, as `app.quit()` does.
-`App::menu` is a MenuBar in every window, its `key`s Ctrl shortcuts. Not on
-WinUI yet: the agent surface beyond the first window - see [facet_winui's MANIFEST](../facet_winui/MANIFEST.md).
+`App::menu` is a MenuBar in every window, its `key`s Ctrl shortcuts, and
+`facet_agent_winui` serves every window through one connection - see
+[facet_winui's MANIFEST](../facet_winui/MANIFEST.md).
 `examples/facet_runtime_winui` is a two-window app on this path. The neutral runtime reports no
 backend. Shared window ownership lives in `windows.cplus`; retained content
 navigation lives in `facet/navigation`.

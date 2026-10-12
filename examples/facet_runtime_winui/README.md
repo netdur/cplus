@@ -23,6 +23,10 @@ manifest lists `facet_winui`, `winui` and `winrt` because of it.
 Ctrl+Q), Edit (the standard actions) and Window (Close Settings, enabled only
 while Settings is open) - shown as a MenuBar in every window.
 
+`CPLUS_RUNTIME_WINUI_AGENT=1` serves the agent surface over loopback HTTP
+(`facet_agent_winui`); one connection reaches both windows, as `main` and
+`settings`.
+
 `Load in background` runs a `services::run_job` whose `run` sleeps on a worker
 thread; its result is applied on the UI thread and shown in `home:loaded`.
 

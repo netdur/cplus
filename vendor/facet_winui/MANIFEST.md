@@ -50,9 +50,9 @@ every Facet property is implemented.
   (a move between monitors of different scale) has not been exercised on a
   one-display machine, and WinUI ignores a synthetic WM_DPICHANGED. General gesture/key readers and host focus commands
   remain separate work.
-- The agent surface (`facet_agent_winui`) serves one window: the first one
-  opened, then the next open one after it closes. Sheets on that window are
-  visible to it; other windows are not.
+- The agent surface (`facet_agent_winui`) serves every open window as a
+  `window` node under `app`, named by its registered window name (when unique;
+  else its window key). Popups (open menus, pickers) are not enumerated.
 - `.window_drag()` starts the system move loop; double-click-to-maximize and
   snap layouts on the drag region are not provided. `Chrome.subtitle_text`
   and the zoom fields are not mapped.

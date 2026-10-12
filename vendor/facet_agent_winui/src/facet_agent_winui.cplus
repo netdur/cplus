@@ -7,8 +7,13 @@ import "winui/winui" as ui;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "facet/application" as app;
+import "facet/window" as fwindow;
 import "facet_winui/agent_hooks" as hooks;
 import "facet_winui/record" as record;
+import "facet_winui/facet_winui" as host;
 import "facet_agent/native_surface" as selected;
 import "facet_agent/agent" as facade;
 import "agent_winui_mcp/agent_winui_mcp" as http;
@@ -19,15 +24,43 @@ static _SURFACE: agent::Surface=#zero::[agent::Surface]();
 static _ACTIVE: bool=false;
 static _QUEUE: rt::Object=#zero::[rt::Object]();
 static _ID: text::Text=#zero::[text::Text]();
+// EVERY WINDOW, ONE SURFACE. The first window opens it and starts serving;
+// later windows join it and leave it as they close; the last one closing
+// stops the listener and closes the surface. So an agent addresses every
+// window of the app through one connection, each a `window` node named as
+// `_window_name` says.
 fn _opened(window: rt::Object) {
-    assert !_ACTIVE;
+    if _ACTIVE { assert _SURFACE.add_window(window).is_ok(); return; }
     match agent::open(window) { result::Result::Ok(s)=>{_SURFACE=s;},result::Result::Err(_)=>{assert false;return;} }
     let w: ui::IWindow=match ui::IWindow::query(window) {result::Result::Ok(v)=>v,result::Result::Err(_)=>{assert false;return;}};
     _QUEUE=match w.dispatcher_queue() {result::Result::Ok(v)=>v,result::Result::Err(_)=>{assert false;return;}};
+    agent::set_names_fn(_window_name);
     _ACTIVE=true; selected::install(#addr_of(_SURFACE) as *u8,agent::mcp_backend(),_serve);
     if !_ID.is_empty() { _serve(_ID.view()); }
 }
-fn _closing() { if _ACTIVE { http::stop(); selected::uninstall(); _SURFACE.close(); _QUEUE=rt::Object::empty(); _ACTIVE=false; } }
+fn _closing(window: rt::Object) {
+    if !_ACTIVE { return; }
+    let gone: bool=_SURFACE.remove_window(window);
+    if _SURFACE.window_count()>0 { return; }
+    _stop();
+}
+fn _stop() { if _ACTIVE { http::stop(); selected::uninstall(); _SURFACE.close(); agent::set_names_fn(0 as fn(rt::Object)->text::Text); _QUEUE=rt::Object::empty(); _ACTIVE=false; } }
+// A window's address, as agent_appkit gives it: the name the app registered it
+// under (`App::window("settings", ...)`) when exactly one open window has it,
+// else the instance's window key; nothing for a window facet did not open.
+fn _window_name(window: rt::Object) -> text::Text {
+    let root: *core::Node=host::root_of_window(window);
+    if root.is_null() { return text::new(); }
+    let ws: vec::Vec[fwindow::Window]=fwindow::all();
+    var name: str=""; var same: usize=0; var i: usize=0;
+    while i<ws.count() { if let option::Option::Some(w)=ws.at_ptr(i) { if (*w).root()==root { name=(*w).name(); } } i=i+1; }
+    if name!="" {
+        i=0;
+        while i<ws.count() { if let option::Option::Some(w)=ws.at_ptr(i) { if (*w).name()==name { same=same+1; } } i=i+1; }
+        if same==1 { return text::from_str(name); }
+    }
+    return text::from_str(app::window_key_of(root));
+}
 fn serve(id: str) -> i32 {
     if !_ACTIVE { return -12; }
     return http::start(#addr_of(_SURFACE),_QUEUE,id,facade::effective_policy());
@@ -65,6 +98,6 @@ fn _alias(object: rt::Object,node: *core::Node,key: str) {
 }
 fn _release(object: rt::Object) { if _ACTIVE { let removed: bool=_SURFACE.unpin(object); } }
 fn enable(mcp_id: str="") { _ID=text::from_str(mcp_id); hooks::install(hooks::Hooks {opened:_opened,closing:_closing,apply:_apply,alias:_alias,release:_release}); }
-fn disable() { _closing(); hooks::install(#zero::[hooks::Hooks]()); }
+fn disable() { _stop(); hooks::install(#zero::[hooks::Hooks]()); }
 fn surface_ptr() -> *u8 { assert _ACTIVE; return #addr_of(_SURFACE) as *u8; }
 fn mcp_backend() -> backend::Backend { return agent::mcp_backend(); }

@@ -337,9 +337,92 @@ def run_app_menu():
     print('PASS: app menu (every window; click, live enabled state, Ctrl shortcut, edit actions, quit)')
 
 
+def window_of(nodes, key):
+    """The id of the `window` node a described node belongs to."""
+    index = next(i for i, n in enumerate(nodes) if n['id'] == key)
+    while index is not None:
+        if nodes[index]['role'] == 'window':
+            return nodes[index]['id']
+        index = nodes[index].get('parent')
+    return None
+
+
+def run_agent_windows():
+    """One agent connection reaches every window, each named as registered."""
+    import http.client
+    import json
+    log = RUNTIME / 'agent_windows.log'
+    env = {**os.environ, 'CPLUS_RUNTIME_WINUI_PROBE': '1', 'CPLUS_RUNTIME_WINUI_AGENT': '1'}
+    output = log.open('w', encoding='utf-8')
+    process = subprocess.Popen([str(EXE)], cwd=RUNTIME, env=env, stdout=output,
+                               stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+    conn = None
+
+    def rpc(method, params=None):
+        conn.request('POST', '/', json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method,
+                                              'params': params or {}}).encode(),
+                     {'Content-Type': 'application/json'})
+        value = json.loads(conn.getresponse().read())
+        assert 'error' not in value, value
+        return value['result']
+
+    def described(key):
+        end = time.time() + 10
+        while time.time() < end:
+            nodes = rpc('describe_ui', {'mode': 'full'})
+            if any(n['id'] == key for n in nodes):
+                return nodes
+            time.sleep(.2)
+        raise AssertionError(f'{key!r} never described')
+
+    try:
+        content = wait_for(log, 'AGENT PORT', process)
+        port = int(content.split('AGENT PORT ')[1].split()[0])
+        wait_for(log, 'READY: facet_winui', process)
+        wait_for(log, 'facet_agent_winui: MCP on', process)
+        settings = window('Settings', process)
+        assert shows(settings, 'settings:alert')
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+        rpc('initialize', {'protocolVersion': '2024-11-05', 'capabilities': {},
+                           'clientInfo': {'name': 'operator', 'version': '1'}})
+
+        nodes = described('settings:alert')
+        windows = [n['id'] for n in nodes if n['role'] == 'window']
+        assert sorted(windows) == ['main', 'settings'], windows
+        assert window_of(nodes, 'home:open-settings') == 'main'
+        assert window_of(nodes, 'settings:alert') == 'settings'
+
+        # A control in the window opened second answers, and its sheet is
+        # described under that window.
+        assert rpc('click', {'id': 'settings:alert'})['outcome'] == 'allowed'
+        nodes = described('alert:title')
+        assert window_of(nodes, 'alert:title') == 'settings'
+        assert rpc('click', {'id': 'alert:primary'})['outcome'] == 'allowed'
+
+        # NEGATIVE: once Settings closes its controls are gone, and the first
+        # window is still served on the same connection.
+        u.PostMessageW(settings, WM_CLOSE, 0, 0)
+        assert wait_until(lambda: not u.IsWindow(settings))
+        nodes = rpc('describe_ui', {'mode': 'full'})
+        assert [n['id'] for n in nodes if n['role'] == 'window'] == ['main'], nodes
+        assert rpc('click', {'id': 'settings:alert'})['outcome'] == 'not_found'
+        # And a window opened later joins.
+        assert rpc('click', {'id': 'home:open-settings'})['outcome'] == 'allowed'
+        nodes = described('settings:alert')
+        assert window_of(nodes, 'settings:alert') == 'settings', 'a reopened window is not served'
+    finally:
+        if conn is not None:
+            conn.close()
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: agent windows (every window on one connection, named as registered; a closed one leaves)')
+
+
 if __name__ == '__main__':
     run_close_question()
     run_alert_window()
     run_worker_hop()
     run_density()
     run_app_menu()
+    run_agent_windows()

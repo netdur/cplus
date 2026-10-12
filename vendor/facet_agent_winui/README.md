@@ -18,7 +18,11 @@ After the host's ready callback, `agent::in_app()` and
 `agent::in_app_with_grant(grant)` select the WinUI surface. Keyed Facet nodes are
 exposed; unkeyed nodes carry inherited privacy boundaries without entering the
 curated list. Native replacement, policy updates and release keep pins current.
-The window close hook detaches the surface before XAML teardown.
+Every window the host opens joins one surface and leaves it as it closes, each
+a `window` node named by its registered window name (`App::window("settings",
+...)` is `settings`) when no other open window shares it, else by its window
+key. The last window's close stops the listener and detaches the surface
+before XAML teardown.
 
 Copy the full dependency closure from
 [examples/facet_agent_winui_smoke/Cplus.toml](../../examples/facet_agent_winui_smoke/Cplus.toml).

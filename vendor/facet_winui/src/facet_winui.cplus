@@ -130,8 +130,6 @@ static ON_LAUNCH_CTX: *u8=0 as *u8;
 static ON_READY: fn(*u8)=0 as fn(*u8);
 static ON_READY_CTX: *u8=0 as *u8;
 static READY_SAID: bool=false;
-// The window the agent surface is attached to. agent_winui serves one window.
-static AGENT_HOST: *Host=0 as *Host;
 // The most recently activated window: where an alert goes.
 static ACTIVE_HOST: *Host=0 as *Host;
 // Called with the layer root when a window closes under a modal layer, so the
@@ -589,7 +587,7 @@ fn close_host(host: *Host) {
     // needs, held only while this window comes down unless it is the last.
     begin_shutdown();
     if (*host).mounted {
-        if host==AGENT_HOST { agent_hooks::closing(); AGENT_HOST=0 as *Host; }
+        agent_hooks::closing((*host).window.clone());
         let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*host).window));
         native::check(window.remove_size_changed((*host).size_token));native::check(window.remove_closed((*host).close_token));native::check(window.remove_activated((*host).activated_token));
         let shell=native::must::[ui::IUIElement](ui::IUIElement::query((*host).shell));native::check(shell.remove_pointer_pressed((*host).pressed_token));
@@ -607,10 +605,6 @@ fn close_host(host: *Host) {
     if ACTIVE_HOST==host { ACTIVE_HOST=0 as *Host; }
     if ORIGIN==host { ORIGIN=0 as *Host; }
     forget_observers_of(host);
-    if AGENT_HOST.is_null() && !last {
-        let next=first_host();
-        if next.is_not_null() { AGENT_HOST=next; agent_hooks::opened((*next).window); }
-    }
     if last { unwatch_focus(); refresh_retirement::shutdown(); scheduler::shutdown(); }
     let root=(*host).root; let owned=(*host).owned;
     let record: box::Box[Host]=box::from_raw::[Host](host as *u8);
@@ -640,7 +634,7 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome, will_close: fn(*u
     (*host).hwnd=id.value as usize as *u8;
     if QUEUE.is_null() { QUEUE=native::must::[rt::Object](window.dispatcher_queue()); scheduler::install(QUEUE.clone()); }
     let added: status::Status=HOSTS.append(host); assert added==status::Status::Ok;
-    if AGENT_HOST.is_null() { AGENT_HOST=host; agent_hooks::opened((*host).window); }
+    agent_hooks::opened((*host).window.clone());
     let size_handler=native::must::[ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowSizeChangedEventArgs](ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowSizeChangedEventArgs::new(resized,host as *u8));
     let close_handler=native::must::[ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowEventArgs](ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowEventArgs::new(closed,host as *u8));
     let activated_handler=native::must::[ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowActivatedEventArgs](ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowActivatedEventArgs::new(activated,host as *u8));
@@ -1007,6 +1001,12 @@ fn run_with(take tree: core::Node, take chrome: screen::Chrome, on_ready: fn(*u8
     let result: rt::Status=start(open_run_tree,0 as *u8,on_ready,on_ready_ctx);
     if RUN_TREE.is_not_null() { let gone: box::Box[core::Node]=box::from_raw::[core::Node](RUN_TREE as *u8); RUN_TREE=0 as *core::Node; }
     return result;
+}
+// The facet tree an open window shows, or null: what an agent names a window by.
+fn root_of_window(window: rt::Object) -> *core::Node {
+    var i: usize=0;
+    while i<HOSTS.count() { if let option::Option::Some(h)=HOSTS.at(i) { if !(*h).closing && identity_of((*h).window.clone())==identity_of(window.clone()) { return (*h).root; } } i=i+1; }
+    return 0 as *core::Node;
 }
 fn live_views() -> i64 { return views::live_views(); }
 fn live_subscriptions() -> i64 { return views::live_subscriptions()+app_menu::subscriptions(); }

@@ -41,24 +41,65 @@ impl _Pin {
         }
     }
 }
+// EVERY WINDOW, IN ONE SURFACE. Each open window is a node of role Window
+// under `app`, its content beneath it, in the order the windows were added -
+// the shape agent_appkit and agent_win32 answer, so a node's window is its
+// parent chain and ids resolve in one registry across all of them. A window's
+// node is addressed by the name `set_names_fn` gives it; with no name it keeps
+// its positional id (`app/window#0`).
 struct Surface {
-    _window: rt::Object,
+    _windows: vec::Vec[rt::Object],
     _pins: vec::Vec[_Pin],
     _thread: u32,
 }
+// A window's address, asked at every walk and never cached: the toolkit above
+// knows names this package must not (facet's registered window names). Empty
+// text means unnamed. Nothing installed names no window.
+static _NAMES: fn(rt::Object)->text::Text=0 as fn(rt::Object)->text::Text;
+fn set_names_fn(f: fn(rt::Object)->text::Text) { _NAMES=f; }
+fn _name_of(window: rt::Object) -> text::Text { let f=_NAMES; if f.is_null() { return text::new(); } return f(window); }
+fn _owned_by_this_thread(window: rt::Object) -> rt::Status {
+    guard let result::Result::Ok(w)=ui::IWindow::query(window) else result::Result::Err(e) { return rt::Status {code:e.code}; };
+    guard let result::Result::Ok(q)=w.dispatcher_queue() else result::Result::Err(e) { return rt::Status {code:e.code}; };
+    guard let result::Result::Ok(access)=ui::IDispatcherQueue2::query(q) else result::Result::Err(e) { return rt::Status {code:e.code}; };
+    if !native::boolean(access.has_thread_access()) { return rt::Status {code:0x8001010e as i32}; }
+    return rt::Status {code:0};
+}
 // The Window must belong to the calling UI thread. Keep Surface on that thread
-// and close it during Window.Closed, before XAML runtime shutdown.
+// and close it before XAML runtime shutdown. More windows join with
+// `add_window` and leave with `remove_window`.
 fn open(window: rt::Object) -> result::Result[Surface,rt::Error] {
-    guard let result::Result::Ok(w)=ui::IWindow::query(window) else result::Result::Err(e) { return result::Result[Surface,rt::Error]::Err(e); };
-    guard let result::Result::Ok(q)=w.dispatcher_queue() else result::Result::Err(e) { return result::Result[Surface,rt::Error]::Err(e); };
-    guard let result::Result::Ok(access)=ui::IDispatcherQueue2::query(q) else result::Result::Err(e) { return result::Result[Surface,rt::Error]::Err(e); };
-    if !native::boolean(access.has_thread_access()) { return result::Result[Surface,rt::Error]::Err(rt::Error {code:0x8001010e as i32}); }
-    return result::Result[Surface,rt::Error]::Ok(Surface {_window:window.clone(),_pins:vec::new::[_Pin](),_thread:GetCurrentThreadId()});
+    let owned=_owned_by_this_thread(window.clone());
+    if owned.is_err() { return result::Result[Surface,rt::Error]::Err(rt::Error {code:owned.code}); }
+    var windows: vec::Vec[rt::Object]=vec::new::[rt::Object]();
+    windows.append(window.clone());
+    return result::Result[Surface,rt::Error]::Ok(Surface {_windows:windows,_pins:vec::new::[_Pin](),_thread:GetCurrentThreadId()});
 }
 impl Surface {
     fn _check_thread(this) { assert this._thread==GetCurrentThreadId(); }
     fn close(ref this) {
-        this._check_thread(); this._pins=vec::new::[_Pin](); this._window=rt::Object::empty();
+        this._check_thread(); this._pins=vec::new::[_Pin](); this._windows=vec::new::[rt::Object]();
+    }
+    fn window_count(this) -> usize { return this._windows.count(); }
+    fn _window_index(this, window: rt::Object) -> option::Option[usize] {
+        var i: usize=0;
+        while i<this._windows.count() { if let option::Option::Some(w)=this._windows.at_ptr(i) { if native::same(*w,window) { return option::Option[usize]::Some(i); } } i=i+1; }
+        return option::Option[usize]::None;
+    }
+    // Another window of the same UI thread. Refused when it is already here.
+    fn add_window(ref this, window: rt::Object) -> rt::Status {
+        this._check_thread();
+        let owned=_owned_by_this_thread(window.clone());
+        if owned.is_err() { return owned; }
+        if let option::Option::Some(_)=this._window_index(window.clone()) { return rt::Status {code:0x80070057 as i32}; }
+        this._windows.append(window.clone()); return rt::Status {code:0};
+    }
+    // A window that is closing. Its pins stay until unpinned (a renderer
+    // releases them with its views); the walk no longer reaches them.
+    fn remove_window(ref this, window: rt::Object) -> bool {
+        this._check_thread();
+        guard let option::Option::Some(i)=this._window_index(window) else { return false; };
+        let gone: option::Option[rt::Object]=this._windows.remove(i); return true;
     }
     fn _pin_for(this, o: rt::Object) -> option::Option[usize] {
         var i: usize=0;
@@ -73,7 +114,7 @@ impl Surface {
     // control until unpin/close; it does NOT keep a detached control actionable.
     fn pin(ref this, o: rt::Object, id: str, policy: u32=0, observe_only: bool=false, exposed: bool=true) -> rt::Status {
         this._check_thread();
-        if this._window.is_null() || id=="" || id=="app" || policy>identity::policy_exclude() { return rt::Status {code:0x80070057 as i32}; }
+        if this._windows.count()==0 || id=="" || id=="app" || policy>identity::policy_exclude() { return rt::Status {code:0x80070057 as i32}; }
         guard let result::Result::Ok(element)=ui::IFrameworkElement::query(o) else result::Result::Err(e) { return rt::Status {code:e.code}; };
         var i: usize=0;
         while i<this._pins.count() {
@@ -131,13 +172,21 @@ impl Surface {
     }
 }
 struct _Node { object: rt::Object, peer: rt::Object, hidden: bool, secret: bool, pin: option::Option[usize] }
-struct _Snapshot { reg: identity::Registry, nodes: vec::Vec[_Node], valid: bool }
+// `windows` holds this snapshot's window names: a window is addressed by the
+// name it was registered under, so a pin with the same id gives that id up
+// (keeping its policy) rather than making the answer ambiguous.
+struct _Snapshot { reg: identity::Registry, nodes: vec::Vec[_Node], valid: bool, windows: vec::Vec[text::Text] }
+fn _is_window_name(snap: _Snapshot, id: str) -> bool {
+    var i: usize=0;
+    while i<snap.windows.count() { if let option::Option::Some(t)=snap.windows.at_ptr(i) { if (*t).view()==id { return true; } } i=i+1; }
+    return false;
+}
 fn _walk(s: Surface, ref snap: _Snapshot, tree: ui::IVisualTreeHelperStatics, o: rt::Object, parent: usize, hidden: bool, disabled: bool, secret_parent: bool, depth: usize) {
     if depth>256 || snap.nodes.count()>20000 { snap.valid=false; return; }
     let p: rt::Object=native::peer(o); let role: identity::Role=native::classify(o,p);
     let pin_index: option::Option[usize]=s._pin_for(o);
     var id: option::Option[str]=option::Option[str]::None;
-    if let option::Option::Some(i)=pin_index { if let option::Option::Some(pin)=s._pins.at_ptr(i) { id=option::Option[str]::Some((*pin).id.view()); } }
+    if let option::Option::Some(i)=pin_index { if let option::Option::Some(pin)=s._pins.at_ptr(i) { if !_is_window_name(snap,(*pin).id.view()) { id=option::Option[str]::Some((*pin).id.view()); } } }
     if let option::Option::Some(key)=id { if snap.reg.contains(key) { snap.valid=false; return; } }
     let node: usize=snap.reg.add_child(parent,id,role);
     let invisible: bool=hidden || !native::visible(o); let off: bool=disabled || !native::enabled(o);
@@ -164,14 +213,37 @@ fn _walk(s: Surface, ref snap: _Snapshot, tree: ui::IVisualTreeHelperStatics, o:
 }
 fn _snapshot(s: Surface) -> _Snapshot {
     s._check_thread();
-    var snap: _Snapshot=_Snapshot {reg:identity::new(),nodes:vec::new::[_Node](),valid:false};
+    var snap: _Snapshot=_Snapshot {reg:identity::new(),nodes:vec::new::[_Node](),valid:false,windows:vec::new::[text::Text]()};
     snap.nodes.append(_Node {object:rt::Object::empty(),peer:rt::Object::empty(),hidden:false,secret:false,pin:option::Option[usize]::None});
-    guard let result::Result::Ok(w)=ui::IWindow::query(s._window) else { return snap; };
-    guard let result::Result::Ok(root)=w.content() else { return snap; };
-    guard let result::Result::Ok(e)=ui::IFrameworkElement::query(root) else { return snap; };
-    if !native::boolean(e.is_loaded()) { return snap; }
     guard let result::Result::Ok(tree)=ui::VisualTreeHelper::i_visual_tree_helper_statics_factory() else { return snap; };
-    snap.valid=true; _walk(s,snap,tree,root,0,false,false,false,0);
+    // Every window's name first: a pin anywhere may share one.
+    var names: vec::Vec[text::Text]=vec::new::[text::Text]();
+    var k: usize=0;
+    while k<s._windows.count() {
+        if let option::Option::Some(window)=s._windows.at_ptr(k) {
+            let name: text::Text=_name_of(*window);
+            // Two windows answering one name cannot both have it.
+            if name.count()>0 && !_is_window_name(snap,name.view()) { snap.windows.append(name.clone()); }
+            names.append(name);
+        }
+        k=k+1;
+    }
+    var w: usize=0;
+    while w<s._windows.count() {
+        guard let option::Option::Some(window)=s._windows.at_ptr(w) else { return snap; };
+        guard let result::Result::Ok(iw)=ui::IWindow::query(*window) else { return snap; };
+        guard let result::Result::Ok(root)=iw.content() else { return snap; };
+        guard let result::Result::Ok(e)=ui::IFrameworkElement::query(root) else { return snap; };
+        // A window still loading has no tree to answer yet; the others do.
+        if !native::boolean(e.is_loaded()) { w=w+1; continue; }
+        let name: text::Text=match names.at_ptr(w) { option::Option::Some(t)=>(*t).clone(), option::Option::None=>text::new() };
+        let id: option::Option[str]=if name.count()>0 && !snap.reg.contains(name.view()) { option::Option[str]::Some(name.view()) } else { option::Option[str]::None };
+        let node: usize=snap.reg.add_child(0,id,identity::Role::Window);
+        snap.nodes.append(_Node {object:rt::Object::empty(),peer:rt::Object::empty(),hidden:false,secret:false,pin:option::Option[usize]::None});
+        snap.valid=true; _walk(s,snap,tree,root,node,false,false,false,0);
+        if !snap.valid { return snap; }
+        w=w+1;
+    }
     // A developer id can collide with a generated diagnostic path. Refuse the
     // ambiguous snapshot instead of letting the registry resolve the wrong node.
     var i: usize=1; while i<snap.nodes.count() {
@@ -259,4 +331,23 @@ fn enqueue(queue: rt::Object, callback: fn(*u8)->rt::Status, context: *u8=0 as *
     guard let result::Result::Ok(q)=ui::IDispatcherQueue::query(queue) else result::Result::Err(e) { return result::Result[bool,rt::Error]::Err(e); };
     guard let result::Result::Ok(h)=ui::DispatcherQueueHandler::new(callback,context,agile:true) else result::Result::Err(e) { return result::Result[bool,rt::Error]::Err(e); };
     return q.try_enqueue(h.object());
+}
+
+#[test]
+fn a_window_name_outranks_a_pin_with_the_same_id() {
+    var snap: _Snapshot=_Snapshot {reg:identity::new(),nodes:vec::new::[_Node](),valid:false,windows:vec::new::[text::Text]()};
+    snap.windows.append(text::from_str("settings"));
+    assert _is_window_name(snap,"settings");
+    assert !_is_window_name(snap,"settings:alert");
+    assert !_is_window_name(snap,"");
+    return;
+}
+
+#[test]
+fn a_window_nothing_names_is_unnamed() {
+    // NEGATIVE: with no names seam installed no window has a name, and its
+    // node keeps the positional id.
+    set_names_fn(0 as fn(rt::Object)->text::Text);
+    assert _name_of(rt::Object::empty()).count()==0;
+    return;
 }

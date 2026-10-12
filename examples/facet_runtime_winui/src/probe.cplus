@@ -6,6 +6,8 @@
 //                                 FIRST on_should_quit and allow the next,
 //                                 and report density changes: app-wide, and
 //                                 Settings' own window.
+//   CPLUS_RUNTIME_WINUI_AGENT=1   serve the agent surface over loopback HTTP
+//                                 (facet_agent_winui) and print its port.
 import "stdlib/env" as env;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
@@ -13,6 +15,8 @@ import "stdlib/io" as io;
 import "facet/services" as services;
 import "facet/window" as window;
 import "facet_runtime/runtime" as runtime;
+import "facet_agent_winui/facet_agent_winui" as agent;
+import "agent_mcp/agent_mcp" as mcp;
 
 extern fn fflush(stream: *u8) -> i32;
 
@@ -32,10 +36,21 @@ fn enabled() -> bool {
 fn say(line: str) { io::println(line); let _f: i32 = fflush(0 as *u8); }
 
 fn install(app: runtime::App) {
+    if env::has_var("CPLUS_RUNTIME_WINUI_AGENT") {
+        agent::enable("facet-runtime-winui");
+        app.on_launch(agent_ready);
+    }
     if !enabled() { return; }
-    app.on_launch(launched);
+    // With the agent on, its launch hook runs this one too.
+    if !env::has_var("CPLUS_RUNTIME_WINUI_AGENT") { app.on_launch(launched); }
     app.on_should_quit(should_quit);
     app.on_quit(quitting);
+}
+
+fn agent_ready(ctx: *u8) {
+    let port: u16 = mcp::loopback_port(mcp::current_pid());
+    say("AGENT PORT ${port}");
+    if enabled() { launched(ctx); }
 }
 
 fn launched(ctx: *u8) {
