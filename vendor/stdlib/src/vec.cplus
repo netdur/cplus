@@ -586,11 +586,19 @@ impl Vec[T: Copy] {
     }
 }
 
+// Every item, or — when the Vec cannot grow — an empty Vec, never a prefix
+// of the items presented as all of them. The value-producer contract
+// (text.cplus, above `from_str`). The collected items and the rest of
+// `source` drop on the way out.
 fn collect[T](take source: iterator::Iterator[T]) -> Vec[T] {
     var out: Vec[T] = new::[T]();
     loop {
         match source.next() {
-            option::Option[T]::Some(value) => { out.append(value); }
+            option::Option[T]::Some(value) => {
+                if !out.append(value).is_ok() {
+                    return new::[T]();
+                }
+            }
             option::Option[T]::None => { return out; }
         }
     }

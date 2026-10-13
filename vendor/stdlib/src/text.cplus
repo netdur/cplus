@@ -135,19 +135,44 @@ fn with_capacity(minimum: usize) -> Text {
     return new();
 }
 
+// A VALUE PRODUCER — this and every other function here that builds and
+// returns a new `Text` (or `Vec`) — answers allocation failure the way
+// `with_capacity` does: with a valid EMPTY value, never with part of the
+// result. "Recovers rather than reports" is a contract only if the caller can
+// tell the two apart, and a half-built result reads as a whole one. A caller
+// that must observe the failure builds with the mutator instead
+// (`var t = new(); let s: status::Status = t.append(x);`).
+// docs/lang/error-handling.md §2; slab/spike.md Finding 1.
 fn from_str(s: str) -> Text {
     let n: usize = #str_len(s);
     var t: Text = with_capacity(n);
-    t.append(s);
+    // One append: it either copies all of `s` or leaves `t` empty.
+    let _s: status::Status = t.append(s);
     return t;
 }
 
 // A new Text made of `s` repeated `count` times (Swift's String(repeating:count:)).
+// The whole result is reserved up front, so a count too large to allocate is
+// an empty Text at once rather than a loop of failing appends.
 fn repeating(s: str, count: usize) -> Text {
-    var t: Text = new();
+    let n: usize = #str_len(s);
+    if n == (0 as usize) || count == (0 as usize) {
+        return new();
+    }
+    let max: usize = (0 as usize) -% (1 as usize);
+    if count > max / n {
+        return new();
+    }
+    let total: usize = n *% count;
+    var t: Text = with_capacity(total);
+    if t._cap < total {
+        return new();
+    }
     var i: usize = 0 as usize;
     while i < count {
-        t.append(s);
+        if !t.append(s).is_ok() {
+            return new();
+        }
         i = i +% (1 as usize);
     }
     return t;
@@ -233,10 +258,16 @@ fn join(parts: vec::Vec[str], separator: str = "") -> Text {
     var i: usize = 0 as usize;
     while i < parts.count() {
         if i != (0 as usize) {
-            out.append(separator);
+            if !out.append(separator).is_ok() {
+                return new();
+            }
         }
         match parts.at_ptr(i) {
-            option::Option[*str]::Some(p) => { out.append({ *p }); }
+            option::Option[*str]::Some(p) => {
+                if !out.append({ *p }).is_ok() {
+                    return new();
+                }
+            }
             option::Option[*str]::None => { }
         }
         i = i +% (1 as usize);
@@ -486,7 +517,9 @@ impl Text {
     // C+ has no `+` operator overloading, so this is the value-style concat.
     fn appending(this, s: str) -> Text {
         var t: Text = this.clone();
-        t.append(s);
+        if !t.append(s).is_ok() {
+            return new();
+        }
         return t;
     }
 
@@ -509,15 +542,21 @@ impl Text {
         var i: usize = 0 as usize;
         while (i +% n) <= this._len {
             if region_matches(this._ptr, i, p, n) {
-                out.append(this._copy_range(start, i));
-                out.append(with);
+                if !out.append(this._copy_range(start, i)).is_ok() {
+                    return new();
+                }
+                if !out.append(with).is_ok() {
+                    return new();
+                }
                 i = i +% n;
                 start = i;
             } else {
                 i = i +% (1 as usize);
             }
         }
-        out.append(this._copy_range(start, this._len));
+        if !out.append(this._copy_range(start, this._len)).is_ok() {
+            return new();
+        }
         return out;
     }
 
@@ -532,11 +571,20 @@ impl Text {
         }
         let deficit: usize = to -% this._len;
         var out: Text = with_capacity(to);
+        if out._cap < to {
+            return new();
+        }
+        // A failed append leaves `_len` where it was, so the loop below would
+        // never end: every append is checked, not only for the result's sake.
         while out._len < deficit {
-            out.append(with);
+            if !out.append(with).is_ok() {
+                return new();
+            }
         }
         out.truncate(deficit);
-        out.append(this.view());
+        if !out.append(this.view()).is_ok() {
+            return new();
+        }
         return out;
     }
 
@@ -549,9 +597,18 @@ impl Text {
             return this.clone();
         }
         var out: Text = with_capacity(to);
-        out.append(this.view());
+        if out._cap < to {
+            return new();
+        }
+        if !out.append(this.view()).is_ok() {
+            return new();
+        }
+        // Checked for the same reason as `pad_start`: a failed append would
+        // otherwise spin here forever.
         while out._len < to {
-            out.append(with);
+            if !out.append(with).is_ok() {
+                return new();
+            }
         }
         out.truncate(to);
         return out;
@@ -731,6 +788,67 @@ fn intern(s: str) -> str {
 
 fn _consume_text(take t: Text) -> Text {
     return t;
+}
+
+// ── value producers: the whole result or an empty one (2026-10-13) ──────
+// No allocation-fault hook exists, so a failure is forced the deterministic
+// way: a request no allocator can meet. `_huge` is a view whose LENGTH is
+// 2^62 over a real one-byte buffer — never read, because `append` reserves
+// before it copies, and the reserve is what fails. Each test fails part-way,
+// after earlier appends succeeded, which is where the old code returned the
+// prefix as if it were the whole result. slab/spike.md Finding 1.
+fn _huge() -> str {
+    let one: str = "x";
+    return { #str_from_raw_parts(#str_ptr(one), (1 as usize) << (62 as usize)) };
+}
+
+#[test]
+fn join_that_cannot_finish_is_empty_not_a_prefix() {
+    var parts: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = parts.append("ab");
+    let _b: status::Status = parts.append(_huge());
+    let out: Text = join(parts, separator: ",");
+    assert out.count() == (0 as usize);
+}
+
+#[test]
+fn appending_that_cannot_finish_is_empty_not_the_original() {
+    let t: Text = from_str("abc");
+    assert t.appending(_huge()).count() == (0 as usize);
+    assert t.appending("d").view() == "abcd";
+}
+
+#[test]
+fn replacing_that_cannot_finish_is_empty_not_a_prefix() {
+    let t: Text = from_str("a,b");
+    assert t.replacing(of: ",", with: _huge()).count() == (0 as usize);
+    assert t.replacing(of: ",", with: ";").view() == "a;b";
+}
+
+#[test]
+fn from_str_that_cannot_allocate_is_empty() {
+    assert from_str(_huge()).count() == (0 as usize);
+}
+
+#[test]
+fn repeating_too_much_is_empty_at_once() {
+    // Overflowing `usize` is refused before any allocation; a size that
+    // fits but cannot be allocated is refused at the reserve. Neither loops.
+    let max: usize = (0 as usize) -% (1 as usize);
+    assert repeating("ab", max).count() == (0 as usize);
+    assert repeating("a", (1 as usize) << (62 as usize)).count() == (0 as usize);
+    assert repeating("ab", 3 as usize).view() == "ababab";
+}
+
+#[test]
+fn padding_to_an_impossible_width_is_empty_and_ends() {
+    // Before, a failed reserve fell through to one-byte appends toward 2^62.
+    let t: Text = from_str("7");
+    let huge: usize = (1 as usize) << (62 as usize);
+    assert t.pad_start(to: huge).count() == (0 as usize);
+    assert t.pad_end(to: huge).count() == (0 as usize);
+    assert t.pad_start(to: 3 as usize, with: "0").view() == "007";
+    assert t.pad_end(to: 3 as usize).view() == "7  ";
 }
 
 #[test]

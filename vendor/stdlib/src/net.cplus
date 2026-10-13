@@ -174,7 +174,10 @@ impl TcpStream {
             var k: usize = 0 as usize;
             while k < count {
                 let byte_p: *u8 = { chunk + k };
-                buf.append({ *byte_p });
+                if !buf.append({ *byte_p }).is_ok() {
+                    { free(chunk); }
+                    return result::io_err::[vec::Vec[u8]](result::IoError::OutOfMemory);
+                }
                 k = k +% (1 as usize);
             }
         }

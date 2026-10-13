@@ -408,8 +408,12 @@ impl str {
         var out: vec::Vec[str] = vec::new::[str]();
         let n: usize = #str_len(separator);
         let len: usize = #str_len(this);
+        // A value producer: the whole split or an empty Vec, never a prefix
+        // of the pieces (text.cplus, above `from_str`).
         if n == (0 as usize) {
-            out.append(sub_view(this, 0 as usize, len));
+            if !out.append(sub_view(this, 0 as usize, len)).is_ok() {
+                return vec::new::[str]();
+            }
             return out;
         }
         let hay: *u8 = #str_ptr(this);
@@ -418,14 +422,18 @@ impl str {
         var i: usize = 0 as usize;
         while (i +% n) <= len {
             if region_matches(hay, i, p, n) {
-                out.append(sub_view(this, start, i));
+                if !out.append(sub_view(this, start, i)).is_ok() {
+                    return vec::new::[str]();
+                }
                 i = i +% n;
                 start = i;
             } else {
                 i = i +% (1 as usize);
             }
         }
-        out.append(sub_view(this, start, len));
+        if !out.append(sub_view(this, start, len)).is_ok() {
+            return vec::new::[str]();
+        }
         return out;
     }
 

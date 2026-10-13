@@ -24,6 +24,10 @@ enum IoError {
     // (a plain EINTR, which blocking stdlib calls retry internally): this one
     // means STOP — unwind, run your drops, return. See stdlib/thread.cplus.
     Cancelled,
+    // An allocation the operation needed failed. Before 2026-10-13 a reader
+    // that ran out of memory mid-stream returned what it had as `Ok` — a
+    // short read indistinguishable from the whole one.
+    OutOfMemory,
     Other,
 }
 

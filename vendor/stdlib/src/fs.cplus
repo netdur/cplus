@@ -501,7 +501,9 @@ fn _is_dot_entry(p: *u8, len: usize) -> bool {
 }
 
 // The entry names in directory `path` (excluding "." and ".."), or `None` if the
-// directory can't be opened. Names only — not full paths.
+// directory can't be opened — or can't be listed whole for want of memory: a
+// listing missing entries is never returned as the listing. Names only — not
+// full paths.
 fn read_dir(path: str) -> option::Option[vec::Vec[text::Text]] {
     // opendir copies the path internally, so the CString need only outlive the
     // call (it does — bound in the match arm).
@@ -522,7 +524,10 @@ fn read_dir(path: str) -> option::Option[vec::Vec[text::Text]] {
         let len: usize = { strlen(name_ptr) };
         if !_is_dot_entry(name_ptr, len) {
             let name: str = { #str_from_raw_parts(name_ptr, len) };
-            out.append(name.to_text());
+            if !out.append(name.to_text()).is_ok() {
+                let _e: i32 = { fsys::dir_close(dir) };
+                return option::Option[vec::Vec[text::Text]]::None;
+            }
         }
         ent = { fsys::dir_next(dir) };
     }

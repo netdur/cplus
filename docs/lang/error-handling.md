@@ -41,6 +41,28 @@ When the only failure mode is out-of-memory and the program's answer to OOM
 is "die later, not here", binding `_` is the honest spelling:
 `let _s: status::Status = v.append(x);` — visible, greppable, deliberate.
 
+### Value producers: the whole result, or an empty one
+
+A function that BUILDS and returns a new `Text` or `Vec` — `text::from_str`,
+`text::join`, `repeating`, `appending`, `replacing`, `pad_start` / `pad_end`,
+`str.split`, `vec::collect` — has no `Status` to return, so it answers
+allocation failure with a valid **empty** value. It never returns part of
+the result: a half-built `Text` reads exactly like a whole one, and that is
+a failure nobody can see. When the failure must be observed, build with the
+mutator, which reports it:
+
+```cplus
+var t: text::Text = text::new();
+let s: status::Status = t.append(piece);
+if !s.is_ok() { return s; }
+```
+
+A reader that returns `Result` reports it instead: `TcpStream::read_to_end`
+answers `IoError::OutOfMemory`, and `fs::read_dir` (an `Option`) answers
+`None` rather than a listing missing entries. Write your own producers the
+same way: check every `append` inside them, and return empty on the first
+failure.
+
 ### `Option[T]` — the read's answer
 
 `at`, `find`, `to_i64`, `slice(from:, to:)` — a miss is a normal outcome,
