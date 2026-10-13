@@ -166,7 +166,7 @@ A named type cannot be resolved to any declared type, enum, or in-scope generic 
 fn main() -> Foo { return 0; }
 ```
 
-**Fix.** Typo, missing import, or a generic param not in scope. The owned `string` type was removed: use `Text` and `import "stdlib/text"`.
+**Fix.** Typo, missing import, or a generic param not in scope. The owned `string` type was removed: use `Text` and `import "stdlib/text"`. A generic type written without its arguments is reported as such (`` `Result` is a generic enum: it needs its type arguments here ``): C+ does not infer them, so write them wherever the type is named — including a variant constructor, `Result[i32, Error]::Ok(7)`, where they are the ones in the function's declared return type.
 
 <sub>repro: checked · cplus-core/src/sema.rs:12376 · test cplus-core/src/sema.rs:unknown_type_e0303</sub>
 
@@ -252,7 +252,7 @@ A function name is used as a bare value (or another unsupported form such as `&x
 fn main() -> i32 { let x = 1; let y = &x; return 0; }
 ```
 
-**Fix.** Assign the function to a `fn(...)`-typed binding to take its address. For a method, pass `recv.method` where a handler pair is expected. C+ has no `&T` / `&mut T` at all — the caller relation is a prefix on the PARAMETER (`ref` / `take` / bare), and `#addr_of(place)` is the raw-pointer form. Use a range only in a `for` header.
+**Fix.** Assign the function to a `fn(...)`-typed binding to take its address. For a method, pass `recv.method` where a handler pair is expected. C+ has no `&T` / `&mut T` at all — the caller relation is a prefix on the PARAMETER (`ref` / `take` / bare), and `#addr_of(place)` is the raw-pointer form. Use a range only in a `for` header. `for x in arr` over a fixed array is this code too — `for` takes a range or an `Iterator[T]` — so index it: `for i in 0..3 { let x: i32 = arr[i as usize]; }` (the range variable is `i32`; an index is `usize`).
 
 <sub>repro: checked · cplus-core/src/sema.rs:13138 · test cplus-core/src/sema.rs:ref_not_supported_e0312</sub>
 

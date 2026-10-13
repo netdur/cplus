@@ -2787,6 +2787,41 @@ impl SemaCx<'_> {
     /// `text::Text`. Without a note here the trail goes cold exactly where the
     /// user has already done what E0613 told them to — they add the import,
     /// the E0613 disappears, and a bare E0303 with no help takes its place.
+    /// Notes for a generic struct or enum written without `[...]`: the
+    /// complete form with the template's own parameter names, and for an
+    /// enum the variant-constructor form, which is where it is usually
+    /// forgotten.
+    fn generic_named_bare_notes(&self, name: &str) -> Option<Vec<String>> {
+        let (params, first_variant): (Vec<String>, Option<String>) =
+            if let Some(e) = self.enum_generic_templates.get(name) {
+                (
+                    e.generic_params.iter().map(|g| g.name.name.clone()).collect(),
+                    e.variants.first().map(|v| v.name.name.clone()),
+                )
+            } else if let Some(st) = self.struct_generic_templates.get(name) {
+                (st.generic_params.iter().map(|g| g.name.name.clone()).collect(), None)
+            } else {
+                return None;
+            };
+        let full = format!("{name}[{}]", params.join(", "));
+        let mut notes = vec![format!(
+            "write `{full}` with each of {} replaced by a concrete type — C+ does not infer \
+             a generic type's arguments from context",
+            params
+                .iter()
+                .map(|p| format!("`{p}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )];
+        if let Some(v) = first_variant {
+            notes.push(format!(
+                "a variant constructor names them too: `{full}::{v}(..)` — for a value \
+                 returned from a function, copy the arguments from its declared return type"
+            ));
+        }
+        Some(notes)
+    }
+
     fn unknown_type_notes(name: &str) -> Option<Vec<String>> {
         match name {
             "string" => Some(Self::text_replacement_notes()),
@@ -9355,14 +9390,28 @@ impl SemaCx<'_> {
                 let elem_ty = match self.unwrap_iterator(&it_ty) {
                     Some(t) => t,
                     None => {
-                        self.err(
-                            "E0312",
-                            format!(
-                                "`for ... in` requires either a closed range (`0..n`) or an `Iterator[T]`, got `{}`",
-                                ty_display(&it_ty),
-                            ),
-                            iter.span,
+                        let msg = format!(
+                            "`for ... in` requires either a closed range (`0..n`) or an `Iterator[T]`, got `{}`",
+                            ty_display(&it_ty),
                         );
+                        // An array is the common case and has one explicit
+                        // spelling: index it over its length. Print it whole
+                        // (slab/spike.md Finding 5) rather than leave the
+                        // author to invent `for x in arr`-shaped syntax.
+                        match &it_ty {
+                            Ty::Array(elem, n) => {
+                                let src = match &iter.kind {
+                                    ExprKind::Ident(name) => name.rsplit('.').next().unwrap_or(name).to_string(),
+                                    _ => "arr".to_string(),
+                                };
+                                let notes = vec![format!(
+                                    "iterate an array by index: `for i in 0..{n} {{ let x: {} = {src}[i as usize]; ... }}` — the range variable is `i32` and an index is `usize`",
+                                    ty_display(elem)
+                                )];
+                                self.err_note("E0312", msg, iter.span, notes);
+                            }
+                            _ => self.err("E0312", msg, iter.span),
+                        }
                         return;
                     }
                 };
@@ -19333,6 +19382,24 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     self.resolving_aliases.remove(name);
                     return resolved;
                 }
+                // A generic type named without its arguments is not unknown,
+                // and saying so sent authors looking for an import. Name what
+                // is missing and print the complete spelling (slab/spike.md
+                // Finding 5: `Result::Ok(7)` said "unknown type `Result`").
+                if let Some(notes) = self.generic_named_bare_notes(name) {
+                    let kind = if self.enum_generic_templates.contains_key(name) {
+                        "enum"
+                    } else {
+                        "struct"
+                    };
+                    self.err_note(
+                        "E0303",
+                        format!("`{name}` is a generic {kind}: it needs its type arguments here"),
+                        t.span,
+                        notes,
+                    );
+                    return Ty::Error;
+                }
                 if let Some(notes) = Self::unknown_type_notes(name) {
                     self.err_note("E0303", format!("unknown type `{name}`"), t.span, notes);
                 } else {
@@ -25324,6 +25391,48 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
             codes.contains(&"E0326"),
             "the same method declared in two files of the package is a duplicate; got {codes:?}"
         );
+    }
+
+    // ── 2026-10-13 (slab/spike.md Finding 5): a diagnostic a weaker model can
+    // follow. Each test asserts the note AND that the code it prescribes
+    // checks clean — the first draft of the array note did not compile.
+    #[test]
+    fn a_generic_enum_named_bare_says_so_and_its_spelling_compiles() {
+        let bad = "enum Result[T,E] { Ok(T), Err(E) }\nenum Error { Invalid }\n\
+                   fn value() -> Result[i32,Error] { return Result::Ok(7); }\n";
+        let ds = check_src(bad);
+        let d = ds.iter().find(|d| d.code.0 == "E0303").expect("E0303");
+        assert!(d.message.contains("`Result` is a generic enum"), "got: {}", d.message);
+        assert!(
+            d.notes.iter().any(|n| n.contains("`Result[T, E]::Ok(..)`")),
+            "got: {:?}",
+            d.notes
+        );
+        let fixed = "enum Result[T,E] { Ok(T), Err(E) }\nenum Error { Invalid }\n\
+                     fn value() -> Result[i32,Error] { return Result[i32, Error]::Ok(7); }\n";
+        assert!(codes_of(&check_src(fixed)).is_empty(), "the prescribed form must check");
+    }
+
+    #[test]
+    fn a_generic_struct_named_bare_says_so() {
+        let ds = check_src("struct Pair[A, B] { a: A, b: B }\nfn f() { let p: Pair = Pair { a: 1, b: 2 }; }\n");
+        let d = ds.iter().find(|d| d.code.0 == "E0303").expect("E0303");
+        assert!(d.message.contains("`Pair` is a generic struct"), "got: {}", d.message);
+        assert!(d.notes.iter().any(|n| n.contains("`Pair[A, B]`")), "got: {:?}", d.notes);
+    }
+
+    #[test]
+    fn iterating_an_array_notes_the_indexed_loop_and_it_compiles() {
+        let bad = "fn f() -> i32 { let arr: [i32; 3] = [1, 2, 3]; var s: i32 = 0; for x in arr { s = s + x; } return s; }\n";
+        let ds = check_src(bad);
+        let d = ds.iter().find(|d| d.code.0 == "E0312").expect("E0312");
+        assert!(
+            d.notes.iter().any(|n| n.contains("for i in 0..3 { let x: i32 = arr[i as usize]; ... }")),
+            "got: {:?}",
+            d.notes
+        );
+        let fixed = "fn f() -> i32 { let arr: [i32; 3] = [1, 2, 3]; var s: i32 = 0; for i in 0..3 { let x: i32 = arr[i as usize]; s = s + x; } return s; }\n";
+        assert!(codes_of(&check_src(fixed)).is_empty(), "the prescribed loop must check");
     }
 
     // ── 2026-10-13 (slab/spike.md Finding 2): a helper counts as a release
