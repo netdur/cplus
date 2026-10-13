@@ -1,19 +1,37 @@
 import "stdlib/vec" as vec;
 import "stdlib/option" as option;
+import "stdlib/result" as result;
 import "stdlib/status" as status;
+import "stdlib/box" as box;
+import "stdlib/atomic" as atomic;
 import "facet/facet" as core;
 import "facet/services" as services;
 import "winui/winui" as ui;
 import "winrt/runtime" as rt;
 import "./native" as native;
-struct Timer { id: u64, object: rt::Object, token: ui::EventRegistrationToken, call: fn(*u8), opaque ctx: *u8 }
+// `origin` is the window the callback was scheduled from (see facet_winui's
+// `asking`): opaque here, captured and re-entered through the two hooks the
+// host installs, so this module needs no view of windows.
+struct Timer { id: u64, object: rt::Object, token: ui::EventRegistrationToken, call: fn(*u8), opaque ctx: *u8, opaque origin: *u8 }
 struct Observer { id: u64, opaque node: *core::Node, call: fn(*u8), opaque ctx: *u8, width: f64, height: f64 }
+// BEFORE LAUNCH THERE IS NO QUEUE. A facade app's first screen is built and
+// attached before Application.Start has made the DispatcherQueue, and what it
+// schedules then (a timer from `on_attach`) is parked here, under the token it
+// was given, and armed when `install` arrives - not dropped.
+struct Parked { id: u64, seconds: f64, call: fn(*u8), opaque ctx: *u8, opaque origin: *u8 }
+static PARKED: vec::Vec[Parked]=#zero::[vec::Vec[Parked]]();
 static QUEUE: rt::Object=#zero::[rt::Object]();
 static TIMERS: vec::Vec[Timer]=#zero::[vec::Vec[Timer]]();
 static OBSERVERS: vec::Vec[Observer]=#zero::[vec::Vec[Observer]]();
 static NEXT: u64=1;
+static CAPTURE: fn()->*u8=0 as fn()->*u8;
+static ENTER: fn(*u8)->*u8=0 as fn(*u8)->*u8;
+fn set_origin_fns(capture: fn()->*u8,enter: fn(*u8)->*u8) {CAPTURE=capture;ENTER=enter;return;}
+fn captured() -> *u8 {let f=CAPTURE;if f.is_null() {return 0 as *u8;}return f();}
 fn id() -> u64 {let n: u64=NEXT;NEXT=NEXT+1;return n;}
 fn cancel(token: u64) {
+    var k: usize=0;
+    while k<PARKED.count() {match PARKED.at_ptr(k) {option::Option::Some(p)=>{if (*p).id==token {let gone: option::Option[Parked]=PARKED.remove(k);return;}},option::Option::None=>{}} k=k+1;}
     var i: usize=0;
     while i<TIMERS.count() {
         match TIMERS.at_ptr(i) {option::Option::Some(p)=>{if (*p).id==token {
@@ -27,25 +45,69 @@ fn tick(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
     let token: u64=context as usize as u64; var i: usize=0;
     while i<TIMERS.count() {
         match TIMERS.at_ptr(i) {option::Option::Some(p)=>{if (*p).id==token {
-            let call: fn(*u8)=(*p).call;let ctx: *u8=(*p).ctx;cancel(token);call(ctx);return rt::Status {code:0};
+            let call: fn(*u8)=(*p).call;let ctx: *u8=(*p).ctx;let origin: *u8=(*p).origin;cancel(token);
+            let enter=ENTER;if enter.is_null() || origin.is_null() {call(ctx);return rt::Status {code:0};}
+            let outer: *u8=enter(origin);call(ctx);let _o: *u8=enter(outer);return rt::Status {code:0};
         }},option::Option::None=>{}} i=i+1;
     }
     return rt::Status {code:0};
 }
 fn after(seconds: f64,call: fn(*u8),ctx: *u8) -> u64 {
-    assert core::on_ui_thread(); if QUEUE.is_null() {return 0;}
+    assert core::on_ui_thread();
+    let token: u64=id();
+    if QUEUE.is_null() {let parked: status::Status=PARKED.append(Parked {id:token,seconds:seconds,call:call,ctx:ctx,origin:captured()});assert parked==status::Status::Ok;return token;}
+    arm(token,seconds,call,ctx,captured());return token;
+}
+fn arm(token: u64,seconds: f64,call: fn(*u8),ctx: *u8,origin: *u8) {
     let queue: ui::IDispatcherQueue=native::must::[ui::IDispatcherQueue](ui::IDispatcherQueue::query(QUEUE));
     let value: rt::Object=native::must::[rt::Object](queue.create_timer());
     let timer: ui::IDispatcherQueueTimer=native::must::[ui::IDispatcherQueueTimer](ui::IDispatcherQueueTimer::query(value));
-    let token: u64=id();
     let callback: ui::TypedEventHandler_Microsoft_UI_Dispatching_DispatcherQueueTimer_Object=native::must::[ui::TypedEventHandler_Microsoft_UI_Dispatching_DispatcherQueueTimer_Object](ui::TypedEventHandler_Microsoft_UI_Dispatching_DispatcherQueueTimer_Object::new(tick,token as usize as *u8,agile:true));
     let event: ui::EventRegistrationToken=native::must::[ui::EventRegistrationToken](timer.add_tick(callback.object()));
     native::check(timer.set_is_repeating(false));
     native::check(timer.set_interval(ui::TimeSpan {duration:if seconds>0.001f64 {(seconds*10000000.0f64) as i64} else {10000 as i64}}));
-    let added: status::Status=TIMERS.append(Timer {id:token,object:value,token:event,call:call,ctx:ctx});assert added==status::Status::Ok;
-    native::check(timer.start()); return token;
+    let added: status::Status=TIMERS.append(Timer {id:token,object:value,token:event,call:call,ctx:ctx,origin:origin});assert added==status::Status::Ok;
+    native::check(timer.start());
 }
-fn run_on_main(call: fn(*u8),ctx: *u8) {let token: u64=after(0.0f64,call,ctx);return;}
+// RUN_ON_MAIN FROM ANY THREAD. facet's jobs finish on a worker and hop back
+// through here (services::run_job), so a worker is the normal caller, not an
+// edge case. On the UI thread it is `after(0)` - which also carries the asking
+// window across the turn. Elsewhere it is DispatcherQueue.TryEnqueue, whose
+// queue is agile, with an agile handler whose context is a boxed (call, ctx)
+// the UI thread frees after running it.
+//
+// THE WORKER'S QUEUE IS NEVER RELEASED. `install` publishes one extra reference
+// to the IDispatcherQueue and nothing takes it back, so a worker that read the
+// pointer can never race a release at shutdown. One reference for the life of
+// the process; after the run, TryEnqueue answers false and the work is
+// dropped - facet's no-hop posture, and the box is freed here.
+struct Hop { call: fn(*u8), opaque ctx: *u8 }
+static WORKER_QUEUE: u64=0;
+fn hop(context: *u8) -> rt::Status {
+    let h: Hop=box::from_raw::[Hop](context).unwrap();
+    let call: fn(*u8)=h.call; call(h.ctx); return rt::Status {code:0};
+}
+fn post(call: fn(*u8),ctx: *u8) -> bool {
+    let raw: u64=atomic::load_u64(#addr_of(WORKER_QUEUE),atomic::Ordering::Acquire);
+    if raw==0 {return false;}
+    let boxed: *u8=match box::new::[Hop](Hop {call:call,ctx:ctx}) {option::Option::Some(b)=>{b.into_raw()},option::Option::None=>{return false;}};
+    match ui::DispatcherQueueHandler::new(hop,boxed,agile:true) {
+        result::Result::Ok(handler)=>{
+            match ui::IDispatcherQueue::query(rt::Object::retain(raw as usize as *u8)) {
+                result::Result::Ok(queue)=>{
+                    match queue.try_enqueue(handler.object()) {result::Result::Ok(accepted)=>{if accepted {return true;}},result::Result::Err(_)=>{}}
+                },
+                result::Result::Err(_)=>{}
+            }
+        },
+        result::Result::Err(_)=>{}
+    }
+    let dropped: Hop=box::from_raw::[Hop](boxed).unwrap(); return false;
+}
+fn run_on_main(call: fn(*u8),ctx: *u8) {
+    if core::on_ui_thread() {let token: u64=after(0.0f64,call,ctx);return;}
+    let _posted: bool=post(call,ctx);return;
+}
 fn observe(node: *core::Node,call: fn(*u8),ctx: *u8) -> u64 {
     let token: u64=id();let added: status::Status=OBSERVERS.append(Observer {id:token,node:node,call:call,ctx:ctx,width:-1.0f64,height:-1.0f64});assert added==status::Status::Ok;return token;
 }
@@ -61,5 +123,14 @@ fn notify_sizes() {
         var j: usize=0;while j<OBSERVERS.count() {match OBSERVERS.at_ptr(j) {option::Option::Some(p)=>{if (*p).id==token {let call=(*p).call;let ctx=(*p).ctx;call(ctx);break;}},option::Option::None=>{}}j=j+1;}
     },option::Option::None=>{}}i=i+1;}return;
 }
-fn install(queue: rt::Object) {QUEUE=queue.clone();services::install_scheduler(services::Scheduler {run_on_main:run_on_main,after:after,cancel_after:cancel,observe_size:observe,cancel_observe_size:cancel_observer});return;}
-fn shutdown() {while TIMERS.count()>0 {match TIMERS.at_ptr(0) {option::Option::Some(p)=>{cancel((*p).id);},option::Option::None=>{break;}}}OBSERVERS.remove_all();services::uninstall_scheduler();QUEUE=rt::Object::empty();return;}
+fn scheduler() -> services::Scheduler {return services::Scheduler {run_on_main:run_on_main,after:after,cancel_after:cancel,observe_size:observe,cancel_observe_size:cancel_observer};}
+// Before launch: answer facet's scheduling verbs, parking timers until the
+// queue exists. Idempotent.
+fn install_parked() {if QUEUE.is_null() {services::install_scheduler(scheduler());}return;}
+fn install(queue: rt::Object) {QUEUE=queue.clone();
+    if atomic::load_u64(#addr_of(WORKER_QUEUE),atomic::Ordering::Acquire)==0 {rt::add_ref(queue.raw());atomic::store_u64(#addr_of(WORKER_QUEUE),queue.raw() as usize as u64,atomic::Ordering::Release);}
+    services::install_scheduler(scheduler());
+    // What was asked for before launch, armed now under the tokens it was given.
+    while PARKED.count()>0 {match PARKED.remove(0) {option::Option::Some(p)=>{arm(p.id,p.seconds,p.call,p.ctx,p.origin);},option::Option::None=>{break;}}}
+    return;}
+fn shutdown() {while TIMERS.count()>0 {match TIMERS.at_ptr(0) {option::Option::Some(p)=>{cancel((*p).id);},option::Option::None=>{break;}}}OBSERVERS.remove_all();PARKED.remove_all();services::uninstall_scheduler();QUEUE=rt::Object::empty();return;}

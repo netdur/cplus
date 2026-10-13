@@ -1,5 +1,12 @@
 # facet_win32
 
+> **Deprecated (2026-10, netdur/cplus#20).** `facet_winui` is the Windows
+> backend and the default. This package receives no new features or parity work,
+> only what keeps it building until it is removed; an app that still needs it
+> opts out with `facet_runtime/win32`'s `select()`. New Windows work goes into
+> [`facet_winui`](../facet_winui); see its [MANIFEST](../facet_winui/MANIFEST.md)
+> for what it covers.
+
 facet's Win32 backend — the Windows counterpart of
 [`facet_appkit`](../facet_appkit), [`facet_gtk`](../facet_gtk) and
 [`facet_android`](../facet_android).

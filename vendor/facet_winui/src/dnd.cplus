@@ -1,0 +1,331 @@
+// facet_winui/dnd - drag and drop on any node: the five drag verbs and the
+// four sender readers, over XAML's own drag events.
+//
+// | facet                    | WinUI                                                  |
+// |--------------------------|--------------------------------------------------------|
+// | allow_drop               | AllowDrop, and a drag carrying Text                    |
+// | allow_file_drop          | AllowDrop, and a drag carrying StorageItems            |
+// | on_drag_over             | DragEnter / DragOver; false answers AcceptedOperation  |
+// |                          | None, which is how a target says "not this one"        |
+// | on_drag_leave            | DragLeave                                              |
+// | on_drop                  | Drop                                                   |
+// | can_drag                 | CanDrag; the payload is the node's KEY as text         |
+// | on_drag_start            | DragStarting                                           |
+// | on_drop_completed        | DropCompleted (dropped or cancelled: one end)          |
+//
+// The payload is facet_gtk's and facet_appkit's: a node dragged carries its
+// key, so `dropped_text` on the target names the node that was dragged. A node
+// with no key starts no drag - it would deliver nothing.
+//
+// THE PAYLOAD IS ASYNCHRONOUS. A DataPackageView hands its files and text out
+// as IAsyncOperations, and facet's readers are synchronous: a handler is
+// called and then ASKS what is coming. So the event takes the drag's deferral,
+// starts the read, and returns; the scheduler polls the operation (no
+// completion delegate for each generic), and when it is done the files are
+// pinned, the handler runs and decides, the answer goes on the event's
+// AcceptedOperation, and the deferral completes. WinUI holds the drag for
+// that long, so the source sees the answer the handler gave.
+//
+// The files are read once per drag, at DragEnter; every DragOver after that
+// asks `on_drag_over` again, synchronously, with them pinned. Until the read
+// is in, a DragOver answers what the formats say.
+//
+// THE READERS ANSWER FOR ONE NODE. `dropped_files` names the node the drag is
+// over (or was dropped on); `dropped_text` and `drop_position` the node that
+// was dropped on; `drag_targeted` the node a drag is over now. Asked about any
+// other node they answer nothing - a handler must not be told about a drop
+// that did not land on it.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/gestures" as gestures;
+import "facet/vocabulary" as vocab;
+import "./record" as record;
+import "./scheduler" as scheduler;
+
+// DataPackageOperation.
+const OP_NONE: u32=0;
+const OP_COPY: u32=1;
+const OP_MOVE: u32=2;
+
+// ---- what the readers answer ------------------------------------------------------
+static TARGETED: usize=0;
+static FILES_VIEW: usize=0;
+static FILES: vec::Vec[text::Text]=#zero::[vec::Vec[text::Text]]();
+static DROP_VIEW: usize=0;
+static DROP_TEXT: text::Text=#zero::[text::Text]();
+static DROP_X: f64=0.0f64;
+static DROP_Y: f64=0.0f64;
+
+fn set_targeted(view: usize, on: bool) {
+    if on { TARGETED=view; } else if TARGETED==view { TARGETED=0; }
+}
+fn set_files(view: usize, take files: vec::Vec[text::Text]) { FILES_VIEW=view; FILES=files; }
+fn set_drop(view: usize, take dropped: text::Text, x: f64, y: f64) { DROP_VIEW=view; DROP_TEXT=dropped; DROP_X=x; DROP_Y=y; }
+// A record is gone: nothing may answer for it, and a later view at the same
+// address must not inherit its drop.
+fn forget(view: usize) {
+    if TARGETED==view { TARGETED=0; }
+    if FILES_VIEW==view { FILES_VIEW=0; FILES.remove_all(); }
+    if DROP_VIEW==view { DROP_VIEW=0; DROP_TEXT=text::new(); }
+}
+
+fn dropped_text(sender: *u8) -> text::Text {
+    if DROP_VIEW==0 || DROP_VIEW!=sender as usize { return text::new(); }
+    return DROP_TEXT.clone();
+}
+fn dropped_files(sender: *u8) -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text]=vec::new::[text::Text]();
+    if FILES_VIEW==0 || FILES_VIEW!=sender as usize { return out; }
+    var i: usize=0;
+    while i<FILES.count() {
+        if let option::Option::Some(p)=FILES.at_ptr(i) { let _a: status::Status=out.append((*p).clone()); }
+        i=i+1;
+    }
+    return out;
+}
+fn drop_position(sender: *u8) -> option::Option[vocab::Point] {
+    if DROP_VIEW==0 || DROP_VIEW!=sender as usize { return option::Option[vocab::Point]::None; }
+    return option::Option[vocab::Point]::Some(vocab::Point {x:DROP_X,y:DROP_Y});
+}
+fn drag_targeted(sender: *u8) -> bool { return TARGETED!=0 && TARGETED==sender as usize; }
+
+// ---- deciding ---------------------------------------------------------------------
+// What a target answers: nothing it may take is None; `on_drag_over` answering
+// false is a refusal, and only a handler that EXISTS can refuse - a zone with
+// none accepts, as on GTK and AppKit.
+fn answer(takes: bool, has_over: bool, over_took: bool) -> u32 {
+    if !takes { return OP_NONE; }
+    if has_over && !over_took { return OP_NONE; }
+    return OP_COPY;
+}
+// The node's own band reads its gestures at fire time.
+static LIVE: fn(*record::View) -> bool=0 as fn(*record::View) -> bool;
+fn set_live_fn(f: fn(*record::View) -> bool) { LIVE=f; }
+fn live(r: *record::View) -> bool { let f=LIVE; if f.is_null() || r.is_null() { return false; } return f(r); }
+fn gestures_of(r: *record::View) -> *gestures::Gestures {
+    if !live(r) || (*r).node.is_null() { return 0 as *gestures::Gestures; }
+    return gestures::gestures_of((*r).node);
+}
+
+struct Kinds { files: bool, text: bool }
+// What this drag carries that this node asked for. Files win over text: a
+// file dragged from Explorer also offers its path as text, and a zone that
+// takes both must hear it as the file it is.
+fn kinds_of(g: *gestures::Gestures, args: rt::Object) -> Kinds {
+    var k: Kinds=Kinds {files:false,text:false};
+    if g.is_null() { return k; }
+    let event=match ui::DragEventArgs::query(args) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return k; } };
+    let raw=match event.data_view() { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return k; } };
+    let view=match ui::IDataPackageView::query(raw) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return k; } };
+    let formats=match ui::StandardDataFormats::i_standard_data_formats_statics_factory() { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return k; } };
+    if (*g).allow_file_drop {
+        if let result::Result::Ok(f)=formats.storage_items() { k.files=match view.contains(f.view()) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{false} }; }
+    }
+    if (*g).allow_drop && !k.files {
+        if let result::Result::Ok(t)=formats.text() { k.text=match view.contains(t.view()) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{false} }; }
+    }
+    return k;
+}
+fn data_view(args: rt::Object) -> option::Option[ui::IDataPackageView] {
+    let event=match ui::DragEventArgs::query(args) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return option::Option[ui::IDataPackageView]::None; } };
+    let raw=match event.data_view() { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return option::Option[ui::IDataPackageView]::None; } };
+    return match ui::IDataPackageView::query(raw) {
+        result::Result::Ok(v)=>option::Option[ui::IDataPackageView]::Some(v),
+        result::Result::Err(_)=>option::Option[ui::IDataPackageView]::None,
+    };
+}
+fn accept(args: rt::Object, op: u32) {
+    if let result::Result::Ok(e)=ui::DragEventArgs::query(args) { let _s: rt::Status=e.set_accepted_operation(op); let _h: rt::Status=e.set_handled(true); }
+}
+fn fire_over(r: *record::View, g: *gestures::Gestures) -> u32 {
+    let has_over: bool=(*g).on_drag_over!=gestures::no_gesture;
+    let took: bool=gestures::fire((*r).node,(*g).on_drag_over,(*g).on_drag_over_ctx);
+    return answer(true,has_over,took);
+}
+
+// ---- an asynchronous read ---------------------------------------------------------
+// AsyncStatus: Started 0, Completed 1, Canceled 2, Error 3.
+const READ_FILES: u32=1;
+const READ_TEXT: u32=2;
+const AT_ENTER: u32=1;
+const AT_DROP: u32=2;
+// Seconds between polls, and how long a read may take before the drag is
+// answered without it (a source that never delivers must not hang the drag).
+const POLL: f64=0.015f64;
+const PATIENCE: u32=400;
+
+struct Pending { view: usize, kind: u32, at: u32, op: rt::Object, args: rt::Object, deferral: rt::Object, x: f64, y: f64, polls: u32 }
+static READING: i64=0;
+fn reads_in_flight() -> i64 { return READING; }
+
+fn start(r: *record::View, kind: u32, at: u32, take args: rt::Object, x: f64, y: f64) -> bool {
+    let view=match data_view(args.clone()) { option::Option::Some(v)=>{v}, option::Option::None=>{ return false; } };
+    let op: rt::Object=match (if kind==READ_FILES {view.get_storage_items_async()} else {view.get_text_async()}) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return false; } };
+    let event=match ui::DragEventArgs::query(args.clone()) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return false; } };
+    let deferral: rt::Object=match event.get_deferral() { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return false; } };
+    let owner: box::Box[Pending]=match box::new::[Pending](Pending {view:r as usize,kind:kind,at:at,op:op,args:args,deferral:deferral,x:x,y:y,polls:0}) {
+        option::Option::Some(v)=>{v}, option::Option::None=>{ return false; }
+    };
+    READING=READING+1;
+    let _t: u64=scheduler::after(POLL,poll,owner.into_raw() as *u8);
+    return true;
+}
+fn status_of(op: rt::Object) -> i32 {
+    return match ui::IAsyncInfo::query(op) { result::Result::Ok(i)=>{ match i.status() { result::Result::Ok(s)=>{s}, result::Result::Err(_)=>{3} } }, result::Result::Err(_)=>{3} };
+}
+fn files_of(op: rt::Object) -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text]=vec::new::[text::Text]();
+    let async_op=match ui::IAsyncOperation_Windows_Foundation_Collections_IVectorView_Windows_Storage_IStorageItem::query(op) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return out; } };
+    let raw=match async_op.get_results() { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return out; } };
+    let items=match ui::IVectorView_Windows_Storage_IStorageItem::query(raw) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return out; } };
+    let count: u32=match items.size() { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{0 as u32} };
+    var i: u32=0;
+    while i<count {
+        if let result::Result::Ok(o)=items.get_at(i) {
+            if let result::Result::Ok(item)=ui::IStorageItem::query(o) {
+                // A virtual item (a phone, a zip entry) has no path: it is not
+                // a file an app can open, so it is not listed.
+                if let result::Result::Ok(p)=item.path() { if p.view()!="" { let _a: status::Status=out.append(p); } }
+            }
+        }
+        i=i+1;
+    }
+    return out;
+}
+fn text_of(op: rt::Object) -> text::Text {
+    return match ui::IAsyncOperation_String::query(op) {
+        result::Result::Ok(a)=>{ match a.get_results() { result::Result::Ok(t)=>{t}, result::Result::Err(_)=>{text::new()} } },
+        result::Result::Err(_)=>{text::new()},
+    };
+}
+fn poll(context: *u8) {
+    let p: *Pending=context as *Pending;
+    let s: i32=status_of((*p).op.clone());
+    if s==0 && (*p).polls<PATIENCE { (*p).polls=(*p).polls+1; let _t: u64=scheduler::after(POLL,poll,context); return; }
+    let done: box::Box[Pending]=box::from_raw::[Pending](context);
+    READING=READING-1;
+    let r: *record::View=(*p).view as *record::View;
+    let g=gestures_of(r);
+    var op: u32=OP_NONE;
+    if g.is_not_null() {
+        if (*p).kind==READ_FILES { set_files((*p).view,if s==1 {files_of((*p).op.clone())} else {vec::new::[text::Text]()}); }
+        if (*p).at==AT_ENTER {
+            op=fire_over(r,g);
+        } else {
+            set_targeted((*p).view,false);
+            let dropped: text::Text=if (*p).kind==READ_TEXT && s==1 {text_of((*p).op.clone())} else {text::new()};
+            set_drop((*p).view,dropped,(*p).x,(*p).y);
+            op=if gestures::fire((*r).node,(*g).on_drop,(*g).on_drop_ctx) {OP_COPY} else {OP_NONE};
+        }
+    }
+    accept((*p).args.clone(),op);
+    if let result::Result::Ok(d)=ui::IDragOperationDeferral::query((*p).deferral.clone()) { let _c: rt::Status=d.complete(); }
+}
+
+// ---- the target's events ----------------------------------------------------------
+fn position(r: *record::View, args: rt::Object) -> ui::Point {
+    let event=match ui::DragEventArgs::query(args) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return #zero::[ui::Point](); } };
+    return match event.get_position((*r).object.clone()) { result::Result::Ok(p)=>{p}, result::Result::Err(_)=>{#zero::[ui::Point]()} };
+}
+fn drag_enter(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View; let g=gestures_of(r);
+    if g.is_null() { return rt::Status {code:0}; }
+    let k=kinds_of(g,args.clone());
+    if !k.files && !k.text { accept(args,OP_NONE); return rt::Status {code:0}; }
+    set_targeted(r as usize,true);
+    // Files: read them before asking, so `on_drag_over` sees what is coming.
+    if k.files {
+        set_files(r as usize,vec::new::[text::Text]());
+        if start(r,READ_FILES,AT_ENTER,args.clone(),0.0f64,0.0f64) { return rt::Status {code:0}; }
+    }
+    accept(args,fire_over(r,g));
+    return rt::Status {code:0};
+}
+fn drag_over(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View; let g=gestures_of(r);
+    if g.is_null() { return rt::Status {code:0}; }
+    let k=kinds_of(g,args.clone());
+    if !k.files && !k.text { accept(args,OP_NONE); return rt::Status {code:0}; }
+    set_targeted(r as usize,true);
+    accept(args,fire_over(r,g));
+    return rt::Status {code:0};
+}
+fn drag_leave(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View; let g=gestures_of(r);
+    if g.is_null() || !drag_targeted(r as *u8) { return rt::Status {code:0}; }
+    set_targeted(r as usize,false);
+    let _t: bool=gestures::fire((*r).node,(*g).on_drag_leave,(*g).on_drag_leave_ctx);
+    return rt::Status {code:0};
+}
+fn drop(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View; let g=gestures_of(r);
+    if g.is_null() { return rt::Status {code:0}; }
+    let k=kinds_of(g,args.clone());
+    if !k.files && !k.text { accept(args,OP_NONE); return rt::Status {code:0}; }
+    let at=position(r,args.clone());
+    if start(r,if k.files {READ_FILES} else {READ_TEXT},AT_DROP,args.clone(),at.x as f64,at.y as f64) { return rt::Status {code:0}; }
+    // The read could not start: the drop still lands, carrying nothing.
+    set_targeted(r as usize,false);
+    set_drop(r as usize,text::new(),at.x as f64,at.y as f64);
+    accept(args.clone(),if gestures::fire((*r).node,(*g).on_drop,(*g).on_drop_ctx) {OP_COPY} else {OP_NONE});
+    return rt::Status {code:0};
+}
+
+// ---- the source's events ----------------------------------------------------------
+fn drag_starting(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View; let g=gestures_of(r);
+    let event=match ui::IDragStartingEventArgs::query(args) { result::Result::Ok(v)=>{v}, result::Result::Err(_)=>{ return rt::Status {code:0}; } };
+    let key: str=if g.is_null() {""} else {(*(*r).node).key()};
+    if key=="" { let _c: rt::Status=event.set_cancel(true); return rt::Status {code:0}; }
+    if let result::Result::Ok(raw)=event.data() {
+        if let result::Result::Ok(package)=ui::IDataPackage::query(raw) { let _t: rt::Status=package.set_text(key); }
+    }
+    let _o: rt::Status=event.set_allowed_operations(OP_COPY|OP_MOVE);
+    let _f: bool=gestures::fire((*r).node,(*g).on_drag_start,(*g).on_drag_start_ctx);
+    return rt::Status {code:0};
+}
+fn drop_completed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View; let g=gestures_of(r);
+    if g.is_null() { return rt::Status {code:0}; }
+    let _f: bool=gestures::fire((*r).node,(*g).on_drop_completed,(*g).on_drop_completed_ctx);
+    return rt::Status {code:0};
+}
+
+#[test]
+fn a_reader_answers_only_for_the_node_concerned() {
+    var files: vec::Vec[text::Text]=vec::new::[text::Text]();
+    let _a: status::Status=files.append(text::from_str("C:\\a.png"));
+    set_files(1234,files);
+    set_drop(1234,text::from_str("card:1"),4.0f64,6.0f64);
+    set_targeted(1234,true);
+    assert dropped_files(1234 as *u8).count()==1;
+    assert dropped_files(5678 as *u8).count()==0;
+    assert dropped_text(1234 as *u8).view()=="card:1";
+    assert dropped_text(5678 as *u8).view()=="";
+    assert drag_targeted(1234 as *u8) && !drag_targeted(5678 as *u8);
+    assert match drop_position(1234 as *u8) { option::Option::Some(p)=>p.x==4.0f64 && p.y==6.0f64, option::Option::None=>false };
+    assert match drop_position(5678 as *u8) { option::Option::Some(_p)=>false, option::Option::None=>true };
+    // Leaving another node does not clear this one's hover.
+    set_targeted(5678,false);
+    assert drag_targeted(1234 as *u8);
+    // A released record answers nothing, whatever reuses its address.
+    forget(1234);
+    assert dropped_files(1234 as *u8).count()==0 && dropped_text(1234 as *u8).view()=="" && !drag_targeted(1234 as *u8);
+    return;
+}
+
+#[test]
+fn only_an_on_drag_over_that_exists_can_refuse() {
+    assert answer(true,false,false)==OP_COPY;      // no handler: the zone takes it
+    assert answer(true,true,true)==OP_COPY;
+    assert answer(true,true,false)==OP_NONE;       // the handler said no
+    assert answer(false,false,false)==OP_NONE;     // nothing it asked for
+    return;
+}

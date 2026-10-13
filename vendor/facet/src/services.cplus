@@ -252,7 +252,6 @@ fn pump_async(ctx: *u8) {
 extern fn pipe(fds: *i32) -> i32;
 extern fn close(fd: i32) -> i32;
 extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
-#[link_name = "fcntl"] extern fn fcntl_worker_test(fd: i32, cmd: i32, ...) -> i32;
 
 // The handoff crossing to the worker thread is a CONCRETE struct: the typed
 // input and fn ride as boxed raw pointers, reclaimed by the run_worker[I, O]
@@ -1467,7 +1466,7 @@ fn a_worker_result_with_a_closed_receiver_is_reclaimed_on_macos() {
     var fds: [i32; 2] = [-1, -1];
     assert { pipe(#addr_of(fds) as *i32) } == 0;
     assert platform_sys::prepare_worker_pipe(fds[1]) == 0;
-    assert { fcntl_worker_test(fds[1], 74) } == 1; // F_GETNOSIGPIPE
+    assert platform_sys::worker_pipe_skips_sigpipe(fds[1]);
     let _closed = { close(fds[0]) };
     let input = match box::new::[i32](7) {
         option::Option::Some(b) => b.into_raw(), option::Option::None => 0 as *u8,

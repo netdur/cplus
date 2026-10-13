@@ -68,6 +68,17 @@ invalid = test_root / 'invalid'
 failed = subprocess.run(command + ['--include', 'No.Such.Type', '--out', str(invalid)], capture_output=True, text=True)
 assert failed.returncode != 0 and 'did not match' in failed.stderr
 assert not invalid.exists(), 'Bad input wrote partial output'
+# Every delegate whose first parameter is an object (an event's sender)
+# records it around the callback; a parameterless one has nothing to record.
+source = (outputs[0] / 'src/winui.cplus').read_text(encoding='utf-8')
+dispatches = re.findall(r'    fn dispatch\((self: \*u8[^)]*)\) -> i32 \{(.*?)\n    \}', source, re.S)
+assert dispatches, 'No delegate dispatch emitted'
+for params, body in dispatches:
+    sends = params.startswith('self: *u8, p0: *u8')
+    assert ('rt::event_enter(p0)' in body) == sends, params
+    assert ('rt::event_leave(outer)' in body) == sends, params
+    if sends:
+        assert body.index('rt::event_enter') < body.index('= callback(') < body.index('rt::event_leave'), params
 counts = collections.Counter(m['status'] for t in manifest['types'] for m in t['methods'])
 print(f'PASS: deterministic output, provenance, invalid selection, {checked} independent SDK slots; {dict(counts)}')
 print(f'Artifacts: {test_root}')

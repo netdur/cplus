@@ -55,5 +55,4 @@ gmodule     = "*"
 # the consuming manifest, and facet's runtime facade reaches its backend on
 # whatever platform it is built for.
 [windows.dependencies]
-facet_win32 = "*"
 win32       = "*"

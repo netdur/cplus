@@ -3,6 +3,10 @@ name    = "facet_win32"
 version = "0.0.1"
 edition = "2026"
 
+# DEPRECATED (2026-10, netdur/cplus#20): facet_winui is the Windows backend.
+# This package takes no new features or parity work, only what keeps it
+# building until it is removed. New Windows work goes into facet_winui.
+#
 # facet_win32 — facet's Win32 backend, the Windows sibling of facet_appkit
 # (macOS), facet_gtk (Linux) and facet_android.
 #

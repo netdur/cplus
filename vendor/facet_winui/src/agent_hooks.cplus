@@ -3,7 +3,8 @@ import "winrt/runtime" as rt;
 import "facet/facet" as core;
 struct Hooks {
     opened: fn(rt::Object),
-    closing: fn(),
+    // Each window as it closes, while its views still exist.
+    closing: fn(rt::Object),
     apply: fn(rt::Object,*core::Node),
     alias: fn(rt::Object,*core::Node,str),
     release: fn(rt::Object),
@@ -11,7 +12,7 @@ struct Hooks {
 static _HOOKS: Hooks=#zero::[Hooks]();
 fn install(hooks: Hooks) { _HOOKS=hooks; }
 fn opened(window: rt::Object) { if _HOOKS.opened.is_not_null() { (_HOOKS.opened)(window); } }
-fn closing() { if _HOOKS.closing.is_not_null() { (_HOOKS.closing)(); } }
+fn closing(window: rt::Object) { if _HOOKS.closing.is_not_null() { (_HOOKS.closing)(window); } }
 fn apply(object: rt::Object,node: *core::Node) { if _HOOKS.apply.is_not_null() { (_HOOKS.apply)(object,node); } }
 fn release(object: rt::Object) { if _HOOKS.release.is_not_null() { (_HOOKS.release)(object); } }
 

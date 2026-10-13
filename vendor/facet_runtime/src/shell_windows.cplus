@@ -1,0 +1,312 @@
+// facet_runtime/shell - the Windows OS services the facade answers whatever
+// draws the windows: the clipboard and the file and folder pickers.
+//
+// They are the shell's, not a UI toolkit's, so they live here over `win32`
+// rather than in a backend: WinUI (the default) and Win32 (the deprecated
+// opt-out) both reach them through `runtime_windows`, and they outlive
+// facet_win32 (netdu/cplus#20). Moved from facet_win32's `clipboard`,
+// `dialogs` and `sys`, whose reasoning they keep.
+//
+// A picker is owned by the ACTIVE window - the one the user just clicked in -
+// which is what disables it and keeps the picker in front of it. That is a
+// top-level HWND whichever toolkit made it.
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "win32/winuser" as u;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(p: *u8, v: i32, n: usize) -> *u8;
+extern fn memcpy(d: *u8, s: *u8, n: usize) -> *u8;
+extern fn strlen(s: *u8) -> usize;
+extern fn MultiByteToWideChar(codepage: u32, flags: u32, mb: *u8, mb_len: i32, wc: *u16, wc_len: i32) -> i32;
+extern fn WideCharToMultiByte(codepage: u32, flags: u32, wide: *u16, wide_len: i32, mb: *u8, mb_len: i32,
+                              default_char: *u8, used_default: *i32) -> i32;
+extern fn GlobalAlloc(flags: u32, bytes: usize) -> *u8;
+extern fn GlobalLock(hmem: *u8) -> *u8;
+extern fn GlobalUnlock(hmem: *u8) -> i32;
+extern fn GlobalFree(hmem: *u8) -> *u8;
+extern fn GetOpenFileNameA(p: *u8) -> i32;
+extern fn GetSaveFileNameA(p: *u8) -> i32;
+extern fn CoInitializeEx(reserved: *u8, coinit: u32) -> i32;
+extern fn CoUninitialize();
+extern fn CoCreateInstance(clsid: *u8, outer: *u8, ctx: u32, iid: *u8, out: *usize) -> i32;
+extern fn CoTaskMemFree(p: *u8);
+
+// ---- UTF-8 <-> UTF-16 -------------------------------------------------------------
+fn cp_utf8() -> u32 { return 65001 as u32; }
+fn read_u16(w: *u16, at: usize) -> u16 { return *(((w as *u8) + (at *% (2 as usize))) as *u16); }
+fn write_u16(w: *u16, at: usize, v: u16) { *(((w as *u8) + (at *% (2 as usize))) as *u16) = v; return; }
+fn wide_len(w: *u16) -> usize { var n: usize = 0; while read_u16(w, n) != (0 as u16) { n = n +% (1 as usize); } return n; }
+
+// UTF-8 -> a NUL-terminated UTF-16 buffer the caller frees. `-1` as the
+// source length counts the terminator too, so the result is terminated.
+fn to_wide(s: str) -> *u16 {
+    match text::from_str(s).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let need: i32 = MultiByteToWideChar(cp_utf8(), 0, cs.as_ptr(), 0 -% (1 as i32), 0 as *u16, 0);
+            if need <= 0 { return 0 as *u16; }
+            let buf: *u8 = malloc((need as usize) *% (2 as usize));
+            if buf.is_null() { return 0 as *u16; }
+            let got: i32 = MultiByteToWideChar(cp_utf8(), 0, cs.as_ptr(), 0 -% (1 as i32), buf as *u16, need);
+            if got <= 0 { free(buf); return 0 as *u16; }
+            return buf as *u16;
+        }
+        option::Option[text::CString]::None => { return 0 as *u16; }
+    }
+}
+// The clipboard's line ending is CRLF and facet's strings are LF: every LF not
+// already after a CR gains one on the way out, and `from_wide_lf` drops it on
+// the way back, so an application reads back what it wrote.
+fn to_wide_crlf(s: str) -> *u16 {
+    let flat: *u16 = to_wide(s);
+    if flat.is_null() { return flat; }
+    var extra: usize = 0; var i: usize = 0; var prev: u16 = 0;
+    while true {
+        let ch: u16 = read_u16(flat, i);
+        if ch == (0 as u16) { break; }
+        if ch == (10 as u16) && prev != (13 as u16) { extra = extra +% (1 as usize); }
+        prev = ch; i = i +% (1 as usize);
+    }
+    if extra == (0 as usize) { return flat; }
+    let out: *u8 = malloc((i +% extra +% (1 as usize)) *% (2 as usize));
+    if out.is_null() { return flat; }
+    let w: *u16 = out as *u16;
+    var src: usize = 0; var dst: usize = 0; prev = 0;
+    while src < i {
+        let ch: u16 = read_u16(flat, src);
+        if ch == (10 as u16) && prev != (13 as u16) { write_u16(w, dst, 13 as u16); dst = dst +% (1 as usize); }
+        write_u16(w, dst, ch); prev = ch;
+        dst = dst +% (1 as usize); src = src +% (1 as usize);
+    }
+    write_u16(w, dst, 0 as u16);
+    free(flat as *u8);
+    return w;
+}
+fn from_wide(w: *u16) -> text::Text {
+    if w.is_null() { return text::new(); }
+    let need: i32 = WideCharToMultiByte(cp_utf8(), 0, w, 0 -% (1 as i32), 0 as *u8, 0, 0 as *u8, 0 as *i32);
+    if need <= 0 { return text::new(); }
+    let buf: *u8 = malloc(need as usize);
+    if buf.is_null() { return text::new(); }
+    let got: i32 = WideCharToMultiByte(cp_utf8(), 0, w, 0 -% (1 as i32), buf, need, 0 as *u8, 0 as *i32);
+    var out: text::Text = text::new();
+    // `need` counts the terminator and a `str` must not hold it.
+    if got > 1 { out = text::from_str(#str_from_raw_parts(buf, (got -% (1 as i32)) as usize)); }
+    free(buf);
+    return out;
+}
+fn from_wide_lf(w: *u16) -> text::Text {
+    if w.is_null() { return text::new(); }
+    let len: usize = wide_len(w);
+    let out: *u8 = malloc((len +% (1 as usize)) *% (2 as usize));
+    if out.is_null() { return from_wide(w); }
+    let c: *u16 = out as *u16;
+    var src: usize = 0; var dst: usize = 0;
+    while src < len {
+        let ch: u16 = read_u16(w, src);
+        let next: u16 = if src +% (1 as usize) < len { read_u16(w, src +% (1 as usize)) } else { 0 as u16 };
+        if ch == (13 as u16) && next == (10 as u16) { src = src +% (1 as usize); continue; }
+        write_u16(c, dst, ch); dst = dst +% (1 as usize); src = src +% (1 as usize);
+    }
+    write_u16(c, dst, 0 as u16);
+    let t: text::Text = from_wide(c);
+    free(out);
+    return t;
+}
+
+// ---- the clipboard ----------------------------------------------------------------
+// CF_UNICODETEXT, synchronously in both directions: Win32's read is a plain
+// call, so `paste_text` answers what the board holds.
+fn cf_unicodetext() -> u32 { return 13 as u32; }
+// SetClipboardData requires a MOVEABLE block, and owns it once it is placed.
+fn gmem_moveable() -> u32 { return 0x0002 as u32; }
+
+fn copy_text(s: str) -> bool {
+    let src: *u16 = to_wide_crlf(s);
+    if src.is_null() { return false; }
+    let n: usize = wide_len(src);
+    let h: *u8 = GlobalAlloc(gmem_moveable(), (n +% (1 as usize)) *% (2 as usize));
+    if h.is_null() { free(src as *u8); return false; }
+    let dst: *u8 = GlobalLock(h);
+    if dst.is_null() { let _f: *u8 = GlobalFree(h); free(src as *u8); return false; }
+    let _c: *u8 = memcpy(dst, src as *u8, (n +% (1 as usize)) *% (2 as usize));
+    let _u: i32 = GlobalUnlock(h);
+    free(src as *u8);
+    // An ownerless open: it will not fight a control's own copy.
+    if u::OpenClipboard(0 as *u8) == 0 { let _f: *u8 = GlobalFree(h); return false; }
+    let _e: i32 = u::EmptyClipboard();
+    let placed: *u8 = u::SetClipboardData(cf_unicodetext(), h);
+    let _x: i32 = u::CloseClipboard();
+    // Not placed: the system did not take it, so it is still ours to free.
+    if placed.is_null() { let _f: *u8 = GlobalFree(h); return false; }
+    return true;
+}
+fn paste_text() -> option::Option[text::Text] {
+    if u::IsClipboardFormatAvailable(cf_unicodetext()) == 0 { return option::Option[text::Text]::None; }
+    if u::OpenClipboard(0 as *u8) == 0 { return option::Option[text::Text]::None; }
+    let h: *u8 = u::GetClipboardData(cf_unicodetext());
+    if h.is_null() { let _x: i32 = u::CloseClipboard(); return option::Option[text::Text]::None; }
+    // Still the clipboard's: lock to read, never free.
+    let p: *u8 = GlobalLock(h);
+    if p.is_null() { let _x: i32 = u::CloseClipboard(); return option::Option[text::Text]::None; }
+    let out: text::Text = from_wide_lf(p as *u16);
+    let _u: i32 = GlobalUnlock(h);
+    let _x: i32 = u::CloseClipboard();
+    return option::Option[text::Text]::Some(out);
+}
+
+// ---- the file pickers -------------------------------------------------------------
+// OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_EXPLORER for an
+// open; a save swaps FILEMUSTEXIST for OFN_OVERWRITEPROMPT.
+fn open_flags() -> u32 { return 0x1808 as u32; }
+fn save_flags() -> u32 { return 0x080A as u32; }
+// OPENFILENAMEA, field for field, so the compiler lays it out.
+struct OpenFileName {
+    struct_size: u32,
+    opaque owner: *u8,
+    opaque instance: *u8,
+    opaque filter: *u8,
+    opaque custom_filter: *u8,
+    max_custom_filter: u32,
+    filter_index: u32,
+    opaque file: *u8,
+    max_file: u32,
+    opaque file_title: *u8,
+    max_file_title: u32,
+    opaque initial_dir: *u8,
+    opaque title: *u8,
+    flags: u32,
+    file_offset: u16,
+    file_extension: u16,
+    opaque default_ext: *u8,
+    cust_data: i64,
+    opaque hook: *u8,
+    opaque template_name: *u8,
+    opaque reserved_ptr: *u8,
+    reserved: u32,
+    flags_ex: u32,
+}
+const PATH_CAP: usize = 1024 as usize;
+
+// One file dialog. `name` seeds the file box; `extension`, when given, is the
+// one type offered and the extension a typed name gains.
+fn run_file_dialog(save: bool, name: str, extension: str) -> option::Option[text::Text] {
+    let buf: *u8 = malloc(PATH_CAP);
+    if buf.is_null() { return option::Option[text::Text]::None; }
+    let _z: *u8 = memset(buf, 0, PATH_CAP);
+    var seeded: usize = name.count();
+    if seeded >= PATH_CAP { seeded = PATH_CAP -% (1 as usize); }
+    if seeded != (0 as usize) { let _c: *u8 = memcpy(buf, #str_ptr(name), seeded); }
+    // A filter is pairs of NUL-terminated strings, ended by an empty one.
+    let filter: text::Text = if extension.count() != (0 as usize) { "${extension}\0*.${extension}\0\0" } else { text::new() };
+    let ext: text::Text = "${extension}\0";
+    var ofn: OpenFileName = #zero::[OpenFileName]();
+    ofn.struct_size = #size_of::[OpenFileName]() as u32;
+    ofn.owner = u::GetActiveWindow();
+    ofn.file = buf;
+    ofn.max_file = PATH_CAP as u32;
+    ofn.flags = if save { save_flags() } else { open_flags() };
+    if extension.count() != (0 as usize) { ofn.filter = #str_ptr(filter.view()); ofn.default_ext = #str_ptr(ext.view()); }
+    let ok: i32 = if save { GetSaveFileNameA(#addr_of(ofn) as *u8) } else { GetOpenFileNameA(#addr_of(ofn) as *u8) };
+    var out: option::Option[text::Text] = option::Option[text::Text]::None;
+    if ok != 0 {
+        let n: usize = strlen(buf);
+        if n != (0 as usize) { out = option::Option[text::Text]::Some(#str_from_raw_parts(buf, n).to_text()); }
+    }
+    free(buf);
+    return out;
+}
+fn choose_file() -> option::Option[text::Text] { return run_file_dialog(false, "", ""); }
+// Where to save: `name` suggested, `extension` (no dot) the type offered.
+// None when the user cancelled.
+fn choose_save_path(name: str = "", extension: str = "") -> option::Option[text::Text] {
+    return run_file_dialog(true, name, extension);
+}
+
+// ---- the folder picker ------------------------------------------------------------
+// IFileOpenDialog with FOS_PICKFOLDERS, by vtable index (measured for
+// facet_win32 in a C# harness, 2026-10-05): IUnknown Release 2, IModalWindow
+// Show 3, IFileDialog SetOptions 9, GetOptions 10, GetResult 20, IShellItem
+// GetDisplayName 5.
+struct ComGuid { d1: u32, d2: u16, d3: u16, d4: [u8; 8] }
+// {DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7}
+fn clsid_file_open_dialog() -> ComGuid {
+    return ComGuid { d1: 0xDC1C5A9C as u32, d2: 0xE88A as u16, d3: 0x4DDE as u16,
+                     d4: [0xA5 as u8, 0xA1 as u8, 0x60 as u8, 0xF8 as u8, 0x2A as u8, 0x20 as u8, 0xAE as u8, 0xF7 as u8] };
+}
+// {D57C7288-D4AD-4768-BE02-9D969532D960}
+fn iid_file_open_dialog() -> ComGuid {
+    return ComGuid { d1: 0xD57C7288 as u32, d2: 0xD4AD as u16, d3: 0x4768 as u16,
+                     d4: [0xBE as u8, 0x02 as u8, 0x9D as u8, 0x96 as u8, 0x95 as u8, 0x32 as u8, 0xD9 as u8, 0x60 as u8] };
+}
+fn com_slot(obj: *u8, idx: usize) -> *u8 { let vt: *u8 = *(obj as *usize) as *u8; return *((vt + (idx *% (8 as usize))) as *usize) as *u8; }
+fn com_release(obj: *u8) {
+    if obj.is_null() { return; }
+    let f: fn(*u8) -> u32 = com_slot(obj, 2) as fn(*u8) -> u32; let _r: u32 = f(obj);
+}
+// FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR | FOS_PATHMUSTEXIST.
+fn folder_options() -> u32 { return 0x0868 as u32; }
+fn sigdn_filesyspath() -> u32 { return 0x80058000 as u32; }
+
+fn choose_directory() -> option::Option[text::Text] {
+    var out: option::Option[text::Text] = option::Option[text::Text]::None;
+    // An STA, as the shell's dialogs require. S_OK and S_FALSE are balanced;
+    // RPC_E_CHANGED_MODE (COM up in the other mode) must not be.
+    let init: i32 = CoInitializeEx(0 as *u8, 2);
+    let balanced: bool = init == 0 || init == 1;
+    var clsid: ComGuid = clsid_file_open_dialog();
+    var iid: ComGuid = iid_file_open_dialog();
+    var dlg_addr: usize = 0;
+    let hr: i32 = CoCreateInstance(#addr_of(clsid) as *u8, 0 as *u8, 1, #addr_of(iid) as *u8, #addr_of(dlg_addr));
+    let dlg: *u8 = dlg_addr as *u8;
+    if hr == 0 && dlg.is_not_null() {
+        var opts: u32 = 0;
+        let get_options: fn(*u8, *u32) -> i32 = com_slot(dlg, 10) as fn(*u8, *u32) -> i32;
+        let _g: i32 = get_options(dlg, #addr_of(opts));
+        let set_options: fn(*u8, u32) -> i32 = com_slot(dlg, 9) as fn(*u8, u32) -> i32;
+        let _o: i32 = set_options(dlg, opts | folder_options());
+        let show: fn(*u8, *u8) -> i32 = com_slot(dlg, 3) as fn(*u8, *u8) -> i32;
+        // Anything but S_OK (a cancel is 0x800704C7) is "no folder".
+        if show(dlg, u::GetActiveWindow()) == 0 {
+            var item_addr: usize = 0;
+            let get_result: fn(*u8, *usize) -> i32 = com_slot(dlg, 20) as fn(*u8, *usize) -> i32;
+            if get_result(dlg, #addr_of(item_addr)) == 0 && item_addr != (0 as usize) {
+                let item: *u8 = item_addr as *u8;
+                var name_addr: usize = 0;
+                let display_name: fn(*u8, u32, *usize) -> i32 = com_slot(item, 5) as fn(*u8, u32, *usize) -> i32;
+                if display_name(item, sigdn_filesyspath(), #addr_of(name_addr)) == 0 && name_addr != (0 as usize) {
+                    let path: text::Text = from_wide(name_addr as *u16);
+                    // The shell's allocation: CoTaskMemFree, not free.
+                    CoTaskMemFree(name_addr as *u8);
+                    if path.count() != (0 as usize) { out = option::Option[text::Text]::Some(path); }
+                }
+                com_release(item);
+            }
+        }
+        com_release(dlg);
+    }
+    if balanced { CoUninitialize(); }
+    return out;
+}
+
+#[test]
+fn a_newline_round_trips_through_the_clipboards_crlf() {
+    // What an application copies is what it pastes back: LF out as CRLF, and
+    // CRLF back as LF, without doubling a CR already there.
+    let w: *u16 = to_wide_crlf("one\ntwo\r\nthree");
+    assert w.is_not_null();
+    assert read_u16(w, 3 as usize) == (13 as u16);
+    assert read_u16(w, 4 as usize) == (10 as u16);
+    assert from_wide_lf(w).view() == "one\ntwo\nthree";
+    free(w as *u8);
+    return;
+}
+
+#[test]
+fn open_file_name_is_laid_out_as_commdlg_declares_it() {
+    // OPENFILENAMEA is 152 bytes on x64; a field skipped puts every later one
+    // in the wrong place.
+    assert #size_of::[OpenFileName]() == (152 as usize);
+    return;
+}

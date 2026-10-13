@@ -43,14 +43,12 @@ the client size delivered, measured after the caption is gone.
 
 An app written against `facet_runtime` keeps `runtime::App` and opts in:
 
-```cplus
-import "facet_runtime/winui" as winui;
-winui::select();          // before app.run(...)
-```
+WinUI is the default: an app on `facet_runtime` needs no call to reach it.
 
 `App::run` then opens one WinUI window per `open_window`, queuing the ones
 opened before launch, and `runtime::alert`, `choose`, `prompt` and
-`alert_blocking` become facet sheets on the active window's modal layer, keyed
+`alert_blocking` become facet sheets on the modal layer of the window that
+asked (the window whose control or deferred callback called them), keyed
 as on every backend (`alert:title`, `alert:primary`, `prompt:value`, ...), so
 an agent answers them the same way. The app lists `facet_winui`, `winui` and
 `winrt` itself; Win32-only apps never compile them. See
@@ -207,8 +205,8 @@ with animation enabled, and checks an immediate settled offset when disabled.
 
 Only one backend and one WinUI Application run are supported per process.
 Through `facet_runtime` the clipboard and file pickers stay the shared Win32
-calls, which need no window of their own; the app menu (`App::menu`) is not
-rendered on WinUI yet.
+calls, which need no window of their own. The app menu (`App::menu`) is a
+MenuBar at the top of every window; see the MANIFEST's App menu row.
 
 Initial unsupported trees return E_NOTIMPL. Internal native failures abort with
 an HRESULT diagnostic instead of continuing with invalid handles. Full error

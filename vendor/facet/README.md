@@ -23,7 +23,8 @@ fn content() -> facet::Node {
 ```
 
 facet describes UI and owns its state; a backend such as `facet_appkit`,
-`facet_gtk`, `facet_uikit`, or `facet_win32` mounts the tree.
+`facet_gtk`, `facet_uikit`, or `facet_winui` mounts the tree.
+(`facet_win32`, the older Windows backend, is deprecated.)
 
 - [Tutorial](docs/tutorial.md) — build and run a first screen
 - [Guide](docs/guide.md) — tree, ownership, seams, and gotchas

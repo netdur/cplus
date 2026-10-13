@@ -1,0 +1,144 @@
+// A gesture pad: a plain container with the whole gesture band, focus and
+// blur handlers, and a log label. tools/test_facet_runtime_winui.py drives it
+// with the real mouse and keyboard and reads `settings:pad-log` back.
+//
+// Beside it, drag and drop: a card that drags its key, and a zone that takes
+// text and files. A file whose path contains "refuse" is refused while it is
+// still over the zone. Each logs to its own label (`settings:drag-log`,
+// `settings:drop-log`, and printed as `DND <line>`, since a label keeps only
+// the last).
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "facet/component" as component;
+import "./probe" as probe;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/gestures" as gestures;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+
+struct Pad { clicks: i64 }
+
+impl Pad {
+    fn new() -> Pad { return Pad { clicks: 0 }; }
+
+    fn log(ref this, line: str) { this.log_to("settings:pad-log", line); }
+    fn dnd(ref this, key: str, line: str) { probe::say("DND ${line}"); this.log_to(key, line); }
+    fn log_to(ref this, key: str, line: str) {
+        match label::find(key) {
+            option::Option[label::Label]::Some(l) => { l.set_text(line); }
+            option::Option[label::Label]::None => { }
+        }
+    }
+    fn pad(ref this) -> *core::Node {
+        match mount::find_node("settings:pad") {
+            option::Option[*core::Node]::Some(n) => { return n; }
+            option::Option[*core::Node]::None => { return 0 as *core::Node; }
+        }
+    }
+
+    fn on_click(ref this, sender: *u8) -> bool { this.clicks = this.clicks + 1; let n: i64 = this.clicks; this.log("click ${n}"); return true; }
+    fn on_double(ref this, sender: *u8) -> bool { this.log("double"); return true; }
+    fn on_right(ref this, sender: *u8) -> bool { this.log("right"); return true; }
+    fn on_hover(ref this, sender: *u8) -> bool { this.log("hover"); return true; }
+    fn on_unhover(ref this, sender: *u8) -> bool { this.log("unhover"); return true; }
+    fn on_long(ref this, sender: *u8) -> bool { this.log("long"); return true; }
+    fn on_swipe(ref this, sender: *u8) -> bool { this.log("swipe"); return true; }
+    fn on_key(ref this, event: *u8) -> bool {
+        if gestures::key_named(event) == gestures::key_escape() { this.log("key escape"); return true; }
+        return false;
+    }
+    fn on_focus(ref this, sender: *u8) {
+        let n = this.pad();
+        let focused: bool = n.is_not_null() && core::is_focused(n);
+        this.log("focus ${focused}");
+    }
+    fn on_blur(ref this, sender: *u8) {
+        let n = this.pad();
+        let focused: bool = n.is_not_null() && core::is_focused(n);
+        this.log("blur ${focused}");
+    }
+    // -- drag and drop
+    fn on_drag_start(ref this, sender: *u8) -> bool { this.dnd("settings:drag-log", "drag start"); return true; }
+    fn on_drag_end(ref this, sender: *u8) -> bool { this.dnd("settings:drag-log", "drag end"); return true; }
+    fn on_drag_over(ref this, sender: *u8) -> bool {
+        let files: vec::Vec[text::Text] = component::dropped_files(sender);
+        var i: usize = 0;
+        while i < files.count() {
+            if let option::Option::Some(f) = files.at_ptr(i) { if (*f).view().contains("refuse") { this.dnd("settings:drop-log", "refused"); return false; } }
+            i = i + 1;
+        }
+        let n: usize = files.count();
+        let targeted: bool = component::drag_targeted(sender);
+        this.dnd("settings:drop-log", "over ${n} ${targeted}");
+        return true;
+    }
+    fn on_drag_leave(ref this, sender: *u8) -> bool {
+        let targeted: bool = component::drag_targeted(sender);
+        this.dnd("settings:drop-log", "leave ${targeted}");
+        return true;
+    }
+    fn on_drop(ref this, sender: *u8) -> bool {
+        var line: text::Text = text::from_str("drop");
+        let dropped: text::Text = component::dropped_text(sender);
+        if dropped.view() != "" { let _a: status::Status = line.append(" text="); let _b: status::Status = line.append(dropped.view()); }
+        let files: vec::Vec[text::Text] = component::dropped_files(sender);
+        var i: usize = 0;
+        while i < files.count() {
+            if let option::Option::Some(f) = files.at_ptr(i) { let _c: status::Status = line.append(" file="); let _d: status::Status = line.append((*f).view()); }
+            i = i + 1;
+        }
+        match component::drop_position(sender) {
+            option::Option::Some(p) => { let x: i64 = p.x as i64; let y: i64 = p.y as i64; let _e: status::Status = line.append(" at ${x},${y}"); }
+            option::Option::None => { let _f: status::Status = line.append(" nowhere"); }
+        }
+        this.dnd("settings:drop-log", line.view());
+        return true;
+    }
+
+    fn focus_pad(ref this, sender: *u8) { let n = this.pad(); if n.is_not_null() { core::focus(n); } }
+    fn blur_pad(ref this, sender: *u8) { let n = this.pad(); if n.is_not_null() { core::blur(n); } }
+
+    fn build(ref this) -> core::Node {
+        var inner: core::Builder = core::Builder::new();
+        inner.add(label::label("Gesture pad", key: "settings:pad-title"));
+        var pad: core::Node = core::column(inner, key: "settings:pad")
+            .height(70.0f64).padding(8.0f64)
+            .gesture(on_click: this.on_click, on_double_click: this.on_double,
+                     on_right_click: this.on_right, on_hover: this.on_hover,
+                     on_unhover: this.on_unhover, on_long_press: this.on_long,
+                     on_swipe: this.on_swipe, on_key: this.on_key,
+                     long_press_seconds: 0.6f64, swipe_threshold: 100.0f64);
+        pad.on_focus(this.on_focus);
+        pad.on_blur(this.on_blur);
+        var buttons: core::Builder = core::Builder::new();
+        buttons.add(button::button("Focus pad", key: "settings:focus-pad", on_click: this.focus_pad));
+        buttons.add(button::button("Blur pad", key: "settings:blur-pad", on_click: this.blur_pad));
+        var b: core::Builder = core::Builder::new();
+        b.add(pad);
+        b.add(core::row(buttons, key: "settings:pad-buttons").gap(8.0f64));
+        b.add(label::label("Nothing yet", key: "settings:pad-log"));
+        var card_label: core::Builder = core::Builder::new();
+        card_label.add(label::label("Drag me", key: "settings:card-title"));
+        var zone_label: core::Builder = core::Builder::new();
+        zone_label.add(label::label("Drop here", key: "settings:drop-title"));
+        var dnd: core::Builder = core::Builder::new();
+        var card: core::Node = core::column(card_label, key: "card:1").width(100.0f64).height(50.0f64).padding(8.0f64)
+            .gesture(can_drag: true, on_drag_start: this.on_drag_start, on_drop_completed: this.on_drag_end);
+        card.set_background_color(vocab::Color::sunken());
+        var zone: core::Node = core::column(zone_label, key: "settings:drop").width(180.0f64).height(50.0f64).padding(8.0f64)
+            .gesture(allow_drop: true, allow_file_drop: true, on_drag_over: this.on_drag_over,
+                     on_drag_leave: this.on_drag_leave, on_drop: this.on_drop);
+        zone.set_background_color(vocab::Color::sunken());
+        dnd.add(card);
+        dnd.add(zone);
+        b.add(core::row(dnd, key: "settings:dnd").gap(24.0f64));
+        b.add(label::label("No drag", key: "settings:drag-log"));
+        b.add(label::label("No drop", key: "settings:drop-log"));
+        return core::column(b, key: "settings:pad-area").gap(6.0f64);
+    }
+}

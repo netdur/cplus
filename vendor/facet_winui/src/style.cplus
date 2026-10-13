@@ -3,7 +3,54 @@ import "winrt/runtime" as rt;
 import "facet/vocabulary" as vocab;
 import "facet/theme" as theme;
 import "./native" as native;
-fn dark() -> bool { return true; }
+// LIGHT OR DARK. The app's explicit choice (`runtime::set_app_appearance`)
+// wins; `Unspecified` follows the system: `AppsUseLightTheme`, the DWORD the
+// Settings app writes, read again when a window activates (`refresh_system`)
+// so a flip made while the app ran is picked up the next time it comes back.
+extern fn RegGetValueA(key: *u8, subkey: *i8, value: *i8, flags: u32, kind: *u32, data: *u8, size: *u32) -> i32;
+static OVERRIDE: vocab::Appearance=#zero::[vocab::Appearance]();   // Unspecified
+static SYSTEM_DARK: bool=false;
+static SYSTEM_READ: bool=false;
+// HKEY_CURRENT_USER, RRF_RT_REG_DWORD. A missing value is a machine never
+// switched, whose default is LIGHT.
+fn read_system_dark() -> bool {
+    var value: u32=1; var size: u32=4;
+    let rc: i32=RegGetValueA(0x80000001 as *u8,#str_ptr("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\0") as *i8,
+                             #str_ptr("AppsUseLightTheme\0") as *i8,0x10,0 as *u32,#addr_of(value) as *u8,#addr_of(size));
+    return rc==0 && value==0;
+}
+// True when the system setting changed since it was last read.
+fn refresh_system() -> bool {
+    let now: bool=read_system_dark();
+    let changed: bool=SYSTEM_READ && now!=SYSTEM_DARK;
+    SYSTEM_DARK=now; SYSTEM_READ=true;
+    return changed;
+}
+fn set_override(a: vocab::Appearance) { OVERRIDE=a; }
+fn override() -> vocab::Appearance { return OVERRIDE; }
+fn dark_for(a: vocab::Appearance, system_dark: bool) -> bool {
+    return match a { vocab::Appearance::Dark=>true, vocab::Appearance::Light=>false, vocab::Appearance::Unspecified=>system_dark };
+}
+fn dark() -> bool {
+    if !SYSTEM_READ { let _c: bool=refresh_system(); }
+    return dark_for(OVERRIDE,SYSTEM_DARK);
+}
+fn element_theme() -> i32 { return if dark() {ui::element_theme_dark} else {ui::element_theme_light}; }
+// The grey a neutral role takes on each side. Dark: light ink on near-black
+// surfaces; light: dark ink on near-white ones, after WinUI's own light ramp.
+fn neutral(token: u32, is_dark: bool) -> f64 {
+    if is_dark {
+        if token==2 || token==9 || token==15 {return 0.65f64;}
+        if token==11 {return 0.13f64;} if token==12 {return 0.09f64;} if token==13 {return 0.17f64;}
+        if token==14 || token==19 {return 0.25f64;} if token==10 {return 0.32f64;}
+        return 0.94f64;
+    }
+    if token==2 || token==9 || token==15 {return 0.40f64;}
+    if token==11 {return 0.95f64;} if token==12 {return 1.0f64;} if token==13 {return 0.99f64;}
+    if token==14 || token==19 {return 0.88f64;} if token==10 {return 0.82f64;}
+    if token==8 {return 0.50f64;}
+    return 0.10f64;
+}
 fn alpha(c: vocab::Color) -> f64 { return if c.token==255 || c.token==254 || c.a>0.0f64 {c.a} else {1.0f64}; }
 fn resolve(c: vocab::Color, depth: i32=6) -> vocab::Color {
     if depth<=0 || c.token==0 || c.token==255 {return c;}
@@ -16,10 +63,7 @@ fn resolve(c: vocab::Color, depth: i32=6) -> vocab::Color {
         let b: vocab::Color=resolve(c.derived_ink_base(),depth-1); let luminance: f64=b.r*0.2126f64+b.g*0.7152f64+b.b*0.0722f64;
         let value: f64=if luminance>0.55f64 {0.0f64} else {1.0f64}; return vocab::Color::rgba(value,value,value,alpha(c));
     }
-    var value: f64=0.94f64;
-    if c.token==2 || c.token==9 || c.token==15 {value=0.65f64;}
-    if c.token==11 {value=0.13f64;} if c.token==12 {value=0.09f64;} if c.token==13 {value=0.17f64;}
-    if c.token==14 || c.token==19 {value=0.25f64;} if c.token==10 {value=0.32f64;}
+    let value: f64=neutral(c.token,dark());
     if c.token==3 || c.token==6 || c.token==16 || c.token==17 || c.token==18 {return vocab::Color::rgba(0.35f64,0.55f64,0.95f64,alpha(c));}
     if c.token==4 {return vocab::Color::rgba(0.95f64,0.3f64,0.28f64,alpha(c));}
     if c.token==5 {return vocab::Color::rgba(0.2f64,0.8f64,0.4f64,alpha(c));}

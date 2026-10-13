@@ -1,6 +1,11 @@
 # facet_agent_winui
 
-Optional connector between `facet_winui`, `facet_agent` and `agent_winui`.
+**Now a forwarding door.** `facet_agent`'s Windows facade is the WinUI
+connector (netdu/cplus#20): `facet_agent/agent::enable()` serves agent_winui on
+every window. This package keeps its API for code written against it; every
+call forwards to `facet_agent`. New code imports `facet_agent/agent`.
+
+Originally the optional connector between `facet_winui`, `facet_agent` and `agent_winui`.
 The native agent package remains independently usable; ordinary WinUI and Facet
 WinUI apps do not pull in this connector unless they import it.
 
@@ -18,7 +23,11 @@ After the host's ready callback, `agent::in_app()` and
 `agent::in_app_with_grant(grant)` select the WinUI surface. Keyed Facet nodes are
 exposed; unkeyed nodes carry inherited privacy boundaries without entering the
 curated list. Native replacement, policy updates and release keep pins current.
-The window close hook detaches the surface before XAML teardown.
+Every window the host opens joins one surface and leaves it as it closes, each
+a `window` node named by its registered window name (`App::window("settings",
+...)` is `settings`) when no other open window shares it, else by its window
+key. The last window's close stops the listener and detaches the surface
+before XAML teardown.
 
 Copy the full dependency closure from
 [examples/facet_agent_winui_smoke/Cplus.toml](../../examples/facet_agent_winui_smoke/Cplus.toml).

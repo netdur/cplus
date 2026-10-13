@@ -86,8 +86,12 @@ fn start(surface: *agent::Surface,queue: rt::Object,id: str,
     };
     let access: bool=match q.has_thread_access() {result::Result::Ok(v)=>v,result::Result::Err(_)=>false};
     if !access || surface.is_null() || policy==(0 as fn(auth::Request)->auth::Grant) { return -12; }
-    let chosen: u16=if port==0 {mcp::loopback_port(mcp::current_pid())} else {port};
-    let fd: i32=mcp::bind_tcp(chosen); if fd<0 { return fd; }
+    // A zero port is the derived one, or the next free one when another app
+    // holds it (S52); an explicit port is bound as asked.
+    let bound: mcp::LoopbackBind=if port==0 {mcp::bind_loopback(mcp::current_pid())}
+        else {mcp::LoopbackBind {fd:mcp::bind_tcp(port),port:port}};
+    let chosen: u16=bound.port;
+    let fd: i32=bound.fd; if fd<0 { return fd; }
     let address: text::Text="http://127.0.0.1:${chosen}/";
     if !mcp::write_descriptor(id,mcp::current_pid(),"http",address.view()) {
         let closed: i32=netsys::close_fd(fd); return -13;

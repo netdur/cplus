@@ -738,8 +738,9 @@ fn release_controls() {
 //
 // IT IS CREATED AS WS_POPUP AND HIDDEN, which looks wrong and is not:
 // `CreateWindowEx` REFUSES a WS_CHILD window with no parent, and this one has
-// no parent until facet inserts it. facet_win32's `adopt_window` turns it into
-// a visible child at that moment — the case that path exists for.
+// no parent until facet inserts it. The backend turns it into a visible child
+// at that moment — facet_winui's `adopted` (the default) or facet_win32's
+// `adopt_window` — the case those paths exist for.
 //
 // TWO BUFFERS. The pump converts a frame on its own thread while the UI thread
 // may be blitting the last one, so the pump fills the back buffer, publishes it
@@ -1815,8 +1816,8 @@ export extern fn _camera_preview_create(h: *u8) -> *u8 {
     var cls: [u16; 7] = [83 as u16, 84 as u16, 65 as u16, 84 as u16,
                          73 as u16, 67 as u16, 0 as u16];
     // WS_POPUP AND HIDDEN. `CreateWindowEx` refuses WS_CHILD with no parent,
-    // and this window has none until facet inserts it — at which point
-    // facet_win32's `adopt_window` makes it a visible child.
+    // and this window has none until facet inserts it — at which point the
+    // backend (facet_winui's `adopted`, or facet_win32's) makes it a visible child.
     let hwnd: *u8 = { CreateWindowExW(0 as u32, { #addr_of(cls) as *u16 }, 0 as *u16,
                                       0x80000000 as u32, 0 as i32, 0 as i32,
                                       16 as i32, 16 as i32, 0 as *u8, 0 as *u8,

@@ -2,8 +2,8 @@
 
 Windows x64, one WinUI Application run per process with any number of windows.
 The explicit host is `facet_winui/facet_winui` (`run`, or `start` +
-`open_window`); a `runtime::App` reaches it through `facet_runtime/winui`'s
-`select()`. The shared gallery's 38 pages mount; this is not a claim that
+`open_window`); a `runtime::App` runs on it by default - WinUI is the Windows
+backend. The shared gallery's 38 pages mount; this is not a claim that
 every Facet property is implemented.
 
 | Contract | Implemented scope |
@@ -25,30 +25,44 @@ every Facet property is implemented.
 | Decorations | Semantic/theme colors in dark appearance, borders/corners, gradient strokes, DIP dash patterns/phase, caps, joins, miter limits, rounded/per-corner/ellipse stroke outlines, gradients, 2D transforms, frame-synchronized opacity/transform easing, composition rounded/ellipse clips and drop shadows. |
 | Menus and actions | Window command strip with native MenuFlyout launchers and toolbar buttons; context-menu hosts retain visible content. Menus sort by descending priority. Toolbar placement groups Sidebar/Primary/Default/Secondary, then descending priority; ties keep tree order. Secondary commands trail when space permits, and narrow strips wrap. Live text, icons, destructive foreground/reset, inherited visibility/enablement, accessible names, click handlers and safe callback removal. Context-item keyboard shortcuts register before the first menu opening; context actions are scoped. |
 | Other gallery hosts | Circle/square page dots, table document container, swipe actions through drag reveal and native context menu, with image/named icons, destructive foreground/reset, stable interleaved insertion order, and clicked/invoked callbacks. WebView2 source/user-agent updates, history/back/forward, reload, script execution, navigation and process-failure callbacks. |
-| Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. |
+| Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. `run_on_main` from any thread: a worker posts through DispatcherQueue.TryEnqueue, so `services::run_job` runs off the UI thread and applies on it (`tools/test_facet_runtime_winui.py`, `home:load`). After the run ends a hop is dropped. |
 | Window buttons | Three native WinUI buttons drive their own window's AppWindow minimize/maximize/restore and Window.close. Live spacing changes intrinsic size. OnHover watches the containing bar; keyboard/programmatic focus also reveals the group. Maximize glyph and accessible name follow current window state. |
-| Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close) and `app::set_activate_fn` are installed. |
+| Input | `facet_winui/input`: the gesture band on any node over XAML routed events, so a handler's `true` marks the event Handled and `false` lets it bubble to the next node - facet's decline chain. Tapped (click), DoubleTapped (double click; falls back to on_click), RightTapped, PointerPressed/Released, PointerEntered/Exited (hover), PointerMoved, a pan past a 4-DIP slop, a swipe on release beyond `swipe_threshold`, a long press after `long_press_seconds` (or touch Holding) that swallows the click, Ctrl+wheel pinch, KeyDown for `on_key`. Bands are armed only for the verbs a node names. Drag and drop on any node (`facet_winui/dnd`): `allow_drop`/`allow_file_drop` set AllowDrop and take DragEnter/Over/Leave/Drop for Text/StorageItems; the payload is read asynchronously under the drag's deferral and pinned before the handler runs, so `dropped_files` answers inside `on_drag_over` and its `false` answers AcceptedOperation None; `dropped_text`, `dropped_files`, `drop_position` (the node's own space) and `drag_targeted` answer only for the node concerned. `can_drag` sets CanDrag and carries the node's key as text (no key, no drag); DragStarting fires `on_drag_start`, DropCompleted `on_drop_completed`. `run_drag_and_drop` drags a card with the real mouse and drops files from another process through OLE (`tools/winui_drop_files.c`), including a refusal on hover and a leave. `gestures::KeyReader` reads the KeyDown args (VirtualKey code, named keys, live modifiers). `C_FOCUS`/`C_BLUR` take and give up the keyboard (blur hands it to the window's content root); every view's element is tagged, so global focus changes write `is_focused` and fire `on_focus`/`on_blur` on the node. `tools/test_facet_runtime_winui.py` (`run_gestures`) drives a plain container with the real mouse and keyboard. |
+| Appearance | Light and dark. `runtime::set_app_appearance` wins; `Unspecified` follows the system's `AppsUseLightTheme`, re-read at window activation. Every element's RequestedTheme, the window shell and strips, the DWM caption and the neutral colour roles (ink, surfaces, fills, separators) follow; a change restyles every open window (C_RESTYLE) and then calls the app's `on_appearance_change`. `run_appearance` checks Light at start and a live switch to Dark through the caption attribute and the inspector's `native_theme`. |
+| Adopted views | `adopt_native` / `adopt_native_with` leaves: the app's HWND becomes a WS_CHILD (no popup, frame, topmost or taskbar bits) of the WinUI window and is moved over its node after every layout pass, hidden with it; on removal it is hidden and unparented, and the app's release destroys it. Camera's preview takes this path. `run_adopted_view` checks parentage, placement and release. |
+| App menu | `App::menu` (plus the primary screen's `menu_items`) is a MenuBar across the top of every window, above the command strip: a MenuBarItem per group in first-seen order, items and separators. A `key` is a Ctrl (+Shift/+Alt) KeyboardAccelerator on the bar, so it works with the menu closed; the item shows the chord. `is_enabled`/`title_of` are answered when the bar is entered or focused, when its window activates, and again on invocation. `on_click` wins; otherwise quit (the facade's `app.quit()`), close window (asked), and undo/redo/cut/copy/paste/select-all on the text field that last had the keyboard in that window. AutomationIds `menu`, `menu:<group>`, `menu:<group>:<title>`. `tools/test_facet_runtime_winui.py` covers click, live enabled state, Ctrl+, Ctrl+Q, edit actions and quit. |
+| Closing | A user close (caption, Alt+F4, outside `WM_CLOSE`, the window buttons) is asked through AppWindow.Closing and can be refused. Through the facade it asks the window's `on_should_close`, and for the last open window also `on_should_quit`. Closes made in code are not asked twice. `tools/test_facet_runtime_winui.py` covers refusal, allowance and a non-last window. |
+| Windows | A host record per window; windows open on demand after launch; one renderer and one coalesced relayout serve all of them. Closing a window unmounts only its tree; closing the last retires timers/observers and ends the run. `facet/window`'s seam (frame, set_frame, title, density, activity, close, and per-window resize/active/inactive/density observers) and `app::set_activate_fn` are installed. Density is the content's XamlRoot.RasterizationScale; its change fires density observers, app-wide and the window's own. |
 | Chrome | `screen::Chrome` width/height (ResizeClient, corrected to the delivered client area), min/max size, minimizable/maximizable/resizable, and the bar: Native (dark DWM caption), Blended with `window_buttons()` (no system caption; app buttons are the only set), Blended without (ExtendsContentIntoTitleBar), Hidden/Custom (no border, no caption). `.window_drag()` moves a captionless window. |
-| Dialogs | `facet_winui/dialogs`: alert/choose/prompt as keyed facet sheets on a window's modal layer (scrim + card), answers on a later turn, Return/Escape in alert and prompt, initial focus on the primary button or field, blocking `alert` through a nested message loop. |
-| Facade | `facet_runtime/winui` fills runtime_windows' backend seam: driver open/run with pre-launch queueing, dialogs, window verbs, frame/density/active reads, active/inactive/size observers. |
-| Agent integration | Optional lifecycle/apply/release hooks; `facet_agent_winui` connects keyed controls and privacy policies to `agent_winui`. In-app sessions and UI-dispatched MCP requests. |
+| Dialogs | `facet_winui/dialogs`: alert/choose/prompt as keyed facet sheets on the modal layer (scrim + card) of the window that asked: the window a deferred callback was scheduled from, else the window of the event being delivered, else the active one (`tools/test_facet_runtime_winui.py`), answers on a later turn, Return/Escape in alert and prompt, initial focus on the primary button or field, blocking `alert` through a nested message loop. |
+| Facade | `runtime_windows` drives WinUI directly: driver open/run with pre-launch window queueing and timers parked until launch (`prepare`), dialogs, window verbs, frame/density/active reads, active/inactive/size/density observers; a failed start makes `run` answer `InvalidInput`. Win32 is the opt-out (`facet_runtime/win32`). |
+| Agent integration | Lifecycle/apply/release hooks; `facet_agent`'s Windows facade connects keyed controls and privacy policies to `agent_winui` (`facet_agent_winui` forwards to it). In-app sessions and UI-dispatched MCP requests; the inspector's verbs are published, its highlight placed through XAML's TransformToVisual and `inspect` names the XAML class (`run_inspector`). |
 | Accessibility | Native WinUI peers, stable control AutomationIds, explicit accessibility name/help text with native-default restoration, heading levels 1–9 and attached Unicode tooltips with live updates/removal. |
 | Ownership | Native records owned by nodes, event removal before freeing callback contexts, row unrealise before drop, timers cancelled on release, zero view/subscription assertions on shutdown. |
 
 ## Limits
 
-- `facet_runtime` defaults to Win32; WinUI is an opt-in (`facet_runtime/winui`).
-  Through the facade, the app menu (`App::menu`) is not rendered, a window's
-  close does not ask `on_should_quit` (`app.quit()` does), density-change
-  observation registers nothing, and the clipboard and file pickers are the
-  shared Win32 calls. Jobs/worker-thread dispatch, general gesture/key readers
-  and host focus commands remain separate work. `run_on_main` currently queues
-  only from the UI thread.
-- The agent surface (`facet_agent_winui`) serves one window: the first one
-  opened, then the next open one after it closes. Sheets on that window are
-  visible to it; other windows are not.
-- An alert goes to the most recently activated window, not necessarily the one
-  whose control asked for it (the facade's `alert` carries no sender).
+- Through the facade the clipboard and file pickers are the shell's Win32
+  calls (`facet_runtime/shell`). An adopted native window
+  draws above the XAML it overlaps (airspace) and does not follow a scrolling
+  ancestor's offset. The app menu's find tokens (`menu_action_find*`) have no WinUI
+  default and do nothing. A focused text field keeps the chords it handles
+  itself: WinUI's TextBox takes Ctrl+Q, so an app's Ctrl+Q quit does not
+  reach the menu from inside one.
+- A density change is observed as a change of XamlRoot.RasterizationScale.
+  The e2e checks the read and that a resize reports no change; a real change
+  (a move between monitors of different scale) has not been exercised on a
+  one-display machine, and WinUI ignores a synthetic WM_DPICHANGED.
+- Drag and drop carries text and files: a drag of other formats (a bitmap,
+  a URI, HTML) is not a drop on any node. A drag source's payload is its key,
+  as on GTK and AppKit; the drag visual is WinUI's default. Collections keep
+  their own native reorder drag. `key_chars` is empty, as on Win32: KeyDown carries the key, not the
+  character. `on_pinch` is Ctrl + wheel; physical touch pinch, Holding and
+  swipes are wired to the same handlers but not exercised by touch. One
+  pointer at a time, as on Win32.
+- The agent surface (`facet_agent_winui`) serves every open window as a
+  `window` node under `app`, named by its registered window name (when unique;
+  else its window key). Popups (open menus, pickers) are not enumerated.
 - `.window_drag()` starts the system move loop; double-click-to-maximize and
   snap layouts on the drag region are not provided. `Chrome.subtitle_text`
   and the zoom fields are not mapped.
@@ -122,13 +136,14 @@ every Facet property is implemented.
 - Labels still use trailing ellipsis for head/middle truncation and native
   wrapping for both word/character wrap. Buttons and text buttons implement
   the distinct modes through the caption fitting path documented below.
-- Appearance is dark; OS appearance changes, native system palette tracking,
-  3D transforms, per-corner composition clipping and inherited container enable
+- A system light/dark flip is picked up when a window next activates (the
+  setting is re-read then), not the moment it happens. Native system palette
+  tracking (accent colour), 3D transforms, per-corner composition clipping and inherited container enable
   state are not complete.
   Shadows use rectangular masks on children with a native panel parent;
   root-window shadows and arbitrary shape masks are not mapped.
 
-Initial unsupported trees/adopted views/children under leaf controls return
+Initial unsupported trees/children under leaf controls return
 E_NOTIMPL. Unsupported kinds added later and failed native HRESULTs produce a
 fatal diagnostic. Runtime error recovery is not yet implemented.
 

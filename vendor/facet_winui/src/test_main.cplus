@@ -13,6 +13,15 @@ import "facet/window_chrome" as chrome;
 import "facet/label" as label;
 import "./facet_winui" as host;
 import "./dialogs" as dialogs;
+import "./scheduler" as scheduler;
+import "./app_menu" as app_menu;
+import "winui/application" as application;
+import "./input" as input;
+import "./style" as style;
+import "facet/vocabulary" as vocab;
+import "facet/gestures" as gestures;
+import "./shortcuts" as shortcuts;
+import "winui/winui" as ui;
 
 fn tm_noop(ctx: *u8) { return; }
 
@@ -74,5 +83,241 @@ fn sheet_heights_follow_the_message() {
     while i < (120 as usize) { long = long.appending("x"); i = i + (1 as usize); }
     assert dialogs::message_lines(long.view()) == 3.0f64;
     assert dialogs::capped(900.0f64) == 560.0f64;
+    return;
+}
+
+static TM_ASKED: i32 = 0;
+fn tm_refuse(ctx: *u8) -> bool { TM_ASKED = TM_ASKED + 1; return false; }
+fn tm_allow(ctx: *u8) -> bool { TM_ASKED = TM_ASKED + 1; return true; }
+
+#[test]
+fn a_close_is_asked_through_the_window_policy() {
+    // The question AppWindow.Closing and the window buttons put. With no
+    // policy the answer is yes; a refusal is the policy's own answer.
+    var h: host::Host = #zero::[host::Host]();
+    assert host::ask_should_close(#addr_of(h));
+    TM_ASKED = 0;
+    h.should_close = tm_refuse;
+    assert !host::ask_should_close(#addr_of(h));
+    h.should_close = tm_allow;
+    assert host::ask_should_close(#addr_of(h));
+    assert TM_ASKED == 2;
+    return;
+}
+
+#[test]
+fn a_close_request_without_an_open_window_is_refused() {
+    // NEGATIVE: no window is open, so nothing is asked and nothing closes.
+    var h: host::Host = #zero::[host::Host]();
+    TM_ASKED = 0;
+    h.should_close = tm_allow;
+    assert !host::request_close(0 as *host::Host);
+    assert !host::request_close(#addr_of(h));
+    assert TM_ASKED == 0;
+    return;
+}
+
+#[test]
+fn a_deferred_callback_runs_for_the_window_it_was_scheduled_from() {
+    // The scheduler's pair nests: entering answers the window to restore.
+    var a: host::Host = #zero::[host::Host]();
+    var b: host::Host = #zero::[host::Host]();
+    let outer: *u8 = host::enter_origin(#addr_of(a) as *u8);
+    assert outer.is_null();
+    let inner: *u8 = host::enter_origin(#addr_of(b) as *u8);
+    assert inner == (#addr_of(a) as *u8);
+    assert host::enter_origin(inner) == (#addr_of(b) as *u8);
+    assert host::enter_origin(outer) == (#addr_of(a) as *u8);
+    return;
+}
+
+#[test]
+fn a_window_that_is_not_open_never_answers_who_asked() {
+    // NEGATIVE: an origin that is not an open window (closed, or never
+    // opened) is ignored, and with no event and no window nothing asked.
+    var gone: host::Host = #zero::[host::Host]();
+    let outer: *u8 = host::enter_origin(#addr_of(gone) as *u8);
+    assert host::origin().is_null();
+    assert host::capture_origin().is_null();
+    assert host::asking_host().is_null();
+    let _o: *u8 = host::enter_origin(outer);
+    return;
+}
+
+static TM_HOPPED: i32 = 0;
+fn tm_hop(ctx: *u8) { TM_HOPPED = TM_HOPPED + 1; }
+
+#[test]
+fn a_hop_with_no_dispatcher_is_dropped_not_run() {
+    // NEGATIVE: before any run has published a queue, a worker's hop is
+    // refused and its work never runs on the caller's thread.
+    TM_HOPPED = 0;
+    assert !scheduler::post(tm_hop, 0 as *u8);
+    assert TM_HOPPED == 0;
+    return;
+}
+
+static TM_APP_WIDE: i32 = 0;
+static TM_OWN: i32 = 0;
+fn tm_app_wide(ctx: *u8) { TM_APP_WIDE = TM_APP_WIDE + 1; }
+fn tm_own(ctx: *u8) { TM_OWN = TM_OWN + 1; }
+
+#[test]
+fn a_window_observer_hears_only_its_own_window() {
+    // App-wide observers hear every window; a window's own hear only it.
+    var a: host::Host = #zero::[host::Host]();
+    var b: host::Host = #zero::[host::Host]();
+    TM_APP_WIDE = 0; TM_OWN = 0;
+    let wide: u64 = host::observe(4, tm_app_wide);
+    let own: u64 = host::observe_window(4, tm_own, 0 as *u8, #addr_of(a));
+    host::fire(4, #addr_of(b));
+    assert TM_APP_WIDE == 1;
+    assert TM_OWN == 0;
+    host::fire(4, #addr_of(a));
+    assert TM_APP_WIDE == 2;
+    assert TM_OWN == 1;
+    // Another kind reaches neither.
+    host::fire(3, #addr_of(a));
+    assert TM_APP_WIDE == 2;
+    assert TM_OWN == 1;
+    host::cancel_observe(wide);
+    host::cancel_observe(own);
+    return;
+}
+
+#[test]
+fn a_closed_window_takes_its_observers_with_it() {
+    // NEGATIVE: once its window has gone, a window's observer never fires,
+    // even for a later window at the same address.
+    var a: host::Host = #zero::[host::Host]();
+    TM_OWN = 0;
+    let own: u64 = host::observe_window(4, tm_own, 0 as *u8, #addr_of(a));
+    host::forget_observers_of(#addr_of(a));
+    host::fire(4, #addr_of(a));
+    assert TM_OWN == 0;
+    host::cancel_observe(own);   // already gone: a no-op
+    return;
+}
+
+fn tm_click(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn the_app_menu_is_copied_and_its_chords_are_ctrl_based() {
+    var m: screen::AppMenu = screen::app_menu("probe");
+    m.add_command("File", "Settings", key: ",", on_click: tm_click);
+    m.add_item("Edit", "Redo", "z", screen::menu_action_redo(), shift: true);
+    m.add_separator("Edit");
+    app_menu::install(#addr_of(m));
+    // A deep copy: the facade's menu is a local that dies after install.
+    m.add_item("Edit", "Copy", "c", screen::menu_action_copy());
+    assert app_menu::item_count() == (3 as usize);
+    assert app_menu::has_items();
+    let redo = app_menu::item_at(1 as usize);
+    assert app_menu::chord(redo).view() == "Ctrl+Shift+Z";
+    assert app_menu::modifiers(redo) == (ui::virtual_key_modifiers_control | ui::virtual_key_modifiers_shift);
+    assert shortcuts::key_code(",") == 188;
+    assert shortcuts::key_code("q") == 81;
+    app_menu::uninstall();
+    return;
+}
+
+#[test]
+fn an_app_with_no_menu_gets_no_bar() {
+    // NEGATIVE, as on Win32: no items, no MenuBar - and no XAML is touched.
+    var m: screen::AppMenu = screen::empty_app_menu();
+    app_menu::install(#addr_of(m));
+    assert !app_menu::has_items();
+    assert app_menu::build(0 as *u8).is_null();
+    app_menu::uninstall();
+    assert !app_menu::has_items();
+    return;
+}
+
+fn tm_take(sender: *u8, ctx: *u8) -> bool { return true; }
+
+#[test]
+fn a_gesture_set_arms_only_the_bands_it_names() {
+    var g: gestures::Gestures = gestures::Gestures::new();
+    assert input::bands_for(#addr_of(g)) == (0 as u32);
+    g.on_click = tm_take;
+    let click: u32 = input::bands_for(#addr_of(g));
+    // A click needs Tapped, and DoubleTapped for the second tap of a pair.
+    assert click == (input::B_TAPPED | input::B_DOUBLE);
+    g.on_pan = tm_take;
+    let pan: u32 = input::bands_for(#addr_of(g));
+    assert (pan & input::B_PRESSED) != (0 as u32) && (pan & input::B_MOVED) != (0 as u32) && (pan & input::B_RELEASED) != (0 as u32);
+    assert (pan & input::B_KEY) == (0 as u32);
+    g.on_key = tm_take;
+    assert (input::bands_for(#addr_of(g)) & input::B_KEY) != (0 as u32);
+    assert input::bands_for(0 as *gestures::Gestures) == (0 as u32);
+    return;
+}
+
+#[test]
+fn a_swipe_is_distance_and_a_pan_starts_past_the_slop() {
+    assert input::is_swipe(120.0f64, 0.0f64, 100.0f64);
+    assert !input::is_swipe(60.0f64, 60.0f64, 100.0f64);
+    // NEGATIVE: an unset threshold is the default 100, not zero.
+    assert !input::is_swipe(10.0f64, 0.0f64, 0.0f64);
+    assert !input::beyond_slop(2.0f64, 2.0f64);
+    assert input::beyond_slop(5.0f64, 0.0f64);
+    return;
+}
+
+#[test]
+fn virtual_keys_have_facets_names() {
+    assert input::named_key(27 as i64) == gestures::key_escape();
+    assert input::named_key(13 as i64) == gestures::key_return();
+    assert input::named_key(8 as i64) == gestures::key_delete();
+    assert input::named_key(46 as i64) == gestures::key_forward_delete();
+    assert input::named_key(40 as i64) == gestures::key_arrow_down();
+    // A printable key has no name; key_code carries it.
+    assert input::named_key(65 as i64) == gestures::key_none();
+    return;
+}
+
+#[test]
+fn a_test_binary_has_no_runtime_beside_it() {
+    // NEGATIVE: nothing is staged next to the test executable, so a run
+    // would take the installed runtime - the default deployment.
+    assert !application::staged_beside_exe();
+    return;
+}
+
+static TM_FIRED: i32 = 0;
+fn tm_fire(ctx: *u8) { TM_FIRED = TM_FIRED + 1; }
+
+#[test]
+fn a_timer_asked_for_before_launch_is_parked_not_dropped() {
+    // No queue yet: the timer gets a real token and waits for `install`.
+    TM_FIRED = 0;
+    let token: u64 = scheduler::after(0.5f64, tm_fire, 0 as *u8);
+    assert token != (0 as u64);
+    assert scheduler::PARKED.count() == (1 as usize);
+    // NEGATIVE: cancelled before launch, it is gone and never fires.
+    scheduler::cancel(token);
+    assert scheduler::PARKED.count() == (0 as usize);
+    assert TM_FIRED == 0;
+    return;
+}
+
+#[test]
+fn the_apps_choice_wins_and_unspecified_follows_the_system() {
+    assert style::dark_for(vocab::Appearance::Dark, false);
+    assert !style::dark_for(vocab::Appearance::Light, true);
+    assert style::dark_for(vocab::Appearance::Unspecified, true);
+    assert !style::dark_for(vocab::Appearance::Unspecified, false);
+    return;
+}
+
+#[test]
+fn neutral_roles_swap_sides_with_the_appearance() {
+    // Ink is light on dark and dark on light; the window surface the reverse.
+    assert style::neutral(1 as u32, true) > 0.8f64;
+    assert style::neutral(1 as u32, false) < 0.2f64;
+    assert style::neutral(11 as u32, true) < 0.2f64;
+    assert style::neutral(11 as u32, false) > 0.9f64;
+    // NEGATIVE: secondary ink stays readable, never the surface's own grey.
+    assert style::neutral(2 as u32, false) != style::neutral(11 as u32, false);
     return;
 }

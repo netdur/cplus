@@ -1,0 +1,114 @@
+// What tools/test_facet_runtime_winui.py drives. Nothing here runs unless
+// CPLUS_RUNTIME_WINUI_PROBE is set, so the sample is unchanged when launched
+// by hand. Each marker is one flushed stdout line the test waits for.
+//
+//   CPLUS_RUNTIME_WINUI_PROBE=1   also open "settings" at launch, refuse the
+//                                 FIRST on_should_quit and allow the next,
+//                                 and report density changes: app-wide, and
+//                                 Settings' own window.
+//   CPLUS_RUNTIME_WINUI_APPEARANCE=light   start Light, then switch to Dark
+//                                 two seconds after launch.
+//   CPLUS_RUNTIME_WINUI_AGENT=1   serve the agent surface over loopback HTTP
+//                                 (facet_agent + app.agent_mcp) and print its port.
+import "stdlib/env" as env;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "facet/services" as services;
+import "facet/window" as window;
+import "facet/vocabulary" as vocab;
+import "facet_runtime/runtime" as runtime;
+import "facet_agent/agent" as agent;
+import "agent_mcp/agent_mcp" as mcp;
+
+extern fn fflush(stream: *u8) -> i32;
+
+
+static ASKED: i32 = 0;
+static APP_DENSITY: services::Cancellable = #zero::[services::Cancellable]();
+static SETTINGS_DENSITY: services::Cancellable = #zero::[services::Cancellable]();
+static ACTIVATED: services::Cancellable = #zero::[services::Cancellable]();
+static EARLY: services::Cancellable = #zero::[services::Cancellable]();
+static TO_DARK: services::Cancellable = #zero::[services::Cancellable]();
+
+fn enabled() -> bool {
+    match env::var("CPLUS_RUNTIME_WINUI_PROBE") {
+        option::Option[text::Text]::Some(v) => { return v.view() == "1"; }
+        option::Option[text::Text]::None => { return false; }
+    }
+}
+
+fn say(line: str) { io::println(line); let _f: i32 = fflush(0 as *u8); }
+
+fn install(app: runtime::App) {
+    if env::has_var("CPLUS_RUNTIME_WINUI_APPEARANCE") {
+        runtime::set_app_appearance(vocab::Appearance::Light);
+    }
+    if env::has_var("CPLUS_RUNTIME_WINUI_AGENT") {
+        // The ordinary path every facet app takes: enable, then name the surface.
+        agent::enable();
+        app.agent_mcp("facet-runtime-winui");
+        app.on_launch(agent_ready);
+    }
+    if !enabled() { return; }
+    // With the agent on, its launch hook runs this one too.
+    if !env::has_var("CPLUS_RUNTIME_WINUI_AGENT") { app.on_launch(launched); }
+    app.on_should_quit(should_quit);
+    app.on_quit(quitting);
+}
+
+fn agent_ready(ctx: *u8) {
+    // Scheduled here, not before `run`: there is no scheduler before App::run.
+    if env::has_var("CPLUS_RUNTIME_WINUI_APPEARANCE") { TO_DARK = services::after(2.0f64, to_dark); }
+    let port: u16 = mcp::loopback_port(mcp::current_pid());
+    say("AGENT PORT ${port}");
+    if enabled() { launched(ctx); }
+}
+
+fn launched(ctx: *u8) {
+    // Scheduled from on_launch, before WinUI has a queue: it must still fire.
+    EARLY = services::after(0.2f64, early_fired);
+    APP_DENSITY = runtime::observe_display_density(app_density_changed);
+    ACTIVATED = runtime::observe_window_active(first_activation);
+    let _w = runtime::app().open_window("settings");
+}
+
+// Windows exist only once WinUI has launched, so Settings' own observer is
+// armed at the first activation rather than here.
+fn first_activation(ctx: *u8) {
+    if SETTINGS_DENSITY.pending() { return; }
+    match window::find("settings") {
+        option::Option[window::Window]::Some(w) => {
+            SETTINGS_DENSITY = w.on_density(settings_density_changed);
+            if SETTINGS_DENSITY.pending() { say("PROBE settings observed"); }
+            let d: f64 = runtime::display_density();
+            say("PROBE density read ${d}");
+        }
+        option::Option[window::Window]::None => { }
+    }
+}
+
+fn early_fired(ctx: *u8) { say("PROBE early timer"); }
+fn to_dark(ctx: *u8) { runtime::set_app_appearance(vocab::Appearance::Dark); say("PROBE appearance dark"); }
+
+fn app_density_changed(ctx: *u8) {
+    let d: f64 = runtime::display_density();
+    say("PROBE density ${d}");
+}
+
+fn settings_density_changed(ctx: *u8) { say("PROBE settings density"); }
+
+fn should_quit(ctx: *u8) -> bool {
+    ASKED = ASKED + 1;
+    let n: i32 = ASKED;
+    say("PROBE should_quit ${n}");
+    return n > 1;
+}
+
+fn quitting(ctx: *u8) {
+    APP_DENSITY.cancel();
+    EARLY.cancel();
+    ACTIVATED.cancel();
+    SETTINGS_DENSITY.cancel();
+    say("PROBE quit");
+}

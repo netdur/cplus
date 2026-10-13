@@ -281,6 +281,25 @@ fields, which are reachable through their accessors).
 - `--out DIR`: output directory for `--framework` (default: lowercased framework name).
 - `-- <clang args>`: everything after `--` is passed to clang.
 
+## C packages (`--cpackage`)
+
+```
+cpc-bindgen --cpackage --out vendor/<pkg> [--pkg <pkg-config name>]...     --header <h>... [--clib <lib>]... [--search-path <dir>]...     [--skip <function>]... [--variant <platform>] [-- <clang args>]
+```
+
+Binds C headers into a whole package: one module per header (with an
+umbrella when there are several), a `Cplus.toml` whose `[link]` carries the
+libraries and search paths, and a `Reproduce:` line.
+
+- `--skip <function>`: leave a declared function unbound - one the library
+  does not export on the target (e.g. CUDA's Linux-only
+  `cudaDeviceGetNvSciSyncAttributes` on Windows). A bound-but-missing symbol
+  fails the link of every application that imports the module.
+- `--variant <platform>`: write each module as `<module>_<platform>.cplus`,
+  the resolver's platform override, into an existing package, leaving its
+  manifest and umbrella alone; the reproduce line is printed. For headers
+  that differ per platform. `vendor/cuda` uses both (see its README).
+
 ## Generated output depends on the `objc` runtime
 
 ObjC bindings call into the hand-written bridge. Each emitted file imports

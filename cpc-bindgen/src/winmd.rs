@@ -429,13 +429,18 @@ impl Generator {
             }
         }
         high.push("*u8".into()); args.push("rt::delegate_context(self)".into());
+        // An event's sender is its first object parameter; the runtime keeps
+        // it for the callback's duration (rt::event_sender).
+        let sends=signature.params.first().map_or(false,|t| Self::is_object(t));
+        let enter=if sends {"        let outer: usize = rt::event_enter(p0);\n"} else {""};
+        let leave=if sends {"        rt::event_leave(outer);\n"} else {""};
         let high_types=high.join(", "); let abi_types=abi.join(", ");
         // AddHandler takes Object, so WinRT delegates must travel in a typed
         // IReference<T> box; they are IUnknown interfaces, not IInspectable.
         let reference=Type::TypeDef(self.resolve(TypeName("Windows.Foundation","IReference"))?,vec![ty.clone()]);
         let boxed_iid=guid_literal(&self.iid(&reference)?);
         writeln!(out,"    fn boxed(this) -> result::Result[rt::Object, rt::Error] {{ return rt::box_interface(this._object, {boxed_iid}); }}").unwrap();
-        writeln!(out,"    fn new(on_invoke: fn({high_types}) -> rt::Status, on_invoke_ctx: *u8 = 0 as *u8, agile: bool = false) -> result::Result[{name}, rt::Error] {{\n        let invoke: fn({abi_types}) -> i32 = {name}::dispatch;\n        match rt::delegate({}_iid(), invoke as *u8, on_invoke as *u8, on_invoke_ctx, agile) {{\n            result::Result::Ok(o) => {{ return result::Result[{name}, rt::Error]::Ok({name} {{ _object: o }}); }}\n            result::Result::Err(e) => {{ return result::Result[{name}, rt::Error]::Err(e); }}\n        }}\n    }}\n    fn dispatch({}) -> i32 {{\n{setup}        let callback: fn({high_types}) -> rt::Status = rt::delegate_callback(self) as fn({high_types}) -> rt::Status;\n        let status: rt::Status = callback({});\n        return status.code;\n    }}",snake(name),declarations.join(", "),args.join(", ")).unwrap();
+        writeln!(out,"    fn new(on_invoke: fn({high_types}) -> rt::Status, on_invoke_ctx: *u8 = 0 as *u8, agile: bool = false) -> result::Result[{name}, rt::Error] {{\n        let invoke: fn({abi_types}) -> i32 = {name}::dispatch;\n        match rt::delegate({}_iid(), invoke as *u8, on_invoke as *u8, on_invoke_ctx, agile) {{\n            result::Result::Ok(o) => {{ return result::Result[{name}, rt::Error]::Ok({name} {{ _object: o }}); }}\n            result::Result::Err(e) => {{ return result::Result[{name}, rt::Error]::Err(e); }}\n        }}\n    }}\n    fn dispatch({}) -> i32 {{\n{setup}        let callback: fn({high_types}) -> rt::Status = rt::delegate_callback(self) as fn({high_types}) -> rt::Status;\n{enter}        let status: rt::Status = callback({});\n{leave}        return status.code;\n    }}",snake(name),declarations.join(", "),args.join(", ")).unwrap();
         Ok(())
     }
 }

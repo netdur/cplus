@@ -3,33 +3,48 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/nav" as nav;
+import "facet/services" as services;
 import "facet/screen" as screen;
 import "facet/vocabulary" as vocab;
 import "flex_layout/flex_layout" as flex;
 import "facet_runtime/runtime" as runtime;
+import "facet/label" as label;
+import "facet/button" as button;
+import "./pad" as pad;
+import "./native_view" as native_view;
 
-struct Settings { context: nav::Context }
+struct Settings { context: nav::Context, later: services::Cancellable, pad: pad::Pad }
 
 impl Settings {
-    fn new() -> Settings { return Settings { context: nav::Context::none() }; }
+    fn new() -> Settings { return Settings { context: nav::Context::none(), later: services::Cancellable::none(), pad: pad::Pad::new() }; }
     fn boxed() -> screen::ScreenBox { return screen::screen_box::[Settings](Settings::new()); }
     fn on_done(ref this, sender: *u8) { runtime::window_close(sender); }
+    // The sheet opens over THIS window, even when another one is active.
+    fn on_alert(ref this, sender: *u8) {
+        runtime::alert("Settings alert", "Shown over the window that asked.", "OK");
+    }
+    // Later, when another window may be active: still over THIS one.
+    fn on_alert_later(ref this, sender: *u8) {
+        this.later = services::after(1.5f64, this.alert_now);
+    }
+    fn alert_now(ref this) { this.on_alert(0 as *u8); }
 }
 
 impl Settings: component::Component {
     fn build(ref this) -> core::Node {
-        var root = @ui {
-            column(key: "settings") {
-                label("Settings", key: "settings:title", font_size: 20.0f64)
-                label("A second window of the same App. Closing it leaves the first running.",
-                      key: "settings:body", font_size: 13.0f64,
-                      line_break: vocab::LineBreak::WordWrap, max_lines: 0)
-                button("Done", key: "settings:done", on_click: this.on_done)
-            }
-                .grow(1.0f64)
-                .padding(24.0f64)
-                .gap(12.0f64)
-        };
+        var actions: core::Builder = core::Builder::new();
+        actions.add(button::button("Show alert", key: "settings:alert", on_click: this.on_alert));
+        actions.add(button::button("Alert in 1.5 s", key: "settings:alert-later", on_click: this.on_alert_later));
+        actions.add(button::button("Done", key: "settings:done", on_click: this.on_done));
+        var b: core::Builder = core::Builder::new();
+        b.add(label::label("Settings", key: "settings:title", font_size: 20.0f64));
+        b.add(label::label("A second window of the same App. Closing it leaves the first running.",
+                           key: "settings:body", font_size: 13.0f64,
+                           line_break: vocab::LineBreak::WordWrap, max_lines: 0));
+        b.add(core::row(actions, key: "settings:actions").gap(8.0f64));
+        b.add(this.pad.build());
+        b.add(native_view::node("settings:native").height(40.0f64).shrink(0.0f64));
+        var root: core::Node = core::column(b, key: "settings").grow(1.0f64).padding(24.0f64).gap(12.0f64);
         root.set_safe_area(vocab::SafeArea::None);
         return root;
     }

@@ -3,9 +3,8 @@
 Import `"facet_winui/facet_winui" as host`.
 [Tutorial](tutorial.md) · [Guide](guide.md) · [Coverage](../MANIFEST.md)
 
-An application written against `facet_runtime` does not call this module: it
-selects WinUI with `facet_runtime/winui`'s `select()` and keeps using
-`runtime::App` (see the [guide](guide.md#through-facet_runtime)). The functions
+An application written against `facet_runtime` does not call this module: WinUI
+is the Windows backend and it keeps using `runtime::App` (see the [guide](guide.md#through-facet_runtime)). The functions
 below are the explicit host that driver is built on.
 
 ## One window
@@ -35,7 +34,9 @@ fn start(on_launch: fn(*u8), on_launch_ctx: *u8 = 0 as *u8,
          on_stopped: fn(*u8) = 0 as fn(*u8), on_stopped_ctx: *u8 = 0 as *u8) -> rt::Status;
 fn open_window(root: *core::Node, take chrome: screen::Chrome,
                will_close: fn(*u8) = 0 as fn(*u8), will_close_ctx: *u8 = 0 as *u8,
-               owned: bool = false) -> *u8;
+               owned: bool = false,
+               should_close: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
+               should_close_ctx: *u8 = 0 as *u8) -> *u8;
 fn launched() -> bool;
 fn window_count() -> usize;
 fn close_window_of(root: *core::Node) -> bool;
@@ -51,6 +52,11 @@ The answer is an opaque window handle, also recorded as the root's
 
 `open_window` borrows `root` unless `owned` is true, in which case the root
 is a `box::Box[core::Node]` raw pointer the host frees after unmounting.
+`should_close` is asked before a close the user starts: a caption button,
+Alt+F4, a `WM_CLOSE` from outside (all raise AppWindow.Closing) or the
+`window_buttons()` close. False cancels the close and the tree stays mounted.
+A close made in code (`close_window_of`, `close`, the `facet/window` seam's
+`close`) is not asked again, because its caller already decided.
 `will_close` runs on Window.Closed while the views still exist; the tree is
 unmounted after it returns. Closing any window unmounts only its tree; closing
 the last one retires the process-wide services and returns from `start`, after
@@ -85,13 +91,18 @@ fn dismiss_layer(window: *u8);
 fn set_layer_gone(f: fn(*u8));
 fn focus_when_loaded(n: *core::Node);
 fn active_host() -> *u8;
+fn asking_host() -> *u8;
 ```
 
 One facet tree shown over a window's content, centred on a card above a scrim
 that takes every press. The tree is mounted like a window, so `find` and the
 agent reach its keys. `on_key` sees virtual keys pressed in the card that no
 control handled. `set_layer_gone` is told when a window closes under its
-layer. `active_host` is the most recently activated window.
+layer. `active_host` is the most recently activated window. `asking_host` is
+the window that asked for what is running now: the window a deferred callback
+was scheduled from (`scheduler::after` carries it), else the window of the
+event being delivered (its sender's XamlRoot), else `active_host`. The
+dialogs present on `asking_host`.
 
 `facet_winui/dialogs` builds the facade's dialogs on it, with the trees every
 other backend uses:

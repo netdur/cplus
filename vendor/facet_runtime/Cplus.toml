@@ -88,23 +88,21 @@ android_view  = "*"
 jni           = "*"
 
 [windows.dependencies]
-facet_win32 = "*"
-# facet_win32's transitive deps — same flat-set rule: the resolver validates
-# every import in a build against ONE flat set taken from the consuming
-# manifest, so a tier's own dependencies are not enough.
+# WinUI is the Windows backend (netdu/cplus#20): facet_winui and its
+# bindings. `win32` is the shell services (`src/shell_windows.cplus`:
+# clipboard, file pickers), which are the OS's rather than a toolkit's.
+facet_winui = "*"
+winui       = "*"
+winrt       = "*"
 win32       = "*"
 
-# SOURCE MODE ON WINDOWS, because of `src/winui_windows.cplus`. That module is
-# how an app opts into WinUI (`facet_runtime/winui`), and it imports
-# facet_winui. A prebuilt archive is compiled from EVERY active module, so
-# prebuilding here would put WinUI's generated bindings into every Windows
-# app's build and make every one of them list facet_winui, winui and winrt.
-# In source mode a module is compiled only when something imports it: Win32
-# apps never reach it, and the app that imports it lists those three itself.
-# The facade is small; the cost is compiling it with each app, as on Android:
-# measured 2026-10-05, the Win32 facet_gallery's warm build is 13.4 s in
-# source mode against 12.6 s with the facade prebuilt.
-# Neither facet_winui nor its bindings are listed below, on purpose: the app
-# that opts in names them.
+# SOURCE MODE ON WINDOWS, because of `src/win32_windows.cplus`. That module is
+# how an app opts out to the deprecated Win32 backend (`facet_runtime/win32`),
+# and it imports facet_win32. A prebuilt archive is compiled from EVERY active
+# module, so prebuilding here would put facet_win32 into every Windows app's
+# build and make every one of them list it. In source mode a module is
+# compiled only when something imports it: an app that opts out lists
+# facet_win32 itself. The facade is small; the cost is compiling it with each
+# app, as on Android.
 [windows.build]
 prebuild = false

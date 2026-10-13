@@ -1,0 +1,13 @@
+// cblas's suite: the library links and computes. Needs OpenBLAS where the
+// manifest's `[link]` finds it (see README).
+import "./cblas" as blas;
+
+#[test]
+fn a_dot_product_is_computed_by_the_library() {
+    var x: [f64; 3] = [1.0f64, 2.0f64, 3.0f64];
+    var y: [f64; 3] = [4.0f64, 5.0f64, 6.0f64];
+    assert blas::cblas_ddot(3, #addr_of(x) as *f64, 1, #addr_of(y) as *f64, 1) == 32.0f64;
+    // NEGATIVE: an empty vector is zero, not a read past its end.
+    assert blas::cblas_ddot(0, #addr_of(x) as *f64, 1, #addr_of(y) as *f64, 1) == 0.0f64;
+    return;
+}

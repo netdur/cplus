@@ -30,6 +30,14 @@ let nodes = session.describe_ui();
 let clicked = session.click("save");
 ```
 
+One Surface serves every window of the UI thread. `open(window)` starts it
+with one; `add_window(window)` and `remove_window(window)` follow the app's
+windows as they open and close. Each window is a node of role `window` under
+`app`, in the order added, with its content beneath it. `set_names_fn(f)`
+names them: `f(window)` is asked at every walk, and empty text keeps the
+positional id (`app/window#0`). A window's name outranks a pin with the same
+id; that pin keeps its policy and takes a positional id.
+
 Keep the surface at a stable address while any session borrows it. Pinning owns
 the id and retains the control; `unpin(object)` releases the registration.
 `update` supports renderer replacement under the same key. `set_policy` changes
@@ -73,7 +81,7 @@ UI dispatch lifecycle; this native backend retains no MCP dependency.
 
 ## Current boundaries
 
-- One native Window per Surface; no popup enumeration or multiwindow aggregator.
+- Popups (open menus and pickers) are not enumerated.
 - Visual-tree controls only: unrealized list items and WebView DOM are not walked.
 - Range values are readable; range editing and rich editor operations are not implemented.
 - Hit testing and styled runs report unsupported; caret/menu verbs refuse.

@@ -27,3 +27,10 @@ that accept an inspectable object. The runtime owns the delegate through a
 typed `IReference<T>` box; ordinary typed event subscriptions still use
 `object()`. Keep the box for `RemoveHandler`, and keep the borrowed callback
 context alive until removal. Boxing does not make a delegate agile.
+
+A generated delegate whose first parameter is an object (an event's sender)
+records that sender around its callback. After `track_events()` on a thread,
+`event_sender()` there answers the sender of the innermost event being
+delivered, or null; other threads are not tracked. The pointer is borrowed for
+the callback's duration. facet_winui uses it to find the window that asked
+for an alert.

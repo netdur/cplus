@@ -22,10 +22,32 @@ import "facet_winui/facet_winui" as host;
 // host::run(tree, "My application") owns the tree through native shutdown.
 ```
 
+## Deployment
+
+Two ways to have the Windows App Runtime, chosen at start
+(`winui/application::use_runtime`):
+
+- **Installed (framework-dependent), the default.** A plain `cpc build` output
+  runs on any Windows 11 x64 machine with the Windows App Runtime 2 installed
+  (`Microsoft.WindowsAppRuntime.2`, 2.5.1 or later; the installer is
+  https://aka.ms/windowsappsdk/2/latest/windowsappruntimeinstall-x64.exe). At
+  start the process adds the installed framework to its package graph with
+  `TryCreatePackageDependency`/`AddPackageDependency` - the SDK
+  bootstrapper's job, done without shipping its DLL. Nothing is staged and no
+  activation manifest is needed. An application installer installs the
+  runtime the way it would any redistributable.
+- **Self-contained.** When `Microsoft.WindowsAppRuntime.dll` sits beside the
+  executable, that copy is used: the examples' `build.ps1` stage the SDK
+  runtime (`examples/winui_standalone/prepare_runtime.py`) and embed its
+  activation manifest. This also runs on Windows 10, where the dynamic
+  dependency API does not exist.
+
+When neither is available the run ends with a message naming the installer.
+
 Any number of windows run in the one WinUI Application: `host::start` and
 `host::open_window` open them, each honours `screen::Chrome` (size, limits,
 bar, buttons), and closing the last ends the run. A `runtime::App` runs here
-unchanged after `facet_runtime/winui`'s `select()` - windows, routes,
+by default - WinUI is the Windows backend - windows, routes,
 `open_window` and keyed alert/choose/prompt sheets included; see
 [examples/facet_runtime_winui](../../examples/facet_runtime_winui/README.md).
 
@@ -46,10 +68,10 @@ python tools/verb_coverage.py winui --list --check
 
 These test real pointer/keyboard/wheel input, text readback and programmatic
 updates, length limits and read-only fields, scrolling, resize, control
-replacement during its callback, and cleanup. `facet_runtime` still
-defaults to Win32 on Windows; an app opts into this backend with
-`facet_runtime/winui`. The app menu, a close-time `on_should_quit` and
-density-change observation are not served through the facade yet
+replacement during its callback, and cleanup. `facet_runtime` runs on this
+backend by default; `.gesture(...)` works on any node, drag and drop
+included (text and files in, a node's key out), `focus()`/`blur()`
+move the keyboard and `is_focused` reads back; `App::menu` is a MenuBar in every window
 ([MANIFEST](MANIFEST.md)).
 
 The parity probe checks UTF-16 selection and selection-only events, Enter and

@@ -2436,7 +2436,7 @@ lang = "toml"
 verified = true
 emit_site = "cplus-core/src/manifest.rs:349"
 test = "cplus-core/src/manifest.rs:link_search_paths_unset_env_var_rejected_e0865"
-cause = "A `${VAR}` reference in `[link].search-paths` or `[link].extra-objects` names an environment variable that is unset at manifest-parse time and the reference carries no `:-default` fallback."
+cause = "A `${VAR}` reference in `[link].search-paths`, `[link].extra-objects` or `[link].libs` names an environment variable that is unset at manifest-parse time and the reference carries no `:-default` fallback."
 fix = "Set the variable, or give a default with `${VAR:-/path}` (caught at manifest parse time)."
 example = '''
 [package]

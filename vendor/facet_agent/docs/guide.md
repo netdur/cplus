@@ -48,11 +48,19 @@ that second window CLOSED. The user saw a working app throughout. A driver
 cannot tell one node named `app` from an app that has not finished launching,
 and waits forever.
 
-On GTK and Win32 the backend walks the platform's widgets and never imports
-facet, so it asks for the window list through a seam (`set_windows_fn`) that
-`facet_agent` fills from facet's registry. A backend with nothing installed
-keeps the old one-window behaviour, which is what an app driving a window facet
-does not know about still gets.
+On GTK the backend walks the platform's widgets and never imports facet, so it
+asks for the window list through a seam (`set_windows_fn`) that `facet_agent`
+fills from facet's registry. A backend with nothing installed keeps the old
+one-window behaviour, which is what an app driving a window facet does not know
+about still gets.
+
+On Windows the reader is `agent_winui`, over WinUI's XAML tree (netdu/cplus#20).
+facet_winui tells `facet_agent` about every window it opens and closes, and
+`agent_winui` asks each window's name through `set_names_fn`, which this
+package answers from facet's registry the way agent_appkit does. A window's
+registered name outranks a control keyed the same (a screen root keyed
+`settings` in the window `settings`): the control keeps its policy under a
+positional id.
 
 ## An id, not an address
 

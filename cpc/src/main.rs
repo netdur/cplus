@@ -2809,6 +2809,20 @@ fn prebuilt_archive_name(pkg: &str) -> String {
     format!("lib{pkg}.a")
 }
 
+/// The link arguments one `[link] search-paths` entry becomes: `-L<dir>`
+/// everywhere, and on an ELF/Mach-O target `-Wl,-rpath,<dir>` too, which bakes
+/// the directory into the binary so the loader finds the library at run time
+/// with no LD_LIBRARY_PATH. A PE image has no rpath - the DLL is found on PATH
+/// or beside the exe - and lld-link warned "ignoring unknown argument
+/// '-rpath'" for every entry (netdur/cplus#4).
+fn search_path_args(dir: &str, platform: &str) -> Vec<String> {
+    let mut out = vec![format!("-L{dir}")];
+    if platform != "windows" {
+        out.push(format!("-Wl,-rpath,{dir}"));
+    }
+    out
+}
+
 /// A dependency's `[link]` contributions that are independent of binary
 /// slices: search paths, frameworks, system libs, prebuilt objects. Shared by
 /// the normal path and the `dev = true` path, which takes everything here and
@@ -2823,11 +2837,9 @@ fn splice_plain_link_args(
         return Ok(());
     };
     // `-L<dir>` must precede the `-l<name>` it resolves; emit search
-    // paths first. `-rpath` bakes the same dir into the binary so the
-    // loader finds the .so at runtime (no LD_LIBRARY_PATH needed).
+    // paths first. See `search_path_args` for the `-rpath` that rides along.
     for dir in &ls.search_paths {
-        link_args.push(format!("-L{dir}"));
-        link_args.push(format!("-Wl,-rpath,{dir}"));
+        link_args.extend(search_path_args(dir, target::active_platform()));
     }
     for fw in &ls.frameworks {
         link_args.push("-framework".to_string());
@@ -3507,8 +3519,7 @@ fn build_project(
     let mut link_args: Vec<String> = Vec::new();
     if let Some(ls) = m.link.as_ref() {
         for dir in &ls.search_paths {
-            link_args.push(format!("-L{dir}"));
-            link_args.push(format!("-Wl,-rpath,{dir}"));
+            link_args.extend(search_path_args(dir, target::active_platform()));
         }
         for fw in &ls.frameworks {
             link_args.push("-framework".to_string());
@@ -9027,4 +9038,18 @@ fn run_init(args: &[OsString]) -> ExitCode {
     );
     println!("      clones it from git into vendor/stdlib.");
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod link_arg_tests {
+    use super::search_path_args;
+
+    #[test]
+    fn a_search_path_is_an_rpath_only_where_binaries_have_one() {
+        assert_eq!(search_path_args("/usr/local/cuda/lib64", "linux"),
+                   vec!["-L/usr/local/cuda/lib64", "-Wl,-rpath,/usr/local/cuda/lib64"]);
+        assert_eq!(search_path_args("/opt/lib", "macos"), vec!["-L/opt/lib", "-Wl,-rpath,/opt/lib"]);
+        // A PE image has no rpath; lld-link only warned about it (#4).
+        assert_eq!(search_path_args("C:/cuda/lib/x64", "windows"), vec!["-LC:/cuda/lib/x64"]);
+    }
 }

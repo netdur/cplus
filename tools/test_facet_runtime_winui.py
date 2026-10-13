@@ -1,0 +1,795 @@
+"""facet_runtime on WinUI, driven from outside; build examples/facet_runtime_winui first.
+
+A close that the user starts is a WM_CLOSE from outside, the same request a
+caption button or Alt+F4 makes, so that is what these checks post.
+"""
+import ctypes as c
+from ctypes import wintypes as w
+import os
+from pathlib import Path
+import subprocess
+import time
+
+REPO = Path(__file__).resolve().parents[1]
+# The staged build by default; CPLUS_RUNTIME_WINUI_DIR names another (a plain
+# `cpc build` output, which runs on the installed Windows App Runtime).
+RUNTIME = Path(os.environ.get('CPLUS_RUNTIME_WINUI_DIR', REPO / 'examples/facet_runtime_winui/out/runtime'))
+EXE = RUNTIME / os.environ.get('CPLUS_RUNTIME_WINUI_EXE', 'facet_runtime_winui.exe')
+u = c.WinDLL('user32', use_last_error=True)
+u.FindWindowW.argtypes = [w.LPCWSTR, w.LPCWSTR]
+u.FindWindowW.restype = w.HWND
+u.PostMessageW.argtypes = [w.HWND, w.UINT, w.WPARAM, w.LPARAM]
+u.IsWindow.argtypes = [w.HWND]
+u.GetForegroundWindow.restype = w.HWND
+u.GetDpiForWindow.argtypes = [w.HWND]
+u.SetWindowPos.argtypes = [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT]
+u.IsWindowVisible.argtypes = [w.HWND]
+u.GetWindowThreadProcessId.argtypes = [w.HWND, c.POINTER(w.DWORD)]
+WM_CLOSE = 0x0010
+UIA = REPO / 'tools/winui_uia.ps1'
+# Physical pixels, as winui_uia.ps1's `rect` answers, for the cursor.
+u.SetProcessDpiAwarenessContext(c.c_void_p(-4))
+
+
+def uia(action, hwnd, key):
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(UIA),
+                             action, str(hwnd), key], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def shows(hwnd, key, seconds=10):
+    end = time.time() + seconds
+    while time.time() < end:
+        if uia('find', hwnd, key) == '1':
+            return True
+        time.sleep(.2)
+    return False
+
+
+def read(log):
+    return log.read_text(encoding='utf-8', errors='replace')
+
+
+def wait_for(log, marker, process, seconds=30):
+    end = time.time() + seconds
+    while time.time() < end:
+        content = read(log)
+        if marker in content:
+            return content
+        if process.poll() is not None:
+            raise AssertionError(f'exited {process.returncode} before {marker!r}:\n{content}')
+        time.sleep(.05)
+    raise AssertionError(f'timed out waiting for {marker!r}:\n{read(log)}')
+
+
+def window(title, process, seconds=15):
+    end = time.time() + seconds
+    while time.time() < end:
+        hwnd = u.FindWindowW(None, title)
+        if hwnd:
+            pid = w.DWORD()
+            u.GetWindowThreadProcessId(hwnd, c.byref(pid))
+            if pid.value == process.pid:
+                return hwnd
+        time.sleep(.05)
+    raise AssertionError(f'no window titled {title!r}')
+
+
+def launch(log, probe):
+    env = {**os.environ, 'CPLUS_RUNTIME_WINUI_PROBE': probe}
+    output = log.open('w', encoding='utf-8')
+    process = subprocess.Popen([str(EXE)], cwd=RUNTIME, env=env, stdout=output,
+                               stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+    return process, output
+
+
+def run_close_question():
+    """Closing the last window asks on_should_quit; another window does not."""
+    log = RUNTIME / 'close_question.log'
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        main = window('WinUI runtime', process)
+
+        # Not the last window: it closes and the app is not asked.
+        assert u.PostMessageW(settings, WM_CLOSE, 0, 0)
+        end = time.time() + 10
+        while u.IsWindow(settings) and time.time() < end:
+            time.sleep(.05)
+        assert not u.IsWindow(settings), 'settings did not close'
+        time.sleep(.5)
+        assert 'PROBE should_quit' not in read(log), 'a non-last window asked on_should_quit'
+
+        # The last window: asked, refused, still up and still running.
+        assert u.PostMessageW(main, WM_CLOSE, 0, 0)
+        wait_for(log, 'PROBE should_quit 1', process, 10)
+        time.sleep(.5)
+        assert u.IsWindow(main), 'the refused close still closed the window'
+        assert process.poll() is None, 'the refused close ended the run'
+        assert 'PROBE quit' not in read(log)
+
+        # Asked again; allowed this time, the run ends cleanly.
+        assert u.PostMessageW(main, WM_CLOSE, 0, 0)
+        wait_for(log, 'PROBE should_quit 2', process, 10)
+        assert process.wait(15) == 0, read(log)
+        content = read(log)
+        assert 'PROBE quit' in content
+        assert content.count('PROBE should_quit') == 2, content
+        assert 'outlived the run' not in content, content
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: close question (non-last window not asked, refusal holds, allow ends the run)')
+
+
+def activate(hwnd, key):
+    assert uia('focus', hwnd, key) == 'focused'
+    end = time.time() + 5
+    while u.GetForegroundWindow() != hwnd and time.time() < end:
+        time.sleep(.05)
+    assert u.GetForegroundWindow() == hwnd, f'could not activate {key}'
+    time.sleep(.3)
+
+
+def run_alert_window():
+    """An alert opens over the window whose control asked, not the active one."""
+    log = RUNTIME / 'alert_window.log'
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        main = window('WinUI runtime', process)
+        assert shows(settings, 'settings:alert-later')
+        # Settings asks for an alert 1.5 s from now (the press activates it);
+        # main is made the active window before it fires.
+        assert uia('invoke', settings, 'settings:alert-later') == 'invoked'
+        activate(main, 'home:prompt')
+        assert shows(settings, 'alert:title'), 'the alert is not on the window that asked'
+        assert uia('find', main, 'alert:title') == '0', 'the alert went to the active window'
+        assert uia('invoke', settings, 'alert:primary') == 'invoked'
+        end = time.time() + 10
+        while uia('find', settings, 'alert:title') == '1' and time.time() < end:
+            time.sleep(.2)
+        assert uia('find', settings, 'alert:title') == '0', 'the alert did not answer'
+        # An immediate alert from a press goes to the pressed window.
+        activate(main, 'home:prompt')
+        assert uia('invoke', settings, 'settings:alert') == 'invoked'
+        assert shows(settings, 'alert:title')
+        assert uia('find', main, 'alert:title') == '0'
+        assert uia('invoke', settings, 'alert:primary') == 'invoked'
+        # NEGATIVE: the main window's own button keeps it on main.
+        assert uia('invoke', main, 'home:alert') == 'invoked'
+        assert shows(main, 'alert:title')
+        assert uia('find', settings, 'alert:title') == '0'
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: alert window (a deferred alert stays on the window that asked; each window keeps its own)')
+
+
+def run_worker_hop():
+    """A job's worker hands its result back through run_on_main."""
+    log = RUNTIME / 'worker_hop.log'
+    process, output = launch(log, '0')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        main = window('WinUI runtime', process)
+        assert shows(main, 'home:load')
+        # Twice: the press writes "Loading...", so the second answer is a new hop.
+        for round in (1, 2):
+            assert uia('invoke', main, 'home:load') == 'invoked'
+            end = time.time() + 10
+            name = ''
+            while time.time() < end:
+                name = uia('name', main, 'home:loaded')
+                if name.startswith('Loaded'):
+                    break
+                time.sleep(.2)
+            assert name == 'Loaded 42 off the UI thread', f'round {round}: {name!r}\n{read(log)}'
+            assert process.poll() is None, read(log)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: worker hop (run_job runs off the UI thread and applies on it, twice)')
+
+
+def run_density():
+    """Density reads the window's real scale; a resize is not a density change.
+
+    A real change needs a move between monitors of different scale, which one
+    display cannot give: WinUI ignores a synthetic WM_DPICHANGED.
+    """
+    log = RUNTIME / 'density.log'
+    process, output = launch(log, '1')
+    try:
+        content = wait_for(log, 'PROBE density read', process)
+        wait_for(log, 'PROBE settings observed', process)
+        # A timer the app scheduled in on_launch, before WinUI had a queue.
+        wait_for(log, 'PROBE early timer', process, 10)
+        main = window('WinUI runtime', process)
+        expected = u.GetDpiForWindow(main) / 96
+        read_value = float(content.split('PROBE density read ')[1].split()[0])
+        assert abs(read_value - expected) < 1e-6, (read_value, expected)
+        # Resizing raises XamlRoot.Changed with the scale unchanged: neither
+        # the app-wide nor Settings' own density observer may fire.
+        for width in (900, 700, 800):
+            assert u.SetWindowPos(main, None, 60, 60, width, 560, 0x0014)
+            time.sleep(.4)
+        assert process.poll() is None, read(log)
+        content = read(log)
+        assert 'PROBE density 1' not in content and 'PROBE density 2' not in content, content
+        assert 'PROBE settings density' not in content, content
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print(f'PASS: density (reads {expected}; resizing reports no density change)')
+
+
+def chord(*keys):
+    """Press keys together, as a person does: into the foreground window."""
+    for key in keys:
+        u.keybd_event(key, 0, 0, 0)
+    for key in reversed(keys):
+        u.keybd_event(key, 0, 2, 0)
+
+
+def type_text(value):
+    for ch in value.upper():
+        chord(ord(ch))
+
+
+def clipboard(value=None):
+    """Read the clipboard's text, or replace it with `value` first."""
+    k = c.WinDLL('kernel32')
+    k.GlobalAlloc.restype = c.c_void_p
+    k.GlobalLock.restype = c.c_void_p
+    k.GlobalLock.argtypes = k.GlobalUnlock.argtypes = [c.c_void_p]
+    u.GetClipboardData.restype = c.c_void_p
+    u.SetClipboardData.argtypes = [w.UINT, c.c_void_p]
+    assert u.OpenClipboard(None)
+    try:
+        if value is not None:
+            data = (value + '\0').encode('utf-16-le')
+            handle = k.GlobalAlloc(2, len(data))
+            c.memmove(k.GlobalLock(handle), data, len(data))
+            k.GlobalUnlock(handle)
+            u.EmptyClipboard()
+            u.SetClipboardData(13, handle)
+            return value
+        handle = u.GetClipboardData(13)
+        if not handle:
+            return None
+        text = c.wstring_at(k.GlobalLock(handle))
+        k.GlobalUnlock(handle)
+        return text
+    finally:
+        u.CloseClipboard()
+
+
+def wait_until(check, seconds=10):
+    end = time.time() + seconds
+    while time.time() < end:
+        if check():
+            return True
+        time.sleep(.1)
+    return False
+
+
+def run_app_menu():
+    """App::menu is a MenuBar in every window: clicks, live enabled state,
+    Ctrl shortcuts, the edit actions on the text field that had the keyboard,
+    and the quit token through on_should_quit."""
+    log = RUNTIME / 'app_menu.log'
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        main = window('WinUI runtime', process)
+        for hwnd in (main, settings):
+            assert shows(hwnd, 'menu:File') and shows(hwnd, 'menu:Edit')
+
+        # A click, and an item whose enabled state follows the app.
+        assert uia('expand', main, 'menu:Window') == 'expanded'
+        assert uia('enabled', main, 'menu:Window:Close Settings') == 'True'
+        assert uia('invoke', main, 'menu:Window:Close Settings') == 'invoked'
+        assert wait_until(lambda: not u.IsWindow(settings)), 'Close Settings did not close it'
+        assert uia('expand', main, 'menu:Window') == 'expanded'
+        assert uia('enabled', main, 'menu:Window:Close Settings') == 'False', 'stale enabled state'
+        chord(0x1B)
+
+        # A shortcut with the menu closed: Ctrl+, opens Settings again.
+        activate(main, 'home:prompt')
+        chord(0x11, 0xBC)
+        reopened = window('Settings', process)   # raises when Ctrl+, did nothing
+        u.PostMessageW(reopened, WM_CLOSE, 0, 0)
+        assert wait_until(lambda: not u.IsWindow(reopened))
+
+        # Edit > Select All, Edit > Copy from the menu act on the field that
+        # had the keyboard, although opening the menu took it.
+        activate(main, 'home:prompt')
+        assert uia('invoke', main, 'home:prompt') == 'invoked'
+        assert shows(main, 'prompt:value')
+        assert uia('focus', main, 'prompt:value') == 'focused'
+        type_text('hello')
+        assert wait_until(lambda: uia('value', main, 'prompt:value') == 'hello'), uia('value', main, 'prompt:value')
+        clipboard('sentinel')
+        for item in ('Select All', 'Copy'):
+            assert uia('expand', main, 'menu:Edit') == 'expanded'
+            assert uia('invoke', main, f'menu:Edit:{item}') == 'invoked'
+            time.sleep(.3)
+        assert wait_until(lambda: clipboard() == 'hello'), f'clipboard {clipboard()!r}'
+        assert uia('invoke', main, 'prompt:cancel') == 'invoked'
+
+        # The quit token asks on_should_quit (refused once), then Ctrl+Q ends the run.
+        assert uia('expand', main, 'menu:File') == 'expanded'
+        assert uia('invoke', main, 'menu:File:Quit') == 'invoked'
+        wait_for(log, 'PROBE should_quit 1', process, 10)
+        time.sleep(.5)
+        assert process.poll() is None, 'a refused quit ended the run'
+        activate(main, 'home:prompt')
+        chord(0x11, ord('Q'))
+        wait_for(log, 'PROBE should_quit 2', process, 10)
+        assert process.wait(15) == 0, read(log)
+        assert 'outlived the run' not in read(log), read(log)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: app menu (every window; click, live enabled state, Ctrl shortcut, edit actions, quit)')
+
+
+def window_of(nodes, key):
+    """The id of the `window` node a described node belongs to."""
+    index = next(i for i, n in enumerate(nodes) if n['id'] == key)
+    while index is not None:
+        if nodes[index]['role'] == 'window':
+            return nodes[index]['id']
+        index = nodes[index].get('parent')
+    return None
+
+
+def run_agent_windows():
+    """One agent connection reaches every window, each named as registered."""
+    import http.client
+    import json
+    log = RUNTIME / 'agent_windows.log'
+    env = {**os.environ, 'CPLUS_RUNTIME_WINUI_PROBE': '1', 'CPLUS_RUNTIME_WINUI_AGENT': '1'}
+    output = log.open('w', encoding='utf-8')
+    process = subprocess.Popen([str(EXE)], cwd=RUNTIME, env=env, stdout=output,
+                               stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+    conn = None
+
+    def rpc(method, params=None):
+        conn.request('POST', '/', json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method,
+                                              'params': params or {}}).encode(),
+                     {'Content-Type': 'application/json'})
+        value = json.loads(conn.getresponse().read())
+        assert 'error' not in value, value
+        return value['result']
+
+    def described(key):
+        end = time.time() + 10
+        while time.time() < end:
+            nodes = rpc('describe_ui', {'mode': 'full'})
+            if any(n['id'] == key for n in nodes):
+                return nodes
+            time.sleep(.2)
+        raise AssertionError(f'{key!r} never described')
+
+    try:
+        content = wait_for(log, 'AGENT PORT', process)
+        port = int(content.split('AGENT PORT ')[1].split()[0])
+        wait_for(log, 'READY: facet_winui', process)
+        wait_for(log, 'facet: agent surface on', process)
+        settings = window('Settings', process)
+        assert shows(settings, 'settings:alert')
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+        rpc('initialize', {'protocolVersion': '2024-11-05', 'capabilities': {},
+                           'clientInfo': {'name': 'operator', 'version': '1'}})
+
+        nodes = described('settings:alert')
+        windows = [n['id'] for n in nodes if n['role'] == 'window']
+        assert sorted(windows) == ['main', 'settings'], windows
+        assert window_of(nodes, 'home:open-settings') == 'main'
+        assert window_of(nodes, 'settings:alert') == 'settings'
+
+        # A control in the window opened second answers, and its sheet is
+        # described under that window.
+        assert rpc('click', {'id': 'settings:alert'})['outcome'] == 'allowed'
+        nodes = described('alert:title')
+        assert window_of(nodes, 'alert:title') == 'settings'
+        assert rpc('click', {'id': 'alert:primary'})['outcome'] == 'allowed'
+
+        # NEGATIVE: once Settings closes its controls are gone, and the first
+        # window is still served on the same connection.
+        u.PostMessageW(settings, WM_CLOSE, 0, 0)
+        assert wait_until(lambda: not u.IsWindow(settings))
+        nodes = rpc('describe_ui', {'mode': 'full'})
+        assert [n['id'] for n in nodes if n['role'] == 'window'] == ['main'], nodes
+        assert rpc('click', {'id': 'settings:alert'})['outcome'] == 'not_found'
+        # And a window opened later joins.
+        assert rpc('click', {'id': 'home:open-settings'})['outcome'] == 'allowed'
+        nodes = described('settings:alert')
+        assert window_of(nodes, 'settings:alert') == 'settings', 'a reopened window is not served'
+    finally:
+        if conn is not None:
+            conn.close()
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: agent windows (every window on one connection, named as registered; a closed one leaves)')
+
+
+def run_gestures():
+    """The gesture band on a plain container, driven by the real mouse and
+    keyboard: hover, click, double click, right click, long press, swipe,
+    unhover, the key band, and the focus and blur commands with their
+    handlers and is_focused."""
+    log = RUNTIME / 'gestures.log'
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        # A container has no automation peer: find the pad by its title label
+        # and aim at the empty space under it, which only a hit-testable
+        # container answers.
+        assert shows(settings, 'settings:pad-title')
+        activate(settings, 'settings:focus-pad')
+        scale = u.GetDpiForWindow(settings) / 96
+        tx, ty, tw, th = (int(v) for v in uia('rect', settings, 'settings:pad-title').split())
+        x, y = tx - round(8 * scale), ty - round(8 * scale)
+        width, height = round(300 * scale), round(70 * scale)
+        cx, cy = x + width // 2, ty + th + round(14 * scale)
+
+        def says(expected, seconds=5):
+            assert wait_until(lambda: uia('name', settings, 'settings:pad-log') == expected, seconds),                 (expected, uia('name', settings, 'settings:pad-log'))
+
+        def mouse(flags):
+            u.mouse_event(flags, 0, 0, 0, 0)
+
+        def move_to(px, py):
+            # Through the input queue, as tools/test_facet_winui_pointer.py
+            # does: SetCursorPos does not always reach it (remote sessions).
+            u.mouse_event(0x8001, round(px * 65535 / (u.GetSystemMetrics(0) - 1)),
+                          round(py * 65535 / (u.GetSystemMetrics(1) - 1)), 0, 0)
+            time.sleep(.03)
+
+        move_to(cx, cy)
+        says('hover')
+        mouse(2); mouse(4)                               # left click
+        says('click 1')
+        time.sleep(.6)                                   # past the double-click time
+        mouse(2); mouse(4); time.sleep(.05); mouse(2); mouse(4)
+        says('double')
+        mouse(8); mouse(16)                              # right click
+        says('right')
+        mouse(2); time.sleep(1.0); mouse(4)              # held past long_press_seconds
+        says('long')
+        time.sleep(.6)
+        assert uia('name', settings, 'settings:pad-log') == 'long', 'a long press also clicked'
+        move_to(x + 20, cy)                       # a drag across the pad
+        mouse(2)
+        for step in range(1, 13):
+            move_to(x + 20 + step * 15, cy); time.sleep(.02)
+        mouse(4)
+        says('swipe')
+        time.sleep(.6)
+        assert uia('name', settings, 'settings:pad-log') == 'swipe', 'a swipe also clicked'
+        move_to(x + width // 2, y - 40)           # out of the pad
+        says('unhover')
+
+        # The focus command takes the keyboard; the node reports it.
+        assert uia('invoke', settings, 'settings:focus-pad') == 'invoked'
+        says('focus true')
+        chord(0x1B)                                      # Escape, to the focused pad
+        says('key escape')
+        assert uia('invoke', settings, 'settings:blur-pad') == 'invoked'
+        says('blur false')
+        assert process.poll() is None, read(log)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: gestures (hover, click, double, right, long press, swipe, unhover, key band, focus/blur)')
+
+
+def run_inspector():
+    """The inspector's verbs on WinUI: `highlight` frames the node where it is
+    on screen, and `inspect` names the XAML class WinUI made of it."""
+    import http.client
+    import json
+    log = RUNTIME / 'inspector.log'
+    env = {**os.environ, 'CPLUS_RUNTIME_WINUI_PROBE': '0', 'CPLUS_RUNTIME_WINUI_AGENT': '1'}
+    output = log.open('w', encoding='utf-8')
+    process = subprocess.Popen([str(EXE)], cwd=RUNTIME, env=env, stdout=output,
+                               stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+    conn = None
+    try:
+        content = wait_for(log, 'AGENT PORT', process)
+        port = int(content.split('AGENT PORT ')[1].split()[0])
+        wait_for(log, 'facet: agent surface on', process)
+        main = window('WinUI runtime', process)
+        assert shows(main, 'home:open-settings')
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+
+        def rpc(method, params=None):
+            conn.request('POST', '/', json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method,
+                                                  'params': params or {}}).encode(),
+                         {'Content-Type': 'application/json'})
+            value = json.loads(conn.getresponse().read())
+            assert 'error' not in value, value
+            return value['result']
+
+        rpc('initialize', {'protocolVersion': '2024-11-05', 'capabilities': {},
+                           'clientInfo': {'name': 'operator', 'version': '1'}})
+        rpc('describe_tree')   # the snapshot keys resolve against
+        inspected = json.dumps(rpc('inspect', {'id': 'home:open-settings'}))
+        assert 'Microsoft.UI.Xaml.Controls.Button' in inspected, inspected
+        rpc('highlight', {'id': 'home:open-settings'})
+        u.FindWindowW.argtypes = [w.LPCWSTR, w.LPCWSTR]
+        overlay = None
+        end = time.time() + 5
+        while time.time() < end and not overlay:
+            overlay = u.FindWindowW('facet-inspect-overlay', None)
+            time.sleep(.1)
+        assert overlay and u.IsWindowVisible(overlay), 'no highlight shown'
+        r = w.RECT()
+        u.GetWindowRect(overlay, c.byref(r))
+        bx, by, bw, bh = (int(v) for v in uia('rect', main, 'home:open-settings').split())
+        got = (r.left, r.top, r.right - r.left, r.bottom - r.top)
+        assert all(abs(a - b) <= 4 for a, b in zip(got, (bx, by, bw, bh))), (got, (bx, by, bw, bh))
+        rpc('clear_highlight')
+    finally:
+        if conn is not None:
+            conn.close()
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: inspector (highlight framed where the control is; inspect names the XAML class)')
+
+
+def run_appearance():
+    """runtime::set_app_appearance on WinUI: Light before the run, Dark live -
+    the caption (DWM dark mode, read from outside) and every element's
+    resolved theme (the inspector's native_theme) follow."""
+    import http.client
+    import json
+    dwm = c.WinDLL('dwmapi')
+    log = RUNTIME / 'appearance.log'
+    env = {**os.environ, 'CPLUS_RUNTIME_WINUI_PROBE': '0', 'CPLUS_RUNTIME_WINUI_AGENT': '1',
+           'CPLUS_RUNTIME_WINUI_APPEARANCE': 'light'}
+    output = log.open('w', encoding='utf-8')
+    process = subprocess.Popen([str(EXE)], cwd=RUNTIME, env=env, stdout=output,
+                               stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+    conn = None
+
+    def caption_dark(hwnd):
+        value = c.c_int(-1)
+        assert dwm.DwmGetWindowAttribute(w.HWND(hwnd), 20, c.byref(value), 4) == 0
+        return value.value
+
+    try:
+        content = wait_for(log, 'AGENT PORT', process)
+        port = int(content.split('AGENT PORT ')[1].split()[0])
+        wait_for(log, 'facet: agent surface on', process)
+        main = window('WinUI runtime', process)
+        assert shows(main, 'home:open-settings')
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+
+        def rpc(method, params=None):
+            conn.request('POST', '/', json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method,
+                                                  'params': params or {}}).encode(),
+                         {'Content-Type': 'application/json'})
+            value = json.loads(conn.getresponse().read())
+            assert 'error' not in value, value
+            return value['result']
+
+        def theme_of(key):
+            rpc('describe_tree')
+            found = json.dumps(rpc('inspect', {'id': key}))
+            return 'Light' if '"Light"' in found else 'Dark' if '"Dark"' in found else found
+
+        rpc('initialize', {'protocolVersion': '2024-11-05', 'capabilities': {},
+                           'clientInfo': {'name': 'operator', 'version': '1'}})
+        assert 'PROBE appearance dark' not in read(log), 'too slow to see the light side'
+        assert caption_dark(main) == 0, 'the caption is not light'
+        assert theme_of('home:open-settings') == 'Light'
+        wait_for(log, 'PROBE appearance dark', process, 10)
+        time.sleep(.5)
+        assert caption_dark(main) == 1, 'the caption did not follow to dark'
+        assert theme_of('home:open-settings') == 'Dark'
+    finally:
+        if conn is not None:
+            conn.close()
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: appearance (Light before the run, Dark live: caption and resolved theme follow)')
+
+
+def run_adopted_view():
+    """An application's own window (`adopt_native`) is hosted on WinUI: a child
+    of the window, placed over its node, and released by the app."""
+    log = RUNTIME / 'adopted.log'
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        assert shows(settings, 'settings:pad-log')
+        u.FindWindowExW.argtypes = [w.HWND, w.HWND, w.LPCWSTR, w.LPCWSTR]
+        u.FindWindowExW.restype = w.HWND
+        child = None
+        end = time.time() + 5
+        while time.time() < end and not child:
+            child = u.FindWindowExW(settings, None, 'Static', 'Adopted native view')
+            time.sleep(.1)
+        assert child, 'the adopted window is not a child of its WinUI window'
+        assert u.IsWindowVisible(child)
+        scale = u.GetDpiForWindow(settings) / 96
+        r = w.RECT()
+        u.GetWindowRect(child, c.byref(r))
+        lx, ly, lw, lh = (int(v) for v in uia('rect', settings, 'settings:pad-log').split())
+        # 40 points tall, under the last label, at the column's left edge.
+        assert abs((r.bottom - r.top) - 40 * scale) <= 2, (r.top, r.bottom)
+        assert r.top >= ly + lh - 1, ((r.left, r.top), (lx, ly, lw, lh))
+        assert abs(r.left - lx) <= 2, (r.left, lx)
+        u.PostMessageW(settings, WM_CLOSE, 0, 0)
+        wait_for(log, 'PROBE native released', process, 10)
+        assert process.poll() is None
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: adopted view (a child of its window, placed over its node, released by the app)')
+
+
+def drop_driver():
+    """tools/winui_drop_files.c, built once next to the sample."""
+    exe = RUNTIME / 'winui_drop_files.exe'
+    source = REPO / 'tools/winui_drop_files.c'
+    if not exe.exists() or exe.stat().st_mtime < source.stat().st_mtime:
+        subprocess.run(['clang', '-O1', str(source), '-o', str(exe), '-lole32', '-lshell32', '-luser32', '-luuid', '-lgdi32'],
+                       check=True, capture_output=True)
+    return exe
+
+
+def run_drag_and_drop():
+    """Drag and drop on plain containers: a card dragged onto a zone delivers
+    its key as text; files dropped from outside arrive as paths, with where
+    they landed; a file the zone's on_drag_over refuses is refused before the
+    drop; a drag that crosses the zone and leaves it is heard leaving."""
+    log = RUNTIME / 'dnd.log'
+    files = RUNTIME / 'dnd_files'
+    files.mkdir(exist_ok=True)
+    a, b, refuse = files / 'a.txt', files / 'b.txt', files / 'refuse.txt'
+    for f in (a, b, refuse):
+        f.write_text('dropped\n')
+    driver = drop_driver()
+    process, output = launch(log, '1')
+    try:
+        wait_for(log, 'READY: facet_winui', process)
+        settings = window('Settings', process)
+        assert shows(settings, 'settings:drop-title')
+        activate(settings, 'settings:focus-pad')
+        scale = u.GetDpiForWindow(settings) / 96
+
+        def says(key, check, seconds=8):
+            assert wait_until(lambda: check(uia('name', settings, key)), seconds), (key, uia('name', settings, key))
+            return uia('name', settings, key)
+
+        def under(title_key):
+            # A container has no automation peer: aim at the empty space
+            # under its title, which only the container itself answers.
+            x, y, width, height = (int(v) for v in uia('rect', settings, title_key).split())
+            return x + width // 2, y + height + round(10 * scale)
+
+        def move_to(px, py):
+            u.mouse_event(0x8001, round(px * 65535 / (u.GetSystemMetrics(0) - 1)),
+                          round(py * 65535 / (u.GetSystemMetrics(1) - 1)), 0, 0)
+            time.sleep(.03)
+
+        zx, zy = under('settings:drop-title')
+        # The card, dragged by the real mouse: WinUI runs the drag itself.
+        cx, cy = under('settings:card-title')
+        move_to(cx, cy)
+        u.mouse_event(2, 0, 0, 0, 0)
+        for step in range(1, 31):
+            move_to(cx + (zx - cx) * step // 30, cy + (zy - cy) * step // 30)
+        for _ in range(10):
+            move_to(zx + 1, zy); move_to(zx, zy)
+        u.mouse_event(4, 0, 0, 0, 0)
+        dropped = says('settings:drop-log', lambda v: v.startswith('drop'))
+        assert dropped.startswith('drop text=card:1 at '), dropped
+        x, y = (int(v) for v in dropped.rsplit(' ', 1)[1].split(','))
+        assert 0 <= x <= 180 and 0 <= y <= 50, dropped           # in the zone's own space
+        says('settings:drag-log', lambda v: v == 'drag end')
+
+        # Files, from another process, through OLE as Explorer drops them.
+        def drop(*paths, at=(zx, zy), via=None):
+            args = [str(driver)] + (['--via', str(via[0]), str(via[1])] if via else [])
+            result = subprocess.run(args + [str(at[0]), str(at[1])] + [str(p) for p in paths],
+                                    capture_output=True, text=True, timeout=60)
+            assert result.returncode == 0, result.stderr
+            return result.stdout.strip()
+
+        assert drop(a, b) == '1'
+        dropped = says('settings:drop-log', lambda v: v.startswith('drop'))
+        assert dropped.startswith(f'drop file={a} file={b} at '), dropped
+
+        def heard_since(mark):
+            return [l[4:] for l in read(log)[mark:].splitlines() if l.startswith('DND ')]
+
+        # Refused while over the zone: the source is told no, and nothing
+        # drops - the zone hears the drag leave instead.
+        mark = len(read(log))
+        assert drop(refuse) == '0'
+        says('settings:drop-log', lambda v: v.startswith('leave'))
+        heard = heard_since(mark)
+        assert 'refused' in heard and not any(h.startswith('drop') for h in heard), heard
+
+        # Over the zone, then off it to the pad: the zone was the target while
+        # the files were over it, hears them leave, and is not the target
+        # when it does.
+        mark = len(read(log))
+        px, py = under('settings:pad-title')
+        assert drop(a, at=(px, py), via=(zx, zy)) == '0'
+        says('settings:drop-log', lambda v: v.startswith('leave'))
+        heard = heard_since(mark)
+        assert 'over 1 true' in heard and heard[-1] == 'leave false', heard
+        assert not any(h.startswith('drop') for h in heard), heard
+        assert process.poll() is None, read(log)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: drag and drop (card key as text, files with position, refusal on hover, leave)')
+
+
+def run_win32_opt_out():
+    """`facet_runtime/win32::select()` still runs an app on the deprecated
+    Win32 backend, and a close there asks on_should_quit again."""
+    exe = REPO / 'examples/facet_runtime_win32/target/debug/facet_runtime_win32.exe'
+    assert exe.exists(), 'build examples/facet_runtime_win32 first (cpc build)'
+    log = exe.parent / 'opt_out.log'
+    output = log.open('w', encoding='utf-8')
+    process = subprocess.Popen([str(exe)], cwd=exe.parent, stdout=output, stderr=subprocess.STDOUT,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        hwnd = window('Win32 opt-out', process)
+        # A WinUI window's class is WinUIDesktopWin32WindowClass; this is not one.
+        name = c.create_unicode_buffer(256)
+        u.GetClassNameW(hwnd, name, 256)
+        assert name.value and name.value != 'WinUIDesktopWin32WindowClass', name.value
+        assert u.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        wait_for(log, 'PROBE should_quit 1', process, 10)
+        time.sleep(.5)
+        assert u.IsWindow(hwnd) and process.poll() is None, 'the refused close still closed'
+        assert u.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        wait_for(log, 'PROBE should_quit 2', process, 10)
+        assert process.wait(15) == 0, read(log)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output.close()
+    print('PASS: win32 opt-out (selected backend runs; a close asks on_should_quit)')
+
+
+if __name__ == '__main__':
+    run_close_question()
+    run_alert_window()
+    run_worker_hop()
+    run_density()
+    run_app_menu()
+    run_agent_windows()
+    run_gestures()
+    run_inspector()
+    run_adopted_view()
+    run_drag_and_drop()
+    run_appearance()
+    run_win32_opt_out()

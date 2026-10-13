@@ -151,7 +151,22 @@
     "Microsoft.UI.Xaml.Controls.SymbolIcon",
     "Microsoft.UI.Xaml.Controls.Viewbox",
     "Microsoft.UI.Windowing.AppWindow",
-    "Microsoft.UI.Windowing.OverlappedPresenter"
+    "Microsoft.UI.Windowing.OverlappedPresenter",
+    "Microsoft.UI.Windowing.AppWindowClosingEventArgs",
+    "Microsoft.UI.Xaml.Controls.MenuBar",
+    "Microsoft.UI.Xaml.Controls.MenuBarItem",
+    "Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator",
+    "Microsoft.UI.Xaml.Input.FocusManagerGotFocusEventArgs",
+    "Microsoft.UI.Xaml.Input.FocusManagerLostFocusEventArgs",
+    "Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs",
+    "Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs",
+    "Microsoft.UI.Xaml.Input.HoldingRoutedEventArgs",
+    "Microsoft.UI.Xaml.DragEventArgs",
+    "Microsoft.UI.Xaml.DragEventHandler",
+    "Microsoft.UI.Xaml.DragOperationDeferral",
+    "Windows.ApplicationModel.DataTransfer.DataPackageView",
+    "Windows.ApplicationModel.DataTransfer.StandardDataFormats",
+    "Windows.Storage.IStorageItem"
   ],
   "sources": [
     {
@@ -2778,6 +2793,12 @@
       "name": "IconId"
     },
     {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Input.HoldingState",
+      "methods": [],
+      "name": "HoldingState"
+    },
+    {
       "iid": "0d430ee6-252c-59a4-b2a2-d44264dc6a40",
       "kind": "Interface",
       "metadata": "Microsoft.UI.Input.IPointerPoint",
@@ -3372,6 +3393,26 @@
       "name": "AppWindow"
     },
     {
+      "iid": "0e09d90b-2261-590b-9ad1-8504991d8754",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Windowing.AppWindowClosingEventArgs",
+      "methods": [
+        {
+          "name": "get_Cancel",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Cancel",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "AppWindowClosingEventArgs"
+    },
+    {
       "iid": "bc3042c2-c6c6-5632-8989-ff0ec6d3b40d",
       "kind": "Class",
       "metadata": "Microsoft.UI.Windowing.AppWindowPresenter",
@@ -3668,6 +3709,26 @@
         }
       ],
       "name": "IAppWindow4"
+    },
+    {
+      "iid": "0e09d90b-2261-590b-9ad1-8504991d8754",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Windowing.IAppWindowClosingEventArgs",
+      "methods": [
+        {
+          "name": "get_Cancel",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Cancel",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAppWindowClosingEventArgs"
     },
     {
       "iid": "bc3042c2-c6c6-5632-8989-ff0ec6d3b40d",
@@ -12655,6 +12716,108 @@
       "name": "IListViewItemFactory"
     },
     {
+      "iid": "ba97f337-8f1e-5141-b53f-e77a8ba3ebbd",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBar",
+      "methods": [
+        {
+          "name": "get_Items",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBar"
+    },
+    {
+      "iid": "76aa8759-04ee-5a4c-b98c-d03742d47cdb",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBarFactory",
+      "methods": [
+        {
+          "name": "CreateInstance",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBarFactory"
+    },
+    {
+      "iid": "a7900980-51cc-531d-97c5-356b13573398",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBarItem",
+      "methods": [
+        {
+          "name": "get_Title",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Title",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Items",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBarItem"
+    },
+    {
+      "iid": "87d02172-83cb-5459-940f-173f7501b300",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBarItemFactory",
+      "methods": [
+        {
+          "name": "CreateInstance",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBarItemFactory"
+    },
+    {
+      "iid": "c8a33f46-2e1c-5ce0-bc09-4524e68941c8",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBarItemStatics",
+      "methods": [
+        {
+          "name": "get_TitleProperty",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_ItemsProperty",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBarItemStatics"
+    },
+    {
+      "iid": "79aa0b84-5554-5f7c-80d9-7970aa030125",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuBarStatics",
+      "methods": [
+        {
+          "name": "get_ItemsProperty",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuBarStatics"
+    },
+    {
       "iid": "f4c77c6c-1fa5-5d85-8559-5d02b7d4e5e7",
       "kind": "Interface",
       "metadata": "Microsoft.UI.Xaml.Controls.IMenuFlyout",
@@ -12851,6 +13014,27 @@
         }
       ],
       "name": "IMenuFlyoutItemStatics"
+    },
+    {
+      "iid": "3eaf5fd5-935e-5ed7-8d05-f6bafa936d25",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuFlyoutSeparator",
+      "methods": [],
+      "name": "IMenuFlyoutSeparator"
+    },
+    {
+      "iid": "26156c9c-95ef-5e55-8342-773fc43baac3",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Controls.IMenuFlyoutSeparatorFactory",
+      "methods": [
+        {
+          "name": "CreateInstance",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IMenuFlyoutSeparatorFactory"
     },
     {
       "iid": "6959e683-16f6-5208-84e0-b0be92d9f6dd",
@@ -20192,6 +20376,46 @@
       "name": "ListViewSelectionMode"
     },
     {
+      "iid": "ba97f337-8f1e-5141-b53f-e77a8ba3ebbd",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Controls.MenuBar",
+      "methods": [
+        {
+          "name": "get_Items",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "MenuBar"
+    },
+    {
+      "iid": "a7900980-51cc-531d-97c5-356b13573398",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Controls.MenuBarItem",
+      "methods": [
+        {
+          "name": "get_Title",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Title",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Items",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "MenuBarItem"
+    },
+    {
       "iid": "f4c77c6c-1fa5-5d85-8559-5d02b7d4e5e7",
       "kind": "Class",
       "metadata": "Microsoft.UI.Xaml.Controls.MenuFlyout",
@@ -20315,6 +20539,13 @@
       "metadata": "Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase",
       "methods": [],
       "name": "MenuFlyoutItemBase"
+    },
+    {
+      "iid": "3eaf5fd5-935e-5ed7-8d05-f6bafa936d25",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator",
+      "methods": [],
+      "name": "MenuFlyoutSeparator"
     },
     {
       "iid": "c18eb0e9-29fb-525d-abbc-d6b2110f542e",
@@ -27602,6 +27833,20 @@
       "name": "DragEventHandler"
     },
     {
+      "iid": "462c1880-fc6a-5035-8abf-564bacb78158",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.DragOperationDeferral",
+      "methods": [
+        {
+          "name": "Complete",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "DragOperationDeferral"
+    },
+    {
       "iid": "ad17bace-9613-5666-a31b-79a73fba77cf",
       "kind": "Class",
       "metadata": "Microsoft.UI.Xaml.DragStartingEventArgs",
@@ -28585,6 +28830,20 @@
         }
       ],
       "name": "IDragEventArgs"
+    },
+    {
+      "iid": "462c1880-fc6a-5035-8abf-564bacb78158",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.IDragOperationDeferral",
+      "methods": [
+        {
+          "name": "Complete",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IDragOperationDeferral"
     },
     {
       "iid": "ad17bace-9613-5666-a31b-79a73fba77cf",
@@ -31689,6 +31948,38 @@
       "name": "DoubleTappedEventHandler"
     },
     {
+      "iid": "32b9549d-11d8-53a5-a953-02409537a11f",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "DoubleTappedRoutedEventArgs"
+    },
+    {
       "iid": "7f88e76b-7417-5447-aed4-2fabd291bdc6",
       "kind": "Class",
       "metadata": "Microsoft.UI.Xaml.Input.FindNextElementOptions",
@@ -31752,6 +32043,46 @@
       "name": "FocusManager"
     },
     {
+      "iid": "50aca341-4519-59cf-83b1-c9c45cfdb816",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.FocusManagerGotFocusEventArgs",
+      "methods": [
+        {
+          "name": "get_NewFocusedElement",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_CorrelationId",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "FocusManagerGotFocusEventArgs"
+    },
+    {
+      "iid": "fdaf2c3f-a22e-5902-abce-b60758fbed1e",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.FocusManagerLostFocusEventArgs",
+      "methods": [
+        {
+          "name": "get_OldFocusedElement",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_CorrelationId",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "FocusManagerLostFocusEventArgs"
+    },
+    {
       "kind": "Enum",
       "metadata": "Microsoft.UI.Xaml.Input.FocusNavigationDirection",
       "methods": [],
@@ -31771,6 +32102,76 @@
         }
       ],
       "name": "HoldingEventHandler"
+    },
+    {
+      "iid": "8272a4b2-2221-551e-b0bb-16e29138ab20",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.HoldingRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_HoldingState",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        }
+      ],
+      "name": "HoldingRoutedEventArgs"
+    },
+    {
+      "iid": "32b9549d-11d8-53a5-a953-02409537a11f",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IDoubleTappedRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "IDoubleTappedRoutedEventArgs"
     },
     {
       "iid": "7f88e76b-7417-5447-aed4-2fabd291bdc6",
@@ -31834,6 +32235,46 @@
       "metadata": "Microsoft.UI.Xaml.Input.IFocusManager",
       "methods": [],
       "name": "IFocusManager"
+    },
+    {
+      "iid": "50aca341-4519-59cf-83b1-c9c45cfdb816",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IFocusManagerGotFocusEventArgs",
+      "methods": [
+        {
+          "name": "get_NewFocusedElement",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_CorrelationId",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IFocusManagerGotFocusEventArgs"
+    },
+    {
+      "iid": "fdaf2c3f-a22e-5902-abce-b60758fbed1e",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IFocusManagerLostFocusEventArgs",
+      "methods": [
+        {
+          "name": "get_OldFocusedElement",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_CorrelationId",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IFocusManagerLostFocusEventArgs"
     },
     {
       "iid": "e73dce04-e23a-5fb3-96ab-7df04c51dff2",
@@ -31968,6 +32409,44 @@
         }
       ],
       "name": "IFocusManagerStatics"
+    },
+    {
+      "iid": "8272a4b2-2221-551e-b0bb-16e29138ab20",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IHoldingRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_HoldingState",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        }
+      ],
+      "name": "IHoldingRoutedEventArgs"
     },
     {
       "iid": "76ea58b1-e910-5176-9147-695cc95e7da2",
@@ -32256,6 +32735,38 @@
         }
       ],
       "name": "IPointerRoutedEventArgs"
+    },
+    {
+      "iid": "3972fafb-2915-5c62-bb6b-54ad84ff400d",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Input.IRightTappedRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "IRightTappedRoutedEventArgs"
     },
     {
       "iid": "73f74b8c-3709-547e-8e0c-51c03c89126a",
@@ -32666,6 +33177,38 @@
         }
       ],
       "name": "RightTappedEventHandler"
+    },
+    {
+      "iid": "3972fafb-2915-5c62-bb6b-54ad84ff400d",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs",
+      "methods": [
+        {
+          "name": "get_PointerDeviceType",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Handled",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "put_Handled",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPosition",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        }
+      ],
+      "name": "RightTappedRoutedEventArgs"
     },
     {
       "callback": "emitted",
@@ -41827,6 +42370,98 @@
       "name": "DataPackageOperation"
     },
     {
+      "iid": "7b840471-5900-4d85-a90b-10cb85fe3552",
+      "kind": "Class",
+      "metadata": "Windows.ApplicationModel.DataTransfer.DataPackageView",
+      "methods": [
+        {
+          "name": "get_Properties",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_RequestedOperation",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "ReportOperationCompleted",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "get_AvailableFormats",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "Contains",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "GetDataAsync",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "GetTextAsync",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "GetCustomTextAsync",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "GetUriAsync",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "GetHtmlFormatAsync",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "GetResourceMapAsync",
+          "reason": null,
+          "slot": 16,
+          "status": "emitted"
+        },
+        {
+          "name": "GetRtfAsync",
+          "reason": null,
+          "slot": 17,
+          "status": "emitted"
+        },
+        {
+          "name": "GetBitmapAsync",
+          "reason": null,
+          "slot": 18,
+          "status": "emitted"
+        },
+        {
+          "name": "GetStorageItemsAsync",
+          "reason": null,
+          "slot": 19,
+          "status": "emitted"
+        }
+      ],
+      "name": "DataPackageView"
+    },
+    {
       "callback": "emitted",
       "iid": "e7ecd720-f2f4-4a2d-920e-170a2f482a27",
       "kind": "Delegate",
@@ -42024,6 +42659,242 @@
       "name": "IDataPackage4"
     },
     {
+      "iid": "7b840471-5900-4d85-a90b-10cb85fe3552",
+      "kind": "Interface",
+      "metadata": "Windows.ApplicationModel.DataTransfer.IDataPackageView",
+      "methods": [
+        {
+          "name": "get_Properties",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_RequestedOperation",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "ReportOperationCompleted",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "get_AvailableFormats",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "Contains",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "GetDataAsync",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "GetTextAsync",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "GetCustomTextAsync",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "GetUriAsync",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "GetHtmlFormatAsync",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "GetResourceMapAsync",
+          "reason": null,
+          "slot": 16,
+          "status": "emitted"
+        },
+        {
+          "name": "GetRtfAsync",
+          "reason": null,
+          "slot": 17,
+          "status": "emitted"
+        },
+        {
+          "name": "GetBitmapAsync",
+          "reason": null,
+          "slot": 18,
+          "status": "emitted"
+        },
+        {
+          "name": "GetStorageItemsAsync",
+          "reason": null,
+          "slot": 19,
+          "status": "emitted"
+        }
+      ],
+      "name": "IDataPackageView"
+    },
+    {
+      "iid": "40ecba95-2450-4c1d-b6b4-ed45463dee9c",
+      "kind": "Interface",
+      "metadata": "Windows.ApplicationModel.DataTransfer.IDataPackageView2",
+      "methods": [
+        {
+          "name": "GetApplicationLinkAsync",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "GetWebLinkAsync",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IDataPackageView2"
+    },
+    {
+      "iid": "d37771a8-ddad-4288-8428-d1cae394128b",
+      "kind": "Interface",
+      "metadata": "Windows.ApplicationModel.DataTransfer.IDataPackageView3",
+      "methods": [
+        {
+          "name": "RequestAccessAsync",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "RequestAccessWithEnterpriseIdAsync",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "UnlockAndAssumeEnterpriseIdentity",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IDataPackageView3"
+    },
+    {
+      "iid": "dfe96f1f-e042-4433-a09f-26d6ffda8b85",
+      "kind": "Interface",
+      "metadata": "Windows.ApplicationModel.DataTransfer.IDataPackageView4",
+      "methods": [
+        {
+          "name": "SetAcceptedFormatId",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IDataPackageView4"
+    },
+    {
+      "iid": "7ed681a1-a880-40c9-b4ed-0bee1e15f549",
+      "kind": "Interface",
+      "metadata": "Windows.ApplicationModel.DataTransfer.IStandardDataFormatsStatics",
+      "methods": [
+        {
+          "name": "get_Text",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Uri",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Html",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Rtf",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Bitmap",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "get_StorageItems",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        }
+      ],
+      "name": "IStandardDataFormatsStatics"
+    },
+    {
+      "iid": "42a254f4-9d76-42e8-861b-47c25dd0cf71",
+      "kind": "Interface",
+      "metadata": "Windows.ApplicationModel.DataTransfer.IStandardDataFormatsStatics2",
+      "methods": [
+        {
+          "name": "get_WebLink",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_ApplicationLink",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IStandardDataFormatsStatics2"
+    },
+    {
+      "iid": "3b57b069-01d4-474c-8b5f-bc8e27f38b21",
+      "kind": "Interface",
+      "metadata": "Windows.ApplicationModel.DataTransfer.IStandardDataFormatsStatics3",
+      "methods": [
+        {
+          "name": "get_UserActivityJsonArray",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IStandardDataFormatsStatics3"
+    },
+    {
+      "kind": "Class",
+      "metadata": "Windows.ApplicationModel.DataTransfer.StandardDataFormats",
+      "methods": [],
+      "name": "StandardDataFormats"
+    },
+    {
       "callback": "emitted",
       "iid": "c1d3d1a2-ae17-5a5f-b5a2-bdcc8844889a",
       "kind": "Delegate",
@@ -42175,6 +43046,21 @@
     },
     {
       "callback": "emitted",
+      "iid": "3f08262e-a2e1-5134-9297-e9211f481a2d",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<Object>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "AsyncOperationCompletedHandler_Object"
+    },
+    {
+      "callback": "emitted",
       "iid": "b79a741f-7fb5-50ae-9e99-911201ec3d41",
       "kind": "Delegate",
       "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<String>",
@@ -42202,6 +43088,21 @@
         }
       ],
       "name": "AsyncOperationCompletedHandler_Windows_ApplicationModel_DataTransfer_DataPackageOperation"
+    },
+    {
+      "callback": "emitted",
+      "iid": "d4cb6b80-821a-5a7b-898d-d58917b31a36",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<Windows.Foundation.Collections.IMapView<String,Windows.Storage.Streams.RandomAccessStreamReference>>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "AsyncOperationCompletedHandler_Windows_Foundation_Collections_IMapView_String_Windows_Storage_Streams_RandomAccessStreamReference"
     },
     {
       "callback": "emitted",
@@ -42235,6 +43136,21 @@
     },
     {
       "callback": "emitted",
+      "iid": "51436e75-ace1-5a68-b260-f843b846f0db",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<Windows.Foundation.Collections.IVectorView<Windows.Storage.IStorageItem>>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "AsyncOperationCompletedHandler_Windows_Foundation_Collections_IVectorView_Windows_Storage_IStorageItem"
+    },
+    {
+      "callback": "emitted",
       "iid": "e137b677-bfef-54b0-b200-95c5c2902a25",
       "kind": "Delegate",
       "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<Windows.Foundation.IReference<Windows.Foundation.TimeSpan>>",
@@ -42250,6 +43166,51 @@
     },
     {
       "callback": "emitted",
+      "iid": "ad46f1cc-2bb0-585c-9885-03c2780d4d58",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<Windows.Foundation.Uri>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "AsyncOperationCompletedHandler_Windows_Foundation_Uri"
+    },
+    {
+      "callback": "emitted",
+      "iid": "2833ba54-a4e1-5c2d-8a7a-136e8510c78b",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<Windows.Security.EnterpriseData.ProtectionPolicyEvaluationResult>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "AsyncOperationCompletedHandler_Windows_Security_EnterpriseData_ProtectionPolicyEvaluationResult"
+    },
+    {
+      "callback": "emitted",
+      "iid": "c8659aae-4926-52ad-8f60-d89fe5a8df5f",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<Windows.Storage.FileProperties.BasicProperties>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "AsyncOperationCompletedHandler_Windows_Storage_FileProperties_BasicProperties"
+    },
+    {
+      "callback": "emitted",
       "iid": "398c4183-793d-5b00-819b-4aef92485e94",
       "kind": "Delegate",
       "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<Windows.Storage.Streams.IRandomAccessStream>",
@@ -42262,6 +43223,21 @@
         }
       ],
       "name": "AsyncOperationCompletedHandler_Windows_Storage_Streams_IRandomAccessStream"
+    },
+    {
+      "callback": "emitted",
+      "iid": "3d203732-ded7-5d32-87e6-c179781f791f",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.AsyncOperationCompletedHandler<Windows.Storage.Streams.RandomAccessStreamReference>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "AsyncOperationCompletedHandler_Windows_Storage_Streams_RandomAccessStreamReference"
     },
     {
       "kind": "Enum",
@@ -43550,6 +44526,86 @@
         }
       ],
       "name": "IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation"
+    },
+    {
+      "iid": "94c4dfcf-1af2-5621-8b99-4e5643d1b52f",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IVector<Microsoft.UI.Xaml.Controls.MenuBarItem>",
+      "methods": [
+        {
+          "name": "GetAt",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetView",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "IndexOf",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        },
+        {
+          "name": "SetAt",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "InsertAt",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "RemoveAt",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "Append",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "RemoveAtEnd",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "Clear",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 16,
+          "status": "skipped"
+        },
+        {
+          "name": "ReplaceAll",
+          "reason": "array or byref parameter is not yet projected",
+          "slot": 17,
+          "status": "skipped"
+        }
+      ],
+      "name": "IVector_Microsoft_UI_Xaml_Controls_MenuBarItem"
     },
     {
       "iid": "ebe273f7-4731-5ac8-8513-de764868fb9b",
@@ -44864,6 +45920,38 @@
       "name": "IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation"
     },
     {
+      "iid": "d99a99f0-d72d-5172-8781-3de6ee292749",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Controls.MenuBarItem>",
+      "methods": [
+        {
+          "name": "GetAt",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "IndexOf",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 8,
+          "status": "skipped"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        }
+      ],
+      "name": "IVectorView_Microsoft_UI_Xaml_Controls_MenuBarItem"
+    },
+    {
       "iid": "f817bdda-4853-503a-86c3-062db99d0419",
       "kind": "Interface",
       "metadata": "Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase>",
@@ -45504,6 +46592,38 @@
       "name": "IVectorView_String"
     },
     {
+      "iid": "85575a41-06cb-58d0-b98a-7c8f06e6e9d7",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IVectorView<Windows.Storage.IStorageItem>",
+      "methods": [
+        {
+          "name": "GetAt",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "IndexOf",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 8,
+          "status": "skipped"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        }
+      ],
+      "name": "IVectorView_Windows_Storage_IStorageItem"
+    },
+    {
       "callback": "emitted",
       "iid": "936af50f-c851-51cd-b07c-a2ac10f084a3",
       "kind": "Delegate",
@@ -45993,6 +47113,32 @@
       "name": "IAsyncOperation_Microsoft_Web_WebView2_Core_CoreWebView2SaveAsUIResult"
     },
     {
+      "iid": "abf53c57-ee50-5342-b52a-26e3b8cc024f",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.IAsyncOperation<Object>",
+      "methods": [
+        {
+          "name": "put_Completed",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Completed",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetResults",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAsyncOperation_Object"
+    },
+    {
       "iid": "3e1fe603-f897-5263-b328-0806426b8a79",
       "kind": "Interface",
       "metadata": "Windows.Foundation.IAsyncOperation<String>",
@@ -46043,6 +47189,32 @@
         }
       ],
       "name": "IAsyncOperation_Windows_ApplicationModel_DataTransfer_DataPackageOperation"
+    },
+    {
+      "iid": "fc012d44-2dcf-5162-be9a-7668675aa590",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.IAsyncOperation<Windows.Foundation.Collections.IMapView<String,Windows.Storage.Streams.RandomAccessStreamReference>>",
+      "methods": [
+        {
+          "name": "put_Completed",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Completed",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetResults",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAsyncOperation_Windows_Foundation_Collections_IMapView_String_Windows_Storage_Streams_RandomAccessStreamReference"
     },
     {
       "iid": "13b093e5-2427-5d3b-a9b4-f0bcb07202be",
@@ -46097,6 +47269,32 @@
       "name": "IAsyncOperation_Windows_Foundation_Collections_IVectorView_String"
     },
     {
+      "iid": "4b1c0fd7-7a01-5e7a-a6fe-be4500283f23",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.IAsyncOperation<Windows.Foundation.Collections.IVectorView<Windows.Storage.IStorageItem>>",
+      "methods": [
+        {
+          "name": "put_Completed",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Completed",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetResults",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAsyncOperation_Windows_Foundation_Collections_IVectorView_Windows_Storage_IStorageItem"
+    },
+    {
       "iid": "24a901ad-910f-5c0f-b23c-67007577a558",
       "kind": "Interface",
       "metadata": "Windows.Foundation.IAsyncOperation<Windows.Foundation.IReference<Windows.Foundation.TimeSpan>>",
@@ -46123,6 +47321,84 @@
       "name": "IAsyncOperation_Windows_Foundation_IReference_Windows_Foundation_TimeSpan"
     },
     {
+      "iid": "641cb9dd-a28d-59e2-b8db-a227eda6cf2e",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.IAsyncOperation<Windows.Foundation.Uri>",
+      "methods": [
+        {
+          "name": "put_Completed",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Completed",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetResults",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAsyncOperation_Windows_Foundation_Uri"
+    },
+    {
+      "iid": "e8d81715-c56c-5a6b-b738-5df6c2775b7b",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.IAsyncOperation<Windows.Security.EnterpriseData.ProtectionPolicyEvaluationResult>",
+      "methods": [
+        {
+          "name": "put_Completed",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Completed",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetResults",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAsyncOperation_Windows_Security_EnterpriseData_ProtectionPolicyEvaluationResult"
+    },
+    {
+      "iid": "5186131a-4467-504b-977a-0785a8230485",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.IAsyncOperation<Windows.Storage.FileProperties.BasicProperties>",
+      "methods": [
+        {
+          "name": "put_Completed",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Completed",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetResults",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAsyncOperation_Windows_Storage_FileProperties_BasicProperties"
+    },
+    {
       "iid": "430ecece-1418-5d19-81b2-5ddb381603cc",
       "kind": "Interface",
       "metadata": "Windows.Foundation.IAsyncOperation<Windows.Storage.Streams.IRandomAccessStream>",
@@ -46147,6 +47423,32 @@
         }
       ],
       "name": "IAsyncOperation_Windows_Storage_Streams_IRandomAccessStream"
+    },
+    {
+      "iid": "d90442ca-543c-504b-9eb9-294bcad8a283",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.IAsyncOperation<Windows.Storage.Streams.RandomAccessStreamReference>",
+      "methods": [
+        {
+          "name": "put_Completed",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Completed",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetResults",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAsyncOperation_Windows_Storage_Streams_RandomAccessStreamReference"
     },
     {
       "iid": "30d5a829-7fa4-4026-83bb-d75bae4ea99e",
@@ -50138,6 +51440,104 @@
       "metadata": "Windows.Graphics.SizeInt32",
       "methods": [],
       "name": "SizeInt32"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Windows.Security.EnterpriseData.ProtectionPolicyEvaluationResult",
+      "methods": [],
+      "name": "ProtectionPolicyEvaluationResult"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Windows.Storage.FileAttributes",
+      "methods": [],
+      "name": "FileAttributes"
+    },
+    {
+      "iid": "4207a996-ca2f-42f7-bde8-8b10457a7f30",
+      "kind": "Interface",
+      "metadata": "Windows.Storage.IStorageItem",
+      "methods": [
+        {
+          "name": "RenameAsyncOverloadDefaultOptions",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "RenameAsync",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "DeleteAsyncOverloadDefaultOptions",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "DeleteAsync",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "GetBasicPropertiesAsync",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Name",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Path",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Attributes",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "get_DateCreated",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "IsOfType",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        }
+      ],
+      "name": "IStorageItem"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Windows.Storage.NameCollisionOption",
+      "methods": [],
+      "name": "NameCollisionOption"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Windows.Storage.StorageDeleteOption",
+      "methods": [],
+      "name": "StorageDeleteOption"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Windows.Storage.StorageItemTypes",
+      "methods": [],
+      "name": "StorageItemTypes"
     },
     {
       "iid": "905a0fe1-bc53-11df-8c49-001e4fc686da",

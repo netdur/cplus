@@ -1,0 +1,16 @@
+// cuda's suite: the runtime links and answers on this machine. Needs the CUDA
+// toolkit (CUDA_LIB) and its DLLs on PATH, as any program using this package
+// does. (A test build drops wrappers nothing calls, so an unexported symbol in
+// a generated module shows only in an application build - see README.)
+import "./cuda_runtime_api" as rt;
+
+#[test]
+fn the_runtime_links_and_counts_devices() {
+    var count: i32 = -1;
+    let rc: i32 = rt::cudaGetDeviceCount(#addr_of(count));
+    // cudaSuccess with a count, or cudaErrorNoDevice (100) /
+    // cudaErrorInsufficientDriver (35) on a machine without a usable GPU.
+    assert rc == 0 || rc == 100 || rc == 35;
+    if rc == 0 { assert count >= 0; }
+    return;
+}
