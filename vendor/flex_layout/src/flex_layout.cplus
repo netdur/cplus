@@ -520,18 +520,18 @@ impl Node {
     fn add_grid_column(ref this, track: GridTrack, line: str = "") {
         if #str_len(line) > 0 {
             let idx: usize = this._grid_cols.count();
-            while this._grid_col_line_names.count() <= idx { this._grid_col_line_names.append("".to_text()); }
-            this._grid_col_line_names.set(line.to_text(), idx);
+            while this._grid_col_line_names.count() <= idx { let _ = this._grid_col_line_names.append("".to_text()); }
+            let _ = this._grid_col_line_names.set(line.to_text(), idx);
         }
-        this._grid_cols.append(track);
+        let _ = this._grid_cols.append(track);
     }
     fn add_grid_row(ref this, track: GridTrack, line: str = "") {
         if #str_len(line) > 0 {
             let idx: usize = this._grid_rows.count();
-            while this._grid_row_line_names.count() <= idx { this._grid_row_line_names.append("".to_text()); }
-            this._grid_row_line_names.set(line.to_text(), idx);
+            while this._grid_row_line_names.count() <= idx { let _ = this._grid_row_line_names.append("".to_text()); }
+            let _ = this._grid_row_line_names.set(line.to_text(), idx);
         }
-        this._grid_rows.append(track);
+        let _ = this._grid_rows.append(track);
     }
     fn set_grid_dense(ref this, dense: bool) { this._grid_dense = dense; return; }        // container
     fn set_grid_column_span(ref this, count: i32) { this._grid_col_span = if count < 1 { 1 } else { count }; return; }  // item
@@ -1336,14 +1336,14 @@ impl Node {
             let ar2: bool = cs.margin_right.is_auto();
             let ab: bool = cs.margin_bottom.is_auto();
             // horizontal-axis leading side (physical): left in LTR, right in RTL.
-            m_main_lead.append(if row { if rtl { mr } else { ml } } else { mt });
-            m_main_trail.append(if row { if rtl { ml } else { mr } } else { mb });
-            m_cross_lead.append(if row { mt } else { if rtl { mr } else { ml } });
-            m_cross_trail.append(if row { mb } else { if rtl { ml } else { mr } });
-            am_lead.append(if row { if rtl { ar2 } else { al } } else { at2 });
-            am_trail.append(if row { if rtl { al } else { ar2 } } else { ab });
-            acm_lead.append(if row { at2 } else { if rtl { ar2 } else { al } });
-            acm_trail.append(if row { ab } else { if rtl { al } else { ar2 } });
+            let _ = m_main_lead.append(if row { if rtl { mr } else { ml } } else { mt });
+            let _ = m_main_trail.append(if row { if rtl { ml } else { mr } } else { mb });
+            let _ = m_cross_lead.append(if row { mt } else { if rtl { mr } else { ml } });
+            let _ = m_cross_trail.append(if row { mb } else { if rtl { ml } else { mr } });
+            let _ = am_lead.append(if row { if rtl { ar2 } else { al } } else { at2 });
+            let _ = am_trail.append(if row { if rtl { al } else { ar2 } } else { ab });
+            let _ = acm_lead.append(if row { at2 } else { if rtl { ar2 } else { al } });
+            let _ = acm_trail.append(if row { ab } else { if rtl { al } else { ar2 } });
 
             // Intrinsic (content) size of the child within the container's inner box —
             // the fallback when a dimension is `auto`.
@@ -1359,18 +1359,18 @@ impl Node {
                 let resolved: f64 = resolve_border_box(main_dim, cs, row, main_inner, node_w);
                 base = if is_defined(resolved) { f_max(0.0, resolved) } else { if row { isz.width } else { isz.height } };
             }
-            bases.append(base);
-            grows.append(cs.flex_grow);
-            shrinks.append(cs.flex_shrink);
-            flow.append(in_flow);
+            let _ = bases.append(base);
+            let _ = grows.append(cs.flex_grow);
+            let _ = shrinks.append(cs.flex_shrink);
+            let _ = flow.append(in_flow);
 
             // Cross size: explicit if set, else the child's intrinsic cross extent
             // (stretch, applied at placement, overrides a non-explicit cross size).
             let cross_dim: StyleLength = if row { cs.height } else { cs.width };
             let cross_resolved: f64 = resolve_border_box(cross_dim, cs, !row, cross_inner, node_w);
             let has_cross: bool = is_defined(cross_resolved);
-            cross_explicit.append(has_cross);
-            cross_sizes.append(if has_cross { cross_resolved } else { if row { isz.height } else { isz.width } });
+            let _ = cross_explicit.append(has_cross);
+            let _ = cross_sizes.append(if has_cross { cross_resolved } else { if row { isz.height } else { isz.width } });
 
             i = i +% 1;
         }
@@ -1379,7 +1379,7 @@ impl Node {
         var order: vec::Vec[usize] = vec::new::[usize]();   // flow child indices, in order
         i = 0;
         while i < n {
-            if bool_at(flow, i) { order.append(i); }
+            if bool_at(flow, i) { let _ = order.append(i); }
             i = i +% 1;
         }
         let fcount: usize = order.count();
@@ -1387,7 +1387,7 @@ impl Node {
 
         var line_end: vec::Vec[usize] = vec::new::[usize]();   // exclusive end into `order`
         if !wrapping || fcount == 0 {
-            line_end.append(fcount);
+            let _ = line_end.append(fcount);
         } else {
             var k: usize = 0;
             while k < fcount {
@@ -1407,7 +1407,7 @@ impl Node {
                     }
                     break;
                 }
-                line_end.append(k);
+                let _ = line_end.append(k);
             }
         }
         let line_count: usize = line_end.count();
@@ -1426,7 +1426,7 @@ impl Node {
                 lc = f_max(lc, size_at(cross_sizes, ci) + size_at(m_cross_lead, ci) + size_at(m_cross_trail, ci));
                 k = k +% 1;
             }
-            line_cross.append(lc);
+            let _ = line_cross.append(lc);
             total_cross = total_cross + lc;
             ls = le;
             li = li +% 1;
@@ -1447,7 +1447,7 @@ impl Node {
         // mains[child] — resolved main size per child; filled per line below.
         var mains: vec::Vec[f64] = vec::new::[f64]();
         i = 0;
-        while i < n { mains.append(size_at(bases, i)); i = i +% 1; }
+        while i < n { let _ = mains.append(size_at(bases, i)); i = i +% 1; }
 
         // --- lay out each line ---
         var cross_cursor: f64 = cross_lead + ac_lead;
@@ -1490,18 +1490,18 @@ impl Node {
             // not help, because the clamp runs after it.
             // bugs/flex-absolute-child-and-horizontal-scroll.md
             var idx0: usize = 0;
-            while idx0 < n { frozen.append(false); mn.append(undefined()); mx.append(undefined()); mains.set(size_at(bases, idx0), idx0); idx0 = idx0 +% 1; }
+            while idx0 < n { let _ = frozen.append(false); let _ = mn.append(undefined()); let _ = mx.append(undefined()); let _ = mains.set(size_at(bases, idx0), idx0); idx0 = idx0 +% 1; }
             var k: usize = ls;
             while k < le {
                 let ci: usize = usize_at(order, k);
                 let cs: Style = this.child_style(ci);
                 let min_main: StyleLength = if row { cs.min_width } else { cs.min_height };
                 let max_main: StyleLength = if row { cs.max_width } else { cs.max_height };
-                mn.set(min_main.resolve(main_inner), ci);
-                mx.set(max_main.resolve(main_inner), ci);
+                let _ = mn.set(min_main.resolve(main_inner), ci);
+                let _ = mx.set(max_main.resolve(main_inner), ci);
                 margins_sum = margins_sum + size_at(m_main_lead, ci) + size_at(m_main_trail, ci);
                 base_sum = base_sum + size_at(bases, ci);
-                mains.set(f_max(0.0, clamp(size_at(bases, ci), size_at(mn, ci), size_at(mx, ci))), ci);
+                let _ = mains.set(f_max(0.0, clamp(size_at(bases, ci), size_at(mn, ci), size_at(mx, ci))), ci);
                 k = k +% 1;
             }
             let avail_for_items: f64 = main_inner - line_gap_total - margins_sum;
@@ -1511,7 +1511,7 @@ impl Node {
             while k < le {
                 let ci: usize = usize_at(order, k);
                 let factor: f64 = if growing { size_at(grows, ci) } else { size_at(shrinks, ci) };
-                if factor <= 0.0 { frozen.set(true, ci); }
+                if factor <= 0.0 { let _ = frozen.set(true, ci); }
                 k = k +% 1;
             }
             var iter: usize = 0;
@@ -1547,9 +1547,9 @@ impl Node {
                             target = size_at(bases, ci) + (size_at(shrinks, ci) * size_at(bases, ci) / sum_factor) * remaining;
                         }
                         let clamped: f64 = f_max(0.0, clamp(target, size_at(mn, ci), size_at(mx, ci)));
-                        mains.set(clamped, ci);
+                        let _ = mains.set(clamped, ci);
                         if clamped > target + 0.001 || clamped < target - 0.001 {
-                            frozen.set(true, ci);
+                            let _ = frozen.set(true, ci);
                             any_violation = true;
                         }
                     }
@@ -1728,7 +1728,7 @@ impl Node {
             let cs: Style = this.child_style(i);
             let displayed: bool = match cs.display { Display::None => false, _ => true };
             let in_flow: bool = displayed && match cs.position_type { PositionType::Absolute => false, _ => true };
-            if in_flow { items.append(i); }
+            if in_flow { let _ = items.append(i); }
             i = i +% 1;
         }
         let item_count: usize = items.count();
@@ -1784,10 +1784,10 @@ impl Node {
                 }
             }
             occ_mark(occ, r, c, rspan, cspan, col_count);
-            item_col.append(c);
-            item_row.append(r);
-            item_cspan.append(cspan);
-            item_rspan.append(rspan);
+            let _ = item_col.append(c);
+            let _ = item_row.append(r);
+            let _ = item_cspan.append(cspan);
+            let _ = item_rspan.append(rspan);
             if !dense && ecol < 0 && erow < 0 { cursor_r = r; cursor_c = c + cspan; }
             if r + rspan > max_row { max_row = r + rspan; }
             it = it +% 1;
@@ -1800,10 +1800,10 @@ impl Node {
         // each track it covers (exact for span 1) ---
         var col_auto: vec::Vec[f64] = vec::new::[f64]();
         var c0: usize = 0;
-        while c0 < col_count { col_auto.append(0.0); c0 = c0 +% 1; }
+        while c0 < col_count { let _ = col_auto.append(0.0); c0 = c0 +% 1; }
         var row_auto: vec::Vec[f64] = vec::new::[f64]();
         var r0: usize = 0;
-        while r0 < row_count { row_auto.append(0.0); r0 = r0 +% 1; }
+        while r0 < row_count { let _ = row_auto.append(0.0); r0 = r0 +% 1; }
         it = 0;
         while it < item_count {
             let ci: usize = usize_at(items, it);
@@ -1815,9 +1815,9 @@ impl Node {
             let w_share: f64 = isz.width / (cspan as f64);
             let h_share: f64 = isz.height / (rspan as f64);
             var cc: usize = c;
-            while cc < c + cspan && cc < col_count { col_auto.set(f_max(size_at(col_auto, cc), w_share), cc); cc = cc +% 1; }
+            while cc < c + cspan && cc < col_count { let _ = col_auto.set(f_max(size_at(col_auto, cc), w_share), cc); cc = cc +% 1; }
             var rr: usize = r;
-            while rr < r + rspan && rr < row_count { row_auto.set(f_max(size_at(row_auto, rr), h_share), rr); rr = rr +% 1; }
+            while rr < r + rspan && rr < row_count { let _ = row_auto.set(f_max(size_at(row_auto, rr), h_share), rr); rr = rr +% 1; }
             it = it +% 1;
         }
         let col_widths: vec::Vec[f64] = if use_sub_cols { pad_tracks(sub_cols_local, col_count) } else { resolve_tracks(this._grid_cols, col_count, inner_w, col_gap, col_auto) };
@@ -2074,8 +2074,8 @@ impl Node {
                 let csz: Size = this.child_intrinsic(i, inner_avail_w, inner_avail_h);
                 let mm: f64 = or_zero(cs.margin_left.resolve(avail_w)) + or_zero(cs.margin_right.resolve(avail_w));
                 let mmv: f64 = or_zero(cs.margin_top.resolve(avail_w)) + or_zero(cs.margin_bottom.resolve(avail_w));
-                cmain.append((if row { csz.width } else { csz.height }) + (if row { mm } else { mmv }));
-                ccross.append((if row { csz.height } else { csz.width }) + (if row { mmv } else { mm }));
+                let _ = cmain.append((if row { csz.width } else { csz.height }) + (if row { mm } else { mmv }));
+                let _ = ccross.append((if row { csz.height } else { csz.width }) + (if row { mmv } else { mm }));
             }
             i = i +% 1;
         }
@@ -2336,7 +2336,7 @@ fn resolve_tracks(tracks: vec::Vec[GridTrack], count: usize, avail: f64, gap: f6
             TrackUnit::Fr => track_value_at(tracks, t) * fr_unit,
             TrackUnit::Auto => size_at(auto_content, t),
         };
-        out.append(f_max(0.0, size));
+        let _ = out.append(f_max(0.0, size));
         t = t +% 1;
     }
     return out;
@@ -2348,21 +2348,21 @@ fn copy_f64(v: vec::Vec[f64]) -> vec::Vec[f64] {
     var o: vec::Vec[f64] = vec::new::[f64]();
     var i: usize = 0;
     let n: usize = v.count();
-    while i < n { o.append(size_at(v, i)); i = i +% 1; }
+    while i < n { let _ = o.append(size_at(v, i)); i = i +% 1; }
     return o;
 }
 // A copy of `v` padded with zeros (or truncated) to exactly `count` entries.
 fn pad_tracks(v: vec::Vec[f64], count: usize) -> vec::Vec[f64] {
     var o: vec::Vec[f64] = vec::new::[f64]();
     var i: usize = 0;
-    while i < count { o.append(if i < v.count() { size_at(v, i) } else { 0.0 }); i = i +% 1; }
+    while i < count { let _ = o.append(if i < v.count() { size_at(v, i) } else { 0.0 }); i = i +% 1; }
     return o;
 }
 // The `span` consecutive track sizes starting at `start`.
 fn track_slice(sizes: vec::Vec[f64], start: usize, span: usize) -> vec::Vec[f64] {
     var o: vec::Vec[f64] = vec::new::[f64]();
     var k: usize = start;
-    while k < start + span && k < sizes.count() { o.append(size_at(sizes, k)); k = k +% 1; }
+    while k < start + span && k < sizes.count() { let _ = o.append(size_at(sizes, k)); k = k +% 1; }
     return o;
 }
 
@@ -2442,7 +2442,7 @@ fn line_index(names: vec::Vec[text::Text], name: str) -> i32 {
 
 // --- grid occupancy (row-major bitmap, grown a row at a time) ---
 fn occ_ensure(ref occ: vec::Vec[bool], rows_needed: usize, col_count: usize) {
-    while occ.count() < rows_needed * col_count { occ.append(false); }
+    while occ.count() < rows_needed * col_count { let _ = occ.append(false); }
 }
 fn occ_free(occ: vec::Vec[bool], r: usize, c: usize, rspan: usize, cspan: usize, col_count: usize) -> bool {
     var rr: usize = r;
@@ -2463,7 +2463,7 @@ fn occ_mark(ref occ: vec::Vec[bool], r: usize, c: usize, rspan: usize, cspan: us
     while rr < r + rspan {
         var cc: usize = c;
         while cc < c + cspan {
-            occ.set(true, rr * col_count + cc);
+            let _ = occ.set(true, rr * col_count + cc);
             cc = cc +% 1;
         }
         rr = rr +% 1;
@@ -2485,7 +2485,7 @@ fn track_offsets(sizes: vec::Vec[f64], gap: f64, start: f64) -> vec::Vec[f64] {
     var t: usize = 0;
     let n: usize = sizes.count();
     while t < n {
-        out.append(acc);
+        let _ = out.append(acc);
         acc = acc + size_at(sizes, t) + gap;
         t = t +% 1;
     }
@@ -2636,7 +2636,7 @@ struct Builder {
 }
 impl Builder {
     fn new() -> Builder { return Builder { node: Node::new() }; }
-    fn add(ref this, take item: Node) { this.node.add_child(item); return; }
+    fn add(ref this, take item: Node) { let _ = this.node.add_child(item); return; }
     fn finish(take this) -> Node { let Builder { node } = this; return node; }
 }
 
@@ -2696,8 +2696,8 @@ impl Node {
     // The band is measured against the nearest CONTAINED ancestor, never this
     // node itself; `bands` must be passed to `calculate_layout` for either to
     // do anything. Chain them for more than one band.
-    fn hide(take this, band: str) -> Node { var n: Node = this; n.add_rule(band, hide: true); return n; }
-    fn show(take this, band: str) -> Node { var n: Node = this; n.add_rule(band, hide: false); return n; }
+    fn hide(take this, band: str) -> Node { var n: Node = this; let _ = n.add_rule(band, hide: true); return n; }
+    fn show(take this, band: str) -> Node { var n: Node = this; let _ = n.add_rule(band, hide: false); return n; }
     fn justify(take this, v: Justify) -> Node { var n: Node = this; n.style.justify_content = v; return n; }
     fn align(take this, v: Align) -> Node { var n: Node = this; n.style.align_items = v; return n; }
     fn wrap(take this, v: Wrap) -> Node { var n: Node = this; n.style.flex_wrap = v; return n; }

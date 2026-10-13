@@ -268,7 +268,7 @@ impl TextVersions {
     // actually applied the edit.
     fn bump(ref this, node: usize) {
         let cur: u64 = this.version_of(node);
-        this.v.insert(node, cur +% 1);
+        let _ = this.v.insert(node, cur +% 1);
     }
 }
 

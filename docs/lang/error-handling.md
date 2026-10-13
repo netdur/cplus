@@ -39,7 +39,10 @@ if !s.is_ok() { return s; }              // propagate by returning it
 
 When the only failure mode is out-of-memory and the program's answer to OOM
 is "die later, not here", binding `_` is the honest spelling:
-`let _s: status::Status = v.append(x);` — visible, greppable, deliberate.
+`let _ = v.append(x);` — visible, greppable, deliberate. A `Status` left
+unbound is **W0009**: a statement `v.set(42, at: 0);` on an empty Vec does
+nothing and, without the warning, says nothing either. (`#[test]` bodies are
+exempt — their assertions observe the outcome.)
 
 ### Value producers: the whole result, or an empty one
 

@@ -219,7 +219,7 @@ impl Subscriber {
         var i: usize = this.head;
         while i < this.queue.count() {
             match this.queue.at_ptr(i) {
-                option::Option[*Event]::Some(p) => { nq.append({ *p }); }
+                option::Option[*Event]::Some(p) => { let _ = nq.append({ *p }); }
                 option::Option::None => {}
             }
             i = i +% 1;
@@ -244,7 +244,7 @@ impl Subscriber {
             this.head = this.head +% 1;
             this.dropped = this.dropped +% 1;
         }
-        this.queue.append(ev);
+        let _ = this.queue.append(ev);
         this.compact();
     }
 

@@ -60,11 +60,11 @@ fn drop_last[T](s: T[], count: usize) -> T[] {
 
 fn probe_vec() -> vec::Vec[i32] {
     var v: vec::Vec[i32] = vec::new::[i32]();
-    v.append(10);
-    v.append(20);
-    v.append(30);
-    v.append(40);
-    v.append(50);
+    let _ = v.append(10);
+    let _ = v.append(20);
+    let _ = v.append(30);
+    let _ = v.append(40);
+    let _ = v.append(50);
     return v;
 }
 

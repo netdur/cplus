@@ -329,7 +329,7 @@ fn all() -> vec::Vec[Window] {
     var i: usize = 0 as usize;
     while i < n {
         let r: *flex::Node = app::window_root(i);
-        if r.is_not_null() { out.append(Window::_of(r)); }
+        if r.is_not_null() { let _ = out.append(Window::_of(r)); }
         i = i +% (1 as usize);
     }
     return out;
@@ -344,7 +344,7 @@ fn keys() -> vec::Vec[text::Text] {
         let r: *flex::Node = app::window_root(i);
         if r.is_not_null() {
             let k: str = app::window_key_of(r);
-            if k != "" { out.append(text::from_str(k)); }
+            if k != "" { let _ = out.append(text::from_str(k)); }
         }
         i = i +% (1 as usize);
     }

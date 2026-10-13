@@ -652,7 +652,7 @@ fn parse_array(p: Parser) -> ValParse {
     loop {
         let r: ValParse = parse_value(p);
         match r {
-            ValParse::Ok(v, rp) => { p = rp; elems.append(v); }
+            ValParse::Ok(v, rp) => { p = rp; let _ = elems.append(v); }
             ValParse::Fail(rp) => { return fail(rp); }
         }
         p = skip_ws(p);
@@ -694,7 +694,7 @@ fn parse_object(p: Parser) -> ValParse {
 
         let r: ValParse = parse_value(p);
         match r {
-            ValParse::Ok(v, rp) => { p = rp; members.append(Member { key: key, value: v }); }
+            ValParse::Ok(v, rp) => { p = rp; let _ = members.append(Member { key: key, value: v }); }
             ValParse::Fail(rp) => { return fail(rp); }
         }
 
@@ -757,7 +757,7 @@ fn clone_value(v: Value) -> Value {
             var i: usize = 0;
             while i < n {
                 match arr.at_ptr(i) {
-                    option::Option[*Value]::Some(p) => { out.append(clone_value({ *p })); }
+                    option::Option[*Value]::Some(p) => { let _ = out.append(clone_value({ *p })); }
                     option::Option::None => {}
                 }
                 i = i +% 1;
@@ -771,7 +771,7 @@ fn clone_value(v: Value) -> Value {
             while i < n {
                 match arr.at_ptr(i) {
                     option::Option[*Member]::Some(p) => {
-                        out.append(Member {
+                        let _ = out.append(Member {
                             key: { (*p).key.clone() },
                             value: clone_value({ (*p).value }),
                         });

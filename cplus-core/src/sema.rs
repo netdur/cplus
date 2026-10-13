@@ -1183,6 +1183,7 @@ fn check_with_files_inner(
         current_fn_is_gen: false,
         current_gen_yield_ty: None,
         current_fn_no_alloc: false,
+        current_fn_is_test: false,
         current_fn_no_block: false,
         method_contracts: HashMap::new(),
         current_file: None,
@@ -1737,6 +1738,9 @@ struct SemaCx<'a> {
     /// post-pass `check_no_alloc`, but method dispatch (`recv.method()`) can
     /// only be resolved precisely here, where the receiver type is known.
     current_fn_no_alloc: bool,
+    /// The body being checked is a `#[test]` fn — W0009 does not fire there:
+    /// a test's assertions observe the outcome its setup calls produced.
+    current_fn_is_test: bool,
     /// Companion to `current_fn_no_alloc` for the `#[no_block]` contract.
     current_fn_no_block: bool,
     /// v0.0.12 realtime Phase 1: `(type_name, method_name)` → `(no_alloc,
@@ -2820,6 +2824,39 @@ impl SemaCx<'_> {
             ));
         }
         Some(notes)
+    }
+
+    /// W0009: a call whose `status::Status` is dropped on the floor.
+    ///
+    /// `v.set(42, at: 0);` on an empty Vec built clean, did nothing, and said
+    /// nothing (slab/spike.md Finding 1). Every stdlib mutator answers a
+    /// `Status` and changes nothing on failure, so an unbound one is a failure
+    /// nobody sees. The deliberate discard already has a spelling —
+    /// `let _ = v.append(x);` (error-handling.md §2) — and this asks for it.
+    /// A warning, not an error: the program is not wrong, only unobserved.
+    /// `#[test]` bodies are exempt (their assertions observe the outcome).
+    fn warn_if_status_discarded(&mut self, e: &Expr, ty: &Ty) {
+        if self.current_fn_is_test || !matches!(e.kind, ExprKind::Call { .. }) {
+            return;
+        }
+        let Ty::Enum(id) = ty else {
+            return;
+        };
+        let name = &self.enums[id.0 as usize].name;
+        if !(name.starts_with("stdlib.") && name.ends_with(".status.Status")) {
+            return;
+        }
+        self.warn_note(
+            "W0009",
+            "the `Status` this call returns is discarded: if it fails, nothing changes and \
+             nothing says so"
+                .to_string(),
+            e.span,
+            vec![
+                "handle it: `let s: status::Status = ...; if !s.is_ok() { return s; }`".to_string(),
+                "or discard it on purpose: `let _ = ...;`".to_string(),
+            ],
+        );
     }
 
     fn unknown_type_notes(name: &str) -> Option<Vec<String>> {
@@ -8686,6 +8723,7 @@ impl SemaCx<'_> {
         // not perturb definite-assignment/move state — the purity rule
         // guarantees the expression has no effects to record).
         self.check_contract_attrs(&f.attributes, &body_return);
+        self.current_fn_is_test = crate::attrs::is_test(&f.attributes);
         self.check_function_body(
             &f.body,
             body_return,
@@ -8694,6 +8732,7 @@ impl SemaCx<'_> {
             marks_no_block(&f.attributes),
             has_attr_named(&f.attributes, "naked"),
         );
+        self.current_fn_is_test = false;
         self.scopes.pop();
         self.current_fn_is_async = prev_async;
         self.current_fn_is_gen = prev_gen;
@@ -9246,6 +9285,7 @@ impl SemaCx<'_> {
             }
             StmtKind::Expr(e) => {
                 let ty = self.check_expr(e, None);
+                self.warn_if_status_discarded(e, &ty);
                 // v0.0.15 `#[no_alloc]` drop-glue, temporary arm: a discarded
                 // expression statement that materializes a fresh owned value
                 // (a call, constructor, …) drops that unnamed temporary at

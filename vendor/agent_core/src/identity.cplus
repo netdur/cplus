@@ -515,7 +515,7 @@ impl Registry {
     // Set the accessible name (label) the agent reads for this node.
     fn set_name(ref this, node: usize, name: str) {
         assert this.is_valid(node);
-        this.names.set(text::from_str(name), node);
+        let _ = this.names.set(text::from_str(name), node);
     }
 
     // Set the name from the WIDGET'S OWN CONTENT — a button's title, a field's
@@ -547,7 +547,7 @@ impl Registry {
         // by the read gate and `name` carried the line anyway, which is the
         // one-setter leak arriving through the other door.
         if this.in_excluded_subtree(node) { return; }
-        this.names.set(text::from_str(name), node);
+        let _ = this.names.set(text::from_str(name), node);
     }
 
     // The accessible name, as a view into registry-owned storage ("" if unset).
@@ -564,7 +564,7 @@ impl Registry {
     // it is the node's tool schema in the exposed describe.
     fn set_description(ref this, node: usize, d: str) {
         assert this.is_valid(node);
-        this.descriptions.set(text::from_str(d), node);
+        let _ = this.descriptions.set(text::from_str(d), node);
     }
 
     // The intent description ("" if unset), a view into registry-owned storage.
@@ -578,7 +578,7 @@ impl Registry {
 
     fn set_enabled(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
-        this.enabled.set(on, node);
+        let _ = this.enabled.set(on, node);
     }
 
     fn is_enabled(this, node: usize) -> bool {
@@ -593,7 +593,7 @@ impl Registry {
     // on it. The widget stays interactive for the user; only the agent is barred.
     fn set_observe_only(ref this, node: usize) {
         assert this.is_valid(node);
-        this.actionable.set(false, node);
+        let _ = this.actionable.set(false, node);
     }
 
     // Whether the agent may act on this node AS FAR AS THE WIDGET IS CONCERNED
@@ -615,7 +615,7 @@ impl Registry {
     // Declare this node's tier. Inherited by everything under it.
     fn set_tier(ref this, node: usize, tier: u32) {
         assert this.is_valid(node);
-        this.tiers.set(tier, node);
+        let _ = this.tiers.set(tier, node);
     }
 
     // The node's own declared tier, ignoring its ancestors.
@@ -732,7 +732,7 @@ impl Registry {
     // Declare a subtree out of the agent's world, root included.
     fn set_excluded(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
-        this.excluded.set(on, node);
+        let _ = this.excluded.set(on, node);
     }
 
     // Is this node inside an excluded subtree? Walks up, so marking the root is
@@ -756,7 +756,7 @@ impl Registry {
 
     fn set_exposed(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
-        this.exposed.set(on, node);
+        let _ = this.exposed.set(on, node);
     }
 
     // The curated UI description (plan.agent-core.md §4, §5.1): the agent-visible
@@ -792,8 +792,8 @@ impl Registry {
                         }
                     }
                 }
-                pos.append(out.count() as i64);
-                out.append(NodeView {
+                let _ = pos.append(out.count() as i64);
+                let _ = out.append(NodeView {
                     id: text::from_str(this.id_view(i)),
                     role: this.role_of(i),
                     name: text::from_str(this.name_of(i)),
@@ -809,7 +809,7 @@ impl Registry {
                     readable: this.can_read_value(grant, i),
                 });
             } else {
-                pos.append((0 as i64) -% (1 as i64));
+                let _ = pos.append((0 as i64) -% (1 as i64));
             }
             i = i +% 1;
         }
@@ -860,19 +860,19 @@ impl Registry {
             let prefix: str = this.id_view(owner);
             let qualified: text::Text = "${prefix}/${id}";
             if this.index.contains_key(qualified.view()) {
-                this.ids.append("${qualified}#${node_id}");
-            } else { this.ids.append(text::from_str(qualified.view())); }
-        } else { this.ids.append(id); }
-        this.index.insert(this.id_view(node_id), node_id);
-        this.roles.append(role);
-        this.parents.append(parent);
-        this.names.append(text::from_str(""));
-        this.descriptions.append(text::from_str(""));
-        this.enabled.append(true);
-        this.actionable.append(true);
-        this.exposed.append(exposed);
-        this.excluded.append(false);
-        this.tiers.append(tier_open());
+                let _ = this.ids.append("${qualified}#${node_id}");
+            } else { let _ = this.ids.append(text::from_str(qualified.view())); }
+        } else { let _ = this.ids.append(id); }
+        let _ = this.index.insert(this.id_view(node_id), node_id);
+        let _ = this.roles.append(role);
+        let _ = this.parents.append(parent);
+        let _ = this.names.append(text::from_str(""));
+        let _ = this.descriptions.append(text::from_str(""));
+        let _ = this.enabled.append(true);
+        let _ = this.actionable.append(true);
+        let _ = this.exposed.append(exposed);
+        let _ = this.excluded.append(false);
+        let _ = this.tiers.append(tier_open());
         return node_id;
     }
 
@@ -901,7 +901,7 @@ impl Registry {
             option::Option[usize]::Some(x) => x,
             option::Option::None => 0,
         };
-        this.sibling_counts.insert(parent, cur +% 1);
+        let _ = this.sibling_counts.insert(parent, cur +% 1);
         return cur;
     }
 }

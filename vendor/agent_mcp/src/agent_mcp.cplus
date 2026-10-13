@@ -257,27 +257,27 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> 
     };
 
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("id", jstr({ (*p).id })));
-    m.append(member("role", jstr(role_to_str({ (*p).role }))));
+    let _ = m.append(member("id", jstr({ (*p).id })));
+    let _ = m.append(member("role", jstr(role_to_str({ (*p).role }))));
     if with_geometry {
-        m.append(member("class", jstr({ (*p).class_name })));
+        let _ = m.append(member("class", jstr({ (*p).class_name })));
         var frame: vec::Vec[json::Member] = vec::new::[json::Member]();
-        frame.append(member("x", jnum({ (*p).frame.x })));
-        frame.append(member("y", jnum({ (*p).frame.y })));
-        frame.append(member("w", jnum({ (*p).frame.w })));
-        frame.append(member("h", jnum({ (*p).frame.h })));
-        m.append(member("frame", json::Value::Object(frame)));
+        let _ = frame.append(member("x", jnum({ (*p).frame.x })));
+        let _ = frame.append(member("y", jnum({ (*p).frame.y })));
+        let _ = frame.append(member("w", jnum({ (*p).frame.w })));
+        let _ = frame.append(member("h", jnum({ (*p).frame.h })));
+        let _ = m.append(member("frame", json::Value::Object(frame)));
     }
-    m.append(member("hidden", jbool({ (*p).is_hidden })));
+    let _ = m.append(member("hidden", jbool({ (*p).is_hidden })));
     // Clipped, with the full length beside it so a reader knows there is more
     // and `read_text` knows it is worth asking. Absent `text_len` means what
     // you see is all of it.
     let full: str = { (*p).text };
     let shown: str = clip_utf8(full, DESCRIBE_TEXT_BUDGET);
-    m.append(member("text", jstr(shown)));
+    let _ = m.append(member("text", jstr(shown)));
     if #str_len(shown) < #str_len(full) {
-        m.append(member("text_len", jnum(#str_len(full) as f64)));
-        m.append(member("text_truncated", jbool(true)));
+        let _ = m.append(member("text_len", jnum(#str_len(full) as f64)));
+        let _ = m.append(member("text_truncated", jbool(true)));
     }
     // ON THE WIRE ONLY WHEN GATED, and then both fields — the ones here that
     // exist to be READ BY A MODEL rather than by a test. `text: ""` on its own
@@ -286,8 +286,8 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> 
     // different correct next move: read it, ask the user for permission, or
     // leave it alone and say so.
     if { (*p).tier } != identity::tier_open() {
-        m.append(member("tier", jstr(tier_to_str({ (*p).tier }))));
-        m.append(member("readable", jbool({ (*p).readable })));
+        let _ = m.append(member("tier", jstr(tier_to_str({ (*p).tier }))));
+        let _ = m.append(member("readable", jbool({ (*p).readable })));
     } else if { (*p).readable } == false {
         // Open tier and STILL not readable: the node is inside an excluded
         // subtree (or the grant carries no `read` at all). The walked view
@@ -296,7 +296,7 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> 
         // the node goes out as `text: ""` with no `tier` and no `readable`,
         // which is character-for-character what a genuinely empty label looks
         // like, and no client can tell the two apart.
-        m.append(member("readable", jbool(false)));
+        let _ = m.append(member("readable", jbool(false)));
     }
     // The accessibility label, under the same "absent when there is nothing to
     // say" rule as `description`: omitted when empty, and omitted when it only
@@ -308,29 +308,29 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> 
     let tp: *text::Text = { #addr_of((*p).text) };
     if { (*np).view() } != "" {
         if { (*np).view() } != { (*tp).view() } {
-            m.append(member("name", jstr({ (*p).name })));
+            let _ = m.append(member("name", jstr({ (*p).name })));
         }
     }
     // Dev-authored intent — only on the wire when present (keeps full lean).
     let dp: *text::Text = { #addr_of((*p).description) };
     if { (*dp).view() } != "" {
-        m.append(member("description", jstr({ (*p).description })));
+        let _ = m.append(member("description", jstr({ (*p).description })));
     }
     // The permission/capability pair. Both always on the wire: an agent reading
     // one without the other is how sixteen keyed containers came to advertise a
     // press that does not exist.
-    m.append(member("actionable", jbool({ (*p).actionable })));
-    m.append(member("clickable", jbool({ (*p).clickable })));
+    let _ = m.append(member("actionable", jbool({ (*p).actionable })));
+    let _ = m.append(member("clickable", jbool({ (*p).clickable })));
     // DELIVERY, and absent when the backend cannot answer. Omitted rather than
     // sent as `false`, because "not answered" and "answered no" are different
     // facts and a model told the wrong one either skips a working control or
     // keeps pressing a dead one. `hit_test` reports `supported` for the same
     // reason.
     match { (*p).wired } {
-        option::Option[bool]::Some(w) => { m.append(member("wired", jbool(w))); }
+        option::Option[bool]::Some(w) => { let _ = m.append(member("wired", jbool(w))); }
         option::Option::None => { }
     }
-    m.append(member("parent", parent_val));
+    let _ = m.append(member("parent", parent_val));
     return json::Value::Object(m);
 }
 
@@ -462,7 +462,7 @@ fn describe_to_json(
 
 fn outcome_result(o: surface::Outcome) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("outcome", jstr(outcome_to_str(o))));
+    let _ = m.append(member("outcome", jstr(outcome_to_str(o))));
     return json::Value::Object(m);
 }
 
@@ -479,11 +479,11 @@ fn outcome_result(o: surface::Outcome) -> json::Value {
 // demo/bugs/06-agent-facing-docs-omit-what-costs-agents-time.md, A.2).
 fn outcome_result_for(o: surface::Outcome, target: str) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("outcome", jstr(outcome_to_str(o))));
+    let _ = m.append(member("outcome", jstr(outcome_to_str(o))));
     if surface::outcome_eq(o, surface::Outcome::NotFound) {
         let hint: text::Text =
             "no node \"${target}\" in the UI of the application serving this endpoint. Re-read describe_ui — ids change as the UI does — and note that an app launched BY this one has its own agent endpoint: this one only ever answers for its own UI.";
-        m.append(member("hint", jstr({ hint.view() })));
+        let _ = m.append(member("hint", jstr({ hint.view() })));
     }
     // A DEAD END OTHERWISE. `not_exposed` reaches a caller that has usually
     // just READ this node — `describe_ui mode:"full"` shows the whole tree and
@@ -494,7 +494,7 @@ fn outcome_result_for(o: surface::Outcome, target: str) -> json::Value {
     if surface::outcome_eq(o, surface::Outcome::NotExposed) {
         let hint: text::Text =
             "\"${target}\" is in the tree but not on the agent surface. Either the app never named it (only a node with a key is addressable — `mode:\"full\"` shows unnamed ones so you can SEE the structure, not drive it), or it is declared out with `agent: Hidden`. Neither is a fault you can retry: to drive it, the app has to give it a key.";
-        m.append(member("hint", jstr({ hint.view() })));
+        let _ = m.append(member("hint", jstr({ hint.view() })));
     }
     return json::Value::Object(m);
 }
@@ -506,12 +506,12 @@ fn outcome_result_for(o: surface::Outcome, target: str) -> json::Value {
 // already carries that distinction.
 fn hit_test_result(take h: surface::HitTest) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("outcome", jstr(outcome_to_str(h.outcome))));
-    m.append(member("supported", jbool(h.supported)));
-    m.append(member("reachable", jbool(h.reachable)));
-    m.append(member("covered", jbool(h.covered)));
+    let _ = m.append(member("outcome", jstr(outcome_to_str(h.outcome))));
+    let _ = m.append(member("supported", jbool(h.supported)));
+    let _ = m.append(member("reachable", jbool(h.reachable)));
+    let _ = m.append(member("covered", jbool(h.covered)));
     if { h.covered_by.view() } != "" {
-        m.append(member("covered_by", jstr({ h.covered_by.view() })));
+        let _ = m.append(member("covered_by", jstr({ h.covered_by.view() })));
     }
     return json::Value::Object(m);
 }
@@ -522,29 +522,29 @@ fn hit_test_result(take h: surface::HitTest) -> json::Value {
 // "" would read as a colour nobody set.
 fn runs_result(take r: surface::Runs) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("outcome", jstr(outcome_to_str(r.outcome))));
-    m.append(member("supported", jbool(r.supported)));
+    let _ = m.append(member("outcome", jstr(outcome_to_str(r.outcome))));
+    let _ = m.append(member("supported", jbool(r.supported)));
     var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
     var i: usize = 0;
     while i < r.runs.count() {
         match r.runs.at_ptr(i) {
             option::Option[*surface::TextRun]::Some(run) => {
                 var e: vec::Vec[json::Member] = vec::new::[json::Member]();
-                e.append(member("start", jnum({ (*run).start } as f64)));
-                e.append(member("length", jnum({ (*run).length } as f64)));
+                let _ = e.append(member("start", jnum({ (*run).start } as f64)));
+                let _ = e.append(member("length", jnum({ (*run).length } as f64)));
                 if { (*run).color.view() } != "" {
-                    e.append(member("color", jstr({ (*run).color.view() })));
+                    let _ = e.append(member("color", jstr({ (*run).color.view() })));
                 }
-                if { (*run).is_bold } { e.append(member("bold", jbool(true))); }
-                if { (*run).is_italic } { e.append(member("italic", jbool(true))); }
-                if { (*run).is_underlined } { e.append(member("underlined", jbool(true))); }
-                arr.append(json::Value::Object(e));
+                if { (*run).is_bold } { let _ = e.append(member("bold", jbool(true))); }
+                if { (*run).is_italic } { let _ = e.append(member("italic", jbool(true))); }
+                if { (*run).is_underlined } { let _ = e.append(member("underlined", jbool(true))); }
+                let _ = arr.append(json::Value::Object(e));
             }
             option::Option::None => { }
         }
         i = i +% 1;
     }
-    m.append(member("runs", json::Value::Array(arr)));
+    let _ = m.append(member("runs", json::Value::Array(arr)));
     return json::Value::Object(m);
 }
 
@@ -552,9 +552,9 @@ fn runs_result(take r: surface::Runs) -> json::Value {
 
 fn ok_response(id: f64, take result: json::Value) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("jsonrpc", jstr("2.0")));
-    m.append(member("id", jnum(id)));
-    m.append(member("result", result));
+    let _ = m.append(member("jsonrpc", jstr("2.0")));
+    let _ = m.append(member("id", jnum(id)));
+    let _ = m.append(member("result", result));
     return json::Value::Object(m);
 }
 
@@ -574,12 +574,12 @@ fn missing_param(id: f64, method: str, param: str) -> json::Value {
 
 fn err_response(id: f64, code: f64, msg: str) -> json::Value {
     var e: vec::Vec[json::Member] = vec::new::[json::Member]();
-    e.append(member("code", jnum(code)));
-    e.append(member("message", jstr(msg)));
+    let _ = e.append(member("code", jnum(code)));
+    let _ = e.append(member("message", jstr(msg)));
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("jsonrpc", jstr("2.0")));
-    m.append(member("id", jnum(id)));
-    m.append(member("error", json::Value::Object(e)));
+    let _ = m.append(member("jsonrpc", jstr("2.0")));
+    let _ = m.append(member("id", jnum(id)));
+    let _ = m.append(member("error", json::Value::Object(e)));
     return json::Value::Object(m);
 }
 
@@ -594,8 +594,8 @@ fn err_response(id: f64, code: f64, msg: str) -> json::Value {
 // One property of an input schema.
 fn prop(name: str, ty: str, description: str) -> json::Member {
     var p: vec::Vec[json::Member] = vec::new::[json::Member]();
-    p.append(member("type", jstr(ty)));
-    p.append(member("description", jstr(description)));
+    let _ = p.append(member("type", jstr(ty)));
+    let _ = p.append(member("description", jstr(description)));
     return member(name, json::Value::Object(p));
 }
 
@@ -608,13 +608,13 @@ fn prop(name: str, ty: str, description: str) -> json::Member {
 fn tool(name: str, description: str, take props: vec::Vec[json::Member],
         take required: vec::Vec[json::Value]) -> json::Value {
     var schema: vec::Vec[json::Member] = vec::new::[json::Member]();
-    schema.append(member("type", jstr("object")));
-    schema.append(member("properties", json::Value::Object(props)));
-    schema.append(member("required", json::Value::Array(required)));
+    let _ = schema.append(member("type", jstr("object")));
+    let _ = schema.append(member("properties", json::Value::Object(props)));
+    let _ = schema.append(member("required", json::Value::Array(required)));
     var t: vec::Vec[json::Member] = vec::new::[json::Member]();
-    t.append(member("name", jstr(name)));
-    t.append(member("description", jstr(description)));
-    t.append(member("inputSchema", json::Value::Object(schema)));
+    let _ = t.append(member("name", jstr(name)));
+    let _ = t.append(member("description", jstr(description)));
+    let _ = t.append(member("inputSchema", json::Value::Object(schema)));
     return json::Value::Object(t);
 }
 
@@ -623,14 +623,14 @@ fn no_required() -> vec::Vec[json::Value] { return vec::new::[json::Value](); }
 
 fn required1(a: str) -> vec::Vec[json::Value] {
     var r: vec::Vec[json::Value] = vec::new::[json::Value]();
-    r.append(jstr(a));
+    let _ = r.append(jstr(a));
     return r;
 }
 
 fn required2(a: str, b: str) -> vec::Vec[json::Value] {
     var r: vec::Vec[json::Value] = vec::new::[json::Value]();
-    r.append(jstr(a));
-    r.append(jstr(b));
+    let _ = r.append(jstr(a));
+    let _ = r.append(jstr(b));
     return r;
 }
 
@@ -647,71 +647,71 @@ fn core_tools() -> vec::Vec[json::Value] {
     var out: vec::Vec[json::Value] = vec::new::[json::Value]();
 
     var p_describe: vec::Vec[json::Member] = no_props();
-    p_describe.append(prop("mode", "string",
+    let _ = p_describe.append(prop("mode", "string",
         "\"exposed\" (default) is the curated set the developer chose to expose — small and high-signal. \"full\" is the whole walked tree including auto-keyed structural nodes, and is a superset."));
-    p_describe.append(prop("prefix", "string",
+    let _ = p_describe.append(prop("prefix", "string",
         "Answer only with nodes whose id starts with this, e.g. \"board:detail:\". Absent means the whole view. Use it: a whole-tree answer runs to tens of thousands of characters, and the id path is a path, so the question you are asking almost always has a prefix."));
-    out.append(tool("describe_ui",
+    let _ = out.append(tool("describe_ui",
         "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, wired, parent. The three flags are different questions and you need all three: `actionable` is whether you are ALLOWED to act, `clickable` is whether a click would LAND, and `wired` is whether it would reach a handler — a control can pass the first two and still do nothing. `wired` absent means this backend cannot answer it, which is not the same as false. EVERY WINDOW THE APP HAS OPEN is in one answer, each window a node of role \"window\" addressed by the name the app opened it under — so a node's window is its parent chain, and there is no \"current window\" to set. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it. Long text is CLIPPED here and marked `text_truncated` with the full `text_len`; `read_text` answers the whole value.",
         p_describe, no_required()));
 
     var p_click: vec::Vec[json::Member] = no_props();
-    p_click.append(prop("id", "string", "The node id, from describe_ui."));
-    out.append(tool("click",
+    let _ = p_click.append(prop("id", "string", "The node id, from describe_ui."));
+    let _ = out.append(tool("click",
         "Activate a control the way a person clicking it would. Answers an outcome: \"allowed\", \"not_actionable\" (disabled or not a control), or \"not_found\".",
         p_click, required1("id")));
 
     var p_set_text: vec::Vec[json::Member] = no_props();
-    p_set_text.append(prop("id", "string", "The node id of a text input."));
-    p_set_text.append(prop("value", "string", "The text to place in it. An explicit empty string clears the field."));
-    p_set_text.append(prop("base_version", "number", "Optional edit version returned by read_text. Supply it when present; on version_conflict, read again before retrying."));
-    out.append(tool("set_text",
+    let _ = p_set_text.append(prop("id", "string", "The node id of a text input."));
+    let _ = p_set_text.append(prop("value", "string", "The text to place in it. An explicit empty string clears the field."));
+    let _ = p_set_text.append(prop("base_version", "number", "Optional edit version returned by read_text. Supply it when present; on version_conflict, read again before retrying."));
+    let _ = out.append(tool("set_text",
         "Replace the contents of a text input. \"value\" is required: absent would read as an empty string and silently clear the field.",
         p_set_text, required2("id", "value")));
 
     var p_hit: vec::Vec[json::Member] = no_props();
-    p_hit.append(prop("id", "string", "The node id to test."));
-    out.append(tool("hit_test",
+    let _ = p_hit.append(prop("id", "string", "The node id to test."));
+    let _ = out.append(tool("hit_test",
         "Whether this node is the one that would actually receive a click at its own position, or whether something else is over it. Use when a click reports allowed but nothing happens.",
         p_hit, required1("id")));
 
     var p_caret: vec::Vec[json::Member] = no_props();
-    p_caret.append(prop("id", "string", "The node id of a text control."));
-    p_caret.append(prop("at", "number", "Offset in BYTES of the control's own text."));
-    p_caret.append(prop("length", "number", "Selection length in bytes; 0 (default) is an insertion point."));
-    out.append(tool("set_caret",
+    let _ = p_caret.append(prop("id", "string", "The node id of a text control."));
+    let _ = p_caret.append(prop("at", "number", "Offset in BYTES of the control's own text."));
+    let _ = p_caret.append(prop("length", "number", "Selection length in bytes; 0 (default) is an insertion point."));
+    let _ = out.append(tool("set_caret",
         "Place the caret, or select a range, inside a text control.",
         p_caret, required2("id", "at")));
 
     var p_readtext: vec::Vec[json::Member] = no_props();
-    p_readtext.append(prop("id", "string", "Node id, from describe_ui."));
-    out.append(tool("read_text",
+    let _ = p_readtext.append(prop("id", "string", "Node id, from describe_ui."));
+    let _ = out.append(tool("read_text",
         "The WHOLE text of one node. `describe_ui` clips a long value and marks it `text_truncated` with a `text_len` — this is how you get the rest. A node behind a tier you cannot read answers the same empty string it does there: asking twice is not a way past the gate. When supported and readable, version is the stamp to pass to set_text.base_version.",
         p_readtext, required1("id")));
 
     var p_runs: vec::Vec[json::Member] = no_props();
-    p_runs.append(prop("id", "string", "The node id of a text control."));
-    out.append(tool("read_runs",
+    let _ = p_runs.append(prop("id", "string", "The node id of a text control."));
+    let _ = out.append(tool("read_runs",
         "The styled runs of a text control — the text with its attributes, rather than the flattened string describe_ui reports.",
         p_runs, required1("id")));
 
     var p_menu: vec::Vec[json::Member] = no_props();
-    p_menu.append(prop("path", "string", "\"Menu/Item\", by the titles as built — for example \"File/Save\"."));
-    out.append(tool("invoke_menu",
+    let _ = p_menu.append(prop("path", "string", "\"Menu/Item\", by the titles as built — for example \"File/Save\"."));
+    let _ = out.append(tool("invoke_menu",
         "Pick a menu item, validation and all. A menu item is not a node and cannot be reached by id; a disabled one answers \"not_actionable\", the same word a node gets.",
         p_menu, required1("path")));
 
     var p_scroll: vec::Vec[json::Member] = no_props();
-    p_scroll.append(prop("id", "string", "The node id to bring into view."));
-    out.append(tool("scroll_to",
+    let _ = p_scroll.append(prop("id", "string", "The node id to bring into view."));
+    let _ = out.append(tool("scroll_to",
         "Scroll a node into view. Needed before interacting with something outside a scroll container's visible region.",
         p_scroll, required1("id")));
 
-    out.append(tool("poll_event",
+    let _ = out.append(tool("poll_event",
         "The next queued semantic event, or null when there is none. This is the asynchronous half: it is how an agent notices that the USER did something while it was working.",
         no_props(), no_required()));
 
-    out.append(tool("activity",
+    let _ = out.append(tool("activity",
         "What has been DONE to this application through this surface — every click, text write, caret move, menu invocation and scroll, in order, with who asked, what it targeted and whether it worked. For a person supervising an agent, and for an agent reviewing its own work. Content is never recorded: a text write is logged as its length.",
         no_props(), no_required()));
 
@@ -888,7 +888,7 @@ fn all_tools() -> vec::Vec[json::Value] {
         var extra: vec::Vec[json::Value] = d();
         while extra.count() > 0 {
             match extra.remove(0) {
-                option::Option[json::Value]::Some(v) => { out.append(v); }
+                option::Option[json::Value]::Some(v) => { let _ = out.append(v); }
                 option::Option::None => { return out; }
             }
         }
@@ -1162,15 +1162,15 @@ fn actions_json() -> json::Value {
         match ACTIONS.at_ptr(i) {
             option::Option[*Action]::Some(a) => {
                 var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-                m.append(member("seq", jnum({ (*a).seq } as f64)));
-                m.append(member("at_millis", jnum({ (*a).at_millis } as f64)));
-                m.append(member("client", json::Value::Text({ (*a).client }.clone())));
-                m.append(member("verb", json::Value::Text({ (*a).verb }.clone())));
-                m.append(member("target", json::Value::Text({ (*a).target }.clone())));
-                m.append(member("outcome", json::Value::Text({ (*a).outcome }.clone())));
+                let _ = m.append(member("seq", jnum({ (*a).seq } as f64)));
+                let _ = m.append(member("at_millis", jnum({ (*a).at_millis } as f64)));
+                let _ = m.append(member("client", json::Value::Text({ (*a).client }.clone())));
+                let _ = m.append(member("verb", json::Value::Text({ (*a).verb }.clone())));
+                let _ = m.append(member("target", json::Value::Text({ (*a).target }.clone())));
+                let _ = m.append(member("outcome", json::Value::Text({ (*a).outcome }.clone())));
                 let d: text::Text = { (*a).detail }.clone();
-                if d.count() > 0 { m.append(member("detail", json::Value::Text(d))); }
-                rows.append(json::Value::Object(m));
+                if d.count() > 0 { let _ = m.append(member("detail", json::Value::Text(d))); }
+                let _ = rows.append(json::Value::Object(m));
             }
             option::Option::None => { }
         }
@@ -1237,24 +1237,24 @@ fn dispatch(
     // `arguments`, and which is a transport shim's job to inject.
     if method == "initialize" {
         var caps_tools: vec::Vec[json::Member] = vec::new::[json::Member]();
-        caps_tools.append(member("listChanged", json::Value::Bool(false)));
+        let _ = caps_tools.append(member("listChanged", json::Value::Bool(false)));
         var caps: vec::Vec[json::Member] = vec::new::[json::Member]();
-        caps.append(member("tools", json::Value::Object(caps_tools)));
+        let _ = caps.append(member("tools", json::Value::Object(caps_tools)));
         var info: vec::Vec[json::Member] = vec::new::[json::Member]();
-        info.append(member("name", jstr(server_name())));
-        info.append(member("version", jstr("0.0.27")));
+        let _ = info.append(member("name", jstr(server_name())));
+        let _ = info.append(member("version", jstr("0.0.27")));
         var r: vec::Vec[json::Member] = vec::new::[json::Member]();
         // The version this server was written against. Echoing the CLIENT's
         // would be a lie the moment they differ, and the client is required to
         // handle a server naming a different one.
-        r.append(member("protocolVersion", jstr("2024-11-05")));
-        r.append(member("capabilities", json::Value::Object(caps)));
-        r.append(member("serverInfo", json::Value::Object(info)));
+        let _ = r.append(member("protocolVersion", jstr("2024-11-05")));
+        let _ = r.append(member("capabilities", json::Value::Object(caps)));
+        let _ = r.append(member("serverInfo", json::Value::Object(info)));
         return ok_response(id, json::Value::Object(r));
     }
     if method == "tools/list" {
         var r: vec::Vec[json::Member] = vec::new::[json::Member]();
-        r.append(member("tools", json::Value::Array(all_tools())));
+        let _ = r.append(member("tools", json::Value::Array(all_tools())));
         return ok_response(id, json::Value::Object(r));
     }
     if method == "tools/call" {
@@ -1285,13 +1285,13 @@ fn to_content(id: f64, take inner: json::Value) -> json::Value {
     if inner.has("error") { return inner; }
     let payload: json::Value = obj_get(inner, "result");
     var block: vec::Vec[json::Member] = vec::new::[json::Member]();
-    block.append(member("type", jstr("text")));
-    block.append(member("text", json::Value::Text(payload.to_text())));
+    let _ = block.append(member("type", jstr("text")));
+    let _ = block.append(member("text", json::Value::Text(payload.to_text())));
     var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
-    arr.append(json::Value::Object(block));
+    let _ = arr.append(json::Value::Object(block));
     var r: vec::Vec[json::Member] = vec::new::[json::Member]();
-    r.append(member("content", json::Value::Array(arr)));
-    r.append(member("isError", json::Value::Bool(false)));
+    let _ = r.append(member("content", json::Value::Array(arr)));
+    let _ = r.append(member("isError", json::Value::Bool(false)));
     return ok_response(id, json::Value::Object(r));
 }
 
@@ -1464,12 +1464,12 @@ fn route_verb(
                         var body: text::Text = text::from_str({ (*n).text.view() });
                         if body.is_empty() { body = text::from_str({ (*n).name.view() }); }
                         var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-                        m.append(member("id", jstr({ want.view() })));
-                        m.append(member("text", jstr({ body.view() })));
-                        m.append(member("readable", jbool({ (*n).readable })));
+                        let _ = m.append(member("id", jstr({ want.view() })));
+                        let _ = m.append(member("text", jstr({ body.view() })));
+                        let _ = m.append(member("readable", jbool({ (*n).readable })));
                         if (*n).readable && vt.text_version.is_not_null() {
                             if let option::Option::Some(version)=(vt.text_version)(surf,grant,want.view()) {
-                                m.append(member("version", jnum(version as f64)));
+                                let _ = m.append(member("version", jnum(version as f64)));
                             }
                         }
                         return ok_response(id, json::Value::Object(m));
@@ -1520,8 +1520,8 @@ fn route_verb(
         let result: json::Value = match ev {
             option::Option[events::Event]::Some(e) => {
                 var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-                m.append(member("source", jnum(e.source as f64)));
-                m.append(member("verb", jstr(verb_to_str(e.verb))));
+                let _ = m.append(member("source", jnum(e.source as f64)));
+                let _ = m.append(member("verb", jstr(verb_to_str(e.verb))));
                 json::Value::Object(m)
             }
             option::Option::None => json::Value::Null,
@@ -1538,12 +1538,12 @@ fn route_verb(
                 "activity: this grant carries no read capability");
         }
         var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-        m.append(member("actions", actions_json()));
+        let _ = m.append(member("actions", actions_json()));
         // The highest sequence number ever issued, against how many rows are
         // still held: a reader seeing 900 and 256 knows the log wrapped rather
         // than that the session was quiet.
-        m.append(member("issued", jnum(ACTION_SEQ as f64)));
-        m.append(member("held", jnum(ACTIONS.count() as f64)));
+        let _ = m.append(member("issued", jnum(ACTION_SEQ as f64)));
+        let _ = m.append(member("held", jnum(ACTIONS.count() as f64)));
         return ok_response(id, json::Value::Object(m));
     }
     // Naming the method it received. An extension method arriving at a process
@@ -3906,21 +3906,21 @@ fn fake_labelled_node(id: str, label: str) -> backend::UiNode {
 
 fn fake_describe_full(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
     var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
-    out.append(fake_node("exposed-node"));
-    out.append(fake_node("structural-node"));
-    out.append(fake_secret_node("payment:card", grant));
-    out.append(fake_blank_node("empty-label", true));
-    out.append(fake_blank_node("assistant:line", false));
-    out.append(fake_labelled_node("chat:row:1:agent", "the whole message a list row carries"));
+    let _ = out.append(fake_node("exposed-node"));
+    let _ = out.append(fake_node("structural-node"));
+    let _ = out.append(fake_secret_node("payment:card", grant));
+    let _ = out.append(fake_blank_node("empty-label", true));
+    let _ = out.append(fake_blank_node("assistant:line", false));
+    let _ = out.append(fake_labelled_node("chat:row:1:agent", "the whole message a list row carries"));
     return out;
 }
 
 fn fake_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
     var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
-    out.append(fake_node("exposed-node"));
+    let _ = out.append(fake_node("exposed-node"));
     // A gated node is EXPOSED. It belongs in the curated view — that is the
     // whole difference between this and simply not tagging the field.
-    out.append(fake_secret_node("payment:card", grant));
+    let _ = out.append(fake_secret_node("payment:card", grant));
     return out;
 }
 
@@ -3973,11 +3973,11 @@ fn fake_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
         }
     }
     var runs: vec::Vec[surface::TextRun] = vec::new::[surface::TextRun]();
-    runs.append(surface::TextRun {
+    let _ = runs.append(surface::TextRun {
         start: 0, length: 3, color: text::from_str("#ff0000"),
         is_bold: true, is_italic: false, is_underlined: false,
     });
-    runs.append(surface::TextRun {
+    let _ = runs.append(surface::TextRun {
         start: 3, length: 4, color: text::new(),
         is_bold: false, is_italic: false, is_underlined: false,
     });
@@ -4023,8 +4023,8 @@ fn ext_probe(method: str, params: json::Value, id: f64, grant: auth::Grant) -> j
 
 fn ext_describes_two() -> vec::Vec[json::Value] {
     var out: vec::Vec[json::Value] = vec::new::[json::Value]();
-    out.append(tool("probe.one", "first", no_props(), no_required()));
-    out.append(tool("probe.two", "second", no_props(), required1("x")));
+    let _ = out.append(tool("probe.one", "first", no_props(), no_required()));
+    let _ = out.append(tool("probe.two", "second", no_props(), required1("x")));
     return out;
 }
 
@@ -4505,11 +4505,11 @@ static EXT_CALLS: i32 = 0;
 fn fake_extension(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json::Value {
     EXT_CALLS = EXT_CALLS + 1;
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("from", jstr("extension")));
-    m.append(member("method", jstr(method)));
+    let _ = m.append(member("from", jstr("extension")));
+    let _ = m.append(member("method", jstr(method)));
     // Echoed so a test can assert the namespace was told WHO is asking, not
     // merely that someone was admitted.
-    m.append(member("may_edit_tree", jbool(grant.has(auth::cap_edit_tree()))));
+    let _ = m.append(member("may_edit_tree", jbool(grant.has(auth::cap_edit_tree()))));
     return ok_response(id, json::Value::Object(m));
 }
 
@@ -4522,7 +4522,7 @@ fn second_extension(method: str, params: json::Value, id: f64, grant: auth::Gran
 
 fn second_describes_one() -> vec::Vec[json::Value] {
     var out: vec::Vec[json::Value] = vec::new::[json::Value]();
-    out.append(tool("second.only", "the second namespace's one verb", no_props(), no_required()));
+    let _ = out.append(tool("second.only", "the second namespace's one verb", no_props(), no_required()));
     return out;
 }
 
@@ -5117,12 +5117,12 @@ fn fake_child_node(id: str, parent: usize) -> backend::UiNode {
 // wrong: window > board > (col:1 > card:1), (detail:3 > detail:title).
 fn nested_describe(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
     var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
-    out.append(fake_node("window"));                          // 0
-    out.append(fake_child_node("board", 0));         // 1
-    out.append(fake_child_node("board:col:1", 1));   // 2
-    out.append(fake_child_node("board:card:1", 2));  // 3
-    out.append(fake_child_node("board:detail:3", 1));        // 4
-    out.append(fake_child_node("board:detail:title", 4));    // 5
+    let _ = out.append(fake_node("window"));                          // 0
+    let _ = out.append(fake_child_node("board", 0));         // 1
+    let _ = out.append(fake_child_node("board:col:1", 1));   // 2
+    let _ = out.append(fake_child_node("board:card:1", 2));  // 3
+    let _ = out.append(fake_child_node("board:detail:3", 1));        // 4
+    let _ = out.append(fake_child_node("board:detail:title", 4));    // 5
     return out;
 }
 
@@ -5211,10 +5211,10 @@ fn a_deeper_match_reattaches_to_the_nearest_surviving_ancestor() {
 // while its array is numbered in another does, and one did.
 fn cyclic_describe(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
     var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
-    out.append(fake_node("window"));                                  // 0
-    out.append(fake_child_node("a", 2));                     // 1 -> 2
-    out.append(fake_child_node("b", 1));                     // 2 -> 1
-    out.append(fake_child_node("board:detail:3", 1));        // 3 -> the loop
+    let _ = out.append(fake_node("window"));                                  // 0
+    let _ = out.append(fake_child_node("a", 2));                     // 1 -> 2
+    let _ = out.append(fake_child_node("b", 1));                     // 2 -> 1
+    let _ = out.append(fake_child_node("board:detail:3", 1));        // 3 -> the loop
     return out;
 }
 

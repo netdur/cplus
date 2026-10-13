@@ -685,7 +685,7 @@ fn walk_runs(storage: *u8) -> vec::Vec[surface::TextRun] {
         if eff.length == 0 { eff.length = units -% at; }
         let start_b: u64 = byte_offset_of(src, at);
         let end_b: u64 = byte_offset_of(src, at +% eff.length);
-        out.append(surface::TextRun {
+        let _ = out.append(surface::TextRun {
             start: start_b,
             length: end_b -% start_b,
             color: run_color_hex(attrs),
@@ -1224,7 +1224,7 @@ fn add_part(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
     reg.set_enabled(child, live_enabled(owner));
     reg.set_name(child, name);
     let _r: *u8 = rt::retain(owner);
-    views.append(ViewRef { p: owner, part: part, node: 0 as *core::Node });
+    let _ = views.append(ViewRef { p: owner, part: part, node: 0 as *core::Node });
     return;
 }
 
@@ -1242,7 +1242,7 @@ fn add_item_part(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
     reg.set_name(child, title);
     if selected { reg.set_description(child, "selected"); }
     let _r: *u8 = rt::retain(owner);
-    views.append(ViewRef { p: owner, part: PART_ITEM_BASE + (at as u32), node: n });
+    let _ = views.append(ViewRef { p: owner, part: PART_ITEM_BASE + (at as u32), node: n });
     return;
 }
 
@@ -1307,7 +1307,7 @@ fn add_tab_part(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
     reg.set_name(child, { label.view() });
     if selected { reg.set_description(child, "selected"); }
     let _r: *u8 = rt::retain(owner);
-    views.append(ViewRef { p: owner, part: PART_TAB_BASE + (at as u32), node: n });
+    let _ = views.append(ViewRef { p: owner, part: PART_TAB_BASE + (at as u32), node: n });
     return;
 }
 
@@ -1368,7 +1368,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
         option::Option::None => { }
     }
     let _r: *u8 = rt::retain(view);
-    views.append(ViewRef { p: view, part: PART_SELF, node: 0 as *core::Node });
+    let _ = views.append(ViewRef { p: view, part: PART_SELF, node: 0 as *core::Node });
 
     // The parts a subview walk cannot reach. Only for a field the developer
     // tagged: exposure is opt-in, and a sub-control of an unexposed control has
@@ -1458,7 +1458,7 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             }
             let _r: *u8 = rt::retain(view);
             let own: *core::Node = if picker_text::is_picker(n) { n } else { 0 as *core::Node };
-            views.append(ViewRef { p: view, part: PART_SELF, node: own });
+            let _ = views.append(ViewRef { p: view, part: PART_SELF, node: own });
 
             // The parts a tree walk cannot reach: a control that carries more
             // than one affordance. Same rule as before — only on a keyed node.
@@ -1690,7 +1690,7 @@ fn walk_window(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window
         }
     };
     let _rw: *u8 = rt::retain(window);
-    views.append(ViewRef { p: window, part: PART_SELF, node: 0 as *core::Node });
+    let _ = views.append(ViewRef { p: window, part: PART_SELF, node: 0 as *core::Node });
 
     if !is_null(root as *u8) {
         walk_facet(reg, views, root, win_reg);
@@ -1729,7 +1729,7 @@ fn open(window: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
     // NodeId 0 is the synthetic app root — no backing view.
-    views.append(ViewRef { p: null(), part: PART_SELF, node: 0 as *core::Node });
+    let _ = views.append(ViewRef { p: null(), part: PART_SELF, node: 0 as *core::Node });
     walk_window(reg, views, window);
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
 }
@@ -1760,7 +1760,7 @@ fn open(window: *u8) -> Surface {
 fn open_app() -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
-    views.append(ViewRef { p: null(), part: PART_SELF, node: 0 as *core::Node });
+    let _ = views.append(ViewRef { p: null(), part: PART_SELF, node: 0 as *core::Node });
     // ONE WALK PER NATIVE WINDOW, not per registered root. macOS gives every
     // screen its own NSWindow — a sheet included — so this changes nothing
     // here today; it is what keeps the loop honest for a platform where one
@@ -1913,7 +1913,7 @@ impl Surface {
             // `text: ""` while drawing a card title, and since `readable`
             // only reaches the wire on a gated node, nothing said so.
             let may_read: bool = this.reg.can_read_value_walked(grant, node);
-            out.append(AppKitNode {
+            let _ = out.append(AppKitNode {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(view),
@@ -1981,7 +1981,7 @@ impl Surface {
             } else {
                 false
             };
-            out.append(LayoutDiagnostic {
+            let _ = out.append(LayoutDiagnostic {
                 id: text::from_str(this.reg.resolved_id(node)),
                 class_name: class_name_text(view),
                 uses_autolayout: !translates,
@@ -2366,7 +2366,7 @@ fn mcp_describe_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     while i < local.count() {
         match local.at_ptr(i) {
             option::Option[*AppKitNode]::Some(n) => {
-                out.append(mcpb::UiNode {
+                let _ = out.append(mcpb::UiNode {
                     id: ctext((*n).id.view()),
                     role: { (*n).role },
                     class_name: ctext((*n).class_name.view()),
@@ -2893,7 +2893,7 @@ fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode
                 if identity::role_eq({ (*n).role }, identity::Role::Value) {
                     if !is_null(live) { shown = (*s).live_text(at, live, { (*n).role }); }
                 }
-                out.append(mcpb::UiNode {
+                let _ = out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),

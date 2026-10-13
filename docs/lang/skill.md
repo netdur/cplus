@@ -729,6 +729,13 @@ union and the caller matches it.
 > `guard let` — those are the only three. (`.unwrap()` on `Box[T]` is a
 > different thing: it moves the owned value back off the heap.)
 >
+> **A mutator's `status::Status` is the only news of its failure.** It changes
+> nothing when it fails, so `v.set(x, at: i);` as a bare statement can do nothing
+> and say nothing — that is **W0009**. Bind it and check it
+> (`let s: status::Status = v.append(x); if !s.is_ok() { return s; }`), or
+> discard it on purpose: `let _ = v.append(x);`. (`Status` does have `.is_ok()`;
+> it is `Result`/`Option` that have no methods.)
+>
 > **There is no `panic()` and no `abort()`.** The only hard bail is `assert`,
 > which traps. A function that cannot continue returns an error variant; that is
 > the whole error model, and a caller who must stop calls `assert`.

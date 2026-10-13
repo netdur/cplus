@@ -416,7 +416,7 @@ fn env_keys_in(p: *Application) -> vec::Vec[text::Text] {
     while i < cap {
         match { (*s).envmap.key_ptr_at_slot(i) } {
             option::Option[*text::Text]::Some(kp) => {
-                out.append(text::from_str({ (*kp).view() }));
+                let _ = out.append(text::from_str({ (*kp).view() }));
             }
             option::Option[*text::Text]::None => { }
         }
@@ -720,7 +720,7 @@ fn window_roots_for_native(p: *u8) -> vec::Vec[*flex::Node] {
     while i < n {
         match { (*s).windows.at_ptr(i) } {
             option::Option[*Window]::Some(w) => {
-                if { (*w).native } == p { out.append({ (*w).root }); }
+                if { (*w).native } == p { let _ = out.append({ (*w).root }); }
             }
             option::Option[*Window]::None => { }
         }

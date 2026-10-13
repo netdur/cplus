@@ -4995,21 +4995,21 @@ fn js_quoted(s: str) -> text::Text {
             option::Option[u8]::Some(x) => x,
             option::Option[u8]::None => 0 as u8,
         };
-        if b == (34 as u8) { out.append("\\\""); }
-        else if b == (92 as u8) { out.append("\\\\"); }
-        else if b == (10 as u8) { out.append("\\n"); }
-        else if b == (13 as u8) { out.append("\\r"); }
-        else if b == (9 as u8) { out.append("\\t"); }
+        if b == (34 as u8) { let _ = out.append("\\\""); }
+        else if b == (92 as u8) { let _ = out.append("\\\\"); }
+        else if b == (10 as u8) { let _ = out.append("\\n"); }
+        else if b == (13 as u8) { let _ = out.append("\\r"); }
+        else if b == (9 as u8) { let _ = out.append("\\t"); }
         else if b < (32 as u8) { }
         else {
             match s.slice(i, i +% (1 as usize)) {
-                option::Option[str]::Some(one) => { out.append(one); }
+                option::Option[str]::Some(one) => { let _ = out.append(one); }
                 option::Option[str]::None => { }
             }
         }
         i = i +% (1 as usize);
     }
-    out.append("\"");
+    let _ = out.append("\"");
     return out;
 }
 

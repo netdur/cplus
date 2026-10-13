@@ -157,7 +157,7 @@ fn app_menu(title: str) -> AppMenu {
 impl AppMenu {
     fn add_item(ref this, menu: str, title: str, key: str, action: u32,
                 shift: bool = false, alt: bool = false) {
-        this.items.append(MenuItem::new(menu, title, key: key, shift: shift, alt: alt,
+        let _ = this.items.append(MenuItem::new(menu, title, key: key, shift: shift, alt: alt,
                                         action: action));
         return;
     }
@@ -184,7 +184,7 @@ impl AppMenu {
         shift: bool = false,
         alt: bool = false,
     ) {
-        this.items.append(MenuItem::new(menu, title, key: key, shift: shift, alt: alt,
+        let _ = this.items.append(MenuItem::new(menu, title, key: key, shift: shift, alt: alt,
                                         action: menu_action_none(),
                                         on_click: on_click, ctx: ctx,
                                         is_enabled: is_enabled, is_enabled_ctx: is_enabled_ctx,
@@ -194,7 +194,7 @@ impl AppMenu {
 
     // Add a dividing rule to `menu` at this point.
     fn add_separator(ref this, menu: str) {
-        this.items.append(MenuItem::separator(menu));
+        let _ = this.items.append(MenuItem::separator(menu));
     }
 
     // Drop every item in `menu` holding the CHORD `k`+`shift`+`alt` (keyless
@@ -246,7 +246,7 @@ impl AppMenu {
                     let k: text::Text = it.key.clone();
                     let m: text::Text = it.menu.clone();
                     this.remove_chord(m.view(), k.view(), it.shift, it.alt);
-                    this.items.append(it);
+                    let _ = this.items.append(it);
                 }
                 option::Option[MenuItem]::None => { break; }
             }

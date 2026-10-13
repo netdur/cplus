@@ -299,7 +299,7 @@ fn main() -> i32 {
     }
 
     var body: vec::Vec[u8] = vec::new::[u8]();
-    body.extend_from_raw(pixels, pixel_bytes);
+    let _ = body.extend_from_raw(pixels, pixel_bytes);
     match fs::create("out.ppm") {
         result::Result[fs::File, result::IoError]::Ok(f) => {
             var file: fs::File = f;

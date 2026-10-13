@@ -3394,6 +3394,26 @@ app_id = "com.elmanahil.spendwise"
 '''
 
 [[code]]
+id = "W0009"
+title = "A call's `Status` is discarded"
+category = "Warnings"
+severity = "warning"
+repro = "scenario"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:warn_if_status_discarded"
+test = "cpc/tests/e2e.rs:a_discarded_status_warns_w0009_and_a_deliberate_discard_does_not"
+cause = "A call that answers a stdlib `status::Status` is used as a statement, so its answer is thrown away. Every stdlib mutator changes nothing on failure and says so only through that `Status` — `v.set(42, at: 0)` on an empty Vec does nothing — so an unbound one is a failure nobody sees. `#[test]` functions are exempt: their assertions observe what the setup produced."
+fix = "Handle it — `let s: status::Status = v.append(x); if !s.is_ok() { return s; }` — or, when failure is acceptable (typically out-of-memory and the program's answer is \"die later\"), discard it on purpose: `let _ = v.append(x);`. A function that builds and returns a new value should check each append and return an empty value on the first failure (error-handling.md §2)."
+example = '''
+import "stdlib/vec" as vec;
+fn main() -> i32 {
+    var v = vec::new::[i32]();
+    v.set(42, at: 0);        // W0009: the OutOfBounds answer is dropped
+    return v.count() as i32;
+}
+'''
+[[code]]
 id = "W0824"
 title = "Handler parameter cannot receive a bound method"
 category = "Warnings"

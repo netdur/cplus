@@ -788,7 +788,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8,
 struct status_of_append { _u: i32 }
 fn append_ref(ref views: vec::Vec[ViewRef], view: *u8) -> status_of_append {
     let _s: status_of_append = status_of_append { _u: 0 };
-    views.append(ViewRef { p: view, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
+    let _ = views.append(ViewRef { p: view, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
     return _s;
 }
 
@@ -814,7 +814,7 @@ fn add_item_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
                 reg.set_name(child, pp.item(i));
                 if (i as i64) == chosen { reg.set_description(child, "selected"); }
                 let _r: *u8 = rt::retain(view);
-                views.append(ViewRef { p: view, tab: i as i64, node: n, dialog: DIALOG_NONE });
+                let _ = views.append(ViewRef { p: view, tab: i as i64, node: n, dialog: DIALOG_NONE });
                 i = i +% (1 as usize);
             }
         }
@@ -873,7 +873,7 @@ fn add_tab_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
         reg.set_name(child, { label.view() });
         if (i as i64) == showing { reg.set_description(child, "selected"); }
         let _r: *u8 = rt::retain(view);
-        views.append(ViewRef { p: view, tab: i as i64, node: n, dialog: DIALOG_NONE });
+        let _ = views.append(ViewRef { p: view, tab: i as i64, node: n, dialog: DIALOG_NONE });
         i = i +% (1 as usize);
     }
     return;
@@ -1005,7 +1005,7 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             if picker_text::is_picker(n) {
                 // A date or time picker keeps its facet node: its value is the
                 // facet date, read and PICKED through it (spendwise S22).
-                views.append(ViewRef { p: view, tab: -1 as i64, node: n, dialog: DIALOG_NONE });
+                let _ = views.append(ViewRef { p: view, tab: -1 as i64, node: n, dialog: DIALOG_NONE });
             } else {
                 let _a: status_of_append = append_ref(views, view);
             }
@@ -1172,7 +1172,7 @@ fn walk_window(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window
             reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window),
     };
     let _rw: *u8 = rt::retain(window);
-    views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
+    let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
 
     var ri: usize = 0 as usize;
     while ri < { roots.count() } {
@@ -1192,7 +1192,7 @@ fn open(window: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
     // NodeId 0 is the synthetic app root — no backing view.
-    views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
+    let _ = views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
     walk_window(reg, views, window);
     let modal: bool = add_dialog(reg, views, window);
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views, modal: modal };
@@ -1251,7 +1251,7 @@ fn observe_only_from(ref reg: identity::Registry, first: usize) {
 fn open_app() -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
-    views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
+    let _ = views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
     var seen: vec::Vec[usize] = vec::new::[usize]();
     var first_win: *u8 = null();
     let n: usize = app::window_count();
@@ -1288,24 +1288,24 @@ fn add_dialog(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window:
     let prefix: str = native_dialog::kind_prefix(d.kind);
     let group: usize = reg.add_child(reg.root(), option::Option[str]::Some(prefix), identity::Role::Window);
     let _g: *u8 = rt::retain(window);
-    views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
+    let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
     let title_key: text::Text = "${prefix}:title";
     let t: usize = reg.add_child(group, option::Option[str]::Some({ title_key.view() }), identity::Role::Text);
     reg.set_name(t, { d.title.view() });
     let _t: *u8 = rt::retain(window);
-    views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
+    let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
     if !d.message.is_empty() {
         let message_key: text::Text = "${prefix}:message";
         let m: usize = reg.add_child(group, option::Option[str]::Some({ message_key.view() }), identity::Role::Text);
         reg.set_name(m, { d.message.view() });
         let _m: *u8 = rt::retain(window);
-        views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
+        let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
     }
     if d.kind == native_dialog::KIND_PROMPT {
         let f: usize = reg.add_child(group, option::Option[str]::Some("prompt:value"), identity::Role::Input);
         reg.set_name(f, { d.field.view() });
         let _f: *u8 = rt::retain(window);
-        views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_FIELD });
+        let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_FIELD });
     }
     var i: usize = 0 as usize;
     while i < d.buttons.count() {
@@ -1315,7 +1315,7 @@ fn add_dialog(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window:
                 let b: usize = reg.add_child(group, option::Option[str]::Some({ key.view() }), identity::Role::Button);
                 reg.set_name(b, { (*title).view() });
                 let _b: *u8 = rt::retain(window);
-                views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: i as i64 });
+                let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: i as i64 });
             }
             option::Option[*text::Text]::None => { }
         }
@@ -1474,7 +1474,7 @@ impl Surface {
             // reports `text: ""` while it is drawing a title.
             let may_read: bool = this.reg.can_read_value_walked(grant, node);
             let f: rt::Rect = { rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))) };
-            out.append(mcpb::UiNode {
+            let _ = out.append(mcpb::UiNode {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(view),
@@ -1948,7 +1948,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                 if identity::role_eq({ (*n).role }, identity::Role::Value) {
                     if !is_null(live) { shown = (*s).live_text(at, live, { (*n).role }); }
                 }
-                out.append(mcpb::UiNode {
+                let _ = out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
@@ -2231,7 +2231,7 @@ fn walk_runs(storage: *u8) -> vec::Vec[surface::TextRun] {
         if eff.length == (0 as u64) { eff.length = units -% at; }
         let start_b: u64 = byte_offset_of(src, at);
         let end_b: u64 = byte_offset_of(src, at +% eff.length);
-        out.append(surface::TextRun {
+        let _ = out.append(surface::TextRun {
             start: start_b,
             length: end_b -% start_b,
             color: run_color_hex(attrs),

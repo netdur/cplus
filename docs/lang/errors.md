@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **198 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **152** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **199 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **152** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -2877,6 +2877,23 @@ app_id = "com.elmanahil.spendwise"
 **Fix.** Make the file carry the manifest's id — `CFBundleIdentifier` in the plist, `package=` on the Android `<manifest>` element — or change `app_id` if the file is the one that is right.
 
 <sub>repro: scenario · cpc/src/main.rs:warn_app_id_disagreement · test cpc/tests/cli_scaffold.rs:build_warns_w0008_when_a_platform_file_drifts_from_app_id</sub>
+
+### W0009 · A call's `Status` is discarded
+
+A call that answers a stdlib `status::Status` is used as a statement, so its answer is thrown away. Every stdlib mutator changes nothing on failure and says so only through that `Status` — `v.set(42, at: 0)` on an empty Vec does nothing — so an unbound one is a failure nobody sees. `#[test]` functions are exempt: their assertions observe what the setup produced.
+
+```cplus
+import "stdlib/vec" as vec;
+fn main() -> i32 {
+    var v = vec::new::[i32]();
+    v.set(42, at: 0);        // W0009: the OutOfBounds answer is dropped
+    return v.count() as i32;
+}
+```
+
+**Fix.** Handle it — `let s: status::Status = v.append(x); if !s.is_ok() { return s; }` — or, when failure is acceptable (typically out-of-memory and the program's answer is "die later"), discard it on purpose: `let _ = v.append(x);`. A function that builds and returns a new value should check each append and return an empty value on the first failure (error-handling.md §2).
+
+<sub>repro: scenario · cplus-core/src/sema.rs:warn_if_status_discarded · test cpc/tests/e2e.rs:a_discarded_status_warns_w0009_and_a_deliberate_discard_does_not</sub>
 
 ### W0824 · Handler parameter cannot receive a bound method
 

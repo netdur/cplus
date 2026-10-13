@@ -458,7 +458,7 @@ fn mount_walk(n: *core::Node, host: *u8, slot: usize, ref q: vec::Vec[*core::Nod
     }
     else if create.is_not_null() { v = create(RENDERER.ctx, n); }
     core::set_attached(n, true);
-    q.append(n);
+    let _ = q.append(n);
     if v.is_not_null() {
         // An adopted view keeps the release `adopt_native` paired with it. The
         // application said who frees this view; the backend does not get to
@@ -495,7 +495,7 @@ fn mount_walk(n: *core::Node, host: *u8, slot: usize, ref q: vec::Vec[*core::Nod
 
 fn detach_walk(n: *core::Node, ref q: vec::Vec[*core::Node]) {
     core::set_attached(n, false);
-    q.append(n);
+    let _ = q.append(n);
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {
@@ -667,8 +667,8 @@ fn fr_release(v: *u8) { FR_RELEASES = FR_RELEASES + 1; return; }
 fn fr_apply(ctx: *u8, n: *core::Node) { FR_APPLIES = FR_APPLIES + 1; return; }
 
 fn fr_insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
-    FR_INS_HOSTS.append(host as u64);
-    FR_INS_SLOTS.append(slot as u64);
+    let _ = FR_INS_HOSTS.append(host as u64);
+    let _ = FR_INS_SLOTS.append(slot as u64);
 }
 
 fn fr_remove(ctx: *u8, host: *u8, child: *u8) { FR_REMOVES = FR_REMOVES + 1; return; }
@@ -1157,7 +1157,7 @@ fn visibility_walk(n: *core::Node, up: bool,
     let now: bool = up && !core::is_hidden(n);
     if now != core::was_showing(n) {
         core::set_was_showing(n, now);
-        if now { shown.append(n); } else { gone.append(n); }
+        if now { let _ = shown.append(n); } else { let _ = gone.append(n); }
     }
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
@@ -1239,7 +1239,7 @@ fn notify_visibility() {
 // Headless attach: flags + M4 queue, no views.
 fn attach_flags_walk(n: *core::Node, ref q: vec::Vec[*core::Node]) {
     core::set_attached(n, true);
-    q.append(n);
+    let _ = q.append(n);
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {

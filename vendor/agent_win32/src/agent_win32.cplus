@@ -459,7 +459,7 @@ fn walk(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], keys: *vec::Ve
         hwnd: *u8, parent_reg: usize) {
     let role: identity::Role = resolve_role(hwnd);
     let reg_node: usize = add_window_node(reg, keys, hwnd, parent_reg, role);
-    refs.append(HwndRef { p: hwnd });
+    let _ = refs.append(HwndRef { p: hwnd });
 
     var child: *u8 = first_child_of(hwnd);
     while !is_null(child) {
@@ -477,7 +477,7 @@ fn walk_window(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], keys: *
     if is_null(window) { return; }
     let app_root: usize = reg.root();
     let win_reg: usize = add_window_node(reg, keys, window, app_root, identity::Role::Window);
-    refs.append(HwndRef { p: window });
+    let _ = refs.append(HwndRef { p: window });
 
     var child: *u8 = first_child_of(window);
     while !is_null(child) {
@@ -493,7 +493,7 @@ fn open(window: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var refs: vec::Vec[HwndRef] = vec::new::[HwndRef]();
     // NodeId 0 is the synthetic app root — no backing window.
-    refs.append(HwndRef { p: null() });
+    let _ = refs.append(HwndRef { p: null() });
     let keys: vec::Vec[KeyedWindow] = fetch_keys();
     walk_window(reg, refs, #addr_of(keys), window);
     return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
@@ -519,7 +519,7 @@ fn has_windows_fn() -> bool { return WINDOWS_FN.is_not_null(); }
 fn open_app() -> Surface {
     var reg: identity::Registry = identity::new();
     var refs: vec::Vec[HwndRef] = vec::new::[HwndRef]();
-    refs.append(HwndRef { p: null() });
+    let _ = refs.append(HwndRef { p: null() });
     let f: fn() -> vec::Vec[usize] = WINDOWS_FN;
     if f.is_null() {
         return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
@@ -682,7 +682,7 @@ impl Surface {
                 }
                 option::Option[usize]::None => option::Option[usize]::None,
             };
-            out.append(Win32Node {
+            let _ = out.append(Win32Node {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(hwnd),
@@ -799,7 +799,7 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     while i < local.count() {
         match local.at_ptr(i) {
             option::Option[*Win32Node]::Some(n) => {
-                out.append(mcpb::UiNode {
+                let _ = out.append(mcpb::UiNode {
                     id: ctext((*n).id.view()),
                     role: { (*n).role },
                     class_name: ctext((*n).class_name.view()),
@@ -884,7 +884,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     };
                     if !is_null(live) { shown = node_text(live); }
                 }
-                out.append(mcpb::UiNode {
+                let _ = out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
@@ -1024,14 +1024,14 @@ static T_SECOND: usize = 0;
 
 fn t_windows() -> vec::Vec[usize] {
     var v: vec::Vec[usize] = vec::new::[usize]();
-    v.append(T_WIN);
+    let _ = v.append(T_WIN);
     return v;
 }
 
 // Only the SECOND child carries a key: the first stays walked-but-not-exposed.
 fn t_keys() -> vec::Vec[KeyedWindow] {
     var v: vec::Vec[KeyedWindow] = vec::new::[KeyedWindow]();
-    v.append(KeyedWindow { hwnd: T_SECOND, key: text::from_str("probe:second") });
+    let _ = v.append(KeyedWindow { hwnd: T_SECOND, key: text::from_str("probe:second") });
     return v;
 }
 

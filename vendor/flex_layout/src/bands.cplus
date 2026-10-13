@@ -112,12 +112,12 @@ impl BandSet {
     // vocabulary prevents is every screen inventing its own numbers.
     fn defaults() -> BandSet {
         var s: BandSet = BandSet::new();
-        s.set(BAND_TINY, max_width: 300.0);
-        s.set(BAND_COMPACT, min_width: 300.0, max_width: 600.0);
-        s.set(BAND_MEDIUM, min_width: 600.0, max_width: 840.0);
-        s.set(BAND_EXPANDED, min_width: 840.0, max_width: 1200.0);
-        s.set(BAND_LARGE, min_width: 1200.0, max_width: 1600.0);
-        s.set(BAND_XLARGE, min_width: 1600.0);
+        let _ = s.set(BAND_TINY, max_width: 300.0);
+        let _ = s.set(BAND_COMPACT, min_width: 300.0, max_width: 600.0);
+        let _ = s.set(BAND_MEDIUM, min_width: 600.0, max_width: 840.0);
+        let _ = s.set(BAND_EXPANDED, min_width: 840.0, max_width: 1200.0);
+        let _ = s.set(BAND_LARGE, min_width: 1200.0, max_width: 1600.0);
+        let _ = s.set(BAND_XLARGE, min_width: 1600.0);
         return s;
     }
 

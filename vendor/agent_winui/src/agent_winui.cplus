@@ -72,7 +72,7 @@ fn open(window: rt::Object) -> result::Result[Surface,rt::Error] {
     let owned=_owned_by_this_thread(window.clone());
     if owned.is_err() { return result::Result[Surface,rt::Error]::Err(rt::Error {code:owned.code}); }
     var windows: vec::Vec[rt::Object]=vec::new::[rt::Object]();
-    windows.append(window.clone());
+    let _ = windows.append(window.clone());
     return result::Result[Surface,rt::Error]::Ok(Surface {_windows:windows,_pins:vec::new::[_Pin](),_thread:GetCurrentThreadId()});
 }
 impl Surface {
@@ -92,7 +92,7 @@ impl Surface {
         let owned=_owned_by_this_thread(window.clone());
         if owned.is_err() { return owned; }
         if let option::Option::Some(_)=this._window_index(window.clone()) { return rt::Status {code:0x80070057 as i32}; }
-        this._windows.append(window.clone()); return rt::Status {code:0};
+        let _ = this._windows.append(window.clone()); return rt::Status {code:0};
     }
     // A window that is closing. Its pins stay until unpinned (a renderer
     // releases them with its views); the walk no longer reaches them.
@@ -133,7 +133,7 @@ impl Surface {
             guard let result::Result::Ok(t)=e.add_password_changing(h.object()) else result::Result::Err(err) { return rt::Status {code:err.code}; };
             pin.token=t; pin.event_kind=2;
         }
-        this._pins.append(pin); return rt::Status {code:0};
+        let _ = this._pins.append(pin); return rt::Status {code:0};
     }
     fn set_policy(ref this, id: str, policy: u32, observe_only: bool=false) -> bool {
         this._check_thread(); if policy>identity::policy_exclude() { return false; }
@@ -204,7 +204,7 @@ fn _walk(s: Surface, ref snap: _Snapshot, tree: ui::IVisualTreeHelperStatics, o:
     // Password values are never read. Writing still follows the application's
     // declared tier, matching agent_core's password/autofill contract.
     let secret: bool=secret_parent || native::password(o);
-    snap.nodes.append(_Node {object:o.clone(),peer:p,hidden:invisible,secret:secret,pin:pin_index});
+    let _ = snap.nodes.append(_Node {object:o.clone(),peer:p,hidden:invisible,secret:secret,pin:pin_index});
     guard let result::Result::Ok(count)=tree.get_children_count(o) else { snap.valid=false; return; };
     var i: i32=0; while i<count {
         guard let result::Result::Ok(child)=tree.get_child(o,i) else { snap.valid=false; return; };
@@ -214,7 +214,7 @@ fn _walk(s: Surface, ref snap: _Snapshot, tree: ui::IVisualTreeHelperStatics, o:
 fn _snapshot(s: Surface) -> _Snapshot {
     s._check_thread();
     var snap: _Snapshot=_Snapshot {reg:identity::new(),nodes:vec::new::[_Node](),valid:false,windows:vec::new::[text::Text]()};
-    snap.nodes.append(_Node {object:rt::Object::empty(),peer:rt::Object::empty(),hidden:false,secret:false,pin:option::Option[usize]::None});
+    let _ = snap.nodes.append(_Node {object:rt::Object::empty(),peer:rt::Object::empty(),hidden:false,secret:false,pin:option::Option[usize]::None});
     guard let result::Result::Ok(tree)=ui::VisualTreeHelper::i_visual_tree_helper_statics_factory() else { return snap; };
     // Every window's name first: a pin anywhere may share one.
     var names: vec::Vec[text::Text]=vec::new::[text::Text]();
@@ -223,8 +223,8 @@ fn _snapshot(s: Surface) -> _Snapshot {
         if let option::Option::Some(window)=s._windows.at_ptr(k) {
             let name: text::Text=_name_of(*window);
             // Two windows answering one name cannot both have it.
-            if name.count()>0 && !_is_window_name(snap,name.view()) { snap.windows.append(name.clone()); }
-            names.append(name);
+            if name.count()>0 && !_is_window_name(snap,name.view()) { let _ = snap.windows.append(name.clone()); }
+            let _ = names.append(name);
         }
         k=k+1;
     }
@@ -239,7 +239,7 @@ fn _snapshot(s: Surface) -> _Snapshot {
         let name: text::Text=match names.at_ptr(w) { option::Option::Some(t)=>(*t).clone(), option::Option::None=>text::new() };
         let id: option::Option[str]=if name.count()>0 && !snap.reg.contains(name.view()) { option::Option[str]::Some(name.view()) } else { option::Option[str]::None };
         let node: usize=snap.reg.add_child(0,id,identity::Role::Window);
-        snap.nodes.append(_Node {object:rt::Object::empty(),peer:rt::Object::empty(),hidden:false,secret:false,pin:option::Option[usize]::None});
+        let _ = snap.nodes.append(_Node {object:rt::Object::empty(),peer:rt::Object::empty(),hidden:false,secret:false,pin:option::Option[usize]::None});
         snap.valid=true; _walk(s,snap,tree,root,node,false,false,false,0);
         if !snap.valid { return snap; }
         w=w+1;
@@ -256,11 +256,11 @@ fn _describe(p: *u8, grant: auth::Grant, exposed: bool) -> vec::Vec[backend::UiN
     let s: *Surface=p as *Surface; let snap: _Snapshot=_snapshot(*s);
     var out: vec::Vec[backend::UiNode]=vec::new::[backend::UiNode]();
     if !snap.valid || !grant.has(auth::cap_read()) { return out; }
-    var mapping: vec::Vec[option::Option[usize]]=vec::new::[option::Option[usize]](); mapping.append(option::Option[usize]::None);
+    var mapping: vec::Vec[option::Option[usize]]=vec::new::[option::Option[usize]](); let _ = mapping.append(option::Option[usize]::None);
     var i: usize=1; while i<snap.nodes.count() {
         let parent: option::Option[usize]=match snap.reg.parent_of(i) { option::Option::Some(n)=>match mapping.at(n) {option::Option::Some(v)=>v,option::Option::None=>option::Option[usize]::None},option::Option::None=>option::Option[usize]::None };
-        if snap.reg.in_excluded_subtree(i) || (exposed && !snap.reg.is_exposed(i)) { mapping.append(parent); i=i+1; continue; }
-        mapping.append(option::Option[usize]::Some(out.count()));
+        if snap.reg.in_excluded_subtree(i) || (exposed && !snap.reg.is_exposed(i)) { let _ = mapping.append(parent); i=i+1; continue; }
+        let _ = mapping.append(option::Option[usize]::Some(out.count()));
         if let option::Option::Some(n)=snap.nodes.at_ptr(i) {
             let readable: bool=snap.reg.can_read_value_walked(grant,i) && !(*n).secret;
             var name: text::Text=text::new(); var description: text::Text=text::new(); var cls: text::Text=text::new();
@@ -271,7 +271,7 @@ fn _describe(p: *u8, grant: auth::Grant, exposed: bool) -> vec::Vec[backend::UiN
                 if let result::Result::Ok(r)=peer.get_bounding_rectangle() { frame=backend::Rect {x:r.x as f64,y:r.y as f64,w:r.width as f64,h:r.height as f64}; }
             }
             let value: text::Text=if readable { native::value((*n).object,(*n).peer) } else { text::new() };
-            out.append(backend::UiNode {id:text::from_str(snap.reg.resolved_id(i)),role:snap.reg.role_of(i),class_name:cls,frame:frame,is_hidden:(*n).hidden,text:value,name:name,description:description,actionable:snap.reg.can_act(grant,i),clickable:native::clickable((*n).peer),wired:option::Option[bool]::None,tier:snap.reg.tier_of(i),readable:readable,parent:parent});
+            let _ = out.append(backend::UiNode {id:text::from_str(snap.reg.resolved_id(i)),role:snap.reg.role_of(i),class_name:cls,frame:frame,is_hidden:(*n).hidden,text:value,name:name,description:description,actionable:snap.reg.can_act(grant,i),clickable:native::clickable((*n).peer),wired:option::Option[bool]::None,tier:snap.reg.tier_of(i),readable:readable,parent:parent});
         }
         i=i+1;
     }

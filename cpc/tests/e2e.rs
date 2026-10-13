@@ -13113,6 +13113,35 @@ fn phase11_type_alias_chained_runs() {
 // 2026-10-13 (slab/spike.md Finding 2): any call taking `this.ptr` counted
 // as a release, so a no-op helper satisfied E0510 and the allocation leaked.
 // A helper counts only when its body releases; a releasing one still does.
+// 2026-10-13 (slab/spike.md Finding 1): `v.set(42, at: 0);` on an empty Vec
+// built clean, did nothing, and said nothing. W0009 asks for the Status to be
+// handled or discarded on purpose; `let _ =` is the deliberate spelling.
+#[test]
+fn a_discarded_status_warns_w0009_and_a_deliberate_discard_does_not() {
+    let (ok, out) = try_build_stdlib_project(
+        "mmw9",
+        "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/status\" as status;\n\
+         fn count_of(v: vec::Vec[i32]) -> i32 { return v.count() as i32; }\n\
+         fn main() -> i32 {\n\
+         var v = vec::new::[i32]();\n\
+         v.set(42, at: 0);\n\
+         let _ = v.append(1);\n\
+         let s: status::Status = v.append(2);\n\
+         if !s.is_ok() { return 1; }\n\
+         let n: i32 = count_of(v);\n\
+         return n;\n\
+         }\n\
+         #[test]\n\
+         fn setup_in_a_test_is_exempt() { var w = vec::new::[i32](); w.append(1); assert w.count() == (1 as usize); }\n",
+    );
+    assert!(ok, "a warning must not fail the build:\n{out}");
+    let hits: Vec<&str> = out.lines().filter(|l| l.contains("warning[W0009]")).collect();
+    assert_eq!(hits.len(), 1, "exactly the unbound `v.set` warns:\n{out}");
+    assert!(hits[0].contains("main.cplus:6:"), "at line 6:\n{out}");
+    assert!(out.contains("or discard it on purpose: `let _ = ...;`"), "the note names the spelling:\n{out}");
+}
+
 #[test]
 fn a_drop_handing_its_pointer_to_a_no_op_helper_is_e0510() {
     let cpc = env!("CARGO_BIN_EXE_cpc");

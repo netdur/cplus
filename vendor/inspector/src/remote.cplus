@@ -674,10 +674,10 @@ fn set_fault(rp: *Remote, msg: str) {
 fn rpc(rp: *Remote, method: str, take params: json::Value) -> option::Option[json::Value] {
     { (*rp)._answered = false };
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member_of("jsonrpc", json::Value::Text(text::from_str("2.0"))));
-    m.append(member_of("id", json::Value::Number(1.0f64)));
-    m.append(member_of("method", json::Value::Text(text::from_str(method))));
-    m.append(member_of("params", params));
+    let _ = m.append(member_of("jsonrpc", json::Value::Text(text::from_str("2.0"))));
+    let _ = m.append(member_of("id", json::Value::Number(1.0f64)));
+    let _ = m.append(member_of("method", json::Value::Text(text::from_str(method))));
+    let _ = m.append(member_of("params", params));
     let body: text::Text = json::Value::Object(m).to_text();
     // THE WIRE DECIDES THE FRAME, and only the frame — the JSON-RPC inside is
     // the same object either way, which is what lets one client speak to a
@@ -1111,7 +1111,7 @@ fn r_describe(s: *u8) -> vec::Vec[insp::Node] {
 
 fn node_params(index: usize) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member_of("node", json::Value::Number(index as f64)));
+    let _ = m.append(member_of("node", json::Value::Number(index as f64)));
     return json::Value::Object(m);
 }
 
@@ -1138,9 +1138,9 @@ fn r_set(s: *u8, h: insp::Handle, p: str, take v: insp::Value) -> insp::Outcome 
         option::Option::None => { return insp::Outcome::TypeMismatch; }
     };
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member_of("node", json::Value::Number(index as f64)));
-    m.append(member_of("property", json::Value::Text(text::from_str(p))));
-    m.append(member_of("value", wv));
+    let _ = m.append(member_of("node", json::Value::Number(index as f64)));
+    let _ = m.append(member_of("property", json::Value::Text(text::from_str(p))));
+    let _ = m.append(member_of("value", wv));
     return match rpc(rp, verbs::V_SET, json::Value::Object(m)) {
         option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
         option::Option::None => insp::Outcome::Stale,
@@ -1154,8 +1154,8 @@ fn r_reset(s: *u8, h: insp::Handle, p: str) -> insp::Outcome {
         option::Option::None => { return insp::Outcome::NotFound; }
     };
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member_of("node", json::Value::Number(index as f64)));
-    m.append(member_of("property", json::Value::Text(text::from_str(p))));
+    let _ = m.append(member_of("node", json::Value::Number(index as f64)));
+    let _ = m.append(member_of("property", json::Value::Text(text::from_str(p))));
     return match rpc(rp, verbs::V_RESET, json::Value::Object(m)) {
         option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
         option::Option::None => insp::Outcome::Stale,
@@ -1186,16 +1186,16 @@ fn r_insert(s: *u8, h: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Ou
         option::Option::None => { return insp::Outcome::NotFound; }
     };
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member_of("node", json::Value::Number(index as f64)));
-    m.append(member_of("element", json::Value::Text(sp.maker.clone())));
-    m.append(member_of("key", json::Value::Text(sp.key.clone())));
-    m.append(member_of("text", json::Value::Text(sp.label.clone())));
+    let _ = m.append(member_of("node", json::Value::Number(index as f64)));
+    let _ = m.append(member_of("element", json::Value::Text(sp.maker.clone())));
+    let _ = m.append(member_of("key", json::Value::Text(sp.key.clone())));
+    let _ = m.append(member_of("text", json::Value::Text(sp.label.clone())));
     // An append arrives as a very large index; the wire's own rule ("absent
     // appends, and `insert_child` clamps") makes one billion the same append
     // without asking a f64 to carry usize::MAX exactly.
     var wire_at: usize = at;
     if wire_at > 1000000000 { wire_at = 1000000000; }
-    m.append(member_of("at", json::Value::Number(wire_at as f64)));
+    let _ = m.append(member_of("at", json::Value::Number(wire_at as f64)));
     return match rpc(rp, verbs::V_INSERT, json::Value::Object(m)) {
         option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
         option::Option::None => insp::Outcome::Stale,
@@ -1225,11 +1225,11 @@ fn r_reparent(s: *u8, h: insp::Handle, parent: insp::Handle, at: usize) -> insp:
         option::Option::None => { return insp::Outcome::NotFound; }
     };
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member_of("node", json::Value::Number(index as f64)));
-    m.append(member_of("parent", json::Value::Number(pindex as f64)));
+    let _ = m.append(member_of("node", json::Value::Number(index as f64)));
+    let _ = m.append(member_of("parent", json::Value::Number(pindex as f64)));
     var wire_at: usize = at;
     if wire_at > 1000000000 { wire_at = 1000000000; }
-    m.append(member_of("at", json::Value::Number(wire_at as f64)));
+    let _ = m.append(member_of("at", json::Value::Number(wire_at as f64)));
     return match rpc(rp, verbs::V_REPARENT, json::Value::Object(m)) {
         option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
         option::Option::None => insp::Outcome::Stale,

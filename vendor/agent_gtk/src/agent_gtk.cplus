@@ -399,7 +399,7 @@ fn walk(ref reg: identity::Registry, ref refs: vec::Vec[WidgetRef], widget: *u8,
     // was served wide — and facet_gtk now pins that tier on every C_AGENT
     // node, so the pin had nowhere to land.
     reg.set_policy(reg_node, effective_policy(widget));
-    refs.append(WidgetRef { p: widget });
+    let _ = refs.append(WidgetRef { p: widget });
 
     var child: *u8 = { gtk_widget_get_first_child(widget) };
     while !is_null(child) {
@@ -420,7 +420,7 @@ fn walk_window(ref reg: identity::Registry, ref refs: vec::Vec[WidgetRef], windo
     } else {
         reg.add_child(reg.root(), option::Option[str]::Some(convert::cstr_to_str_unsafe(win_pinned)), identity::Role::Window)
     };
-    refs.append(WidgetRef { p: window });
+    let _ = refs.append(WidgetRef { p: window });
 
     var child: *u8 = { gtk_widget_get_first_child(window) };
     while !is_null(child) {
@@ -437,7 +437,7 @@ fn open(window: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var refs: vec::Vec[WidgetRef] = vec::new::[WidgetRef]();
     // NodeId 0 is the synthetic app root — no backing widget.
-    refs.append(WidgetRef { p: null() });
+    let _ = refs.append(WidgetRef { p: null() });
     walk_window(reg, refs, window);
     return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
 }
@@ -473,7 +473,7 @@ fn open_app() -> Surface {
     remember_ui_thread();
     var reg: identity::Registry = identity::new();
     var refs: vec::Vec[WidgetRef] = vec::new::[WidgetRef]();
-    refs.append(WidgetRef { p: null() });
+    let _ = refs.append(WidgetRef { p: null() });
     let f: fn() -> vec::Vec[usize] = WINDOWS_FN;
     if f.is_null() {
         return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
@@ -537,7 +537,7 @@ impl Surface {
             // parameter, so a gate that only held in the curated view would
             // hold until the model tried the other one.
             let may_read: bool = this.reg.can_read_value_walked(grant, node);
-            out.append(GtkNode {
+            let _ = out.append(GtkNode {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(widget),
@@ -823,7 +823,7 @@ fn mcp_describe_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     while i < local.count() {
         match local.at_ptr(i) {
             option::Option[*GtkNode]::Some(n) => {
-                out.append(mcpb::UiNode {
+                let _ = out.append(mcpb::UiNode {
                     id: ctext((*n).id.view()),
                     role: { (*n).role },
                     class_name: ctext((*n).class_name.view()),
@@ -891,7 +891,7 @@ fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode
                     let live: *u8 = widget_for_id(s, { (*n).id.view() });
                     if !is_null(live) { shown = node_text(live, { (*n).role }); }
                 }
-                out.append(mcpb::UiNode {
+                let _ = out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
@@ -1711,19 +1711,19 @@ fn hex_nibble(v: u32) -> u8 {
 // conversion Pango's own `pango_color_to_string` uses at 8-bit width.
 fn css_hex(r: u16, g: u16, b: u16) -> text::Text {
     var bytes: vec::Vec[u8] = vec::new::[u8]();
-    bytes.append(35 as u8);
+    let _ = bytes.append(35 as u8);
     let ch: vec::Vec[u16] = vec::new::[u16]();
     var chans: vec::Vec[u16] = ch;
-    chans.append(r);
-    chans.append(g);
-    chans.append(b);
+    let _ = chans.append(r);
+    let _ = chans.append(g);
+    let _ = chans.append(b);
     var i: usize = 0 as usize;
     while i < chans.count() {
         match chans.at(i) {
             option::Option[u16]::Some(c) => {
                 let byte: u32 = (c as u32) >> (8 as u32);
-                bytes.append(hex_nibble((byte >> (4 as u32)) & (15 as u32)));
-                bytes.append(hex_nibble(byte & (15 as u32)));
+                let _ = bytes.append(hex_nibble((byte >> (4 as u32)) & (15 as u32)));
+                let _ = bytes.append(hex_nibble(byte & (15 as u32)));
             }
             option::Option[u16]::None => {}
         }
@@ -1769,7 +1769,7 @@ fn label_runs(w: *u8) -> surface::Runs {
         // not zero — an empty list would read as "nothing is styled" for a
         // label that CSS made bold.
         if len > (0 as i32) {
-            out.append(surface::TextRun {
+            let _ = out.append(surface::TextRun {
                 start: 0 as u64,
                 length: len as u64,
                 color: text::new(),
@@ -1834,7 +1834,7 @@ fn label_runs(w: *u8) -> surface::Runs {
                     option::Option[*surface::TextRun]::None => {}
                 }
             }
-            if !merged { out.append(run); }
+            if !merged { let _ = out.append(run); }
         }
         more = { pango_attr_iterator_next(iter) } != (0 as i32);
     }

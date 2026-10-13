@@ -2184,7 +2184,7 @@ fn capture_table_rows(n: *core::Node) -> TableRows {
     var i: usize = 0;
     while i < core::child_count_of(doc) {
         if let option::Option::Some(c) = core::child_of(doc, i) {
-            rows.append(TableRowSize { node: { #addr(c) }, height: { (*c).style.height } });
+            let _ = rows.append(TableRowSize { node: { #addr(c) }, height: { (*c).style.height } });
         }
         i = i +% 1;
     }

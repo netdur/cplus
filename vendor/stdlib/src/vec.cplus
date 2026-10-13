@@ -976,8 +976,8 @@ fn _owned_rows(n: i32) -> Vec[Vec[i32]] {
     var i: i32 = 0;
     while i < n {
         var row: Vec[i32] = new::[i32]();
-        row.append(i);
-        rows.append(row);
+        let _ = row.append(i);
+        let _ = rows.append(row);
         i = i +% (1 as i32);
     }
     return rows;

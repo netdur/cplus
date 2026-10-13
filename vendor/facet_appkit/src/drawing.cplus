@@ -793,7 +793,7 @@ fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
         // ---- the state stack and the transform
         } else if cmd.op == vocab::DrawOp::Save {
             CGContextSaveGState(ctx);
-            stack.append(st);
+            let _ = stack.append(st);
         } else if cmd.op == vocab::DrawOp::Restore {
             CGContextRestoreGState(ctx);
             match stack.remove_last() {
