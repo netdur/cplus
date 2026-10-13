@@ -8142,12 +8142,15 @@ impl SemaCx<'_> {
                 _ => false,
             }
         }
-        fn expr_releases(e: &Expr, field: &str) -> bool {
+        fn expr_releases(e: &Expr, field: &str, rel: &ReleaseOracle) -> bool {
             match &e.kind {
-                // A direct release: `field` passed to a direct call.
-                ExprKind::Call { args, .. } => args.iter().any(|a| arg_is_self_field(a, field)),
+                // A release: `field` passed to a position that may release it.
+                ExprKind::Call { callee, args, .. } => args
+                    .iter()
+                    .enumerate()
+                    .any(|(j, a)| arg_is_self_field(a, field) && rel.may_release(callee, j)),
                 // Transparent wrapper — a bare block.
-                ExprKind::Block(b) => block_releases(b, field),
+                ExprKind::Block(b) => block_releases(b, field, rel),
                 // The one allowed conditional: a null-guard on the same field,
                 // no `else`. Arbitrary conditions are intentionally NOT descended.
                 ExprKind::If {
@@ -8157,18 +8160,18 @@ impl SemaCx<'_> {
                 } => {
                     else_branch.is_none()
                         && is_null_guard(cond, field)
-                        && block_releases(then, field)
+                        && block_releases(then, field, rel)
                 }
                 _ => false,
             }
         }
         /// PROVABLY released: an unconditional direct release, or one guarded
         /// only by a null-test on the same field (both leak-free by inspection).
-        fn block_releases(b: &Block, field: &str) -> bool {
+        fn block_releases(b: &Block, field: &str, rel: &ReleaseOracle) -> bool {
             b.stmts.iter().any(|s| match &s.kind {
-                StmtKind::Expr(e) | StmtKind::Defer(e) => expr_releases(e, field),
+                StmtKind::Expr(e) | StmtKind::Defer(e) => expr_releases(e, field, rel),
                 _ => false,
-            }) || b.tail.as_ref().is_some_and(|t| expr_releases(t, field))
+            }) || b.tail.as_ref().is_some_and(|t| expr_releases(t, field, rel))
         }
 
         /// A direct release of `field` APPEARS somewhere in the drop body —
@@ -8177,58 +8180,60 @@ impl SemaCx<'_> {
         /// all / delegated to a helper" (→ error). A method/helper call that
         /// doesn't pass the field as an argument is not a release, so delegation
         /// (`this.cleanup()`) correctly does not count.
-        fn appears_released(body: &Block, field: &str) -> bool {
-            fn e(x: &Expr, f: &str) -> bool {
+        fn appears_released(body: &Block, field: &str, rel: &ReleaseOracle) -> bool {
+            fn e(x: &Expr, f: &str, rel: &ReleaseOracle) -> bool {
                 match &x.kind {
                     ExprKind::Call { callee, args, .. } => {
-                        args.iter().any(|a| arg_is_self_field(a, f))
-                            || e(callee, f)
-                            || args.iter().any(|a| e(a, f))
+                        args.iter()
+                            .enumerate()
+                            .any(|(j, a)| arg_is_self_field(a, f) && rel.may_release(callee, j))
+                            || e(callee, f, rel)
+                            || args.iter().any(|a| e(a, f, rel))
                     }
-                    ExprKind::Block(bl) => b(bl, f),
+                    ExprKind::Block(bl) => b(bl, f, rel),
                     ExprKind::If {
                         cond,
                         then,
                         else_branch,
                     } => {
-                        e(cond, f) || b(then, f) || else_branch.as_ref().is_some_and(|eb| e(eb, f))
+                        e(cond, f, rel) || b(then, f, rel) || else_branch.as_ref().is_some_and(|eb| e(eb, f, rel))
                     }
                     ExprKind::Match { scrutinee, arms } => {
-                        e(scrutinee, f) || arms.iter().any(|a| e(&a.body, f))
+                        e(scrutinee, f, rel) || arms.iter().any(|a| e(&a.body, f, rel))
                     }
-                    ExprKind::Binary { lhs, rhs, .. } => e(lhs, f) || e(rhs, f),
-                    ExprKind::Unary { operand, .. } => e(operand, f),
-                    ExprKind::Cast { expr, .. } => e(expr, f),
-                    ExprKind::Field { receiver, .. } => e(receiver, f),
-                    ExprKind::Index { receiver, index } => e(receiver, f) || e(index, f),
-                    ExprKind::Assign { target, value, .. } => e(target, f) || e(value, f),
-                    ExprKind::Await(x2) | ExprKind::Yield(x2) => e(x2, f),
+                    ExprKind::Binary { lhs, rhs, .. } => e(lhs, f, rel) || e(rhs, f, rel),
+                    ExprKind::Unary { operand, .. } => e(operand, f, rel),
+                    ExprKind::Cast { expr, .. } => e(expr, f, rel),
+                    ExprKind::Field { receiver, .. } => e(receiver, f, rel),
+                    ExprKind::Index { receiver, index } => e(receiver, f, rel) || e(index, f, rel),
+                    ExprKind::Assign { target, value, .. } => e(target, f, rel) || e(value, f, rel),
+                    ExprKind::Await(x2) | ExprKind::Yield(x2) => e(x2, f, rel),
                     ExprKind::Range { start, end, .. } => {
-                        start.as_ref().is_some_and(|s| e(s, f))
-                            || end.as_ref().is_some_and(|s| e(s, f))
+                        start.as_ref().is_some_and(|s| e(s, f, rel))
+                            || end.as_ref().is_some_and(|s| e(s, f, rel))
                     }
                     _ => false,
                 }
             }
-            fn s(st: &Stmt, f: &str) -> bool {
+            fn s(st: &Stmt, f: &str, rel: &ReleaseOracle) -> bool {
                 match &st.kind {
-                    StmtKind::Expr(x) | StmtKind::Defer(x) | StmtKind::Assert(x) => e(x, f),
-                    StmtKind::Return(Some(x)) => e(x, f),
-                    StmtKind::Let { init: Some(x), .. } => e(x, f),
-                    StmtKind::While { cond, body, .. } => e(cond, f) || b(body, f),
-                    StmtKind::Loop(bl, _) => b(bl, f),
+                    StmtKind::Expr(x) | StmtKind::Defer(x) | StmtKind::Assert(x) => e(x, f, rel),
+                    StmtKind::Return(Some(x)) => e(x, f, rel),
+                    StmtKind::Let { init: Some(x), .. } => e(x, f, rel),
+                    StmtKind::While { cond, body, .. } => e(cond, f, rel) || b(body, f, rel),
+                    StmtKind::Loop(bl, _) => b(bl, f, rel),
                     StmtKind::For(fl, _) => match fl {
-                        ForLoop::Range { iter, body, .. } => e(iter, f) || b(body, f),
+                        ForLoop::Range { iter, body, .. } => e(iter, f, rel) || b(body, f, rel),
                         ForLoop::CStyle {
                             init,
                             cond,
                             update,
                             body,
                         } => {
-                            init.as_ref().is_some_and(|i| s(i, f))
-                                || cond.as_ref().is_some_and(|c| e(c, f))
-                                || update.iter().any(|u| e(u, f))
-                                || b(body, f)
+                            init.as_ref().is_some_and(|i| s(i, f, rel))
+                                || cond.as_ref().is_some_and(|c| e(c, f, rel))
+                                || update.iter().any(|u| e(u, f, rel))
+                                || b(body, f, rel)
                         }
                     },
                     StmtKind::IfLet {
@@ -8237,25 +8242,25 @@ impl SemaCx<'_> {
                         else_body,
                         ..
                     } => {
-                        e(scrutinee, f)
-                            || b(body, f)
-                            || else_body.as_ref().is_some_and(|eb| b(eb, f))
+                        e(scrutinee, f, rel)
+                            || b(body, f, rel)
+                            || else_body.as_ref().is_some_and(|eb| b(eb, f, rel))
                     }
                     StmtKind::GuardLet {
                         scrutinee,
                         else_body,
                         ..
-                    } => e(scrutinee, f) || b(else_body, f),
+                    } => e(scrutinee, f, rel) || b(else_body, f, rel),
                     StmtKind::WhileLet {
                         scrutinee, body, ..
-                    } => e(scrutinee, f) || b(body, f),
+                    } => e(scrutinee, f, rel) || b(body, f, rel),
                     _ => false,
                 }
             }
-            fn b(bl: &Block, f: &str) -> bool {
-                bl.stmts.iter().any(|st| s(st, f)) || bl.tail.as_ref().is_some_and(|t| e(t, f))
+            fn b(bl: &Block, f: &str, rel: &ReleaseOracle) -> bool {
+                bl.stmts.iter().any(|st| s(st, f, rel)) || bl.tail.as_ref().is_some_and(|t| e(t, f, rel))
             }
-            b(body, field)
+            b(body, field, rel)
         }
 
         // Each struct's `drop` body, keyed by the impl target name.
@@ -8290,6 +8295,7 @@ impl SemaCx<'_> {
             }
             self.current_file = item.origin_file.clone();
             let body = drop_bodies.get(s.name.name.as_str());
+            let rel = ReleaseOracle::new(p, s.name.name.as_str());
             for f in &s.fields {
                 if f.is_opaque || !is_raw_ptr(&f.ty) {
                     continue;
@@ -8299,10 +8305,10 @@ impl SemaCx<'_> {
                 //   provably freed (unconditional / null-guarded)  -> clean
                 //   freed, but only under some other condition       -> W0002 warning
                 //   no direct free of the field appears at all       -> E0510 error
-                if body.is_some_and(|b| block_releases(b, fname)) {
+                if body.is_some_and(|b| block_releases(b, fname, &rel)) {
                     continue;
                 }
-                if body.is_some_and(|b| appears_released(b, fname)) {
+                if body.is_some_and(|b| appears_released(b, fname, &rel)) {
                     self.warn(
                         "W0002",
                         format!(
@@ -8317,8 +8323,10 @@ impl SemaCx<'_> {
                 let detail = if body.is_none() {
                     "the struct has no `drop` to release it"
                 } else {
-                    "this struct's `drop` never frees it (a release delegated to a helper \
-                     doesn't count — it must be a direct call here)"
+                    "this struct's `drop` never passes it to anything that releases it \
+                     (a C+ helper counts only when its own body releases that parameter — \
+                     passes it on to a release, an `extern`, an intrinsic, or stores or \
+                     returns it; one that only reads it does not)"
                 };
                 self.err(
                     "E0510",
@@ -23847,6 +23855,199 @@ fn is_addr_of_place(e: &Expr) -> bool {
     }
 }
 
+/// Which call positions MAY RELEASE a raw pointer handed to them — E0510's
+/// question about a `drop` body.
+///
+/// It used to be "any call with `this.field` as an argument", so
+/// `fn observe(p: *u8) {}` satisfied the check and the allocation leaked
+/// (slab/spike.md Finding 2) — while the diagnostic said a helper does not
+/// count at all. Now a callee's body is read:
+///
+/// - an `extern` or body-less declaration may release: there is nothing to
+///   read, and that is the trust boundary (memory-model contract §4);
+/// - a C+ function or `this` method may release parameter `i` when its body
+///   hands `i` (or a cast or `let` alias of it) to a position that may
+///   release, to an intrinsic, into a struct / enum value, an assignment, or
+///   a return — ownership passed on, as `box::from_raw` does;
+/// - a callee that cannot be resolved here (a fn pointer, another type's
+///   method, a path call) may release: unknown is not evidence of a leak.
+///
+/// A pointer cast to an integer (`p as usize`) is a number and is no longer
+/// tracked; a cast to another pointer type is the same pointer.
+///
+/// Demand-driven and memoised. A recursive cycle answers "no release" for the
+/// moment — a helper that only recurses releases nothing — and an answer that
+/// leaned on that assumption is not memoised, so mutual recursion with a
+/// release on another path is found on the next ask.
+struct ReleaseOracle<'p> {
+    fns: HashMap<&'p str, &'p Function>,
+    self_methods: HashMap<&'p str, &'p Method>,
+    memo: std::cell::RefCell<HashMap<(String, usize), bool>>,
+    visiting: std::cell::RefCell<std::collections::HashSet<(String, usize)>>,
+    cycle_hit: std::cell::Cell<bool>,
+}
+
+impl<'p> ReleaseOracle<'p> {
+    fn new(p: &'p Program, self_ty: &str) -> Self {
+        let mut fns = HashMap::new();
+        let mut self_methods = HashMap::new();
+        for item in &p.items {
+            match &item.kind {
+                ItemKind::Function(f) => {
+                    fns.insert(f.name.name.as_str(), f);
+                }
+                ItemKind::Impl(b) if b.target.name == self_ty => {
+                    for m in &b.methods {
+                        self_methods.insert(m.name.name.as_str(), m);
+                    }
+                }
+                _ => {}
+            }
+        }
+        ReleaseOracle {
+            fns,
+            self_methods,
+            memo: std::cell::RefCell::new(HashMap::new()),
+            visiting: std::cell::RefCell::new(std::collections::HashSet::new()),
+            cycle_hit: std::cell::Cell::new(false),
+        }
+    }
+
+    /// May the callee release what it receives at argument position `i`?
+    fn may_release(&self, callee: &Expr, i: usize) -> bool {
+        match &callee.kind {
+            ExprKind::Ident(name) => match self.fns.get(name.as_str()) {
+                Some(f) if f.is_extern || f.is_declaration => true,
+                Some(f) => self.body_may_release(name, &f.params, &f.body, i),
+                None => true,
+            },
+            ExprKind::Field { receiver, name }
+                if matches!(&receiver.kind, ExprKind::Ident(r) if r == "this" || r == "self") =>
+            {
+                match self.self_methods.get(name.name.as_str()) {
+                    Some(m) if m.is_declaration => true,
+                    Some(m) => self.body_may_release(
+                        &format!("this.{}", name.name),
+                        &m.params,
+                        &m.body,
+                        i,
+                    ),
+                    None => true,
+                }
+            }
+            _ => true,
+        }
+    }
+
+    fn body_may_release(&self, key: &str, params: &[Param], body: &Block, i: usize) -> bool {
+        let Some(param) = params.get(i) else {
+            return true;
+        };
+        let memo_key = (key.to_string(), i);
+        if let Some(v) = self.memo.borrow().get(&memo_key) {
+            return *v;
+        }
+        if self.visiting.borrow().contains(&memo_key) {
+            self.cycle_hit.set(true);
+            return false;
+        }
+        let outer_cycle = self.cycle_hit.replace(false);
+        self.visiting.borrow_mut().insert(memo_key.clone());
+
+        struct Scan<'o, 'p> {
+            rel: &'o ReleaseOracle<'p>,
+            tracked: std::collections::HashSet<String>,
+            hit: bool,
+        }
+        fn root(e: &Expr) -> Option<&str> {
+            match &e.kind {
+                ExprKind::Ident(n) => Some(n.as_str()),
+                ExprKind::Cast { expr, ty } if matches!(ty.kind, TypeKind::RawPtr(_)) => root(expr),
+                ExprKind::Block(b) if b.stmts.is_empty() => b.tail.as_ref().and_then(|t| root(t)),
+                _ => None,
+            }
+        }
+        impl Scan<'_, '_> {
+            fn mine(&self, e: &Expr) -> bool {
+                root(e).is_some_and(|n| self.tracked.contains(n))
+            }
+        }
+        impl ExprRewriter for Scan<'_, '_> {
+            fn visit_stmt(&mut self, st: &Stmt) -> Option<Stmt> {
+                match &st.kind {
+                    StmtKind::Let {
+                        name,
+                        init: Some(e),
+                        ..
+                    } if self.mine(e) => {
+                        self.tracked.insert(name.name.clone());
+                    }
+                    StmtKind::Return(Some(e)) if self.mine(e) => self.hit = true,
+                    _ => {}
+                }
+                None
+            }
+            fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+                if self.hit {
+                    return None;
+                }
+                match &e.kind {
+                    ExprKind::Call { callee, args, .. } => {
+                        for (j, a) in args.iter().enumerate() {
+                            if self.mine(a) && self.rel.may_release(callee, j) {
+                                self.hit = true;
+                            }
+                        }
+                        // `p.release()` — a method on the pointer itself.
+                        if let ExprKind::Field { receiver, name } = &callee.kind {
+                            if self.mine(receiver)
+                                && name.name != "is_null"
+                                && name.name != "is_not_null"
+                            {
+                                self.hit = true;
+                            }
+                        }
+                    }
+                    ExprKind::Intrinsic { args, .. } => {
+                        if args.iter().any(|a| self.mine(a)) {
+                            self.hit = true;
+                        }
+                    }
+                    ExprKind::StructLit { fields, .. }
+                    | ExprKind::GenericStructLit { fields, .. }
+                    | ExprKind::InferredStructLit { fields } => {
+                        if fields.iter().any(|f| self.mine(&f.value)) {
+                            self.hit = true;
+                        }
+                    }
+                    ExprKind::GenericEnumCall { args, .. } => {
+                        if args.iter().any(|a| self.mine(a)) {
+                            self.hit = true;
+                        }
+                    }
+                    ExprKind::Assign { value, .. } if self.mine(value) => self.hit = true,
+                    _ => {}
+                }
+                None
+            }
+        }
+        let mut scan = Scan {
+            rel: self,
+            tracked: [param.name.name.clone()].into_iter().collect(),
+            hit: false,
+        };
+        let _ = walk_block(body, &mut scan);
+        let hit = scan.hit || body.tail.as_ref().is_some_and(|t| scan.mine(t));
+        self.visiting.borrow_mut().remove(&memo_key);
+        let leaned_on_a_cycle = self.cycle_hit.get();
+        if hit || !leaned_on_a_cycle {
+            self.memo.borrow_mut().insert(memo_key, hit);
+        }
+        self.cycle_hit.set(outer_cycle || leaned_on_a_cycle);
+        hit
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -25123,6 +25324,57 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
             codes.contains(&"E0326"),
             "the same method declared in two files of the package is a duplicate; got {codes:?}"
         );
+    }
+
+    // ── 2026-10-13 (slab/spike.md Finding 2): a helper counts as a release
+    // only when its body releases. Any call taking `this.field` used to count,
+    // so `observe(this.ptr)` with an empty `observe` satisfied E0510 — while
+    // the message said a helper never counts.
+    const RELEASE_PRELUDE: &str = "extern fn free(p: *u8);\nextern fn close_handle(p: *u8);\nstruct Owner { ptr: *u8 }\n";
+
+    #[test]
+    fn a_helper_that_does_not_release_leaves_the_field_unaccounted_e0510() {
+        let cases: &[(&str, &str)] = &[
+            ("empty_helper", "fn observe(p: *u8) { } impl Owner { fn drop(ref this) { observe(this.ptr); } }"),
+            ("reads_it_as_a_number", "fn look(p: *u8) { let n: usize = p as usize; } impl Owner { fn drop(ref this) { look(this.ptr); } }"),
+            ("returns_its_address", "fn addr(p: *u8) -> usize { return p as usize; } impl Owner { fn drop(ref this) { let _a: usize = addr(this.ptr); } }"),
+            ("only_recurses", "fn r(p: *u8, n: i32) { if n > 0 { r(p, n - 1); } } impl Owner { fn drop(ref this) { r(this.ptr, 3); } }"),
+            ("empty_this_method", "impl Owner { fn rel(this, p: *u8) { } fn drop(ref this) { this.rel(this.ptr); } }"),
+        ];
+        let missed: Vec<String> = cases
+            .iter()
+            .filter_map(|(name, tail)| {
+                let ds = check_src(&format!("{RELEASE_PRELUDE}{tail}"));
+                let codes = codes_of(&ds);
+                (!codes.contains(&"E0510")).then(|| format!("{name}: {codes:?}"))
+            })
+            .collect();
+        assert!(missed.is_empty(), "expected E0510: {missed:?}");
+    }
+
+    #[test]
+    fn a_helper_that_releases_accounts_for_the_field() {
+        let cases: &[(&str, &str)] = &[
+            ("direct_free", "impl Owner { fn drop(ref this) { { free(this.ptr); } } }"),
+            ("any_extern", "impl Owner { fn drop(ref this) { { close_handle(this.ptr); } } }"),
+            ("freeing_helper", "fn dispose(p: *u8) { { free(p); } } impl Owner { fn drop(ref this) { dispose(this.ptr); } }"),
+            ("chained_helpers", "fn inner(p: *u8) { { free(p); } } fn outer(p: *u8) { inner(p); } impl Owner { fn drop(ref this) { outer(this.ptr); } }"),
+            ("aliased_then_freed", "fn d2(p: *u8) { let q: *u8 = p; { free(q); } } impl Owner { fn drop(ref this) { d2(this.ptr); } }"),
+            ("null_guarded_in_helper", "fn d3(p: *u8) { if p.is_not_null() { { free(p); } } } impl Owner { fn drop(ref this) { d3(this.ptr); } }"),
+            ("cast_to_another_pointer", "fn d4(p: *i32) { { free(p as *u8); } } impl Owner { fn drop(ref this) { d4(this.ptr as *i32); } }"),
+            ("this_method", "impl Owner { fn rel(this, p: *u8) { { free(p); } } fn drop(ref this) { this.rel(this.ptr); } }"),
+            ("mutual_recursion", "fn a(p: *u8, n: i32) { if n > 0 { b(p, n - 1); } else { { free(p); } } } fn b(p: *u8, n: i32) { a(p, n); } impl Owner { fn drop(ref this) { b(this.ptr, 2); } }"),
+            ("ownership_moved_into_a_value", "struct Box2 { p: *u8 } impl Box2 { fn drop(ref this) { { free(this.p); } } } fn wrap(p: *u8) -> Box2 { return Box2 { p: p }; } impl Owner { fn drop(ref this) { wrap(this.ptr); } }"),
+        ];
+        let noisy: Vec<String> = cases
+            .iter()
+            .filter_map(|(name, tail)| {
+                let ds = check_src(&format!("{RELEASE_PRELUDE}{tail}"));
+                let codes = codes_of(&ds);
+                codes.contains(&"E0510").then(|| format!("{name}: {codes:?}"))
+            })
+            .collect();
+        assert!(noisy.is_empty(), "a real release was rejected: {noisy:?}");
     }
 
     #[test]

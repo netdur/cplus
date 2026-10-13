@@ -13110,6 +13110,47 @@ fn phase11_type_alias_chained_runs() {
     assert_eq!(run.code(), Some(42));
 }
 
+// 2026-10-13 (slab/spike.md Finding 2): any call taking `this.ptr` counted
+// as a release, so a no-op helper satisfied E0510 and the allocation leaked.
+// A helper counts only when its body releases; a releasing one still does.
+#[test]
+fn a_drop_handing_its_pointer_to_a_no_op_helper_is_e0510() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let noop = dir.join("noop.cplus");
+    std::fs::write(
+        &noop,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         fn observe(p: *u8) { }\n\
+         struct Owner { ptr: *u8 }\n\
+         impl Owner { fn drop(ref this) { observe(this.ptr); } }\n\
+         fn main() -> i32 { let o: Owner = Owner { ptr: { malloc(16 as usize) } }; return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&noop).output().expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a no-op helper must not account for the field: {stderr}");
+    assert!(stderr.contains("E0510"), "expected E0510: {stderr}");
+
+    let freeing = dir.join("freeing.cplus");
+    std::fs::write(
+        &freeing,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         fn dispose(p: *u8) { { free(p); } }\n\
+         struct Owner { ptr: *u8 }\n\
+         impl Owner { fn drop(ref this) { dispose(this.ptr); } }\n\
+         fn main() -> i32 { let o: Owner = Owner { ptr: { malloc(16 as usize) } }; return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg(&freeing).arg("-o").arg(dir.join("freeing")).output().expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "a releasing helper must account for the field: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 #[test]
 fn phase11_type_alias_cycle_rejected_e0510() {
     let cpc = env!("CARGO_BIN_EXE_cpc");

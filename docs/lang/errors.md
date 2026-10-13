@@ -1429,7 +1429,7 @@ fn main() -> i32 {
 
 ### E0510 · Unaccounted raw-pointer field in a `Drop` type
 
-A struct has a raw-pointer field that is neither released in a `drop` (no releasing `drop`, or only via a helper) nor marked `opaque`.
+A struct has a raw-pointer field that is neither released in a `drop` nor marked `opaque`. A release is the field passed to an `extern` (the trust boundary — no body to read), or to a C+ helper whose own body releases that parameter: passes it on to a release, an intrinsic, stores it, or returns it. A helper that only reads the pointer (`fn observe(p: *u8) { }`) is not a release.
 
 ```cplus
 extern fn malloc(n: usize) -> *u8;
@@ -1439,7 +1439,7 @@ fn main() -> i32 { return 0; }
 
 **Fix.** Release it in `drop` (`free(this.f)`), or mark the field `opaque` if another owner frees it.
 
-<sub>repro: checked · cplus-core/src/sema.rs:4446 · test cpc/tests/e2e.rs:phase11_type_alias_cycle_rejected_e0510</sub>
+<sub>repro: checked · cplus-core/src/sema.rs:8332 · test cpc/tests/e2e.rs:a_drop_handing_its_pointer_to_a_no_op_helper_is_e0510</sub>
 
 ### E0513 · Returning a `str` / `T[]` view of a local that drops
 

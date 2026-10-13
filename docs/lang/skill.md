@@ -314,10 +314,12 @@ impl Owned { fn drop(ref this) { free(this._ptr); } }   // I free it
 struct Borrowed { opaque _ptr: *u8 }                     // somebody else frees it
 ```
 
-The check is structural, not dataflow — it reads your `drop` body and grades what
-it can prove. An unconditional `free(this.f)` is clean; a conditional one
-(refcount, flag, loop) is **W0002** and is expected for `Arc`/`Rc`-shaped owners;
-delegating the free to a helper reads as no free at all and is E0510.
+The check reads your `drop` body and grades what it can prove. An unconditional
+`free(this.f)` is clean; a conditional one (refcount, flag, loop) is **W0002**
+and is expected for `Arc`/`Rc`-shaped owners. A helper counts when its own body
+releases the pointer (`fn dispose(p: *u8) { free(p); }`); one that only reads
+it (`fn observe(p: *u8) { }`) does not, and that is E0510. An `extern` is
+trusted: there is no body to read.
 
 **`opaque` is a claim you are making, not a check the compiler performs.** Use it
 only when another owner really does free it — an FFI handle the runtime owns, a
