@@ -164,12 +164,14 @@ beside the fn-pointer.
 Each of these is legal-looking code with a surprise in it. The long
 explanations live in the linked topic file.
 
-- **Integer literals evaluate through `i32` before `as`.**
-  `(1 << 40) as u64` is not the mask you meant — it is 256. Widen the LEFT
-  operand before the shift (`1u64 << 40`), or build the mask in a `const`,
-  which folds at the declared width and rejects overflow. A constant shift
-  distance at or past the operand's width now warns (W0007); the general
-  literal-width rule still has no warning, so the habit still matters.
+- **An operation on unsuffixed integer literals is computed in `i32`
+  before `as`.** `(1 << 40) as u64` is not the mask you meant — it is 256.
+  A lone literal is fine (`4294967295 as u64` is `u32::MAX`); the
+  operation is the trap. Widen the LEFT operand before the shift
+  (`1u64 << 40`), or build the mask in a `const`, which folds at the
+  declared width and rejects overflow. The constant forms warn (W0007); a
+  variable shift distance (`(1 << n) as u64`) does not, so the habit still
+  matters.
 - **No array→slice coercion.** `[T; N]` does not pass where `T[]` is
   expected; go through a `Vec` and `as_slice`, or index.
 - **A view at a binding needs a named owner** — and a brace-block tail

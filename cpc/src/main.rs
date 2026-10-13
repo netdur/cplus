@@ -142,8 +142,10 @@ debug / introspection (single-file):
                                     in FILE. Prints to stdout; redirect with `> out.h`.
   cpc --emit-ll-project             multi-file: print the merged IR to stdout (uses ./Cplus.toml)
   cpc build --print-link-args       print the link line the DEPENDENCIES contribute, one arg per
-                                    line, and build nothing. What a cross target's consumer (Xcode,
-                                    Gradle, ESP-IDF) must add beside the app's own archive.
+                                    line. Rebuilds out-of-date dependency slices first (so it can
+                                    compile and write them); never builds the app. What a cross
+                                    target's consumer (Xcode, Gradle, ESP-IDF) must add beside the
+                                    app's own archive.
 
 other:
   --diagnostics=MODE                diagnostics output: human (default) | short | json
@@ -293,7 +295,8 @@ merged LLVM IR to stdout instead of invoking clang. Uses ./Cplus.toml.
 cpc build --print-link-args [--target NAME] [--release]
 
 Print the link line this project's DEPENDENCIES contribute, one argument
-per line, and build nothing else. Reads ./Cplus.toml.
+per line. Reads ./Cplus.toml. It does not build the app, but it is not
+read-only: see the side effect below.
 
 For a cross target (`--target ios-arm64-simulator`, android, esp32) cpc
 emits ONE archive: the entry package and the generics it instantiated.
@@ -302,8 +305,10 @@ package, and the external build system — Xcode, Gradle, ESP-IDF — has to
 name all of them. This is that list, resolved the same way the compiler
 resolves it, so nothing downstream has to re-derive it and drift.
 
-Dependency slices are brought up to date first, so every path printed is
-a file that exists and is current.
+SIDE EFFECT: out-of-date dependency slices are rebuilt first — this can
+compile, and it writes their archives — so every path printed is a file
+that exists and is current. A script calling it should expect the time
+and the writes of a dependency build.
 
   cpc build --target ios-arm64-simulator
   cpc build --target ios-arm64-simulator --print-link-args
@@ -1109,7 +1114,8 @@ enum Subcommand {
     Headers,
     EmitLlProject,
     /// `cpc build --print-link-args` — print the link line this project's
-    /// DEPENDENCIES contribute, one argument per line, and build nothing.
+    /// DEPENDENCIES contribute, one argument per line. Never builds the app;
+    /// rebuilds out-of-date dependency slices first, so it can compile.
     ///
     /// A cross target hands its consumer one archive: the entry package and
     /// the generics it instantiated. Every dependency's object code is in its

@@ -245,7 +245,9 @@ cpc build --target ios-arm64            # target/ios-arm64/debug/lib<name>.a + <
 cpc build --print-link-args             # what the DEPENDENCIES add to the link line
 ```
 
-`--print-link-args` prints one argument per line and builds nothing. It is
+`--print-link-args` prints one argument per line. It never builds the app,
+but it rebuilds any out-of-date dependency slice first, so it can compile
+and write archives — every path it prints exists and is current. It is
 what you paste into Xcode's "Other Linker Flags" or a Gradle rule: the app's
 own archive is not enough, because every dependency's `[link]` frameworks
 and libs travel with it.

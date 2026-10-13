@@ -822,12 +822,19 @@ Everything else you can get wrong and `cpc check` will correct in one line.
 These are the ones that either compile-and-mislead, or fail with a message that
 does not explain itself.
 
-**Integer literals wrap through `i32` before `as`.** Build big masks
-arithmetically, not by writing a wide literal:
+**An operation on unsuffixed integer literals is computed in `i32`, before
+`as`.** `(1 << 40) as u64` is 256, not 2^40, and `(1 << n) as u64` with a
+variable `n` is wrong the same way. A single literal is not the problem —
+`4294967295 as u64` is `u32::MAX` — the operation is. Widen the LEFT operand
+before operating, or use a `const`, which folds at its declared width:
 
 ```cplus
-const MASK: u64 = (1u64 << 40) - 1u64;    // ✓ const expressions fold at compile time
+let m: u64 = (1u64 << 40) - 1u64;          // ✓ widened before the shift
+const MASK: u64 = (1u64 << 40) - 1u64;     // ✓ const expressions fold at compile time
 ```
+
+W0007 warns on the constant forms (a literal shift distance, literal
+arithmetic that overflows); a variable shift distance gets no warning.
 
 **Arithmetic traps on overflow in debug and wraps in release.** `+% -% *%`
 always wrap and are what you write when wrapping is the intent — they are
