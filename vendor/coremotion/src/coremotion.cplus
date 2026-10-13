@@ -2074,7 +2074,7 @@ impl BatchedSensorManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AccelerometerData::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AccelerometerData::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AccelerometerData]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2099,7 +2099,7 @@ impl BatchedSensorManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DeviceMotion::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DeviceMotion::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DeviceMotion]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;

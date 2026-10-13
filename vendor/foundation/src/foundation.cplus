@@ -6457,7 +6457,7 @@ impl String {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6471,7 +6471,7 @@ impl String {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6990,7 +6990,7 @@ impl String {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7012,7 +7012,7 @@ impl String {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7094,7 +7094,7 @@ impl String {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7525,7 +7525,7 @@ impl Object {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7707,7 +7707,7 @@ impl Object {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7776,7 +7776,7 @@ impl Object {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7790,7 +7790,7 @@ impl Object {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7804,7 +7804,7 @@ impl Object {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7874,7 +7874,7 @@ impl Object {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7957,7 +7957,7 @@ impl Object {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8421,7 +8421,7 @@ impl Enumerator {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8481,7 +8481,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8505,7 +8505,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8598,7 +8598,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8611,7 +8611,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8636,7 +8636,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8814,7 +8814,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8874,7 +8874,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8891,7 +8891,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8904,7 +8904,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8938,7 +8938,7 @@ impl Array {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8994,7 +8994,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9007,7 +9007,7 @@ impl Array {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9069,7 +9069,7 @@ impl Dictionary {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9108,7 +9108,7 @@ impl Dictionary {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9125,7 +9125,7 @@ impl Dictionary {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9165,7 +9165,7 @@ impl Dictionary {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9178,7 +9178,7 @@ impl Dictionary {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10183,7 +10183,7 @@ impl OrderedCollectionDifference {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(OrderedCollectionChange::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(OrderedCollectionChange::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[OrderedCollectionChange]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10196,7 +10196,7 @@ impl OrderedCollectionDifference {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(OrderedCollectionChange::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(OrderedCollectionChange::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[OrderedCollectionChange]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10596,7 +10596,7 @@ impl URL {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10672,7 +10672,7 @@ impl URL {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10837,7 +10837,7 @@ impl URL {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10891,7 +10891,7 @@ impl URL {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11315,7 +11315,7 @@ impl ItemProvider {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11408,7 +11408,7 @@ impl ItemProvider {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11659,7 +11659,7 @@ impl Progress {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11977,7 +11977,7 @@ impl Error {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12006,7 +12006,7 @@ impl Error {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12029,7 +12029,7 @@ impl Error {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Error::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Error::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Error]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12246,7 +12246,7 @@ impl Locale {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12311,7 +12311,7 @@ impl Locale {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12325,7 +12325,7 @@ impl Locale {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12339,7 +12339,7 @@ impl Locale {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12353,7 +12353,7 @@ impl Locale {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12367,7 +12367,7 @@ impl Locale {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12381,7 +12381,7 @@ impl Locale {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12601,7 +12601,7 @@ impl Set {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12707,7 +12707,7 @@ impl Set {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13327,7 +13327,7 @@ impl OperationQueue {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Operation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Operation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Operation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13559,7 +13559,7 @@ impl Bundle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13596,7 +13596,7 @@ impl Bundle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13609,7 +13609,7 @@ impl Bundle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13628,7 +13628,7 @@ impl Bundle {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13652,7 +13652,7 @@ impl Bundle {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13689,7 +13689,7 @@ impl Bundle {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13703,7 +13703,7 @@ impl Bundle {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13720,7 +13720,7 @@ impl Bundle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Bundle::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Bundle::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Bundle]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13733,7 +13733,7 @@ impl Bundle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Bundle::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Bundle::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Bundle]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13854,7 +13854,7 @@ impl Bundle {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13871,7 +13871,7 @@ impl Bundle {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13889,7 +13889,7 @@ impl Bundle {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13903,7 +13903,7 @@ impl Bundle {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13923,7 +13923,7 @@ impl Bundle {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14498,7 +14498,7 @@ impl TimeZone {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14537,7 +14537,7 @@ impl TimeZone {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14914,7 +14914,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14928,7 +14928,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14942,7 +14942,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14956,7 +14956,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14970,7 +14970,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14984,7 +14984,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14998,7 +14998,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15012,7 +15012,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15026,7 +15026,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15040,7 +15040,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15054,7 +15054,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15068,7 +15068,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15082,7 +15082,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15096,7 +15096,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15110,7 +15110,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15124,7 +15124,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15138,7 +15138,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15152,7 +15152,7 @@ impl Calendar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15531,7 +15531,7 @@ impl AttributedString {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15562,7 +15562,7 @@ impl AttributedString {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16110,7 +16110,7 @@ impl PresentationIntent {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16384,7 +16384,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16402,7 +16402,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16420,7 +16420,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16438,7 +16438,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16456,7 +16456,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16492,7 +16492,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16510,7 +16510,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16528,7 +16528,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16546,7 +16546,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16564,7 +16564,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16582,7 +16582,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16600,7 +16600,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16618,7 +16618,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16636,7 +16636,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16654,7 +16654,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16672,7 +16672,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16690,7 +16690,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16708,7 +16708,7 @@ impl DateFormatter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17011,7 +17011,7 @@ impl NumberFormatter {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17060,7 +17060,7 @@ impl NumberFormatter {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17160,7 +17160,7 @@ impl NumberFormatter {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17209,7 +17209,7 @@ impl NumberFormatter {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17258,7 +17258,7 @@ impl NumberFormatter {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17307,7 +17307,7 @@ impl NumberFormatter {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17356,7 +17356,7 @@ impl NumberFormatter {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -20134,7 +20134,7 @@ impl Exception {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -20148,7 +20148,7 @@ impl Exception {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21306,7 +21306,7 @@ impl URLComponents {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URLQueryItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URLQueryItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URLQueryItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21334,7 +21334,7 @@ impl URLComponents {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URLQueryItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URLQueryItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URLQueryItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21419,7 +21419,7 @@ impl DirectoryEnumerator {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21436,7 +21436,7 @@ impl DirectoryEnumerator {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21519,7 +21519,7 @@ impl FileVersion {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FileVersion::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FileVersion::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FileVersion]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21532,7 +21532,7 @@ impl FileVersion {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FileVersion::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FileVersion::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FileVersion]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21671,7 +21671,7 @@ impl FileManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21691,7 +21691,7 @@ impl FileManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21704,7 +21704,7 @@ impl FileManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21807,7 +21807,7 @@ impl FileManager {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21821,7 +21821,7 @@ impl FileManager {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21838,7 +21838,7 @@ impl FileManager {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21855,7 +21855,7 @@ impl FileManager {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22008,7 +22008,7 @@ impl FileManager {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22040,7 +22040,7 @@ impl FileManager {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22369,7 +22369,7 @@ impl HashTable {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22485,7 +22485,7 @@ impl HTTPCookie {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22517,7 +22517,7 @@ impl HTTPCookie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(HTTPCookie::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(HTTPCookie::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[HTTPCookie]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22534,7 +22534,7 @@ impl HTTPCookie {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22606,7 +22606,7 @@ impl HTTPCookie {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22911,7 +22911,7 @@ impl HTTPCookieStorage {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(HTTPCookie::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(HTTPCookie::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[HTTPCookie]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22950,7 +22950,7 @@ impl HTTPCookieStorage {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(HTTPCookie::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(HTTPCookie::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[HTTPCookie]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22967,7 +22967,7 @@ impl HTTPCookieStorage {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(HTTPCookie::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(HTTPCookie::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[HTTPCookie]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23481,7 +23481,7 @@ impl OrderedSet {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23613,7 +23613,7 @@ impl OrderedSet {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23824,7 +23824,7 @@ impl OrderedSet {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24737,7 +24737,7 @@ impl MorphologyCustomPronoun {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24857,7 +24857,7 @@ impl TermOfAddress {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MorphologyPronoun::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MorphologyPronoun::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MorphologyPronoun]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25028,7 +25028,7 @@ impl Operation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Operation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Operation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Operation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25197,7 +25197,7 @@ impl Orthography {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25225,7 +25225,7 @@ impl Orthography {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25239,7 +25239,7 @@ impl Orthography {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25366,7 +25366,7 @@ impl Connection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Connection::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Connection::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Connection]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25494,7 +25494,7 @@ impl Connection {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), rt::msg_f64(nsval, rt::sel(#str_ptr("doubleValue\0"))));
+            if !out.insert(bridge::to_text(nskey), rt::msg_f64(nsval, rt::sel(#str_ptr("doubleValue\0")))).is_ok() { return string_map::new::[f64](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25558,7 +25558,7 @@ impl Connection {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25865,7 +25865,7 @@ impl ProcessInfo {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25879,7 +25879,7 @@ impl ProcessInfo {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26126,7 +26126,7 @@ impl RegularExpression {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextCheckingResult::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextCheckingResult::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextCheckingResult]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26245,7 +26245,7 @@ impl TextCheckingResult {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26272,7 +26272,7 @@ impl TextCheckingResult {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26306,7 +26306,7 @@ impl TextCheckingResult {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26508,7 +26508,7 @@ impl Host {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26527,7 +26527,7 @@ impl Host {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26728,7 +26728,7 @@ impl Thread {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26742,7 +26742,7 @@ impl Thread {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27004,7 +27004,7 @@ impl URLProtectionSpace {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Data::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Data::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Data]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27218,7 +27218,7 @@ impl URLRequest {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27601,7 +27601,7 @@ impl URLCredentialStorage {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), URLCredential::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), URLCredential::from_raw(nsval)).is_ok() { return string_map::new::[URLCredential](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27867,7 +27867,7 @@ impl MutableURLRequest {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28231,7 +28231,7 @@ impl UserDefaults {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28253,7 +28253,7 @@ impl UserDefaults {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28345,7 +28345,7 @@ impl UserDefaults {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28362,7 +28362,7 @@ impl UserDefaults {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28410,7 +28410,7 @@ impl UserDefaults {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28467,7 +28467,7 @@ impl UserDefaults {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28511,7 +28511,7 @@ impl ValueTransformer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28566,7 +28566,7 @@ impl SecureUnarchiveFromDataTransformer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28660,7 +28660,7 @@ impl XMLParser {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29308,7 +29308,7 @@ impl Expression {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Expression::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Expression::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Expression]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29737,7 +29737,7 @@ impl ExtensionItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ItemProvider::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ItemProvider::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ItemProvider]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29948,7 +29948,7 @@ impl FileCoordinator {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FilePresenter::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FilePresenter::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FilePresenter]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30102,7 +30102,7 @@ impl FileWrapper {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30150,7 +30150,7 @@ impl FileWrapper {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), FileWrapper::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), FileWrapper::from_raw(nsval)).is_ok() { return string_map::new::[FileWrapper](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30241,7 +30241,7 @@ impl LinguisticTagger {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30255,7 +30255,7 @@ impl LinguisticTagger {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30305,7 +30305,7 @@ impl LinguisticTagger {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30331,7 +30331,7 @@ impl LinguisticTagger {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30355,7 +30355,7 @@ impl LinguisticTagger {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30376,7 +30376,7 @@ impl LinguisticTagger {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30390,7 +30390,7 @@ impl LinguisticTagger {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30450,7 +30450,7 @@ impl MetadataItem {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30464,7 +30464,7 @@ impl MetadataItem {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30543,7 +30543,7 @@ impl MetadataQueryResultGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataQueryResultGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataQueryResultGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataQueryResultGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30649,7 +30649,7 @@ impl MetadataQuery {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SortDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30678,7 +30678,7 @@ impl MetadataQuery {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30696,7 +30696,7 @@ impl MetadataQuery {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30781,10 +30781,10 @@ impl MetadataQuery {
             var vvec: vec::Vec[MetadataQueryAttributeValueTuple] = vec::Vec[MetadataQueryAttributeValueTuple]::with_capacity(vn as usize);
             var vj: u64 = 0 as u64;
             while vj < vn {
-                vvec.append(MetadataQueryAttributeValueTuple::from_raw(rt::msg_id_u64(nsval, at_sel, vj)));
+                if !vvec.append(MetadataQueryAttributeValueTuple::from_raw(rt::msg_id_u64(nsval, at_sel, vj))).is_ok() { return string_map::new::[vec::Vec[MetadataQueryAttributeValueTuple]](); }
                 vj = vj +% (1 as u64);
             }
-            out.insert(bridge::to_text(nskey), vvec);
+            if !out.insert(bridge::to_text(nskey), vvec).is_ok() { return string_map::new::[vec::Vec[MetadataQueryAttributeValueTuple]](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30797,7 +30797,7 @@ impl MetadataQuery {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataQueryResultGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataQueryResultGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataQueryResultGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30871,7 +30871,7 @@ impl NetService {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), Data::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), Data::from_raw(nsval)).is_ok() { return string_map::new::[Data](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30972,7 +30972,7 @@ impl NetService {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Data::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Data::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Data]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31102,7 +31102,7 @@ impl UbiquitousKeyValueStore {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31194,7 +31194,7 @@ impl UbiquitousKeyValueStore {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31336,7 +31336,7 @@ impl UndoManager {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32092,7 +32092,7 @@ impl URLSessionConfiguration {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32173,7 +32173,7 @@ impl URLSessionTaskMetrics {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URLSessionTaskTransactionMetrics::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URLSessionTaskTransactionMetrics::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URLSessionTaskTransactionMetrics]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34012,7 +34012,7 @@ impl Task {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34033,7 +34033,7 @@ impl Task {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34235,7 +34235,7 @@ impl XMLElement {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(XMLElement::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(XMLElement::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[XMLElement]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34248,7 +34248,7 @@ impl XMLElement {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(XMLElement::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(XMLElement::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[XMLElement]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34387,7 +34387,7 @@ impl XMLElement {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(XMLNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(XMLNode::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[XMLNode]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34415,7 +34415,7 @@ impl XMLElement {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(XMLNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(XMLNode::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[XMLNode]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34854,7 +34854,7 @@ impl XMLNode {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(XMLNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(XMLNode::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[XMLNode]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34961,7 +34961,7 @@ impl XMLNode {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(XMLNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(XMLNode::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[XMLNode]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35449,7 +35449,7 @@ impl ClassDescription {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35463,7 +35463,7 @@ impl ClassDescription {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35477,7 +35477,7 @@ impl ClassDescription {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35836,7 +35836,7 @@ impl ScriptCommandDescription {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36092,7 +36092,7 @@ impl ScriptCommand {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36132,7 +36132,7 @@ impl ScriptCommand {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36814,7 +36814,7 @@ impl CreateCommand {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37060,7 +37060,7 @@ impl ScriptSuiteRegistry {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), ScriptClassDescription::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), ScriptClassDescription::from_raw(nsval)).is_ok() { return string_map::new::[ScriptClassDescription](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37077,7 +37077,7 @@ impl ScriptSuiteRegistry {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), ScriptCommandDescription::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), ScriptCommandDescription::from_raw(nsval)).is_ok() { return string_map::new::[ScriptCommandDescription](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37120,7 +37120,7 @@ impl ScriptSuiteRegistry {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37375,7 +37375,7 @@ impl UserNotification {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37531,7 +37531,7 @@ impl UserNotification {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(UserNotificationAction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(UserNotificationAction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[UserNotificationAction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37614,7 +37614,7 @@ impl UserNotificationCenter {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(UserNotification::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(UserNotification::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[UserNotification]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37642,7 +37642,7 @@ impl UserNotificationCenter {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(UserNotification::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(UserNotification::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[UserNotification]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37823,7 +37823,7 @@ impl UserAutomatorTask {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38098,7 +38098,7 @@ impl ItemProviderWriting {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38132,7 +38132,7 @@ impl ItemProviderReading {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38615,7 +38615,7 @@ fn cplus_darg_arr_text(src: *u8) -> vec::Vec[text::Text] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(bridge::to_text(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(bridge::to_text(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;

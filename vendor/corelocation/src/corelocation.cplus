@@ -903,7 +903,7 @@ impl BeaconRegion {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1538,7 +1538,7 @@ impl LocationManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Region::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Region::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Region]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1552,7 +1552,7 @@ impl LocationManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Region::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Region::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Region]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1566,7 +1566,7 @@ impl LocationManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BeaconIdentityConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BeaconIdentityConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BeaconIdentityConstraint]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1637,7 +1637,7 @@ impl Monitor {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1873,7 +1873,7 @@ impl Placemark {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2115,7 +2115,7 @@ fn cplus_darg_arr_Location(src: *u8) -> vec::Vec[Location] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Location::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Location::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Location]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2128,7 +2128,7 @@ fn cplus_darg_arr_Beacon(src: *u8) -> vec::Vec[Beacon] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Beacon::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Beacon::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Beacon]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;

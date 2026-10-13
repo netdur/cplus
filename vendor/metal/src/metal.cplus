@@ -4651,7 +4651,7 @@ impl StructType {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(StructMember::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(StructMember::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[StructMember]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5019,7 +5019,7 @@ impl FunctionDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BinaryArchive]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5078,7 +5078,7 @@ impl CompileOptions {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5163,7 +5163,7 @@ impl CompileOptions {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DynamicLibrary]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5259,7 +5259,7 @@ impl RenderPipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Binding]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5272,7 +5272,7 @@ impl RenderPipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Binding]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5285,7 +5285,7 @@ impl RenderPipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Binding]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5298,7 +5298,7 @@ impl RenderPipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Binding]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5311,7 +5311,7 @@ impl RenderPipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Binding]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5324,7 +5324,7 @@ impl RenderPipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Argument]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5337,7 +5337,7 @@ impl RenderPipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Argument]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5350,7 +5350,7 @@ impl RenderPipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Argument]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5375,7 +5375,7 @@ impl ComputePipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Binding]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5388,7 +5388,7 @@ impl ComputePipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Argument]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5516,7 +5516,7 @@ impl FunctionReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Binding]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6032,7 +6032,7 @@ impl MTL4PipelineStageDynamicLinkingDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4BinaryFunction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6060,7 +6060,7 @@ impl MTL4PipelineStageDynamicLinkingDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DynamicLibrary]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6165,7 +6165,7 @@ impl MTL4CompilerTaskOptions {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4Archive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4Archive::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4Archive]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6408,7 +6408,7 @@ impl TileRenderPipelineDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BinaryArchive]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6436,7 +6436,7 @@ impl TileRenderPipelineDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DynamicLibrary]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6705,7 +6705,7 @@ impl MeshRenderPipelineDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BinaryArchive]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7276,7 +7276,7 @@ impl RenderPipelineDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BinaryArchive]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7304,7 +7304,7 @@ impl RenderPipelineDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DynamicLibrary]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7332,7 +7332,7 @@ impl RenderPipelineDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DynamicLibrary]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7693,7 +7693,7 @@ impl ComputePipelineDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DynamicLibrary]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7721,7 +7721,7 @@ impl ComputePipelineDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DynamicLibrary]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7749,7 +7749,7 @@ impl ComputePipelineDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BinaryArchive]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8211,7 +8211,7 @@ impl StitchedLibraryDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FunctionStitchingGraph::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FunctionStitchingGraph::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FunctionStitchingGraph]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8239,7 +8239,7 @@ impl StitchedLibraryDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Function]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8267,7 +8267,7 @@ impl StitchedLibraryDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BinaryArchive]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9619,7 +9619,7 @@ impl LinkedFunctions {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Function]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9647,7 +9647,7 @@ impl LinkedFunctions {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Function]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9683,10 +9683,10 @@ impl LinkedFunctions {
             var vvec: vec::Vec[Function] = vec::Vec[Function]::with_capacity(vn as usize);
             var vj: u64 = 0 as u64;
             while vj < vn {
-                vvec.append(Function::from_raw(rt::msg_id_u64(nsval, at_sel, vj)));
+                if !vvec.append(Function::from_raw(rt::msg_id_u64(nsval, at_sel, vj))).is_ok() { return string_map::new::[vec::Vec[Function]](); }
                 vj = vj +% (1 as u64);
             }
-            out.insert(bridge::to_text(nskey), vvec);
+            if !out.insert(bridge::to_text(nskey), vvec).is_ok() { return string_map::new::[vec::Vec[Function]](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9732,7 +9732,7 @@ impl LinkedFunctions {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Function]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9816,7 +9816,7 @@ impl RenderPipelineFunctionsDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Function]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9844,7 +9844,7 @@ impl RenderPipelineFunctionsDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Function]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9872,7 +9872,7 @@ impl RenderPipelineFunctionsDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Function]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9916,7 +9916,7 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4BinaryFunction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9944,7 +9944,7 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4BinaryFunction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9972,7 +9972,7 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4BinaryFunction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10000,7 +10000,7 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4BinaryFunction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10028,7 +10028,7 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4BinaryFunction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10196,7 +10196,7 @@ impl PrimitiveAccelerationStructureDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AccelerationStructureGeometryDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AccelerationStructureGeometryDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AccelerationStructureGeometryDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10493,7 +10493,7 @@ impl AccelerationStructureMotionTriangleGeometryDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MotionKeyframeData]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10620,7 +10620,7 @@ impl AccelerationStructureMotionBoundingBoxGeometryDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MotionKeyframeData]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10850,7 +10850,7 @@ impl AccelerationStructureMotionCurveGeometryDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MotionKeyframeData]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10902,7 +10902,7 @@ impl AccelerationStructureMotionCurveGeometryDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MotionKeyframeData]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11069,7 +11069,7 @@ impl InstanceAccelerationStructureDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AccelerationStructure::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AccelerationStructure::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AccelerationStructure]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11843,7 +11843,7 @@ impl FunctionStitchingFunctionNode {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FunctionStitchingNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FunctionStitchingNode::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FunctionStitchingNode]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11871,7 +11871,7 @@ impl FunctionStitchingFunctionNode {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FunctionStitchingFunctionNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FunctionStitchingFunctionNode::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FunctionStitchingFunctionNode]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11951,7 +11951,7 @@ impl FunctionStitchingGraph {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FunctionStitchingFunctionNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FunctionStitchingFunctionNode::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FunctionStitchingFunctionNode]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11991,7 +11991,7 @@ impl FunctionStitchingGraph {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FunctionStitchingAttribute::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FunctionStitchingAttribute::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FunctionStitchingAttribute]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12124,7 +12124,7 @@ impl MTL4PrimitiveAccelerationStructureDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4AccelerationStructureGeometryDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4AccelerationStructureGeometryDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4AccelerationStructureGeometryDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12989,7 +12989,7 @@ impl MTL4StitchedFunctionDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4FunctionDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13057,7 +13057,7 @@ impl MTL4StaticLinkingDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4FunctionDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13085,7 +13085,7 @@ impl MTL4StaticLinkingDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MTL4FunctionDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13121,10 +13121,10 @@ impl MTL4StaticLinkingDescriptor {
             var vvec: vec::Vec[MTL4FunctionDescriptor] = vec::Vec[MTL4FunctionDescriptor]::with_capacity(vn as usize);
             var vj: u64 = 0 as u64;
             while vj < vn {
-                vvec.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(nsval, at_sel, vj)));
+                if !vvec.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(nsval, at_sel, vj))).is_ok() { return string_map::new::[vec::Vec[MTL4FunctionDescriptor]](); }
                 vj = vj +% (1 as u64);
             }
-            out.insert(bridge::to_text(nskey), vvec);
+            if !out.insert(bridge::to_text(nskey), vvec).is_ok() { return string_map::new::[vec::Vec[MTL4FunctionDescriptor]](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13294,7 +13294,7 @@ impl MTL4MachineLearningPipelineReflection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Binding]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14446,7 +14446,7 @@ impl Device {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CounterSet::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CounterSet::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CounterSet]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15366,7 +15366,7 @@ impl Function {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(VertexAttribute::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(VertexAttribute::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[VertexAttribute]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15379,7 +15379,7 @@ impl Function {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Attribute::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Attribute::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Attribute]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15401,7 +15401,7 @@ impl Function {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), FunctionConstant::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), FunctionConstant::from_raw(nsval)).is_ok() { return string_map::new::[FunctionConstant](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15505,7 +15505,7 @@ impl Library {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16012,7 +16012,7 @@ impl CounterSet {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Counter::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Counter::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Counter]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16948,7 +16948,7 @@ impl ResidencySet {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Allocation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Allocation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Allocation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18536,7 +18536,7 @@ impl CommandBufferEncoderInfo {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;

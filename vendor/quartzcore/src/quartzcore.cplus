@@ -1792,7 +1792,7 @@ impl CIFilter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1806,7 +1806,7 @@ impl CIFilter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1823,7 +1823,7 @@ impl CIFilter {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1880,7 +1880,7 @@ impl CIFilter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1894,7 +1894,7 @@ impl CIFilter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1972,7 +1972,7 @@ impl CIFilter {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CIFilter]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2874,7 +2874,7 @@ impl CIImage {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CIFilter]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2906,7 +2906,7 @@ impl CIImage {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CIFilter]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3200,7 +3200,7 @@ impl CIKernel {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CIKernel::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CIKernel::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CIKernel]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3213,7 +3213,7 @@ impl CIKernel {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CIKernel::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CIKernel::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CIKernel]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3251,7 +3251,7 @@ impl CIKernel {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3741,7 +3741,7 @@ impl CIRAWFilter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3755,7 +3755,7 @@ impl CIRAWFilter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -4490,7 +4490,7 @@ impl Layer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -4599,7 +4599,7 @@ impl Layer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Layer::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Layer::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Layer]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -4992,7 +4992,7 @@ impl Layer {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), Action::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), Action::from_raw(nsval)).is_ok() { return string_map::new::[Action](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5062,7 +5062,7 @@ impl Layer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Constraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Constraint::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Constraint]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5321,7 +5321,7 @@ impl KeyframeAnimation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5351,7 +5351,7 @@ impl KeyframeAnimation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaTimingFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaTimingFunction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaTimingFunction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5390,7 +5390,7 @@ impl KeyframeAnimation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5422,7 +5422,7 @@ impl KeyframeAnimation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5454,7 +5454,7 @@ impl KeyframeAnimation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5647,7 +5647,7 @@ impl AnimationGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Animation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Animation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Animation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6395,7 +6395,7 @@ impl EmitterCell {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(EmitterCell::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(EmitterCell::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[EmitterCell]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6450,7 +6450,7 @@ impl EmitterLayer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(EmitterCell::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(EmitterCell::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[EmitterCell]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6628,7 +6628,7 @@ impl GradientLayer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7131,7 +7131,7 @@ impl ShapeLayer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7492,7 +7492,7 @@ impl CIFilterProtocol {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;

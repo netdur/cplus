@@ -5762,7 +5762,7 @@ impl ContentKeyRequest {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5944,7 +5944,7 @@ impl ContentKeySpecifier {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6147,7 +6147,7 @@ impl ContentKeySession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ContentKeyRecipient::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ContentKeyRecipient::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ContentKeyRecipient]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6160,7 +6160,7 @@ impl ContentKeySession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(NSData::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(NSData::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[NSData]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6231,7 +6231,7 @@ impl MediaSelectionOption {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6268,7 +6268,7 @@ impl MediaSelectionOption {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6295,7 +6295,7 @@ impl MediaSelectionOption {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6309,7 +6309,7 @@ impl MediaSelectionOption {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6351,7 +6351,7 @@ impl AssetVariantVideoAttributes {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6372,7 +6372,7 @@ impl AssetVariantVideoAttributes {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetVariantVideoLayoutAttributes::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetVariantVideoLayoutAttributes::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetVariantVideoLayoutAttributes]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6443,7 +6443,7 @@ impl AssetVariantAudioAttributes {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6751,7 +6751,7 @@ impl AssetTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetTrackSegment::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetTrackSegment::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetTrackSegment]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6764,7 +6764,7 @@ impl AssetTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6784,7 +6784,7 @@ impl AssetTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6797,7 +6797,7 @@ impl AssetTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6811,7 +6811,7 @@ impl AssetTrack {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6824,7 +6824,7 @@ impl AssetTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6845,7 +6845,7 @@ impl AssetTrack {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6953,7 +6953,7 @@ impl MetadataItem {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7019,7 +7019,7 @@ impl MetadataItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7043,7 +7043,7 @@ impl MetadataItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7067,7 +7067,7 @@ impl MetadataItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7127,7 +7127,7 @@ impl MetadataItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7151,7 +7151,7 @@ impl MetadataItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7219,7 +7219,7 @@ impl CompositionTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CompositionTrackSegment::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CompositionTrackSegment::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CompositionTrackSegment]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7232,7 +7232,7 @@ impl CompositionTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CompositionTrackFormatDescriptionReplacement::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CompositionTrackFormatDescriptionReplacement::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CompositionTrackFormatDescriptionReplacement]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7253,7 +7253,7 @@ impl CompositionTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7266,7 +7266,7 @@ impl CompositionTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7374,7 +7374,7 @@ impl Asset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7394,7 +7394,7 @@ impl Asset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7414,7 +7414,7 @@ impl Asset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7427,7 +7427,7 @@ impl Asset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetTrackGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetTrackGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetTrackGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7440,7 +7440,7 @@ impl Asset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7473,7 +7473,7 @@ impl Asset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7486,7 +7486,7 @@ impl Asset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7500,7 +7500,7 @@ impl Asset {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7513,7 +7513,7 @@ impl Asset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TimedMetadataGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7533,7 +7533,7 @@ impl Asset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TimedMetadataGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7570,7 +7570,7 @@ impl Asset {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7587,7 +7587,7 @@ impl Asset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaSelection::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaSelection::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaSelection]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7665,7 +7665,7 @@ impl AssetTrackGroup {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7720,7 +7720,7 @@ impl TimedMetadataGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7761,7 +7761,7 @@ impl MediaSelectionGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaSelectionOption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7797,7 +7797,7 @@ impl MediaSelectionGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaSelectionOption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7821,7 +7821,7 @@ impl MediaSelectionGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaSelectionOption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7845,7 +7845,7 @@ impl MediaSelectionGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaSelectionOption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7869,7 +7869,7 @@ impl MediaSelectionGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaSelectionOption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7893,7 +7893,7 @@ impl MediaSelectionGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaSelectionOption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7947,7 +7947,7 @@ impl URLAsset {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -7961,7 +7961,7 @@ impl URLAsset {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8034,7 +8034,7 @@ impl URLAsset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetVariant::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetVariant::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetVariant]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8128,7 +8128,7 @@ impl AssetCache {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaSelectionOption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaSelectionOption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8152,7 +8152,7 @@ impl AssetCache {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8264,7 +8264,7 @@ impl FragmentedAsset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FragmentedAssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FragmentedAssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FragmentedAssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8292,7 +8292,7 @@ impl FragmentedAsset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FragmentedAssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FragmentedAssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FragmentedAssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8312,7 +8312,7 @@ impl FragmentedAsset {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FragmentedAssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FragmentedAssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FragmentedAssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8382,7 +8382,7 @@ impl FragmentedAssetMinder {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Asset::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Asset::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Asset]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8420,7 +8420,7 @@ impl MediaPresentationSelector {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaPresentationSetting::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaPresentationSetting::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaPresentationSetting]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8479,7 +8479,7 @@ impl AudioMix {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioMixInputParameters::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioMixInputParameters::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioMixInputParameters]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8539,7 +8539,7 @@ impl VideoComposition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(VideoCompositionInstruction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(VideoCompositionInstruction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[VideoCompositionInstruction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8562,7 +8562,7 @@ impl VideoComposition {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8579,7 +8579,7 @@ impl VideoComposition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SpatialVideoConfiguration::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SpatialVideoConfiguration::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SpatialVideoConfiguration]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8761,7 +8761,7 @@ impl AssetExportSession {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8775,7 +8775,7 @@ impl AssetExportSession {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8803,7 +8803,7 @@ impl AssetExportSession {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -8848,7 +8848,7 @@ impl AssetExportSession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9187,7 +9187,7 @@ impl AssetReader {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetReaderOutput::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetReaderOutput::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetReaderOutput]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9239,7 +9239,7 @@ impl MetadataGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9288,7 +9288,7 @@ impl MutableTimedMetadataGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9363,7 +9363,7 @@ impl DateRangeMetadataGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9414,7 +9414,7 @@ impl MutableDateRangeMetadataGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9578,7 +9578,7 @@ impl AsynchronousVideoCompositionRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9593,7 +9593,7 @@ impl AsynchronousVideoCompositionRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9883,7 +9883,7 @@ impl VideoCompositionInstruction {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(VideoCompositionLayerInstruction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(VideoCompositionLayerInstruction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[VideoCompositionLayerInstruction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9907,7 +9907,7 @@ impl VideoCompositionInstruction {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10013,7 +10013,7 @@ impl MutableVideoComposition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(VideoCompositionInstruction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(VideoCompositionInstruction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[VideoCompositionInstruction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10055,7 +10055,7 @@ impl MutableVideoComposition {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10196,7 +10196,7 @@ impl MutableVideoCompositionInstruction {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(VideoCompositionLayerInstruction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(VideoCompositionLayerInstruction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[VideoCompositionLayerInstruction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10234,7 +10234,7 @@ impl MutableVideoCompositionInstruction {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10527,7 +10527,7 @@ impl CaptionGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Caption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Caption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Caption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10619,7 +10619,7 @@ impl AssetReaderTrackOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10711,7 +10711,7 @@ impl AssetReaderAudioMixOutput {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10728,7 +10728,7 @@ impl AssetReaderAudioMixOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10832,7 +10832,7 @@ impl AssetReaderVideoCompositionOutput {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10849,7 +10849,7 @@ impl AssetReaderVideoCompositionOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10960,7 +10960,7 @@ impl AssetReaderOutputCaptionAdaptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Caption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Caption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Caption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11276,7 +11276,7 @@ impl AssetResourceLoadingContentInformationRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11596,7 +11596,7 @@ impl CustomMediaSelectionScheme {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaPresentationSetting::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaPresentationSetting::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaPresentationSetting]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11614,7 +11614,7 @@ impl CustomMediaSelectionScheme {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11627,7 +11627,7 @@ impl CustomMediaSelectionScheme {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaPresentationSelector::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaPresentationSelector::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaPresentationSelector]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11754,7 +11754,7 @@ impl AssetSegmentReport {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetSegmentTrackReport::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetSegmentTrackReport::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetSegmentTrackReport]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11883,7 +11883,7 @@ impl AssetWriterInput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11900,7 +11900,7 @@ impl AssetWriterInput {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12181,7 +12181,7 @@ impl AssetWriter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12206,7 +12206,7 @@ impl AssetWriter {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12250,7 +12250,7 @@ impl AssetWriter {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetWriterInput::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetWriterInput::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetWriterInput]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12319,7 +12319,7 @@ impl AssetWriter {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetWriterInputGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetWriterInputGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetWriterInputGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12408,7 +12408,7 @@ impl AssetWriterInputGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetWriterInput::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetWriterInput::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetWriterInput]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12566,7 +12566,7 @@ impl AssetWriterInputPixelBufferAdaptor {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12640,7 +12640,7 @@ impl AssetWriterInputTaggedPixelBufferGroupAdaptor {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12817,7 +12817,7 @@ impl MutableAudioMix {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioMixInputParameters::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioMixInputParameters::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioMixInputParameters]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13412,7 +13412,7 @@ impl MetricPlayerItemInitialLikelyToKeepUpEvent {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetricHLSPlaylistRequestEvent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetricHLSPlaylistRequestEvent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetricHLSPlaylistRequestEvent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13425,7 +13425,7 @@ impl MetricPlayerItemInitialLikelyToKeepUpEvent {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetricHLSMediaSegmentRequestEvent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetricHLSMediaSegmentRequestEvent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetricHLSMediaSegmentRequestEvent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13438,7 +13438,7 @@ impl MetricPlayerItemInitialLikelyToKeepUpEvent {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetricContentKeyRequestEvent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetricContentKeyRequestEvent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetricContentKeyRequestEvent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13819,7 +13819,7 @@ impl MetricDownloadSummaryEvent {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetVariant::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetVariant::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetVariant]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13860,7 +13860,7 @@ impl PlayerMediaSelectionCriteria {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13874,7 +13874,7 @@ impl PlayerMediaSelectionCriteria {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13888,7 +13888,7 @@ impl PlayerMediaSelectionCriteria {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13916,7 +13916,7 @@ impl AssetDownloadContentConfiguration {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetVariantQualifier::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetVariantQualifier::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetVariantQualifier]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13944,7 +13944,7 @@ impl AssetDownloadContentConfiguration {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaSelection::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MediaSelection::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MediaSelection]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14001,7 +14001,7 @@ impl AssetDownloadTask {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14082,7 +14082,7 @@ impl AssetDownloadConfiguration {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetDownloadContentConfiguration::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetDownloadContentConfiguration::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetDownloadContentConfiguration]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14783,7 +14783,7 @@ impl CaptionGrouper {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptionGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptionGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptionGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14900,7 +14900,7 @@ impl CaptionConversionValidator {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Caption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Caption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Caption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14917,7 +14917,7 @@ impl CaptionConversionValidator {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptionConversionWarning::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptionConversionWarning::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptionConversionWarning]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15093,7 +15093,7 @@ impl TextStyleRule {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextStyleRule::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextStyleRule::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextStyleRule]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15190,7 +15190,7 @@ impl TextStyleRule {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15273,7 +15273,7 @@ impl CaptionRenderer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptionRendererScene::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptionRendererScene::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptionRendererScene]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15290,7 +15290,7 @@ impl CaptionRenderer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Caption::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Caption::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Caption]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15360,7 +15360,7 @@ impl Composition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CompositionTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15381,7 +15381,7 @@ impl Composition {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15409,7 +15409,7 @@ impl Composition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CompositionTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15429,7 +15429,7 @@ impl Composition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CompositionTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15449,7 +15449,7 @@ impl Composition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15462,7 +15462,7 @@ impl Composition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TimedMetadataGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15475,7 +15475,7 @@ impl Composition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TimedMetadataGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15706,7 +15706,7 @@ impl MutableCompositionTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CompositionTrackSegment::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CompositionTrackSegment::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CompositionTrackSegment]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15807,7 +15807,7 @@ impl MutableComposition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MutableCompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MutableCompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MutableCompositionTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15886,7 +15886,7 @@ impl MutableComposition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MutableCompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MutableCompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MutableCompositionTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15906,7 +15906,7 @@ impl MutableComposition {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MutableCompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MutableCompositionTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MutableCompositionTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16022,7 +16022,7 @@ impl MutableMetadataItem {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16437,7 +16437,7 @@ impl MutableMovieTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16501,7 +16501,7 @@ impl MutableMovieTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16514,7 +16514,7 @@ impl MutableMovieTrack {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16585,7 +16585,7 @@ impl Movie {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16710,7 +16710,7 @@ impl Movie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MovieTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16762,7 +16762,7 @@ impl Movie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MovieTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16782,7 +16782,7 @@ impl Movie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MovieTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17023,7 +17023,7 @@ impl MutableMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MutableMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MutableMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MutableMovieTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17145,7 +17145,7 @@ impl MutableMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MutableMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MutableMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MutableMovieTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17162,7 +17162,7 @@ impl MutableMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17205,7 +17205,7 @@ impl MutableMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MutableMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MutableMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MutableMovieTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17225,7 +17225,7 @@ impl MutableMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MutableMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MutableMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MutableMovieTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17245,7 +17245,7 @@ impl MutableMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17258,7 +17258,7 @@ impl MutableMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TimedMetadataGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17271,7 +17271,7 @@ impl MutableMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TimedMetadataGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17341,7 +17341,7 @@ impl FragmentedMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FragmentedMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FragmentedMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FragmentedMovieTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17369,7 +17369,7 @@ impl FragmentedMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FragmentedMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FragmentedMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FragmentedMovieTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17389,7 +17389,7 @@ impl FragmentedMovie {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FragmentedMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FragmentedMovieTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FragmentedMovieTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17456,7 +17456,7 @@ impl FragmentedMovieMinder {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FragmentedMovie::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FragmentedMovie::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FragmentedMovie]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17502,7 +17502,7 @@ impl OutputSettingsAssistant {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17527,7 +17527,7 @@ impl OutputSettingsAssistant {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17544,7 +17544,7 @@ impl OutputSettingsAssistant {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17665,7 +17665,7 @@ impl PlayerItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerItemTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerItemTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerItemTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17686,7 +17686,7 @@ impl PlayerItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17700,7 +17700,7 @@ impl PlayerItem {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17840,7 +17840,7 @@ impl PlayerItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextStyleRule::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextStyleRule::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextStyleRule]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18026,7 +18026,7 @@ impl PlayerItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CustomMediaSelectionScheme::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CustomMediaSelectionScheme::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CustomMediaSelectionScheme]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18078,7 +18078,7 @@ impl PlayerItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerItemOutput::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerItemOutput::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerItemOutput]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18099,7 +18099,7 @@ impl PlayerItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerItemMediaDataCollector::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerItemMediaDataCollector::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerItemMediaDataCollector]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18715,7 +18715,7 @@ impl QueuePlayer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18769,7 +18769,7 @@ impl PlaybackCoordinationMedium {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerPlaybackCoordinator::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerPlaybackCoordinator::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerPlaybackCoordinator]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18810,7 +18810,7 @@ impl PlaybackCoordinator {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CoordinatedPlaybackParticipant::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CoordinatedPlaybackParticipant::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CoordinatedPlaybackParticipant]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18824,7 +18824,7 @@ impl PlaybackCoordinator {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18846,7 +18846,7 @@ impl PlaybackCoordinator {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18887,7 +18887,7 @@ impl CoordinatedPlaybackParticipant {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -19238,7 +19238,7 @@ impl VideoOutputSpecification {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -19278,7 +19278,7 @@ impl VideoOutputSpecification {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -19398,7 +19398,7 @@ impl PlayerItemAccessLog {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerItemAccessLogEvent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerItemAccessLogEvent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerItemAccessLogEvent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -19443,7 +19443,7 @@ impl PlayerItemErrorLog {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerItemErrorLogEvent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerItemErrorLogEvent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerItemErrorLogEvent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -19739,7 +19739,7 @@ impl PlayerItemErrorLogEvent {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -20257,7 +20257,7 @@ impl PlayerLayer {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -20357,7 +20357,7 @@ impl PlayerLooper {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -20450,7 +20450,7 @@ impl PlayerInterstitialEvent {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -20655,7 +20655,7 @@ impl PlayerInterstitialEventMonitor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerInterstitialEvent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerInterstitialEvent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerInterstitialEvent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -20721,7 +20721,7 @@ impl PlayerInterstitialEventController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerInterstitialEvent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerInterstitialEvent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerInterstitialEvent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -20845,7 +20845,7 @@ impl PlayerItemIntegratedTimelineSnapshot {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PlayerItemSegment::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PlayerItemSegment::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PlayerItemSegment]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21125,7 +21125,7 @@ impl SampleBufferVideoRenderer {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21328,7 +21328,7 @@ impl SampleBufferRenderSynchronizer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(QueuedSampleBufferRendering::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(QueuedSampleBufferRendering::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[QueuedSampleBufferRendering]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21792,7 +21792,7 @@ impl AudioFormat {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22270,7 +22270,7 @@ impl AudioConverter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22408,7 +22408,7 @@ impl AudioConverter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22423,7 +22423,7 @@ impl AudioConverter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22438,7 +22438,7 @@ impl AudioConverter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22453,7 +22453,7 @@ impl AudioConverter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22468,7 +22468,7 @@ impl AudioConverter {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22574,7 +22574,7 @@ impl AudioEngine {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioConnectionPoint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioConnectionPoint::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioConnectionPoint]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22710,7 +22710,7 @@ impl AudioEngine {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioNode::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioNode]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23152,7 +23152,7 @@ impl AudioUnitEQ {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioUnitEQFilterParameters::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioUnitEQFilterParameters::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioUnitEQFilterParameters]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23333,7 +23333,7 @@ impl AudioEnvironmentNode {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23554,7 +23554,7 @@ impl AudioSessionDataSourceDescription {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23656,7 +23656,7 @@ impl AudioSessionPortDescription {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionChannelDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionChannelDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionChannelDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23669,7 +23669,7 @@ impl AudioSessionPortDescription {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionDataSourceDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionDataSourceDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionDataSourceDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23714,7 +23714,7 @@ impl AudioSessionRouteDescription {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionPortDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionPortDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionPortDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23727,7 +23727,7 @@ impl AudioSessionRouteDescription {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionPortDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionPortDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionPortDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23844,7 +23844,7 @@ impl AudioSession {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23871,7 +23871,7 @@ impl AudioSession {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24020,7 +24020,7 @@ impl AudioSession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionDataSourceDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionDataSourceDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionDataSourceDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24037,7 +24037,7 @@ impl AudioSession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionDataSourceDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionDataSourceDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionDataSourceDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24078,7 +24078,7 @@ impl AudioSession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioChannelLayout::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioChannelLayout::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioChannelLayout]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24119,7 +24119,7 @@ impl AudioSession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionPortDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionPortDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionPortDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24387,7 +24387,7 @@ impl AudioPlayer {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24412,7 +24412,7 @@ impl AudioPlayer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionChannelDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionChannelDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionChannelDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24670,7 +24670,7 @@ impl AudioRecorder {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24712,7 +24712,7 @@ impl AudioRecorder {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionChannelDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionChannelDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionChannelDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24984,7 +24984,7 @@ impl AudioSequencer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MusicTrack::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MusicTrack::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MusicTrack]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25005,7 +25005,7 @@ impl AudioSequencer {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25188,7 +25188,7 @@ impl AudioUnitComponent {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25218,7 +25218,7 @@ impl AudioUnitComponent {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25236,7 +25236,7 @@ impl AudioUnitComponent {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25273,7 +25273,7 @@ impl AudioUnitComponent {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25302,7 +25302,7 @@ impl AudioUnitComponentManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioUnitComponent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioUnitComponent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioUnitComponent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25316,7 +25316,7 @@ impl AudioUnitComponentManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioUnitComponent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioUnitComponent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioUnitComponent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25330,7 +25330,7 @@ impl AudioUnitComponentManager {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25344,7 +25344,7 @@ impl AudioUnitComponentManager {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26493,7 +26493,7 @@ impl SpeechSynthesisVoice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SpeechSynthesisVoice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SpeechSynthesisVoice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SpeechSynthesisVoice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26554,7 +26554,7 @@ impl SpeechSynthesisVoice {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26749,7 +26749,7 @@ impl SpeechSynthesizer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionChannelDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionChannelDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionChannelDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26864,7 +26864,7 @@ impl SpeechSynthesisProviderVoice {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26878,7 +26878,7 @@ impl SpeechSynthesisProviderVoice {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26950,7 +26950,7 @@ impl SpeechSynthesisProviderAudioUnit {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SpeechSynthesisProviderVoice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SpeechSynthesisProviderVoice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SpeechSynthesisProviderVoice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27154,7 +27154,7 @@ impl CaptureDeviceFormat {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FrameRateRange::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FrameRateRange::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FrameRateRange]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27237,7 +27237,7 @@ impl CaptureDeviceFormat {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27260,7 +27260,7 @@ impl CaptureDeviceFormat {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27273,7 +27273,7 @@ impl CaptureDeviceFormat {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ZoomRange::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ZoomRange::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ZoomRange]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27290,7 +27290,7 @@ impl CaptureDeviceFormat {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDeviceFormat::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDeviceFormat::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDeviceFormat]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27303,7 +27303,7 @@ impl CaptureDeviceFormat {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27319,7 +27319,7 @@ impl CaptureDeviceFormat {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27437,7 +27437,7 @@ impl CaptureDeviceFormat {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27581,7 +27581,7 @@ impl CaptureDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27594,7 +27594,7 @@ impl CaptureDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27675,7 +27675,7 @@ impl CaptureDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27688,7 +27688,7 @@ impl CaptureDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDeviceFormat::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDeviceFormat::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDeviceFormat]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27749,7 +27749,7 @@ impl CaptureDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDeviceInputSource::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDeviceInputSource::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDeviceInputSource]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27815,7 +27815,7 @@ impl CaptureDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27830,7 +27830,7 @@ impl CaptureDevice {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27863,7 +27863,7 @@ impl CaptureDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27876,7 +27876,7 @@ impl CaptureDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28455,7 +28455,7 @@ impl CaptureDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureReactionEffectState::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureReactionEffectState::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureReactionEffectState]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28608,7 +28608,7 @@ impl CaptureSmartFramingMonitor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureFraming::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureFraming::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureFraming]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28621,7 +28621,7 @@ impl CaptureSmartFramingMonitor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureFraming::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureFraming::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureFraming]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28714,7 +28714,7 @@ impl CaptureDeviceDiscoverySession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28897,7 +28897,7 @@ impl CaptureOutput {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureConnection::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureConnection::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureConnection]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28966,7 +28966,7 @@ impl CaptureInput {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureInputPort::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureInputPort::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureInputPort]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29029,7 +29029,7 @@ impl CaptureConnection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureInputPort::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureInputPort::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureInputPort]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29062,7 +29062,7 @@ impl CaptureConnection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureAudioChannel::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureAudioChannel::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureAudioChannel]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29355,7 +29355,7 @@ impl CaptureSession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureInput::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureInput::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureInput]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29368,7 +29368,7 @@ impl CaptureSession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureOutput::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureOutput::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureOutput]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29381,7 +29381,7 @@ impl CaptureSession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureConnection::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureConnection::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureConnection]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29410,7 +29410,7 @@ impl CaptureSession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureControl::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureControl::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureControl]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29913,7 +29913,7 @@ impl CaptureAudioDataOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29940,7 +29940,7 @@ impl CaptureAudioDataOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30085,7 +30085,7 @@ impl DepthData {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30334,7 +30334,7 @@ impl CaptureMovieFileOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30351,7 +30351,7 @@ impl CaptureMovieFileOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30407,7 +30407,7 @@ impl CaptureMovieFileOutput {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30436,7 +30436,7 @@ impl CaptureMovieFileOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30518,7 +30518,7 @@ impl CaptureAudioFileOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30535,7 +30535,7 @@ impl CaptureAudioFileOutput {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30567,7 +30567,7 @@ impl CaptureAudioFileOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30907,7 +30907,7 @@ impl CaptureMetadataOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30921,7 +30921,7 @@ impl CaptureMetadataOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30947,7 +30947,7 @@ impl CaptureMetadataOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31118,7 +31118,7 @@ impl CapturePhotoSettings {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31135,7 +31135,7 @@ impl CapturePhotoSettings {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31233,7 +31233,7 @@ impl CapturePhotoSettings {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31334,7 +31334,7 @@ impl CapturePhotoSettings {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31363,7 +31363,7 @@ impl CapturePhotoSettings {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31416,7 +31416,7 @@ impl CapturePhotoSettings {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31446,7 +31446,7 @@ impl CapturePhotoSettings {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31463,7 +31463,7 @@ impl CapturePhotoSettings {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31500,7 +31500,7 @@ impl CapturePhotoSettings {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31517,7 +31517,7 @@ impl CapturePhotoSettings {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31554,7 +31554,7 @@ impl CapturePhotoSettings {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31571,7 +31571,7 @@ impl CapturePhotoSettings {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31722,7 +31722,7 @@ impl CapturePhotoBracketSettings {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureBracketedStillImageSettings::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureBracketedStillImageSettings::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureBracketedStillImageSettings]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31974,7 +31974,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31988,7 +31988,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32002,7 +32002,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32017,7 +32017,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32046,7 +32046,7 @@ impl CapturePhotoOutput {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CapturePhotoSettings::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CapturePhotoSettings::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CapturePhotoSettings]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32061,7 +32061,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32075,7 +32075,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32089,7 +32089,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32116,7 +32116,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32130,7 +32130,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32144,7 +32144,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32239,7 +32239,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32329,7 +32329,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32435,7 +32435,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32449,7 +32449,7 @@ impl CapturePhotoOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32556,7 +32556,7 @@ impl CapturePhoto {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32581,7 +32581,7 @@ impl CapturePhoto {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32838,7 +32838,7 @@ impl CaptureStillImageOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32876,7 +32876,7 @@ impl CaptureStillImageOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32890,7 +32890,7 @@ impl CaptureStillImageOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33090,7 +33090,7 @@ impl CaptureVideoDataOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33104,7 +33104,7 @@ impl CaptureVideoDataOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33121,7 +33121,7 @@ impl CaptureVideoDataOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33138,7 +33138,7 @@ impl CaptureVideoDataOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33151,7 +33151,7 @@ impl CaptureVideoDataOutput {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33178,7 +33178,7 @@ impl CaptureVideoDataOutput {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33220,7 +33220,7 @@ impl CaptureVideoDataOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33234,7 +33234,7 @@ impl CaptureVideoDataOutput {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33372,7 +33372,7 @@ impl CaptureDataOutputSynchronizer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureOutput::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureOutput::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureOutput]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33512,7 +33512,7 @@ impl CaptureSynchronizedMetadataObjectData {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33778,7 +33778,7 @@ impl CaptureIndexPicker {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33881,7 +33881,7 @@ impl ExternalSyncDeviceDiscoverySession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ExternalSyncDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ExternalSyncDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ExternalSyncDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33962,7 +33962,7 @@ impl CaptureDeviceInput {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureInputPort::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureInputPort::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureInputPort]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34293,7 +34293,7 @@ impl CaptureSlider {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34466,7 +34466,7 @@ impl CaptureTimecodeGenerator {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureTimecodeSource::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureTimecodeSource::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureTimecodeSource]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34562,7 +34562,7 @@ impl ContinuityDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34575,7 +34575,7 @@ impl ContinuityDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AudioSessionPortDescription::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AudioSessionPortDescription::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AudioSessionPortDescription]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34620,7 +34620,7 @@ impl ExternalStorageDevice {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(NSURL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(NSURL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[NSURL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34698,7 +34698,7 @@ impl ExternalStorageDeviceDiscoverySession {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ExternalStorageDevice::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ExternalStorageDevice::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ExternalStorageDevice]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34805,7 +34805,7 @@ fn cplus_darg_arr_ContentKeyRequest(src: *u8) -> vec::Vec[ContentKeyRequest] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ContentKeyRequest::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ContentKeyRequest::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ContentKeyRequest]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35081,7 +35081,7 @@ impl VideoCompositing {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35098,7 +35098,7 @@ impl VideoCompositing {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35158,7 +35158,7 @@ impl VideoCompositionInstructionProtocol {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35432,7 +35432,7 @@ fn cplus_darg_arr_AssetVariant(src: *u8) -> vec::Vec[AssetVariant] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AssetVariant::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AssetVariant::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AssetVariant]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35656,7 +35656,7 @@ fn cplus_darg_arr_DateRangeMetadataGroup(src: *u8) -> vec::Vec[DateRangeMetadata
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DateRangeMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DateRangeMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DateRangeMetadataGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35843,7 +35843,7 @@ fn cplus_darg_arr_TimedMetadataGroup(src: *u8) -> vec::Vec[TimedMetadataGroup] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TimedMetadataGroup::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TimedMetadataGroup]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36763,7 +36763,7 @@ fn cplus_darg_arr_CaptureConnection(src: *u8) -> vec::Vec[CaptureConnection] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureConnection::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureConnection::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureConnection]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36894,7 +36894,7 @@ fn cplus_darg_arr_MetadataObject(src: *u8) -> vec::Vec[MetadataObject] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MetadataObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MetadataObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MetadataObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37204,7 +37204,7 @@ impl CapturePhotoFileDataRepresentationCustomizer {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37269,7 +37269,7 @@ impl CapturePhotoFileDataRepresentationCustomizer {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37473,7 +37473,7 @@ fn cplus_darg_arr_CaptureTimecodeSource(src: *u8) -> vec::Vec[CaptureTimecodeSou
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CaptureTimecodeSource::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CaptureTimecodeSource::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CaptureTimecodeSource]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;

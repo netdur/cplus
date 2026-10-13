@@ -1235,7 +1235,7 @@ impl DirectionsResponse {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Route::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Route::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Route]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1582,7 +1582,7 @@ impl MapItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MapItemIdentifier::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MapItemIdentifier::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MapItemIdentifier]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1714,7 +1714,7 @@ impl Route {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1743,7 +1743,7 @@ impl Route {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RouteStep::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RouteStep::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RouteStep]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1978,7 +1978,7 @@ impl MultiPoint {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2027,7 +2027,7 @@ impl MultiPolyline {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Polyline::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Polyline::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Polyline]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2099,7 +2099,7 @@ impl Polygon {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Polygon::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Polygon::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Polygon]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2144,7 +2144,7 @@ impl MultiPolygon {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Polygon::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Polygon::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Polygon]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2172,7 +2172,7 @@ impl GeoJSONDecoder {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(GeoJSONObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(GeoJSONObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[GeoJSONObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2207,7 +2207,7 @@ impl GeoJSONFeature {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Shape::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Shape::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Shape]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2445,7 +2445,7 @@ impl LocalSearchResponse {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MapItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MapItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MapItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2618,7 +2618,7 @@ impl LocalSearchCompleter {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(LocalSearchCompletion::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(LocalSearchCompletion::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[LocalSearchCompletion]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3382,7 +3382,7 @@ impl ClusterAnnotation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Annotation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Annotation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Annotation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3509,7 +3509,7 @@ impl MapView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Annotation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Annotation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Annotation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3778,7 +3778,7 @@ impl MapView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Annotation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Annotation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Annotation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3791,7 +3791,7 @@ impl MapView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Annotation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Annotation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Annotation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3877,7 +3877,7 @@ impl MapView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Overlay::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Overlay::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Overlay]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3925,7 +3925,7 @@ impl MapView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Overlay::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Overlay::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Overlay]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -4548,7 +4548,7 @@ impl OverlayPathRenderer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -4733,7 +4733,7 @@ impl GradientPolylineRenderer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5533,7 +5533,7 @@ fn cplus_darg_arr_AnnotationView(src: *u8) -> vec::Vec[AnnotationView] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnnotationView::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnnotationView::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnnotationView]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5546,7 +5546,7 @@ fn cplus_darg_arr_OverlayRenderer(src: *u8) -> vec::Vec[OverlayRenderer] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(OverlayRenderer::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(OverlayRenderer::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[OverlayRenderer]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5559,7 +5559,7 @@ fn cplus_darg_arr_Annotation(src: *u8) -> vec::Vec[Annotation] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Annotation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Annotation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Annotation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;

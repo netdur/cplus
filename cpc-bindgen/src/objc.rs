@@ -2311,7 +2311,7 @@ impl ObjcEmitter {
                  \x20       var i: u64 = 0 as u64;\n\
                  \x20       while i < n {{\n\
                  \x20           let value: *u8 = rt::msg_id_u64(arr, at_sel, i);\n\
-                 \x20           out.append(rt::msg_range(value, range_sel));\n\
+                 \x20           if !out.append(rt::msg_range(value, range_sel)).is_ok() {{ return vec::Vec[rt::Range]::with_capacity(0 as usize); }}\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -2338,7 +2338,7 @@ impl ObjcEmitter {
                  \x20       var i: u64 = 0 as u64;\n\
                  \x20       while i < n {{\n\
                  \x20           let value: *u8 = rt::msg_id_u64(arr, at_sel, i);\n\
-                 \x20           out.append(bridge::to_text(value));\n\
+                 \x20           if !out.append(bridge::to_text(value)).is_ok() {{ return vec::Vec[text::Text]::with_capacity(0 as usize); }}\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -2368,7 +2368,7 @@ impl ObjcEmitter {
                  \x20       var i: u64 = 0 as u64;\n\
                  \x20       while i < n {{\n\
                  \x20           let value: *u8 = rt::msg_id_u64(arr, at_sel, i);\n\
-                 \x20           out.append(rt::msg_f64(value, dv_sel));\n\
+                 \x20           if !out.append(rt::msg_f64(value, dv_sel)).is_ok() {{ return vec::Vec[f64]::with_capacity(0 as usize); }}\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -2398,7 +2398,7 @@ impl ObjcEmitter {
                  \x20       var i: u64 = 0 as u64;\n\
                  \x20       while i < n {{\n\
                  \x20           let value: *u8 = rt::msg_id_u64(arr, at_sel, i);\n\
-                 \x20           let _st: status::Status = out.insert(bridge::to_text(value));\n\
+                 \x20           if !out.insert(bridge::to_text(value)).is_ok() {{ return string_set::with_capacity(0 as usize); }}\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -2430,7 +2430,7 @@ impl ObjcEmitter {
                  \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
                  \x20       var i: u64 = 0 as u64;\n\
                  \x20       while i < n {{\n\
-                 \x20           out.append({elem_ty}::from_raw({elem_handle}));\n\
+                 \x20           if !out.append({elem_ty}::from_raw({elem_handle})).is_ok() {{ return vec::Vec[{elem_ty}]::with_capacity(0 as usize); }}\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -2462,7 +2462,7 @@ impl ObjcEmitter {
                  \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
                  \x20       var i: u64 = 0 as u64;\n\
                  \x20       while i < n {{\n\
-                 \x20           out.append({elem_ty}::from_raw({elem_handle}));\n\
+                 \x20           if !out.append({elem_ty}::from_raw({elem_handle})).is_ok() {{ return vec::Vec[{elem_ty}]::with_capacity(0 as usize); }}\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -2502,7 +2502,7 @@ impl ObjcEmitter {
                          \x20           var vvec: vec::Vec[{w}] = vec::Vec[{w}]::with_capacity(vn as usize);\n\
                          \x20           var vj: u64 = 0 as u64;\n\
                          \x20           while vj < vn {{\n\
-                         \x20               vvec.append({w}::from_raw(rt::msg_id_u64(nsval, at_sel, vj)));\n\
+                         \x20               if !vvec.append({w}::from_raw(rt::msg_id_u64(nsval, at_sel, vj))).is_ok() {{ return string_map::new::[vec::Vec[{w}]](); }}\n\
                          \x20               vj = vj +% (1 as u64);\n\
                          \x20           }}\n"
                     );
@@ -2523,7 +2523,7 @@ impl ObjcEmitter {
                  \x20           let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);\n\
                  \x20           let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);\n\
                  {val_prep}\
-                 \x20           out.insert(bridge::to_text(nskey), {val_expr});\n\
+                 \x20           if !out.insert(bridge::to_text(nskey), {val_expr}).is_ok() {{ return string_map::new::[{val_ty}](); }}\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -4309,6 +4309,10 @@ fn c_scalar_to_cplus(name: &str) -> Option<&'static str> {
     })
 }
 
+/// Every collection bridge is a VALUE PRODUCER: an append that fails returns an
+/// empty collection, never the elements read so far (docs/lang/error-handling.md
+/// §2). W0009 asks every discarded `Status` to be handled; here it is.
+///
 /// A delegate-arg collection bridge helper: `fn <name>(src: *u8) -> Vec[..]` reading
 /// the NSArray/NSSet a callback receives into its handler type. Mirrors the method
 /// side's return bridges (count/objectAtIndex; -allObjects first for a set; retain
@@ -4318,16 +4322,16 @@ fn render_darg_bridge(name: &str, br: &ArgBridge) -> String {
     let (elem_ty, append) = match br {
         ArgBridge::ArrayText => (
             "text::Text".to_string(),
-            "out.append(bridge::to_text(rt::msg_id_u64(arr, at_sel, i)));".to_string(),
+            "if !out.append(bridge::to_text(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }".to_string(),
         ),
         ArgBridge::ArrayNumber => (
             "f64".to_string(),
-            "out.append(rt::msg_f64(rt::msg_id_u64(arr, at_sel, i), dv_sel));".to_string(),
+            "if !out.append(rt::msg_f64(rt::msg_id_u64(arr, at_sel, i), dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }".to_string(),
         ),
         ArgBridge::ArrayObject { w, owning: _ } | ArgBridge::SetObject { w, owning: _ } => {
             // `from_raw` retains for an owning wrapper (and wraps a non-owning +0
             // borrow bare), so wrap the plain +0 element either way.
-            (w.clone(), format!("out.append({w}::from_raw(rt::msg_id_u64(arr, at_sel, i)));"))
+            (w.clone(), format!("if !out.append({w}::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() {{ return vec::Vec[{w}]::with_capacity(0 as usize); }}"))
         }
     };
     // A set has no index; snapshot it as an NSArray via -allObjects first.
@@ -6034,7 +6038,7 @@ mod tests {
         assert!(out.contains("fn visible_identifiers(this) -> string_set::StringSet {"), "typedef-element set:\n{out}");
         // -allObjects snapshot + fold each NSString into the owning set.
         assert!(out.contains(r#"rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")))"#), "allObjects hop:\n{out}");
-        assert!(out.contains("let _st: status::Status = out.insert(bridge::to_text(value));"), "insert bridged Text:\n{out}");
+        assert!(out.contains("if !out.insert(bridge::to_text(value)).is_ok() { return string_set::with_capacity(0 as usize); }"), "insert bridged Text, empty on failure:\n{out}");
         assert!(!out.contains("// SKIPPED `tags`"), "no generic-collection skip:\n{out}");
     }
 
@@ -6119,7 +6123,7 @@ mod tests {
         // Return -> Vec[f64] via doubleValue.
         assert!(out.contains("fn progress_marks(this) -> vec::Vec[f64] {"), "number-array return:\n{out}");
         assert!(out.contains(r#"let dv_sel: *u8 = rt::sel(#str_ptr("doubleValue\0"));"#), "doubleValue read:\n{out}");
-        assert!(out.contains("out.append(rt::msg_f64(value, dv_sel));"), "append f64:\n{out}");
+        assert!(out.contains("if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }"), "append f64, empty on failure:\n{out}");
         // Param <- Vec[f64]: box each element as an NSNumber.
         assert!(out.contains("fn set_progress_marks(this, marks: vec::Vec[f64])"), "number-array param sig:\n{out}");
         assert!(out.contains(r#"let num_sel_marks: *u8 = rt::sel(#str_ptr("numberWithDouble:\0"));"#), "numberWithDouble: box:\n{out}");
@@ -6148,7 +6152,7 @@ mod tests {
         assert!(out.contains("struct AnyObject {"), "AnyObject wrapper emitted:\n{out}");
         // Return -> Vec[AnyObject], non-owning wrap (no retain).
         assert!(out.contains("fn allowed_classes(this) -> vec::Vec[AnyObject] {"), "Class-array return:\n{out}");
-        assert!(out.contains("out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));"), "non-owning wrap:\n{out}");
+        assert!(out.contains("if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }"), "non-owning wrap, empty on failure:\n{out}");
         // Params <- Vec[AnyObject]: IdArray prologue reads each handle via .raw().
         assert!(out.contains("fn read_objects_for_classes(this, classes: vec::Vec[AnyObject])"), "Class-array param:\n{out}");
         assert!(out.contains("fn read_items(this, items: vec::Vec[AnyObject])"), "id-array param:\n{out}");

@@ -8933,7 +8933,7 @@ impl ItemProvider {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9026,7 +9026,7 @@ impl ItemProvider {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9117,7 +9117,7 @@ impl AttributedString {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9148,7 +9148,7 @@ impl AttributedString {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9648,7 +9648,7 @@ impl AttributedString {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9665,7 +9665,7 @@ impl AttributedString {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9711,7 +9711,7 @@ impl AttributedString {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -9725,7 +9725,7 @@ impl AttributedString {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10275,7 +10275,7 @@ impl PresentationIntent {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10675,7 +10675,7 @@ impl FileWrapper {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -10723,7 +10723,7 @@ impl FileWrapper {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), FileWrapper::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), FileWrapper::from_raw(nsval)).is_ok() { return string_map::new::[FileWrapper](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11650,7 +11650,7 @@ impl Color {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Color]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -11990,7 +11990,7 @@ impl Color {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Color]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12451,7 +12451,7 @@ impl View {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[View]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12711,7 +12711,7 @@ impl View {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CIFilter]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -12747,7 +12747,7 @@ impl View {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CIFilter]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13041,7 +13041,7 @@ impl View {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13146,7 +13146,7 @@ impl View {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(GestureRecognizer::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(GestureRecognizer::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[GestureRecognizer]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13250,7 +13250,7 @@ impl View {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TrackingArea::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TrackingArea::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TrackingArea]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13445,7 +13445,7 @@ impl View {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[LayoutConstraint]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13554,7 +13554,7 @@ impl View {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[LayoutConstraint]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -13583,7 +13583,7 @@ impl View {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(LayoutGuide::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(LayoutGuide::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[LayoutGuide]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14048,7 +14048,7 @@ impl Window {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14212,7 +14212,7 @@ impl Window {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TitlebarAccessoryViewController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TitlebarAccessoryViewController::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TitlebarAccessoryViewController]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14685,7 +14685,7 @@ impl Window {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14710,7 +14710,7 @@ impl Window {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Window]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14739,7 +14739,7 @@ impl Window {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Window]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -14885,7 +14885,7 @@ impl Window {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Window]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15177,7 +15177,7 @@ impl Window {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Drawer::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Drawer::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Drawer]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15325,7 +15325,7 @@ impl BitmapImageRep {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageRep]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -15679,7 +15679,7 @@ impl GraphicsContext {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16392,7 +16392,7 @@ impl Image {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageRep]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16419,7 +16419,7 @@ impl Image {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16433,7 +16433,7 @@ impl Image {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16504,7 +16504,7 @@ impl Image {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16518,7 +16518,7 @@ impl Image {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16532,7 +16532,7 @@ impl Image {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16546,7 +16546,7 @@ impl Image {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16700,7 +16700,7 @@ impl Screen {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Screen::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Screen::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Screen]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16749,7 +16749,7 @@ impl Screen {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -16871,7 +16871,7 @@ impl RunningApplication {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RunningApplication::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RunningApplication::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RunningApplication]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17055,7 +17055,7 @@ impl WorkspaceOpenConfiguration {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17076,7 +17076,7 @@ impl WorkspaceOpenConfiguration {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17327,7 +17327,7 @@ impl Workspace {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17348,7 +17348,7 @@ impl Workspace {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17390,7 +17390,7 @@ impl Workspace {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17419,7 +17419,7 @@ impl Workspace {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17432,7 +17432,7 @@ impl Workspace {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Color]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17488,7 +17488,7 @@ impl Workspace {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17785,7 +17785,7 @@ impl Workspace {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RunningApplication::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RunningApplication::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RunningApplication]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17923,7 +17923,7 @@ impl Event {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Touch]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17937,7 +17937,7 @@ impl Event {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Touch]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17951,7 +17951,7 @@ impl Event {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Touch]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -17964,7 +17964,7 @@ impl Event {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Touch]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18563,7 +18563,7 @@ impl Pasteboard {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PasteboardItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PasteboardItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PasteboardItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18577,7 +18577,7 @@ impl Pasteboard {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18591,7 +18591,7 @@ impl Pasteboard {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18746,7 +18746,7 @@ impl PasteboardItem {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18928,7 +18928,7 @@ impl Menu {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MenuItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -19087,7 +19087,7 @@ impl Menu {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MenuItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -19559,7 +19559,7 @@ impl Responder {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -19573,7 +19573,7 @@ impl Responder {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -19773,7 +19773,7 @@ impl Animation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -19804,7 +19804,7 @@ impl Animation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -20010,7 +20010,7 @@ impl DraggingItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DraggingImageComponent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -20740,7 +20740,7 @@ impl LayoutGuide {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[LayoutConstraint]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21361,7 +21361,7 @@ impl TextInputContext {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -21379,7 +21379,7 @@ impl TextInputContext {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22164,7 +22164,7 @@ impl TextTab {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22291,7 +22291,7 @@ impl ParagraphStyle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextTab::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextTab::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextTab]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22308,7 +22308,7 @@ impl ParagraphStyle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextList::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextList::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextList]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22337,7 +22337,7 @@ impl ParagraphStyle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextBlock::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextBlock::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextBlock]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22485,7 +22485,7 @@ impl MutableParagraphStyle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextTab::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextTab::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextTab]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22537,7 +22537,7 @@ impl MutableParagraphStyle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextList::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextList::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextList]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -22581,7 +22581,7 @@ impl MutableParagraphStyle {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextBlock::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextBlock::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextBlock]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23102,7 +23102,7 @@ impl TextView {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23162,7 +23162,7 @@ impl TextView {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23176,7 +23176,7 @@ impl TextView {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23210,7 +23210,7 @@ impl TextView {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23325,7 +23325,7 @@ impl TextView {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23373,7 +23373,7 @@ impl TextView {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23413,7 +23413,7 @@ impl TextView {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23505,7 +23505,7 @@ impl TextView {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23686,7 +23686,7 @@ impl TextView {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -23924,7 +23924,7 @@ impl TextView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(QLPreviewItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(QLPreviewItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[QLPreviewItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24009,7 +24009,7 @@ impl TextView {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24225,7 +24225,7 @@ impl Cell {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DraggingImageComponent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -24849,7 +24849,7 @@ impl MenuItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MenuItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25188,7 +25188,7 @@ impl Printer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25202,7 +25202,7 @@ impl Printer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25233,7 +25233,7 @@ impl Printer {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25363,7 +25363,7 @@ impl PDFInfo {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25400,7 +25400,7 @@ impl PDFInfo {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25466,7 +25466,7 @@ impl PrintInfo {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25650,7 +25650,7 @@ impl PrintInfo {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -25803,7 +25803,7 @@ impl PageLayout {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ViewController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ViewController::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ViewController]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26134,7 +26134,7 @@ impl SavePanel {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(UTType::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(UTType::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[UTType]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26297,7 +26297,7 @@ impl SavePanel {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26358,7 +26358,7 @@ impl SavePanel {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26393,7 +26393,7 @@ impl SharingService {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SharingService::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SharingService::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SharingService]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26465,7 +26465,7 @@ impl SharingService {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26505,7 +26505,7 @@ impl SharingService {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26674,7 +26674,7 @@ impl WindowController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PreviewRepresentableActivityItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PreviewRepresentableActivityItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PreviewRepresentableActivityItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -26883,7 +26883,7 @@ impl Document {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27214,7 +27214,7 @@ impl Document {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27427,7 +27427,7 @@ impl Document {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PreviewRepresentableActivityItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PreviewRepresentableActivityItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PreviewRepresentableActivityItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27488,7 +27488,7 @@ impl Document {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WindowController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WindowController::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WindowController]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27515,7 +27515,7 @@ impl Document {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27529,7 +27529,7 @@ impl Document {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27733,7 +27733,7 @@ impl Document {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -27747,7 +27747,7 @@ impl Document {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28068,7 +28068,7 @@ impl Application {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Window]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28384,7 +28384,7 @@ impl Application {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Document::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Document::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Document]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28397,7 +28397,7 @@ impl Application {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Window]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28500,7 +28500,7 @@ impl ColorList {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ColorList::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ColorList::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ColorList]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28519,7 +28519,7 @@ impl ColorList {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28569,7 +28569,7 @@ impl ColorSpace {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ColorSpace::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ColorSpace::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ColorSpace]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28970,7 +28970,7 @@ impl TextField {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -28987,7 +28987,7 @@ impl TextField {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AttributedString::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AttributedString::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AttributedString]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -29534,7 +29534,7 @@ impl Alert {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Button::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Button::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Button]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30358,7 +30358,7 @@ impl Sound {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30915,7 +30915,7 @@ impl TouchBar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30933,7 +30933,7 @@ impl TouchBar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30951,7 +30951,7 @@ impl TouchBar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -30969,7 +30969,7 @@ impl TouchBar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31001,7 +31001,7 @@ impl TouchBar {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TouchBarItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TouchBarItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TouchBarItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31200,7 +31200,7 @@ impl ViewController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ViewController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ViewController::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ViewController]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31268,7 +31268,7 @@ impl ViewController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ViewController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ViewController::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ViewController]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -31487,7 +31487,7 @@ impl CandidateListTouchBarItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32254,7 +32254,7 @@ impl CollectionView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CollectionViewItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CollectionViewItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CollectionViewItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32268,7 +32268,7 @@ impl CollectionView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32305,7 +32305,7 @@ impl CollectionView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[View]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32319,7 +32319,7 @@ impl CollectionView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32461,7 +32461,7 @@ impl CollectionView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32522,7 +32522,7 @@ impl CollectionView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Color]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32591,7 +32591,7 @@ impl CollectionView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32716,7 +32716,7 @@ impl CollectionViewLayout {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CollectionViewLayoutAttributes::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CollectionViewLayoutAttributes::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CollectionViewLayoutAttributes]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32893,7 +32893,7 @@ impl CollectionViewLayout {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32907,7 +32907,7 @@ impl CollectionViewLayout {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32921,7 +32921,7 @@ impl CollectionViewLayout {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -32935,7 +32935,7 @@ impl CollectionViewLayout {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33347,7 +33347,7 @@ impl CollectionViewItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DraggingImageComponent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33491,7 +33491,7 @@ impl CollectionViewLayoutInvalidationContext {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33705,7 +33705,7 @@ impl CollectionLayoutSection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CollectionLayoutBoundarySupplementaryItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CollectionLayoutBoundarySupplementaryItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CollectionLayoutBoundarySupplementaryItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33749,7 +33749,7 @@ impl CollectionLayoutSection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CollectionLayoutDecorationItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CollectionLayoutDecorationItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CollectionLayoutDecorationItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33849,7 +33849,7 @@ impl CollectionLayoutGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CollectionLayoutSupplementaryItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CollectionLayoutSupplementaryItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CollectionLayoutSupplementaryItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33889,7 +33889,7 @@ impl CollectionLayoutGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CollectionLayoutItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CollectionLayoutItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CollectionLayoutItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -33965,7 +33965,7 @@ impl CollectionLayoutItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CollectionLayoutSupplementaryItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CollectionLayoutSupplementaryItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CollectionLayoutSupplementaryItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34395,7 +34395,7 @@ impl CollectionViewCompositionalLayoutConfiguration {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(CollectionLayoutBoundarySupplementaryItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(CollectionLayoutBoundarySupplementaryItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[CollectionLayoutBoundarySupplementaryItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34577,7 +34577,7 @@ impl CollectionViewGridLayout {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Color]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34640,7 +34640,7 @@ impl DiffableDataSourceSnapshot {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34859,7 +34859,7 @@ impl DiffableDataSourceSnapshot {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -34872,7 +34872,7 @@ impl DiffableDataSourceSnapshot {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35025,7 +35025,7 @@ impl FontDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FontDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35134,7 +35134,7 @@ impl FontDescriptor {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35210,7 +35210,7 @@ impl FontAssetRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FontDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35312,7 +35312,7 @@ impl FontCollection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FontDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35325,7 +35325,7 @@ impl FontCollection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FontDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35357,7 +35357,7 @@ impl FontCollection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FontDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35375,7 +35375,7 @@ impl FontCollection {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35388,7 +35388,7 @@ impl FontCollection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FontDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35401,7 +35401,7 @@ impl FontCollection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FontDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35414,7 +35414,7 @@ impl FontCollection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FontDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35511,7 +35511,7 @@ impl MutableFontCollection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FontDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35539,7 +35539,7 @@ impl MutableFontCollection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FontDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35696,7 +35696,7 @@ impl FontManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Array::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Array::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Array]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35796,7 +35796,7 @@ impl FontManager {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35862,7 +35862,7 @@ impl FontManager {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35876,7 +35876,7 @@ impl FontManager {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -35934,7 +35934,7 @@ impl FontManager {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36099,7 +36099,7 @@ impl Toolbar {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ToolbarItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ToolbarItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ToolbarItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36112,7 +36112,7 @@ impl Toolbar {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ToolbarItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ToolbarItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ToolbarItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36126,7 +36126,7 @@ impl Toolbar {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36266,7 +36266,7 @@ impl Toolbar {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36441,7 +36441,7 @@ impl WindowTabGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Window]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36910,7 +36910,7 @@ impl TableView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TableColumn::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TableColumn::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TableColumn]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -36955,7 +36955,7 @@ impl TableView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SortDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37128,7 +37128,7 @@ impl TableView {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), Nib::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), Nib::from_raw(nsval)).is_ok() { return string_map::new::[Nib](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37585,7 +37585,7 @@ impl Matrix {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Cell::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Cell::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Cell]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -37606,7 +37606,7 @@ impl Matrix {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Cell::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Cell::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Cell]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38218,7 +38218,7 @@ impl ImageRep {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38232,7 +38232,7 @@ impl ImageRep {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38246,7 +38246,7 @@ impl ImageRep {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38260,7 +38260,7 @@ impl ImageRep {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38277,7 +38277,7 @@ impl ImageRep {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageRep]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38298,7 +38298,7 @@ impl ImageRep {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageRep]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38319,7 +38319,7 @@ impl ImageRep {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageRep]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38429,7 +38429,7 @@ impl ImageRep {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38443,7 +38443,7 @@ impl ImageRep {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -38457,7 +38457,7 @@ impl ImageRep {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -39043,7 +39043,7 @@ impl Browser {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Cell::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Cell::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Cell]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -39064,7 +39064,7 @@ impl Browser {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -39623,7 +39623,7 @@ impl ColorPickerTouchBarItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ColorSpace::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ColorSpace::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ColorSpace]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -39936,7 +39936,7 @@ impl OpenPanel {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -40111,7 +40111,7 @@ impl DocumentController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -40242,7 +40242,7 @@ impl DocumentController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Document::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Document::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Document]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -40288,7 +40288,7 @@ impl DocumentController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -40307,7 +40307,7 @@ impl DocumentController {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -40482,7 +40482,7 @@ impl FilePromiseReceiver {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -40496,7 +40496,7 @@ impl FilePromiseReceiver {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -40510,7 +40510,7 @@ impl FilePromiseReceiver {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -41096,7 +41096,7 @@ impl GroupTouchBarItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(UserInterfaceCompressionOptions::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(UserInterfaceCompressionOptions::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[UserInterfaceCompressionOptions]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -41416,7 +41416,7 @@ impl LayoutConstraint {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[LayoutConstraint]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -41642,7 +41642,7 @@ impl LayoutAnchor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[LayoutConstraint]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -42095,7 +42095,7 @@ impl ScrubberLayout {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ScrubberLayoutAttributes::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ScrubberLayoutAttributes::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ScrubberLayoutAttributes]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43059,7 +43059,7 @@ impl SpeechRecognizer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43196,7 +43196,7 @@ impl SpeechSynthesizer {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43256,7 +43256,7 @@ impl SpeechSynthesizer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43383,7 +43383,7 @@ impl SpellChecker {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43432,7 +43432,7 @@ impl SpellChecker {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43450,7 +43450,7 @@ impl SpellChecker {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43469,7 +43469,7 @@ impl SpellChecker {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43552,7 +43552,7 @@ impl SpellChecker {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43594,7 +43594,7 @@ impl SpellChecker {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43608,7 +43608,7 @@ impl SpellChecker {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -43785,7 +43785,7 @@ impl SplitView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[View]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -44050,7 +44050,7 @@ impl SplitViewItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SplitViewItemAccessoryViewController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SplitViewItemAccessoryViewController::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SplitViewItemAccessoryViewController]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -44078,7 +44078,7 @@ impl SplitViewItem {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SplitViewItemAccessoryViewController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SplitViewItemAccessoryViewController::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SplitViewItemAccessoryViewController]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -44180,7 +44180,7 @@ impl SplitViewController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SplitViewItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SplitViewItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SplitViewItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -44814,7 +44814,7 @@ impl PopUpButtonCell {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MenuItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -44852,7 +44852,7 @@ impl PopUpButtonCell {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -45068,7 +45068,7 @@ impl PopUpButton {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(MenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[MenuItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -45110,7 +45110,7 @@ impl PopUpButton {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -45250,7 +45250,7 @@ impl PrintPanel {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ViewController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ViewController::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ViewController]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -45622,7 +45622,7 @@ impl RulerView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RulerMarker::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RulerMarker::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RulerMarker]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -46416,7 +46416,7 @@ impl StackView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[View]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -46429,7 +46429,7 @@ impl StackView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[View]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -46454,7 +46454,7 @@ impl StackView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[View]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -46482,7 +46482,7 @@ impl StackView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[View]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -46624,7 +46624,7 @@ impl GridCell {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[LayoutConstraint]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -47139,7 +47139,7 @@ impl TextCheckingController {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -47277,7 +47277,7 @@ impl TextFieldCell {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -47471,7 +47471,7 @@ impl TextLayoutManager {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -47591,7 +47591,7 @@ impl TextLayoutManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextSelection::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextSelection::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextSelection]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -47639,7 +47639,7 @@ impl TextLayoutManager {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -47751,7 +47751,7 @@ impl TextContainer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BezierPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BezierPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BezierPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -48246,7 +48246,7 @@ impl LayoutManager {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -48323,7 +48323,7 @@ impl LayoutManager {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -48360,7 +48360,7 @@ impl LayoutManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextContainer::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextContainer::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextContainer]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -48486,7 +48486,7 @@ impl LayoutManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RulerMarker::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RulerMarker::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RulerMarker]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -48701,7 +48701,7 @@ impl TextStorage {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(LayoutManager::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(LayoutManager::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[LayoutManager]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -48747,7 +48747,7 @@ impl TextStorage {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextStorage::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextStorage::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextStorage]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -48775,7 +48775,7 @@ impl TextStorage {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextStorage::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextStorage::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextStorage]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -48803,7 +48803,7 @@ impl TextStorage {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextStorage::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextStorage::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextStorage]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -48831,7 +48831,7 @@ impl TextStorage {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextStorage::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextStorage::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextStorage]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -49069,7 +49069,7 @@ impl Typesetter {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -49090,7 +49090,7 @@ impl Typesetter {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextContainer::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextContainer::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextContainer]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -50999,7 +50999,7 @@ impl TableCellView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[DraggingImageComponent]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -51749,7 +51749,7 @@ impl TabView {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TabViewItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TabViewItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TabViewItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -51905,7 +51905,7 @@ impl TabViewController {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -51919,7 +51919,7 @@ impl TabViewController {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -51933,7 +51933,7 @@ impl TabViewController {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -51978,7 +51978,7 @@ impl TabViewController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TabViewItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TabViewItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TabViewItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -53020,7 +53020,7 @@ impl ToolbarItemGroup {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ToolbarItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ToolbarItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ToolbarItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -53552,7 +53552,7 @@ impl SearchField {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -53770,7 +53770,7 @@ impl SearchFieldCell {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -54173,7 +54173,7 @@ impl ArrayController {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -54186,7 +54186,7 @@ impl ArrayController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SortDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -54394,7 +54394,7 @@ impl DictionaryController {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -54412,7 +54412,7 @@ impl DictionaryController {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -54433,7 +54433,7 @@ impl DictionaryController {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -54678,7 +54678,7 @@ impl TreeController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SortDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -54763,7 +54763,7 @@ impl TreeController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -54784,7 +54784,7 @@ impl TreeController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TreeNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TreeNode::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TreeNode]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -54861,7 +54861,7 @@ impl TreeNode {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TreeNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TreeNode::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TreeNode]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -54968,7 +54968,7 @@ impl UserDefaultsController {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -55933,7 +55933,7 @@ impl RuleEditor {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            if !out.insert(bridge::to_text(nskey), bridge::to_text(nsval)).is_ok() { return string_map::new::[text::Text](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56108,7 +56108,7 @@ impl PredicateEditorRowTemplate {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Predicate::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Predicate::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Predicate]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56142,7 +56142,7 @@ impl PredicateEditorRowTemplate {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PredicateEditorRowTemplate::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PredicateEditorRowTemplate::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PredicateEditorRowTemplate]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56155,7 +56155,7 @@ impl PredicateEditorRowTemplate {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[View]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56180,7 +56180,7 @@ impl PredicateEditorRowTemplate {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56199,7 +56199,7 @@ impl PredicateEditorRowTemplate {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56239,7 +56239,7 @@ impl PredicateEditor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PredicateEditorRowTemplate::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PredicateEditorRowTemplate::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PredicateEditorRowTemplate]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56405,7 +56405,7 @@ impl PathCell {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56435,7 +56435,7 @@ impl PathCell {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PathComponentCell::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PathComponentCell::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PathComponentCell]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56601,7 +56601,7 @@ impl PathControl {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56667,7 +56667,7 @@ impl PathControl {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PathControlItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PathControlItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PathControlItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56736,7 +56736,7 @@ impl PathControl {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PathComponentCell::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PathComponentCell::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PathComponentCell]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -56889,7 +56889,7 @@ impl TextAlternatives {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -57605,7 +57605,7 @@ impl TextSelection {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextRange::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextRange::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextRange]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -57662,7 +57662,7 @@ impl TextSelection {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -57829,7 +57829,7 @@ impl TextSelectionNavigation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextSelection::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextSelection::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextSelection]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -57862,7 +57862,7 @@ impl TextSelectionNavigation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextRange::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextRange::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextRange]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -57941,7 +57941,7 @@ impl TextElement {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextElement::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextElement::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextElement]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -58048,7 +58048,7 @@ impl TextContentManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextElement::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextElement::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextElement]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -58081,7 +58081,7 @@ impl TextContentManager {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextLayoutManager::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextLayoutManager::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextLayoutManager]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -58253,7 +58253,7 @@ impl TextListElement {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -58270,7 +58270,7 @@ impl TextListElement {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextListElement::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextListElement::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextListElement]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -58367,7 +58367,7 @@ impl TextLayoutFragment {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextLineFragment::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextLineFragment::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextLineFragment]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -58420,7 +58420,7 @@ impl TextLayoutFragment {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextAttachmentViewProvider::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextAttachmentViewProvider::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextAttachmentViewProvider]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -58750,7 +58750,7 @@ impl ItemProviderWriting {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -58784,7 +58784,7 @@ impl ItemProviderReading {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -59357,7 +59357,7 @@ impl AccessibilityTable {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AccessibilityRow::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AccessibilityRow::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AccessibilityRow]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -59370,7 +59370,7 @@ impl AccessibilityTable {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AccessibilityRow::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AccessibilityRow::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AccessibilityRow]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -59398,7 +59398,7 @@ impl AccessibilityTable {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AccessibilityRow::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AccessibilityRow::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AccessibilityRow]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -60004,7 +60004,7 @@ impl Accessibility {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AccessibilityElement::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AccessibilityElement::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AccessibilityElement]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -60097,7 +60097,7 @@ impl Accessibility {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AccessibilityCustomRotor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AccessibilityCustomRotor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AccessibilityCustomRotor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -60126,7 +60126,7 @@ impl Accessibility {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -60143,7 +60143,7 @@ impl Accessibility {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AttributedString::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AttributedString::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AttributedString]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -60417,7 +60417,7 @@ impl Accessibility {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -60801,7 +60801,7 @@ impl Accessibility {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AccessibilityCustomAction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AccessibilityCustomAction::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AccessibilityCustomAction]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -60895,7 +60895,7 @@ impl PasteboardWriting {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -60950,7 +60950,7 @@ impl PasteboardReading {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -61574,7 +61574,7 @@ impl AnimatablePropertyContainer {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -61651,7 +61651,7 @@ impl DraggingInfo {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -62412,7 +62412,7 @@ fn cplus_darg_arr_URL(src: *u8) -> vec::Vec[URL] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[URL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -62425,7 +62425,7 @@ fn cplus_darg_arr_text(src: *u8) -> vec::Vec[text::Text] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(bridge::to_text(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(bridge::to_text(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -63669,7 +63669,7 @@ impl TextInputClient {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -64044,7 +64044,7 @@ fn cplus_darg_set_IndexPath(src: *u8) -> vec::Vec[IndexPath] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[IndexPath]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -67162,7 +67162,7 @@ fn cplus_darg_arr_SharingService(src: *u8) -> vec::Vec[SharingService] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SharingService::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SharingService::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SharingService]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -67967,7 +67967,7 @@ impl TextFinderClient {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_range(value, range_sel));
+            if !out.append(rt::msg_range(value, range_sel)).is_ok() { return vec::Vec[rt::Range]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -68069,7 +68069,7 @@ fn cplus_darg_arr_View(src: *u8) -> vec::Vec[View] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[View]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -69952,7 +69952,7 @@ fn cplus_darg_arr_Value(src: *u8) -> vec::Vec[Value] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Value::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Value::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Value]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -70507,7 +70507,7 @@ fn cplus_darg_arr_TableColumn(src: *u8) -> vec::Vec[TableColumn] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TableColumn::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TableColumn::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TableColumn]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -71031,7 +71031,7 @@ fn cplus_darg_arr_SortDescriptor(src: *u8) -> vec::Vec[SortDescriptor] {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SortDescriptor]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -73142,7 +73142,7 @@ impl UserInterfaceItemSearching {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;

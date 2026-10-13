@@ -1032,7 +1032,7 @@ fn emit_member(
                     "#[link_name = \"{count}\"]\nextern fn {count}(receiver: *u8) -> i64;\n#[link_name = \"{at}\"]\nextern fn {at}(receiver: *u8, i: i64) -> {cplus};\n"
                 ));
                 wrapper.push_str(&format!(
-                    "    fn {g}(this) -> vec::Vec[{cplus}] {{\n        let n: usize = {{ {count}(this._raw) }} as usize;\n        var v: vec::Vec[{cplus}] = vec::new::[{cplus}]();\n        var i: usize = 0 as usize;\n        while i < n {{ v.append({{ {at}(this._raw, i as i64) }}); i = i +% (1 as usize); }}\n        return v;\n    }}\n"
+                    "    fn {g}(this) -> vec::Vec[{cplus}] {{\n        let n: usize = {{ {count}(this._raw) }} as usize;\n        var v: vec::Vec[{cplus}] = vec::new::[{cplus}]();\n        var i: usize = 0 as usize;\n        while i < n {{ if !v.append({{ {at}(this._raw, i as i64) }}).is_ok() {{ return vec::new::[{cplus}](); }} i = i +% (1 as usize); }}\n        return v;\n    }}\n"
                 ));
             }
             _ if pty == "[String]" => {
@@ -1047,7 +1047,7 @@ fn emit_member(
                     "#[link_name = \"{count}\"]\nextern fn {count}(receiver: *u8) -> i64;\n#[link_name = \"{at}\"]\nextern fn {at}(receiver: *u8, i: i64) -> *u8;\n"
                 ));
                 wrapper.push_str(&format!(
-                    "    fn {g}(this) -> vec::Vec[text::Text] {{\n        let n: usize = {{ {count}(this._raw) }} as usize;\n        var v: vec::Vec[text::Text] = vec::new::[text::Text]();\n        var i: usize = 0 as usize;\n        while i < n {{\n            let p: *u8 = {{ {at}(this._raw, i as i64) }};\n            if !is_null(p) {{\n                let ln: usize = {{ strlen(p) }};\n                let view: str = {{ #str_from_raw_parts(p, ln) }};\n                v.append(view.to_text());\n                {{ free(p); }}\n            }}\n            i = i +% (1 as usize);\n        }}\n        return v;\n    }}\n"
+                    "    fn {g}(this) -> vec::Vec[text::Text] {{\n        let n: usize = {{ {count}(this._raw) }} as usize;\n        var v: vec::Vec[text::Text] = vec::new::[text::Text]();\n        var i: usize = 0 as usize;\n        while i < n {{\n            let p: *u8 = {{ {at}(this._raw, i as i64) }};\n            if !is_null(p) {{\n                let ln: usize = {{ strlen(p) }};\n                let view: str = {{ #str_from_raw_parts(p, ln) }};\n                if !v.append(view.to_text()).is_ok() {{ {{ free(p); }} return vec::new::[text::Text](); }}\n                {{ free(p); }}\n            }}\n            i = i +% (1 as usize);\n        }}\n        return v;\n    }}\n"
                 ));
             }
             _ => return Err("property type not bridgeable".into()),

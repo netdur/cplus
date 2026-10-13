@@ -899,7 +899,7 @@ impl FaceLandmarkRegion2D {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1301,7 +1301,7 @@ impl Contour {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Contour::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Contour::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Contour]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2046,7 +2046,7 @@ impl RecognizedObjectObservation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ClassificationObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ClassificationObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ClassificationObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2140,7 +2140,7 @@ impl TrajectoryObservation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Point::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Point::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Point]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2153,7 +2153,7 @@ impl TrajectoryObservation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Point::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Point::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Point]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2192,7 +2192,7 @@ impl TextObservation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RectangleObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RectangleObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RectangleObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2255,7 +2255,7 @@ impl RecognizedTextObservation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RecognizedText::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RecognizedText::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RecognizedText]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2441,7 +2441,7 @@ impl SaliencyImageObservation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RectangleObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RectangleObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RectangleObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2524,7 +2524,7 @@ impl ContoursObservation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Contour::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Contour::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Contour]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2570,7 +2570,7 @@ impl RecognizedPointsObservation {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), RecognizedPoint::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), RecognizedPoint::from_raw(nsval)).is_ok() { return string_map::new::[RecognizedPoint](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2589,7 +2589,7 @@ impl RecognizedPointsObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2603,7 +2603,7 @@ impl RecognizedPointsObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2706,7 +2706,7 @@ impl AnimalBodyPoseObservation {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), RecognizedPoint::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), RecognizedPoint::from_raw(nsval)).is_ok() { return string_map::new::[RecognizedPoint](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2720,7 +2720,7 @@ impl AnimalBodyPoseObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2734,7 +2734,7 @@ impl AnimalBodyPoseObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2779,7 +2779,7 @@ impl RecognizedPoints3DObservation {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), RecognizedPoint3D::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), RecognizedPoint3D::from_raw(nsval)).is_ok() { return string_map::new::[RecognizedPoint3D](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2793,7 +2793,7 @@ impl RecognizedPoints3DObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2807,7 +2807,7 @@ impl RecognizedPoints3DObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2845,7 +2845,7 @@ impl HumanBodyPose3DObservation {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), HumanBodyRecognizedPoint3D::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), HumanBodyRecognizedPoint3D::from_raw(nsval)).is_ok() { return string_map::new::[HumanBodyRecognizedPoint3D](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2889,7 +2889,7 @@ impl HumanBodyPose3DObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2903,7 +2903,7 @@ impl HumanBodyPose3DObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2991,7 +2991,7 @@ impl Request {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Observation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(Observation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[Observation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3085,7 +3085,7 @@ impl ClassifyImageRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ClassificationObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ClassificationObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ClassificationObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3099,7 +3099,7 @@ impl ClassifyImageRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3112,7 +3112,7 @@ impl ClassifyImageRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ClassificationObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ClassificationObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ClassificationObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3150,7 +3150,7 @@ impl DetectBarcodesRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3164,7 +3164,7 @@ impl DetectBarcodesRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3178,7 +3178,7 @@ impl DetectBarcodesRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3203,7 +3203,7 @@ impl DetectBarcodesRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BarcodeObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BarcodeObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BarcodeObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3240,7 +3240,7 @@ impl DetectFaceRectanglesRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FaceObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FaceObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FaceObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3289,7 +3289,7 @@ impl DetectFaceLandmarksRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FaceObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FaceObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FaceObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3326,7 +3326,7 @@ impl DetectFaceCaptureQualityRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FaceObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FaceObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FaceObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3363,7 +3363,7 @@ impl DetectHorizonRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(HorizonObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(HorizonObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[HorizonObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3448,7 +3448,7 @@ impl DetectRectanglesRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RectangleObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RectangleObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RectangleObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3493,7 +3493,7 @@ impl DetectTextRectanglesRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TextObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TextObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TextObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3531,7 +3531,7 @@ impl RecognizeTextRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3545,7 +3545,7 @@ impl RecognizeTextRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3559,7 +3559,7 @@ impl RecognizeTextRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3577,7 +3577,7 @@ impl RecognizeTextRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3626,7 +3626,7 @@ impl RecognizeTextRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RecognizedTextObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RecognizedTextObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RecognizedTextObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3663,7 +3663,7 @@ impl GenerateAttentionBasedSaliencyImageRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SaliencyImageObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SaliencyImageObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SaliencyImageObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3700,7 +3700,7 @@ impl GenerateObjectnessBasedSaliencyImageRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(SaliencyImageObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(SaliencyImageObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[SaliencyImageObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3745,7 +3745,7 @@ impl GenerateImageFeaturePrintRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FeaturePrintObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FeaturePrintObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FeaturePrintObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -4746,7 +4746,7 @@ impl TranslationalImageRegistrationRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageTranslationAlignmentObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageTranslationAlignmentObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageTranslationAlignmentObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -4783,7 +4783,7 @@ impl HomographicImageRegistrationRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageHomographicAlignmentObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageHomographicAlignmentObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageHomographicAlignmentObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -4949,7 +4949,7 @@ impl DetectHumanRectanglesRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(HumanObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(HumanObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[HumanObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -4987,7 +4987,7 @@ impl RecognizeAnimalsRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5001,7 +5001,7 @@ impl RecognizeAnimalsRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5014,7 +5014,7 @@ impl RecognizeAnimalsRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RecognizedObjectObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RecognizedObjectObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RecognizedObjectObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5078,7 +5078,7 @@ impl GenerateOpticalFlowRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PixelBufferObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PixelBufferObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PixelBufferObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5280,7 +5280,7 @@ impl HumanHandPoseObservation {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), RecognizedPoint::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), RecognizedPoint::from_raw(nsval)).is_ok() { return string_map::new::[RecognizedPoint](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5294,7 +5294,7 @@ impl HumanHandPoseObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5308,7 +5308,7 @@ impl HumanHandPoseObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5344,7 +5344,7 @@ impl DetectHumanHandPoseRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5358,7 +5358,7 @@ impl DetectHumanHandPoseRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5372,7 +5372,7 @@ impl DetectHumanHandPoseRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5386,7 +5386,7 @@ impl DetectHumanHandPoseRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5407,7 +5407,7 @@ impl DetectHumanHandPoseRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(HumanHandPoseObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(HumanHandPoseObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[HumanHandPoseObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5456,7 +5456,7 @@ impl HumanBodyPoseObservation {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), RecognizedPoint::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), RecognizedPoint::from_raw(nsval)).is_ok() { return string_map::new::[RecognizedPoint](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5470,7 +5470,7 @@ impl HumanBodyPoseObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5484,7 +5484,7 @@ impl HumanBodyPoseObservation {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5516,7 +5516,7 @@ impl DetectHumanBodyPoseRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5530,7 +5530,7 @@ impl DetectHumanBodyPoseRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5544,7 +5544,7 @@ impl DetectHumanBodyPoseRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5558,7 +5558,7 @@ impl DetectHumanBodyPoseRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5571,7 +5571,7 @@ impl DetectHumanBodyPoseRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(HumanBodyPoseObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(HumanBodyPoseObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[HumanBodyPoseObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5652,7 +5652,7 @@ impl DetectContoursRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ContoursObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ContoursObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ContoursObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5839,7 +5839,7 @@ impl DetectTrajectoriesRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(TrajectoryObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(TrajectoryObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[TrajectoryObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5890,7 +5890,7 @@ impl GeneratePersonSegmentationRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5919,7 +5919,7 @@ impl GeneratePersonSegmentationRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PixelBufferObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PixelBufferObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PixelBufferObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5953,7 +5953,7 @@ impl DetectDocumentSegmentationRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(RectangleObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(RectangleObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[RectangleObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5990,7 +5990,7 @@ impl GenerateForegroundInstanceMaskRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(InstanceMaskObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(InstanceMaskObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[InstanceMaskObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6027,7 +6027,7 @@ impl GeneratePersonInstanceMaskRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(InstanceMaskObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(InstanceMaskObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[InstanceMaskObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6079,7 +6079,7 @@ impl TrackTranslationalImageRegistrationRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageTranslationAlignmentObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageTranslationAlignmentObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageTranslationAlignmentObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6128,7 +6128,7 @@ impl TrackHomographicImageRegistrationRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageHomographicAlignmentObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageHomographicAlignmentObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageHomographicAlignmentObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6201,7 +6201,7 @@ impl TrackOpticalFlowRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(PixelBufferObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(PixelBufferObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[PixelBufferObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6236,7 +6236,7 @@ impl DetectAnimalBodyPoseRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6250,7 +6250,7 @@ impl DetectAnimalBodyPoseRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6263,7 +6263,7 @@ impl DetectAnimalBodyPoseRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnimalBodyPoseObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnimalBodyPoseObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnimalBodyPoseObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6316,7 +6316,7 @@ impl DetectHumanBodyPose3DRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6330,7 +6330,7 @@ impl DetectHumanBodyPose3DRequest {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6343,7 +6343,7 @@ impl DetectHumanBodyPose3DRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(HumanBodyPose3DObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(HumanBodyPose3DObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[HumanBodyPose3DObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6377,7 +6377,7 @@ impl CalculateImageAestheticsScoresRequest {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageAestheticsScoresObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageAestheticsScoresObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageAestheticsScoresObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6448,7 +6448,7 @@ impl FaceObservationAccepting {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FaceObservation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FaceObservation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FaceObservation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;

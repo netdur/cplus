@@ -2096,7 +2096,7 @@ impl NSAttributedString {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2127,7 +2127,7 @@ impl NSAttributedString {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2615,7 +2615,7 @@ impl NSAttributedString {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2632,7 +2632,7 @@ impl NSAttributedString {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2678,7 +2678,7 @@ impl NSAttributedString {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2692,7 +2692,7 @@ impl NSAttributedString {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3276,7 +3276,7 @@ impl NSPresentationIntent {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3474,7 +3474,7 @@ impl BackForwardList {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BackForwardListItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BackForwardListItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BackForwardListItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3487,7 +3487,7 @@ impl BackForwardList {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(BackForwardListItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(BackForwardListItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[BackForwardListItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5018,7 +5018,7 @@ impl UserContentController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(UserScript::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(UserScript::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[UserScript]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5195,7 +5195,7 @@ impl WebExtension {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(NSError::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(NSError::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[NSError]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5212,7 +5212,7 @@ impl WebExtension {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5295,7 +5295,7 @@ impl WebExtension {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtensionMatchPattern::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtensionMatchPattern::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtensionMatchPattern]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5309,7 +5309,7 @@ impl WebExtension {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtensionMatchPattern::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtensionMatchPattern::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtensionMatchPattern]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5323,7 +5323,7 @@ impl WebExtension {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtensionMatchPattern::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtensionMatchPattern::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtensionMatchPattern]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5615,7 +5615,7 @@ impl WebExtensionContext {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(NSMenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(NSMenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[NSMenuItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5722,7 +5722,7 @@ impl WebExtensionContext {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(NSError::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(NSError::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[NSError]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5864,7 +5864,7 @@ impl WebExtensionContext {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtensionMatchPattern::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtensionMatchPattern::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtensionMatchPattern]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5893,7 +5893,7 @@ impl WebExtensionContext {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtensionCommand::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtensionCommand::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtensionCommand]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5906,7 +5906,7 @@ impl WebExtensionContext {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtensionWindow::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtensionWindow::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtensionWindow]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -5928,7 +5928,7 @@ impl WebExtensionContext {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtensionTab::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtensionTab::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtensionTab]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6053,7 +6053,7 @@ impl WebExtensionAction {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(NSMenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(NSMenuItem::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[NSMenuItem]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6420,7 +6420,7 @@ impl WebExtensionController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtension::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtension::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtension]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6434,7 +6434,7 @@ impl WebExtensionController {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtensionContext::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtensionContext::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtensionContext]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6575,7 +6575,7 @@ impl WebExtensionWindowConfiguration {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(NSURL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(NSURL::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[NSURL]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6588,7 +6588,7 @@ impl WebExtensionWindowConfiguration {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtensionTab::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtensionTab::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtensionTab]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -6733,7 +6733,7 @@ impl WebExtensionDataRecord {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(NSError::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(NSError::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[NSError]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -18485,7 +18485,7 @@ impl WebExtensionWindow {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(WebExtensionTab::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(WebExtensionTab::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[WebExtensionTab]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;

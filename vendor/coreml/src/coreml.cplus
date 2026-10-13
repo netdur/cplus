@@ -644,7 +644,7 @@ impl MultiArray {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -659,7 +659,7 @@ impl MultiArray {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -872,7 +872,7 @@ impl Sequence {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -887,7 +887,7 @@ impl Sequence {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1275,7 +1275,7 @@ impl ImageSizeConstraint {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ImageSize::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ImageSize::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ImageSize]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1368,7 +1368,7 @@ impl MultiArrayConstraint {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1492,7 +1492,7 @@ impl StateConstraint {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(rt::msg_f64(value, dv_sel));
+            if !out.append(rt::msg_f64(value, dv_sel)).is_ok() { return vec::Vec[f64]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1558,7 +1558,7 @@ impl DictionaryFeatureProvider {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), FeatureValue::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), FeatureValue::from_raw(nsval)).is_ok() { return string_map::new::[FeatureValue](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1604,7 +1604,7 @@ impl ArrayBatchProvider {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FeatureProvider::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(FeatureProvider::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[FeatureProvider]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1747,7 +1747,7 @@ impl ModelDescription {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), FeatureDescription::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), FeatureDescription::from_raw(nsval)).is_ok() { return string_map::new::[FeatureDescription](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1764,7 +1764,7 @@ impl ModelDescription {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), FeatureDescription::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), FeatureDescription::from_raw(nsval)).is_ok() { return string_map::new::[FeatureDescription](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1781,7 +1781,7 @@ impl ModelDescription {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), FeatureDescription::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), FeatureDescription::from_raw(nsval)).is_ok() { return string_map::new::[FeatureDescription](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1808,7 +1808,7 @@ impl ModelDescription {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1821,7 +1821,7 @@ impl ModelDescription {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[AnyObject]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1842,7 +1842,7 @@ impl ModelDescription {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), FeatureDescription::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), FeatureDescription::from_raw(nsval)).is_ok() { return string_map::new::[FeatureDescription](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -1880,7 +1880,7 @@ impl PredictionOptions {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval)).is_ok() { return string_map::new::[AnyObject](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2186,7 +2186,7 @@ impl Model {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ComputeDeviceProtocol::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ComputeDeviceProtocol::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ComputeDeviceProtocol]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2608,7 +2608,7 @@ impl ModelStructureNeuralNetwork {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ModelStructureNeuralNetworkLayer::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ModelStructureNeuralNetworkLayer::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ModelStructureNeuralNetworkLayer]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2645,7 +2645,7 @@ impl ModelStructureProgram {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), ModelStructureProgramFunction::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), ModelStructureProgramFunction::from_raw(nsval)).is_ok() { return string_map::new::[ModelStructureProgramFunction](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2679,7 +2679,7 @@ impl ModelStructurePipeline {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2692,7 +2692,7 @@ impl ModelStructurePipeline {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ModelStructure::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ModelStructure::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ModelStructure]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2794,7 +2794,7 @@ impl ModelStructureNeuralNetworkLayer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2808,7 +2808,7 @@ impl ModelStructureNeuralNetworkLayer {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2841,7 +2841,7 @@ impl ModelStructureProgramFunction {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ModelStructureProgramNamedValueType::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ModelStructureProgramNamedValueType::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ModelStructureProgramNamedValueType]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -2911,7 +2911,7 @@ impl ModelStructureProgramArgument {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ModelStructureProgramBinding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ModelStructureProgramBinding::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ModelStructureProgramBinding]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3002,7 +3002,7 @@ impl ModelStructureProgramOperation {
         while i < n {
             let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
             let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
-            out.insert(bridge::to_text(nskey), ModelStructureProgramArgument::from_raw(nsval));
+            if !out.insert(bridge::to_text(nskey), ModelStructureProgramArgument::from_raw(nsval)).is_ok() { return string_map::new::[ModelStructureProgramArgument](); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3015,7 +3015,7 @@ impl ModelStructureProgramOperation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ModelStructureProgramNamedValueType::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ModelStructureProgramNamedValueType::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ModelStructureProgramNamedValueType]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3028,7 +3028,7 @@ impl ModelStructureProgramOperation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ModelStructureProgramBlock::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ModelStructureProgramBlock::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ModelStructureProgramBlock]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3061,7 +3061,7 @@ impl ModelStructureProgramBlock {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ModelStructureProgramNamedValueType::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ModelStructureProgramNamedValueType::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ModelStructureProgramNamedValueType]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3075,7 +3075,7 @@ impl ModelStructureProgramBlock {
         var i: u64 = 0 as u64;
         while i < n {
             let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
-            out.append(bridge::to_text(value));
+            if !out.append(bridge::to_text(value)).is_ok() { return vec::Vec[text::Text]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
@@ -3088,7 +3088,7 @@ impl ModelStructureProgramBlock {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(ModelStructureProgramOperation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            if !out.append(ModelStructureProgramOperation::from_raw(rt::msg_id_u64(arr, at_sel, i))).is_ok() { return vec::Vec[ModelStructureProgramOperation]::with_capacity(0 as usize); }
             i = i +% (1 as u64);
         }
         return out;
