@@ -712,7 +712,7 @@ boundary is the design. Four habits that keep C+ modules readable:
   everything that is not the surface, from the start — widening later is free,
   narrowing later is not.
 - **Tests live beside the code** as `#[test]` fns, run by `cpc test`. A doctest
-  in a `///` comment needs a fence of exactly three backticks (§16).
+  is a ` ``` ` or ` ```cplus ` fence in a `///` comment (§16).
 
 ---
 
@@ -1521,9 +1521,9 @@ anything past a single lookup.
 **`cpc fmt` is a syntax check you get for free**: if source does not round-trip,
 something is off.
 
-**A doctest fence opens only on a line that is exactly three backticks.** A
-```` ```cplus ```` fence in a `///` comment is *not* extracted and its example
-silently never runs.
+**A doctest is a ```` ``` ```` or ```` ```cplus ```` fence in a `///` comment.**
+A fence tagged with another language (```` ```bash ````) is prose and is
+skipped. An unclosed C+ fence fails the build by name.
 
 ---
 

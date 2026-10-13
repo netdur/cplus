@@ -10711,6 +10711,60 @@ fn doctest_failure_reports_doc_test_name() {
     );
 }
 
+// 2026-10-13 (slab/spike.md Finding 3): a ```cplus fence was not extracted,
+// so `assert false;` inside it reported 0 passed / 0 failed and exit 0. A
+// tagged fence is a doctest now; a fence in another language is skipped
+// whole; an unclosed one stops the build instead of vanishing.
+#[test]
+fn doctest_a_tagged_fence_runs_and_can_fail() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "/// ```bash\n\
+         /// cpc test\n\
+         /// ```\n\
+         /// prose between fences;\n\
+         /// ```cplus\n\
+         /// assert false;\n\
+         /// ```\n\
+         fn bad() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "a failing tagged doctest must fail the run: {stdout}");
+    assert!(stdout.contains("DOC_TEST::bad::0 ... FAILED"), "got: {stdout}");
+    assert!(!stdout.contains("DOC_TEST::bad::1"), "the bash fence is not a test: {stdout}");
+}
+
+#[test]
+fn doctest_an_unclosed_fence_stops_the_build() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "/// ```cplus\n\
+         /// assert true;\n\
+         fn open() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "an unclosed doctest must not pass: {stderr}");
+    assert!(stderr.contains("doctest_fence_is_not_closed"), "got: {stderr}");
+}
+
 #[test]
 fn doctest_can_call_documented_item() {
     let cpc = env!("CARGO_BIN_EXE_cpc");

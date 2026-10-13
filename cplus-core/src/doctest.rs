@@ -58,9 +58,21 @@ pub fn extract(src: &str) -> String {
             appended.push('\n');
             appended.push_str("#[test]\n");
             appended.push_str(&format!("fn {fn_name}() {{\n"));
-            for line in &fence {
-                appended.push_str(line);
-                appended.push('\n');
+            match fence {
+                Fence::Test(body) => {
+                    for line in &body {
+                        appended.push_str(line);
+                        appended.push('\n');
+                    }
+                }
+                // An example nobody closed was MEANT to be a test. Dropping
+                // it reported "0 failed" for code that never ran, so the
+                // body is a name that does not resolve and says what to fix:
+                // the build stops on it.
+                Fence::Unterminated => {
+                    appended.push_str(UNTERMINATED_BODY);
+                    appended.push('\n');
+                }
             }
             appended.push_str("}\n");
         }
@@ -139,30 +151,64 @@ fn find_next_item_name(lines: &[&str], from: usize) -> Option<String> {
     None
 }
 
-/// Walk `lines` collecting each fence's interior. A fence opens with a line
-/// that trims to exactly ```` ``` ```` and closes with the same. Unterminated
-/// fences are dropped silently (parse will catch the resulting syntax error
-/// if the user intended the trailing code to be a fence).
-fn find_fences<'a>(lines: &[&'a str]) -> Vec<Vec<&'a str>> {
+/// The body synthesized for a fence that never closes. An unresolved name
+/// whose spelling is the instruction; see `Fence::Unterminated`.
+const UNTERMINATED_BODY: &str = "doctest_fence_is_not_closed_add_a_line_of_three_backticks;";
+
+enum Fence<'a> {
+    /// A C+ example: its interior lines.
+    Test(Vec<&'a str>),
+    /// A C+ fence that reaches the end of its comment block unclosed.
+    Unterminated,
+}
+
+/// The language a fence opener names: `Some("")` for a bare ```` ``` ````,
+/// `Some("cplus")` for ```` ```cplus ````, `None` for a line that is not an
+/// opener.
+fn fence_tag(line: &str) -> Option<&str> {
+    line.trim().strip_prefix("```").map(str::trim)
+}
+
+/// Is this fence a C+ example? A bare fence and a `cplus` one both are.
+///
+/// Only the bare form used to be, and ` ```cplus ` — what a model writes by
+/// reflex, and what every prose page in this repo uses — was never extracted:
+/// `assert false;` inside it reported `{"passed":0,"failed":0}` and exit 0.
+/// A doctest that does not run looks exactly like one that passes.
+fn is_cplus_tag(tag: &str) -> bool {
+    tag.is_empty() || tag == "cplus"
+}
+
+/// Walk `lines` collecting each fence. A fence opens on a line starting with
+/// ```` ``` ```` and closes on a line that trims to exactly ```` ``` ````.
+/// A fence in another language (` ```bash `, ` ```text `) is skipped whole —
+/// including its closing line, which used to open a phantom fence over the
+/// prose that followed it.
+fn find_fences<'a>(lines: &[&'a str]) -> Vec<Fence<'a>> {
     let mut fences = Vec::new();
     let mut i = 0;
     while i < lines.len() {
-        if lines[i].trim() == "```" {
-            let start = i + 1;
-            let mut end = start;
-            while end < lines.len() && lines[end].trim() != "```" {
-                end += 1;
-            }
-            if end < lines.len() {
-                fences.push(lines[start..end].to_vec());
-                i = end + 1;
-            } else {
-                // Unterminated — stop scanning.
-                break;
-            }
-        } else {
+        let Some(tag) = fence_tag(lines[i]) else {
             i += 1;
+            continue;
+        };
+        let start = i + 1;
+        let mut end = start;
+        while end < lines.len() && lines[end].trim() != "```" {
+            end += 1;
         }
+        let closed = end < lines.len();
+        if is_cplus_tag(tag) {
+            fences.push(if closed {
+                Fence::Test(lines[start..end].to_vec())
+            } else {
+                Fence::Unterminated
+            });
+        }
+        if !closed {
+            break;
+        }
+        i = end + 1;
     }
     fences
 }
@@ -298,18 +344,55 @@ fn t() {}
     }
 
     #[test]
-    fn unterminated_fence_is_dropped_silently() {
+    fn unterminated_fence_synthesizes_a_test_that_does_not_build() {
+        // It was dropped silently, so a test run reported nothing for an
+        // example that was meant to run. Now it is a test whose body names
+        // the fix, and the build stops on it.
         let src = "\
 /// ```
 /// assert true;
 fn f() {}
 ";
-        // No `#[test]` should be synthesized — unterminated fence is ignored.
         let out = extract(src);
-        assert!(
-            !out.contains("__doctest_"),
-            "unterminated fence should not synthesize: {out}"
-        );
+        assert!(out.contains("fn __doctest_f_0()"), "got: {out}");
+        assert!(out.contains(UNTERMINATED_BODY), "got: {out}");
+        assert!(!out.contains("assert true;\n}"), "the open body must not run: {out}");
+    }
+
+    #[test]
+    fn a_cplus_tagged_fence_is_a_doctest() {
+        let src = "\
+/// ```cplus
+/// assert false;
+/// ```
+fn add(x: i32) -> i32 { return x; }
+";
+        let out = extract(src);
+        assert!(out.contains("fn __doctest_add_0() {\nassert false;\n}"), "got: {out}");
+    }
+
+    #[test]
+    fn a_fence_in_another_language_is_skipped_whole() {
+        // The closing line of the bash fence must not open a fence of its
+        // own over the prose after it; the cplus fence after that is index 0.
+        let src = "\
+/// ```bash
+/// cpc test
+/// ```
+/// prose that is not code;
+/// ```text
+/// also not code
+/// ```
+/// ```cplus
+/// assert true;
+/// ```
+fn g() {}
+";
+        let out = extract(src);
+        assert!(out.contains("fn __doctest_g_0() {\nassert true;\n}"), "got: {out}");
+        assert!(!out.contains("__doctest_g_1"), "only one fence is C+: {out}");
+        let synthesized = &out[src.len()..];
+        assert!(!synthesized.contains("prose that is not code"), "got: {out}");
     }
 
     #[test]

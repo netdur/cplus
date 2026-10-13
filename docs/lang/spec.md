@@ -65,13 +65,15 @@ A line beginning (after leading whitespace) with `///` is a **doc
 comment**. It is trivia to the grammar, but it has two defined effects:
 
 1. `cpc doc FILE` publishes it, attached to the next item, as Markdown.
-2. A fenced block inside it is extracted as a test. A fence opens and
-   closes on a line that trims to exactly three backticks; the fence body
-   becomes the body of a synthesized `#[test]` function named
+2. A fenced block inside it is extracted as a test. A fence opens on a
+   line that trims to three backticks followed by no info string or by
+   `cplus`, and closes on a line that trims to exactly three backticks; the
+   fence body becomes the body of a synthesized `#[test]` function named
    `__doctest_<item>_<index>`, appended to the end of the file and
    compiled with it. Discovery reports it as `DOC_TEST::<item>::<index>`.
-   A fence line carrying an info string (` ```cplus `) does **not** open a
-   fence, and an unterminated fence is discarded.
+   A fence with any other info string (` ```bash `) is skipped, closing
+   line included. A C+ fence left unclosed synthesizes a test whose body is
+   an undefined name, so the build fails rather than discarding it.
 
 The item a doc comment attaches to is the next `fn`, `struct`, `enum`, or
 `impl` header, skipping blank lines, ordinary comments, and attribute

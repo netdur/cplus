@@ -82,11 +82,11 @@ fn add(a: i32, b: i32) -> i32 { return a +% b; }
 `cpc test` reports it as `DOC_TEST::add::0` — the item's name and the
 fence's index within its comment block.
 
-**A fence opens only on a line that is exactly three backticks.** A
-` ```cplus ` fence — the tagged form used everywhere else in this repo's
-prose — is *not* extracted, and the example inside it silently never runs.
-This is the trap worth remembering: a doctest that does not run looks
-exactly like a doctest that passes.
+**A bare ` ``` ` fence and a ` ```cplus ` fence are both doctests.** A fence
+tagged with another language — ` ```bash `, ` ```text ` — is skipped whole,
+so prose and shell examples can sit beside C+ ones. (Until 2026-10-13 only
+the bare form ran, and a ` ```cplus ` example silently never did: a doctest
+that does not run looks exactly like a doctest that passes.)
 
 Other rules that follow from how extraction works:
 
@@ -96,7 +96,9 @@ Other rules that follow from how extraction works:
 - The item name comes from the next `fn` / `struct` / `enum` / `impl`
   header after the comment; a comment with no item after it is named
   `anon_l<line>`.
-- An unterminated fence is dropped silently.
+- A C+ fence that is never closed stops the build: its test body is
+  `doctest_fence_is_not_closed_add_a_line_of_three_backticks`, an undefined
+  name (E0300), rather than an example that quietly does not run.
 - `cpc doc FILE` emits the same comments as Markdown to
   `target/doc/<basename>.md`, so one fence is documentation and test at
   once.

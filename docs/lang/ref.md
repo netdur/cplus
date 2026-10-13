@@ -527,8 +527,8 @@ A fence inside a `///` comment becomes a test named
 /// ```
 ````
 
-The fence opens **only** on a line that trims to exactly three backticks —
-a ` ```cplus ` fence is not extracted and its example silently never runs.
+A bare ` ``` ` fence and a ` ```cplus ` fence are doctests; a fence tagged
+with any other language is skipped. An unclosed C+ fence stops the build.
 
 `cpc test` entry ladder, first match wins: `src/test_main.cplus` → the
 platform's app entry → the `[library]` target → `src/<package>.cplus`.
