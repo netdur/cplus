@@ -186,7 +186,7 @@ impl File {
         let chunk_size: usize = 4096;
         let chunk: *u8 = { malloc(chunk_size) };
         if chunk.is_null() {
-            return result::io_err::[vec::Vec[u8]](result::IoError::Other);
+            return result::io_err::[vec::Vec[u8]](result::IoError::OutOfMemory);
         }
         loop {
             let n: isize = { fsys::read_fd(this._fd, chunk, chunk_size) };
@@ -199,7 +199,12 @@ impl File {
                 return result::io_ok::[vec::Vec[u8]](buf);
             }
             let count: usize = n as usize;
-            buf.extend_from_raw(chunk, count);
+            // A short buffer returned as `Ok` is a truncated file that reads
+            // as the whole one (value-producer rule, error-handling.md §2).
+            if !buf.extend_from_raw(chunk, count).is_ok() {
+                { free(chunk); }
+                return result::io_err::[vec::Vec[u8]](result::IoError::OutOfMemory);
+            }
         }
         return result::io_err::[vec::Vec[u8]](result::IoError::Other);
     }
@@ -277,7 +282,9 @@ impl File {
     // line *without* its trailing newline. The carry buffer holds the
     // partial line that spans a chunk boundary, copied into the next
     // chunk's scan. A final fragment without a trailing newline at EOF
-    // is yielded as the last line.
+    // is yielded as the last line. Running out of memory ends the stream
+    // the way a read error does — at a line boundary, never by yielding a
+    // line with a piece of it missing.
     gen fn lines(this) -> text::Text {
         var carry: vec::Vec[u8] = vec::new::[u8]();
         let chunk_size: usize = 4096;
@@ -314,7 +321,10 @@ impl File {
                         let view: str = { #str_from_raw_parts(chunk_p, chunk_len) };
                         yield view.to_text();
                     } else {
-                        carry.extend_from_raw(chunk_p, chunk_len);
+                        if !carry.extend_from_raw(chunk_p, chunk_len).is_ok() {
+                            { free(chunk); }
+                            return;
+                        }
                         // Inline the slice rather than binding it: a bound `u8[]`
                         // view of `carry` keeps `carry` borrowed through the
                         // `remove_all()` below (borrowck is lexical), even though
@@ -332,7 +342,10 @@ impl File {
             }
             if start < count {
                 let rest_p: *u8 = { chunk + start };
-                carry.extend_from_raw(rest_p, count -% start);
+                if !carry.extend_from_raw(rest_p, count -% start).is_ok() {
+                    { free(chunk); }
+                    return;
+                }
             }
         }
     }

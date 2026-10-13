@@ -57,9 +57,11 @@ let s: status::Status = t.append(piece);
 if !s.is_ok() { return s; }
 ```
 
-A reader that returns `Result` reports it instead: `TcpStream::read_to_end`
-answers `IoError::OutOfMemory`, and `fs::read_dir` (an `Option`) answers
-`None` rather than a listing missing entries. Write your own producers the
+A reader that returns `Result` reports it instead: `read_to_end` (on a
+`File` and on a `TcpStream`) answers `IoError::OutOfMemory`, and
+`fs::read_dir` (an `Option`) answers `None` rather than a listing missing
+entries. `File::lines` ends the stream, as a read error does, rather than
+yield a line with a piece missing. Write your own producers the
 same way: check every `append` inside them, and return empty on the first
 failure.
 
