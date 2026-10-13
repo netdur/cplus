@@ -38,7 +38,11 @@ let total: i64 = h1.join() +% h2.join();
 ```
 
 `spawn_with::[I, O](take input, f: fn(take I) -> O)` **moves** the input
-into the worker; `spawn::[O](f: fn() -> O)` takes none. `join(take this)`
+into the worker; `spawn::[O](f: fn() -> O)` takes none. A view is not
+something the worker can own: an input that borrows a local — a `str` of a
+`Text`, a struct carrying one — is E0513, since nothing stops the worker
+outliving the frame. A literal `str` is fine; otherwise pass the `Text`, or
+use `thread::scope` (§3). `join(take this)`
 consumes the handle and returns the worker's value. `is_finished(this)`
 polls without blocking.
 

@@ -93,6 +93,53 @@ normally consumed. Nor does a forward count — a wrapper handing on the `take`
 parameter it owns is a move, judged by the same moved-out filter `check_return`
 applies to `return out;`.
 
+`thread::spawn_with` is the same sink and was not on the list until
+2026-10-13: its body ends at `#thread_spawn_with`, and a dropped `JoinHandle`
+detaches the worker, so a `str` view of a local handed to it was clean and the
+worker read freed bytes. Both intrinsics are now `DETACHING_INTRINSICS`. A
+handle that is joined does bound the worker, but nothing ties the handle to
+the input; lending a local to a thread is `thread::scope`'s job.
+
+**A `take` of a view is a borrow** (2026-10-13). `take` transfers ownership
+of an owner; of a `str`, a slice, or a carrier it transfers a COPY of the
+view, and the bytes stay with the caller's owner (§4 of the language memory
+model already said `take` on a Copy value consumes nothing). Three passes read
+`take` as "the callee owns it, nothing to tie", and each dropped a flow:
+
+- the return rule (`detect_fn_view`) skipped `take` parameters, so
+  `fn pass(take v: str) -> str { return v; }` returned an untied view;
+- the flow pass seeded no `take v: T` of a generic impl as a source, so a
+  generic container storing its element (`this.v = v`, `this._slots[i] = v`)
+  exported no keep;
+- a store through a raw pointer was invisible to the flow pass, so
+  `*this._p = v` (`Box::set`), `*slot = v` with `slot` computed from
+  `this._ctrl` (`Channel::send`, `MutexGuard::set`) kept nothing.
+
+A generic `T` instantiated to `str` fell through all three — the shape of
+rust-lang/rust#164250, an obligation checked against the written type and
+bypassed by the instantiation. The rules now:
+
+1. A `take` parameter whose type carries a view contributes to the return
+   tie like a bare one.
+2. A `take` of an impl's own generic parameter is a flow source; the call
+   site's substitution decides which instantiations tie (`Box[str]` does,
+   `Box[Text]` is a real move).
+3. A raw store `*p = v` whose pointer DERIVES FROM THE RECEIVER — a field of
+   `this`, pointer arithmetic or a cast over one, or a pointer loaded through
+   one — is a store into the receiver. This is computed, not declared: the
+   provenance is visible in the body. A store through a pointer of any other
+   provenance stays at the raw seam (E0516 for a written view type).
+4. A GENERIC free fn (not flow-analyzed) whose return type names its own
+   parameter ties its result, at the call site, to each argument at a
+   generic-typed position that carries a view — by the turbofish's
+   substitution, or by the argument itself when there is none. `box::new`,
+   `arc::new`.
+5. Handles that SHARE storage — a non-Copy result carrying the receiver's
+   storage, `m.lock()`, `a.clone()` — are aliases: a view kept through one is
+   kept by all of them. An alias group lasts as long as its names are in
+   scope (block exit, and a match arm's end for payload bindings), so a
+   sibling block reusing a name starts a new group.
+
 **`cpc headers` is one, and the list above did not name it** (2026-09-11).
 Header generation replaces a concrete module's bodies with `;`. A DECLARED
 `#[keeps(this)]` is text and survives; a COMPUTED flow is not, so it was

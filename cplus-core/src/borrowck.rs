@@ -902,6 +902,9 @@ struct FnEntry {
     /// `take item: T` becomes `str` (tie), `Vec[Text]`'s becomes `Text`
     /// (a real move, no tie).
     param_tys: Vec<Type>,
+    /// A free fn's own generic parameter names (`new[T]` → `["T"]`), for
+    /// `generic_ret_positions`. Empty for methods and non-generic fns.
+    generic_names: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -1146,6 +1149,7 @@ impl SigTable {
                             }),
                             param_tys: f.params.iter().map(|p| p.ty.clone()).collect(),
                             ret_ty: f.return_type.clone(),
+                            generic_names: generic_names.clone(),
                         },
                     );
                 }
@@ -1263,6 +1267,7 @@ impl SigTable {
                                 }),
                                 param_tys: m.params.iter().map(|p| p.ty.clone()).collect(),
                                 ret_ty: m.return_type.clone(),
+                                generic_names: Vec::new(),
                             },
                         );
                     }
@@ -1362,6 +1367,67 @@ impl SigTable {
 /// receiver's type arguments. Purely structural — no monomorphization, no
 /// sema types; just enough to ask `type_contains_view` of an instantiated
 /// signature (`take item: T` under `Vec[str]` → `str`).
+/// The return borrow of a GENERIC free fn, decided at the call site.
+///
+/// `detect_fn_view` asks the declared types, and `box::new[T](take v: T) ->
+/// Option[Box[T]]` answers "no view anywhere" until `T` is known. So the
+/// declared signature tied nothing and `box::new::[str](t.view())` outlived
+/// `t` (ASan heap-use-after-free; the same for `arc::new`, and for a plain
+/// `fn pass[T](take v: T) -> T`). Generic free fns are not flow-analyzed, so
+/// this is the conservative rule `detect_fn_view` applies to concrete fns —
+/// the result may carry whatever a generic-typed argument carries — gated by
+/// the instantiation:
+///
+/// - with a turbofish, substitute and ask whether the parameter's type now
+///   carries a view (`[str]` ties, `[Text]` is a move and does not);
+/// - without one, `arg_may_be_view` asks the argument itself (its borrow
+///   sources, or its binding's declared type).
+///
+/// Only when the return type mentions a generic parameter: a result of a
+/// fixed type cannot hold an instantiated `T`.
+/// bugs/closed/a-generic-container-stores-a-view-without-declaring-it-keeps.md
+fn generic_ret_positions(
+    entry: &FnEntry,
+    type_args: &[Type],
+    oracle: &CopyOracle,
+    arg_may_be_view: &dyn Fn(usize) -> bool,
+) -> Vec<usize> {
+    if entry.return_borrow.is_some() || entry.generic_names.is_empty() {
+        return Vec::new();
+    }
+    if !entry
+        .ret_ty
+        .as_ref()
+        .is_some_and(|t| type_mentions_name(t, &entry.generic_names))
+    {
+        return Vec::new();
+    }
+    let map: Option<HashMap<String, Type>> = (type_args.len() == entry.generic_names.len())
+        .then(|| {
+            entry
+                .generic_names
+                .iter()
+                .cloned()
+                .zip(type_args.iter().cloned())
+                .collect()
+        });
+    entry
+        .param_tys
+        .iter()
+        .enumerate()
+        .filter(|(i, t)| {
+            if !type_mentions_name(t, &entry.generic_names) {
+                return false;
+            }
+            match &map {
+                Some(m) => oracle.type_contains_view(&subst_type(t, m)),
+                None => arg_may_be_view(*i),
+            }
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
 fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
     let kind = match &ty.kind {
         TypeKind::Path(name) => {
@@ -1423,11 +1489,60 @@ struct FlowCtx<'a> {
     /// expression — the caller of `walk_block` folds that in). Feeds
     /// `computed_ret_flow` / `computed_ret_from_receiver`.
     ret_bits: u64,
+    /// Locals holding a pointer DERIVED FROM THE RECEIVER — `this._p`,
+    /// `(this._ctrl + off) as *T`, or a pointer loaded through one
+    /// (`let buf: *u8 = { *slot_of_buf };`). A store through such a pointer
+    /// lands in storage the receiver reaches, so it is a store into the
+    /// receiver, exactly like `this.f = v`. Kept apart from `taint`: an
+    /// integer computed from `this._len` is not a borrow of the receiver,
+    /// and `taint` is what ties a caller's binding.
+    ///
+    /// Before 2026-10-13 a raw store was invisible here (`place_from_expr`
+    /// has no deref arm), so `Box[T]::set`, `MutexGuard[T]::set` and
+    /// `Channel[T]::send` exported no flow and `Box[str]` outlived the
+    /// `Text` its view pointed into —
+    /// bugs/closed/a-generic-container-stores-a-view-without-declaring-it-keeps.md
+    recv_ptrs: std::collections::HashSet<String>,
 }
 
 impl<'a> FlowCtx<'a> {
     fn is_receiver_root(root: &str) -> bool {
         root == "self" || root == "this"
+    }
+
+    /// Does this pointer-valued expression reach storage the receiver
+    /// reaches? Follows projections, derefs, casts, pointer arithmetic and
+    /// block tails to a root; a call result is fresh (`malloc`, `realloc`)
+    /// and answers no. See `recv_ptrs`.
+    fn derives_from_receiver(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(name) => Self::is_receiver_root(name) || self.recv_ptrs.contains(name),
+            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
+                self.derives_from_receiver(receiver)
+            }
+            ExprKind::Unary { operand, .. } => self.derives_from_receiver(operand),
+            ExprKind::Cast { expr, .. } => self.derives_from_receiver(expr),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.derives_from_receiver(lhs) || self.derives_from_receiver(rhs)
+            }
+            ExprKind::Block(b) => b.stmts.is_empty()
+                && b.tail.as_ref().is_some_and(|t| self.derives_from_receiver(t)),
+            _ => false,
+        }
+    }
+
+    /// The pointer a store target writes through: `*p`, `(*p).f`, `(*p)[i]`.
+    fn raw_store_pointer(target: &Expr) -> Option<&Expr> {
+        match &target.kind {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => Some(operand),
+            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
+                Self::raw_store_pointer(receiver)
+            }
+            _ => None,
+        }
     }
 
     /// Give match-payload bindings a declared type when the pattern spells
@@ -1498,6 +1613,9 @@ impl<'a> FlowCtx<'a> {
             StmtKind::Let { name, ty, init, .. } => {
                 let t = init.as_ref().map(|e| self.expr_taint(e)).unwrap_or(0);
                 self.taint.insert(name.name.clone(), t);
+                if init.as_ref().is_some_and(|e| self.derives_from_receiver(e)) {
+                    self.recv_ptrs.insert(name.name.clone());
+                }
                 if let Some(decl) = ty {
                     match &decl.kind {
                         TypeKind::Path(p) => {
@@ -1598,7 +1716,16 @@ impl<'a> FlowCtx<'a> {
                     if Self::is_receiver_root(&place.root) {
                         self.receiver_bits |= vt;
                     } else {
-                        *self.taint.entry(place.root).or_insert(0) |= vt;
+                        *self.taint.entry(place.root.clone()).or_insert(0) |= vt;
+                        // `buf = *buf_slot;` — a local re-pointed into the
+                        // receiver's storage. Never cleared: union over paths.
+                        if place.projections.is_empty() && self.derives_from_receiver(value) {
+                            self.recv_ptrs.insert(place.root);
+                        }
+                    }
+                } else if let Some(ptr) = Self::raw_store_pointer(target) {
+                    if self.derives_from_receiver(ptr) {
+                        self.receiver_bits |= vt;
                     }
                 }
                 0
@@ -1718,6 +1845,16 @@ impl<'a> FlowCtx<'a> {
             ExprKind::InferredStructLit { fields } => fields
                 .iter()
                 .fold(0, |a, f| a | self.expr_taint(&f.value)),
+            // A generic literal carries its fields' taint like any other:
+            // `MutexGuard[T] { _ctrl: this._ctrl }` hands back the receiver's
+            // storage, and `Option[T]::Some(v)` its payload. Both fell to the
+            // catch-all, so `Mutex::lock` exported no receiver→return flow.
+            ExprKind::GenericStructLit { fields, .. } => fields
+                .iter()
+                .fold(0, |a, f| a | self.expr_taint(&f.value)),
+            ExprKind::GenericEnumCall { args, .. } => {
+                args.iter().fold(0, |a, e| a | self.expr_taint(e))
+            }
             ExprKind::Block(b) => self.walk_block(b),
             ExprKind::If {
                 cond,
@@ -2018,6 +2155,7 @@ fn compute_receiver_flows(prog: &Program, oracle: &CopyOracle, sigs: &mut SigTab
                     decl_types: HashMap::new(),
                     receiver_bits: 0,
                     ret_bits: 0,
+                    recv_ptrs: std::collections::HashSet::new(),
                 };
                 ctx.types.insert("self".to_string(), b.target.name.clone());
                 // Seed the receiver as its own taint source, so a body that
@@ -2026,13 +2164,25 @@ fn compute_receiver_flows(prog: &Program, oracle: &CopyOracle, sigs: &mut SigTab
                 // param range, so the extra bit never leaks into keeps.
                 ctx.taint.insert("this".to_string(), RECV_TAINT_BIT);
                 ctx.taint.insert("self".to_string(), RECV_TAINT_BIT);
+                // A `take` of the impl's own parameter (`take v: T`) moves
+                // nothing when `T` instantiates to a view: the caller's bytes
+                // stay where they were and the stored copy borrows them. So it
+                // is a source like any view parameter; the call site's
+                // substitution decides which instantiations tie (`Box[str]`
+                // does, `Box[Text]` does not).
+                let impl_generics: Vec<String> = b
+                    .target_generic_params
+                    .iter()
+                    .map(|g| g.name.name.clone())
+                    .collect();
                 for (i, p) in m.params.iter().enumerate() {
                     let Some(entry) = sigs.methods.get(&key) else {
                         continue;
                     };
                     let is_source = entry.param_view_flags.get(i).copied().unwrap_or(false)
                         || (!p.is_take
-                            && matches!(&p.ty.kind, TypeKind::Path(_) | TypeKind::Generic { .. }));
+                            && matches!(&p.ty.kind, TypeKind::Path(_) | TypeKind::Generic { .. }))
+                        || (p.is_take && type_mentions_name(&p.ty, &impl_generics));
                     if is_source && i < 64 {
                         ctx.taint.insert(p.name.name.clone(), 1u64 << i);
                     } else {
@@ -2100,6 +2250,7 @@ fn compute_receiver_flows(prog: &Program, oracle: &CopyOracle, sigs: &mut SigTab
                 decl_types: HashMap::new(),
                 receiver_bits: 0,
                 ret_bits: 0,
+                recv_ptrs: std::collections::HashSet::new(),
             };
             for (i, p) in f.params.iter().enumerate() {
                 let Some(entry) = sigs.fns.get(&name) else {
@@ -2307,8 +2458,13 @@ fn detect_fn_elision_with_flavor(
 /// borrows every such parameter. E1/E3 never see these because views
 /// are Copy return types. Same conservatism as the method rule: the
 /// tie applies regardless of what the body returns. Flavor is Shared —
-/// a view only reads. `take` params never contribute (the value is
-/// consumed; a view into it is a different bug, caught by drop order).
+/// a view only reads. A `take` of an OWNER never contributes (the value is
+/// consumed; a view into it is a different bug, caught by E0513 at the
+/// return). A `take` of a VIEW does: `take v: str` consumes nothing — the
+/// bytes stay with the caller's owner — so `fn pass(take v: str) -> str
+/// { return v; }` hands back a borrow of the argument exactly as the bare
+/// spelling does. Excluding it let the result outlive that owner
+/// (bugs/closed/a-generic-container-stores-a-view-without-declaring-it-keeps.md).
 fn detect_fn_view(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
     // STRM v3 (2026-08-01): widened in both directions. Return side: a fn
     // returning a view-CARRYING aggregate (`fn store(k: str) -> Data` where
@@ -2324,9 +2480,10 @@ fn detect_fn_view(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSourc
     let mut indices: Vec<u32> = Vec::new();
     for (i, p) in f.params.iter().enumerate() {
         if p.is_take {
-            continue;
-        }
-        if !(oracle.definitely_non_copy(&p.ty) || oracle.type_contains_view(&p.ty)) {
+            if !oracle.type_contains_view(&p.ty) {
+                continue;
+            }
+        } else if !(oracle.definitely_non_copy(&p.ty) || oracle.type_contains_view(&p.ty)) {
             continue;
         }
         indices.push(i as u32);
@@ -3293,6 +3450,19 @@ struct Analyzer<'p> {
     /// cleanup — releasing the borrower decrements every source's
     /// `BorrowedShared(N)` count.
     binding_borrows_from: HashMap<String, Vec<Place>>,
+    /// Handles that SHARE storage: `let g = m.lock();` and `let b = a.clone();`
+    /// hand back a value carrying the receiver's own heap pointer (computed
+    /// `ret_from_receiver`) — a refcounted second handle, not a borrow, so no
+    /// loan records the relation. A view KEPT through one handle is kept in
+    /// the block every handle reads, so a `#[keeps]` tie on one is a tie on
+    /// all of them. Symmetric; non-Copy results only (a `usize` read off the
+    /// receiver carries its taint and shares nothing).
+    ///
+    /// Before 2026-10-13 `{ var g = m.lock(); g.set(t.view()); }` with `m`
+    /// outside the block tied only `g`, which died with `t`, and `m` read
+    /// freed bytes afterwards —
+    /// bugs/closed/a-generic-container-stores-a-view-without-declaring-it-keeps.md
+    storage_aliases: HashMap<String, BTreeSet<String>>,
     /// NLL precision: borrowers whose last mention is the CONDITION of the
     /// `if` that is a whole statement, and which are therefore dead before
     /// either arm runs.
@@ -3341,6 +3511,7 @@ impl<'p> Analyzer<'p> {
             diags: Vec::new(),
             live_borrows: BTreeMap::new(),
             binding_borrows_from: HashMap::new(),
+            storage_aliases: HashMap::new(),
             nll_cond_release: None,
         }
     }
@@ -3476,6 +3647,54 @@ impl<'p> Analyzer<'p> {
     /// (`names.push(a); names.push(b);` pins both owners); replacing the
     /// list would leak the earlier edge at release time and leave a stale
     /// `live_borrows` entry to false-fire E0372/E0514 later.
+    /// See `storage_aliases`: `name` was initialised from `recv.method(..)`
+    /// whose result carries the receiver's storage.
+    fn record_storage_alias(&mut self, name: &str, init: &Expr) {
+        let ExprKind::Call { callee, .. } = &init.kind else {
+            return;
+        };
+        let ExprKind::Field {
+            receiver,
+            name: method,
+        } = &callee.kind
+        else {
+            return;
+        };
+        let Some(recv) = place_from_expr(receiver).map(|p| p.root) else {
+            return;
+        };
+        let shares = self
+            .place_type_name(receiver)
+            .and_then(|t| self.sigs.method_entry(&t, &method.name))
+            .is_some_and(|e| e.computed_ret_from_receiver == Some(true));
+        if !shares || !self.binding_is_non_copy(name) {
+            return;
+        }
+        let mut group: BTreeSet<String> =
+            self.storage_aliases.get(&recv).cloned().unwrap_or_default();
+        group.insert(recv.clone());
+        group.insert(name.to_string());
+        for member in group.clone() {
+            let mut others = group.clone();
+            others.remove(&member);
+            self.storage_aliases.entry(member).or_default().extend(others);
+        }
+    }
+
+    /// Bindings leaving scope leave every alias group (names are reused by
+    /// sibling scopes, and a dead handle keeps nothing).
+    fn forget_storage_aliases<'n>(&mut self, names: impl Iterator<Item = &'n String>) {
+        for n in names {
+            if let Some(group) = self.storage_aliases.remove(n) {
+                for other in group {
+                    if let Some(g) = self.storage_aliases.get_mut(&other) {
+                        g.remove(n);
+                    }
+                }
+            }
+        }
+    }
+
     fn extend_borrows(
         &mut self,
         places: Vec<(Place, BorrowFlavor)>,
@@ -3556,7 +3775,12 @@ impl<'p> Analyzer<'p> {
     ///   * **6BC.2 / Rule E2-mut**: exclusive `ref this` method → receiver place.
     fn classify_borrow_source(&self, e: &Expr) -> Vec<(Place, BorrowFlavor)> {
         match &e.kind {
-            ExprKind::Call { callee, args, .. } => self.classify_call_borrow(callee, args),
+            ExprKind::Call {
+                callee,
+                args,
+                type_args,
+                ..
+            } => self.classify_call_borrow(callee, args, type_args),
             // Rule E-VIEW aggregate arm (2026-07-07): a view produced inside
             // an aggregate literal escapes into the aggregate binding, so
             // `let w: Slot = Slot { s: t.view() };` must record `w` as a
@@ -3617,7 +3841,12 @@ impl<'p> Analyzer<'p> {
     /// non-generic enum-variant constructors (`Enum::Variant(payload)`, which
     /// parse as a `Call` with a `Path` callee and capture payload views like
     /// any aggregate).
-    fn classify_call_borrow(&self, callee: &Expr, args: &[Expr]) -> Vec<(Place, BorrowFlavor)> {
+    fn classify_call_borrow(
+        &self,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+    ) -> Vec<(Place, BorrowFlavor)> {
         match &callee.kind {
             ExprKind::Ident(fn_name) => {
                 let Some(entry) = self.sigs.fns.get(fn_name) else {
@@ -3634,6 +3863,30 @@ impl<'p> Analyzer<'p> {
                     }
                 }
                 let Some(rb) = entry.return_borrow.as_ref() else {
+                    // A generic fn's tie depends on its instantiation.
+                    let may_be_view = |i: usize| {
+                        args.get(i).is_some_and(|a| {
+                            !self.classify_borrow_source(a).is_empty()
+                                || place_from_expr(a).is_some_and(|p| {
+                                    self.binding_borrows_from
+                                        .get(&p.root)
+                                        .is_some_and(|o| !o.is_empty())
+                                        || self
+                                            .binding_type(&p.root)
+                                            .is_some_and(|t| self.oracle.type_contains_view(t))
+                                })
+                        })
+                    };
+                    for i in generic_ret_positions(entry, type_args, self.oracle, &may_be_view) {
+                        match place_from_arg(args, i) {
+                            Some(p) => frame.push((p, BorrowFlavor::Shared)),
+                            None => {
+                                if let Some(a) = args.get(i) {
+                                    frame.extend(self.classify_borrow_source(a));
+                                }
+                            }
+                        }
+                    }
                     return frame;
                 };
                 let flavor = entry.return_borrow_flavor.unwrap_or(BorrowFlavor::Shared);
@@ -4266,7 +4519,12 @@ impl<'a> ViewRules<'a> {
             ExprKind::ArrayFill { fill, .. } => {
                 roots.extend(self.view_source_roots(fill));
             }
-            ExprKind::Call { callee, args, .. } => match &callee.kind {
+            ExprKind::Call {
+                callee,
+                args,
+                type_args,
+                ..
+            } => match &callee.kind {
                 ExprKind::Field { receiver, name } => {
                     if self.method_produces_view(receiver, &name.name) {
                         roots.extend(self.view_source_roots(receiver));
@@ -4278,6 +4536,21 @@ impl<'a> ViewRules<'a> {
                 ExprKind::Ident(fn_name) => {
                     for src in self.async_frame_sources_of(callee, args) {
                         roots.extend(self.view_source_roots(src));
+                    }
+                    if let Some(entry) = self.sigs.fns.get(fn_name) {
+                        let may_be_view = |i: usize| {
+                            args.get(i).is_some_and(|a| {
+                                !self.view_source_roots(a).is_empty()
+                                    || self
+                                        .infer_ty(a)
+                                        .is_some_and(|t| self.oracle.type_contains_view(&t))
+                            })
+                        };
+                        for i in generic_ret_positions(entry, type_args, self.oracle, &may_be_view) {
+                            if let Some(a) = args.get(i) {
+                                roots.extend(self.view_source_roots(a));
+                            }
+                        }
                     }
                     match self.sigs.fns.get(fn_name).and_then(|f| f.return_borrow.as_ref()) {
                         Some(ReturnBorrowSource::Param(i)) => {
@@ -5098,7 +5371,7 @@ impl<'a> ViewRules<'a> {
                     self.err(
                         "E0513",
                         format!(
-                            "`{}` hands this value to the reactor, which outlives every frame, but it borrows {owner}, whose storage is freed when this function returns. Give the task its own copy — pass owned values (`take` parameters, `Text` rather than `str`) into the `async fn` — or await it here instead of detaching it",
+                            "`{}` hands this value to work that outlives every frame — a reactor task or a detached thread — but it borrows {owner}, whose storage is freed when this function returns. Give it its own copy — pass owned values (`take` parameters, `Text` rather than `str`) — or keep it bounded: await a task here, lend to a thread through `thread::scope`",
                             display_name(fname)
                         ),
                         arg.span,
@@ -5114,7 +5387,7 @@ impl<'a> ViewRules<'a> {
                     self.err(
                         "E0515",
                         format!(
-                            "`{}` hands this value to the reactor, which outlives every frame, but it borrows parameter `{root}`, whose bytes the caller only guarantees for this call. Give the task its own copy — take ownership of the parameter (`take`) and pass owned values into the `async fn`",
+                            "`{}` hands this value to work that outlives every frame — a reactor task or a detached thread — but it borrows parameter `{root}`, whose bytes the caller only guarantees for this call. Give it its own copy — take ownership of the parameter (`take`) and pass owned values",
                             display_name(fname)
                         ),
                         arg.span,
@@ -6979,18 +7252,27 @@ pub fn computed_flow_sites(prog: &Program) -> std::collections::BTreeSet<Span> {
     out
 }
 
-/// The intrinsic that hands a value to the reactor and returns, spelled
-/// `#reactor_spawn_local(f)`. The reactor drives the frame long after the call
-/// is over, so whatever the value borrows has to outlive the whole program.
+/// The intrinsics that hand a value to something that outlives the call and
+/// return. `#reactor_spawn_local(f)`: the reactor drives the frame long after
+/// the call is over. `#thread_spawn_with(input, f)`: the worker owns `input`,
+/// and `JoinHandle::drop` detaches it, so nothing bounds the worker by the
+/// caller's frame. Whatever the value borrows has to outlive the program.
 ///
-/// This is the name as PARSED. `#name(...)` is its own AST node
+/// `thread_spawn_with` was missing until 2026-10-13: a `str` view of a local
+/// `Text` handed to `thread::spawn_with` was clean and the detached worker
+/// read freed bytes —
+/// bugs/closed/a-view-handed-to-thread-spawn-with-outlives-its-owner.md.
+/// A joined handle bounds the worker, but nothing ties the handle to the
+/// input, so the join is invisible here; lending a local is `thread::scope`'s.
+///
+/// These are names as PARSED. `#name(...)` is its own AST node
 /// (`ExprKind::Intrinsic`), not a call to `__cplus_name` — sema and codegen
 /// add that prefix when they match, and borrowck runs before either.
-const DETACHING_INTRINSIC: &str = "reactor_spawn_local";
+const DETACHING_INTRINSICS: &[&str] = &["reactor_spawn_local", "thread_spawn_with"];
 
 /// Contract §3.1, third sink: fill `FnEntry::computed_detaches`.
 ///
-/// A parameter detaches when its value reaches `DETACHING_INTRINSIC` —
+/// A parameter detaches when its value reaches one of `DETACHING_INTRINSICS` —
 /// directly, or by being forwarded to another function that detaches that
 /// position. `facet::spawn_ui[T](take f)` forwards to `executor::spawn_local`
 /// and its own callers have to be checked too, so the fixpoint is not
@@ -7022,7 +7304,9 @@ fn compute_detach_flows(prog: &Program, sigs: &mut SigTable) {
                 // Two shapes reach the reactor: the intrinsic itself, and a
                 // call to something already known to forward that position.
                 let (positions, args) = match &e.kind {
-                    ExprKind::Intrinsic { name, args, .. } if name == DETACHING_INTRINSIC => {
+                    ExprKind::Intrinsic { name, args, .. }
+                        if DETACHING_INTRINSICS.contains(&name.as_str()) =>
+                    {
                         (vec![true; args.len()], args)
                     }
                     ExprKind::Call { callee, args, .. } => {
@@ -7314,6 +7598,9 @@ impl Analyzer<'_> {
                 // BorrowedExclusive(name) for exclusive ones (6BC.2).
                 if !borrow_sources.is_empty() {
                     self.acquire_borrows(borrow_sources, &name.name, name.span, state);
+                }
+                if let Some(e) = init {
+                    self.record_storage_alias(&name.name, e);
                 }
             }
             StmtKind::LetDestructure { fields, init, .. } => {
@@ -7681,6 +7968,7 @@ impl Analyzer<'_> {
         for borrower in &dying {
             self.drop_borrower(borrower, state);
         }
+        self.forget_storage_aliases(dying.iter());
         // E0514 (memory-model contract §3.3): a block-local owner may not
         // die while a borrower declared outside the block still holds a
         // view of it. Dying borrowers released their claims above, so any
@@ -8061,6 +8349,9 @@ impl Analyzer<'_> {
                     // per-arm overwrite is exact for this arm's body.
                     self.register_pattern_types(&a.pattern, scrutinee);
                     self.apply_expr(&a.body, &mut s);
+                    // Pattern bindings live in no `state`, so the arm's end
+                    // is their scope exit for the alias table.
+                    self.forget_storage_aliases(pattern_binding_names(&a.pattern).iter());
                     s.retain(|k, _| pre.contains_key(k));
                     arm_diverges.push(crate::lower::expr_diverges(&a.body));
                     arm_states.push(s);
@@ -8623,6 +8914,24 @@ impl Analyzer<'_> {
                 sources.extend(arg_sources.into_iter().filter(|(p, _)| p.root != recv_name));
             }
             if !sources.is_empty() {
+                // Every live handle on the same storage keeps it too.
+                let aliases: Vec<String> = self
+                    .storage_aliases
+                    .get(&recv_name)
+                    .map(|g| g.iter().cloned().collect())
+                    .unwrap_or_default();
+                // The table holds only in-scope names (`forget_storage_aliases`
+                // at every block and arm exit); a moved handle keeps nothing.
+                for a in aliases {
+                    if matches!(state.get(&Place::root(&a)), Some(PlaceState::Moved)) {
+                        continue;
+                    }
+                    let own: Vec<(Place, BorrowFlavor)> =
+                        sources.iter().filter(|(p, _)| p.root != a).cloned().collect();
+                    if !own.is_empty() {
+                        self.extend_borrows(own, &a, callee.span, state);
+                    }
+                }
                 self.extend_borrows(sources, &recv_name, callee.span, state);
             }
         }
@@ -14030,6 +14339,115 @@ fn drive(take f: Fut) -> i32 { return 0; }
             .map(|(name, _)| *name)
             .collect();
         assert!(missed.is_empty(), "expected E0513, not raised for: {missed:?}");
+    }
+
+    // ── 2026-10-13: a `take` of a VIEW moves nothing, so it is a borrow ──
+    // rust-lang/rust#164250's class, ported: an obligation checked against
+    // the WRITTEN type that an instantiation slips past. Each route below was
+    // clean and an ASan heap-use-after-free in a real build.
+    // bugs/closed/a-generic-container-stores-a-view-without-declaring-it-keeps.md
+    // bugs/closed/a-view-handed-to-thread-spawn-with-outlives-its-owner.md
+    const TAKE_VIEW_PRELUDE: &str = "\
+fn pass_str(take v: str) -> str { return v; }
+fn pass[T](take v: T) -> T { return v; }
+struct W[T] { v: T }
+impl W[T] { fn put(ref this, take v: T) { this.v = v; return; } }
+struct B[T] { _p: *T }
+impl B[T] { fn set(ref this, take v: T) { { *this._p = v; } return; } }
+fn go(take s: str) -> i32 { return 0; }
+fn spawn_w(take s: str) { { #thread_spawn_with(s, go); } return; }
+struct G[T] { _ctrl: *u8 }
+impl G[T] {
+    fn drop(ref this) { return; }
+    fn set(ref this, take v: T) { let slot: *T = { (this._ctrl + (8 as usize)) as *T }; { *slot = v; } return; }
+}
+struct M[T] { _ctrl: *u8 }
+impl M[T] {
+    fn drop(ref this) { return; }
+    fn lock(this) -> G[T] { return G[T] { _ctrl: this._ctrl }; }
+}
+fn mk_m() -> M[str] { return M[str] { _ctrl: { 0 as *u8 } }; }
+";
+
+    #[test]
+    fn a_take_of_a_view_ties_like_a_borrow() {
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "concrete_take_str_returned",
+                "E0514",
+                "fn f() { var s: str = \"\"; { let t: LStr = mk(); let v: str = t; s = pass_str(v); } return; }",
+            ),
+            (
+                "generic_returned_turbofish",
+                "E0514",
+                "fn f() { var s: str = \"\"; { let t: LStr = mk(); let v: str = t; s = pass::[str](v); } return; }",
+            ),
+            (
+                "generic_returned_inferred",
+                "E0514",
+                "fn f() { var s: str = \"\"; { let t: LStr = mk(); let v: str = t; s = pass(v); } return; }",
+            ),
+            (
+                "generic_field_store",
+                "E0514",
+                "fn f() { var w: W[str] = W[str] { v: \"\" }; { let t: LStr = mk(); let v: str = t; w.put(v); } return; }",
+            ),
+            (
+                "raw_store_through_the_receiver",
+                "E0514",
+                "fn f() { var b: B[str] = B[str] { _p: { 0 as *str } }; { let t: LStr = mk(); let v: str = t; b.set(v); } return; }",
+            ),
+            (
+                "detached_thread",
+                "E0513",
+                "fn f() { let t: LStr = mk(); let v: str = t; spawn_w(v); return; }",
+            ),
+            // The guard shares the lock's storage: keeping through the guard
+            // keeps in `m`, which outlives the block.
+            (
+                "kept_through_a_storage_alias",
+                "E0514",
+                "fn f() { let m: M[str] = mk_m(); { let t: LStr = mk(); let v: str = t; var g: G[str] = m.lock(); g.set(v); } return; }",
+            ),
+        ];
+        let missed: Vec<String> = cases
+            .iter()
+            .filter_map(|(name, code, tail)| {
+                let codes = check_src(&format!("{LANG_STR_PRELUDE}{TAKE_VIEW_PRELUDE}{tail}"));
+                (!codes.iter().any(|c| c == code)).then(|| format!("{name} (want {code}, got {codes:?})"))
+            })
+            .collect();
+        assert!(missed.is_empty(), "not raised: {missed:?}");
+    }
+
+    #[test]
+    fn a_take_that_moves_or_stores_a_literal_is_untouched() {
+        // An owner taken is a real move; a Copy non-view ties nothing; a
+        // literal is 'static; an owner that outlives the keeper is the point.
+        let clean: &[(&str, &str)] = &[
+            ("owned_through_generic", "fn f() { let t: LStr = mk(); let u: LStr = pass::[LStr](t); return; }"),
+            ("int_through_generic", "fn f() { var n: i32 = 0; { let k: i32 = 3; n = pass::[i32](k); } return; }"),
+            ("literal_kept", "fn f() { var w: W[str] = W[str] { v: \"\" }; { w.put(\"lit\"); } return; }"),
+            (
+                "owner_outlives_keeper",
+                "fn f() { let t: LStr = mk(); { let v: str = t; var b: B[str] = B[str] { _p: { 0 as *str } }; b.set(v); } return; }",
+            ),
+            ("literal_to_a_thread", "fn f() { spawn_w(\"lit\"); return; }"),
+            // A name reused by a sibling block is a different handle: the
+            // first `g`'s alias group ended with its block.
+            (
+                "sibling_block_reuses_an_alias_name",
+                "fn f() { let m: M[str] = mk_m(); { var g: G[str] = m.lock(); } { let t: LStr = mk(); let v: str = t; let n: M[str] = mk_m(); var g: G[str] = n.lock(); g.set(v); } return; }",
+            ),
+        ];
+        let noisy: Vec<String> = clean
+            .iter()
+            .filter_map(|(name, tail)| {
+                let codes = check_src(&format!("{LANG_STR_PRELUDE}{TAKE_VIEW_PRELUDE}{tail}"));
+                (!codes.is_empty()).then(|| format!("{name}: {codes:?}"))
+            })
+            .collect();
+        assert!(noisy.is_empty(), "sound code rejected: {noisy:?}");
     }
 
     #[test]

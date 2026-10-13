@@ -66,6 +66,12 @@ For a `Copy` type, `x: T` and `take x: T` both pass by value: a bare `Copy`
 parameter is an ordinary by-value copy, and `take` on one consumes nothing,
 because a `Copy` value cannot be moved out of.
 
+That includes views. `take s: str` copies the `{ptr, len}` and leaves the
+bytes with whoever owns them, so a `take` of a view is still a borrow of that
+owner: a function that returns it, or a container that stores it
+(`Box[str]::set`, `Channel[str]::send`), is tied to the owner exactly as the
+bare spelling would be, and the owner dying first is E0514.
+
 `ref x: T` is the exception, and it is not a special case for `Copy` — it is
 the same rule the table above states. **`ref` passes by pointer for every
 type**, `Copy` included; that is what "writes reach the caller" means, and
@@ -157,7 +163,9 @@ SPEC.md); the same escape rule applies to the coerced view.
 
 Because there are no value-site references, a value cannot be lent to another
 thread. Work that crosses a thread or task boundary takes ownership by value, or
-shares through a reference-counted handle.
+shares through a reference-counted handle. A view is not ownership: handing
+`thread::spawn_with` a `str` of a local `Text` is E0513, because the worker can
+outlive the frame. Pass the `Text`, or lend through `thread::scope`.
 
 - Run work on another thread by moving the inputs in:
 

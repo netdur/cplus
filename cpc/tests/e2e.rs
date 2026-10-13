@@ -28517,6 +28517,44 @@ fn a_label_that_only_fits_another_type_is_an_error_not_a_value() {
 /// compiled plus everything the compiler said. `cpc check` is not enough for
 /// the shapes below: a generic method's keeps flags resolve through the
 /// instantiated receiver type, which only a real build produces.
+/// `try_build_stdlib_project`, then run the binary: (built and exited 0,
+/// build output followed by the program's stdout).
+fn build_and_run_stdlib_project(name: &str, main_src: &str) -> (bool, String) {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        format!("[package]\nname = \"{name}\"\n\n[dependencies]\nstdlib = \"*\"\n"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    symlink_dir(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/main.cplus"), main_src).unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    let mut all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    if !out.status.success() {
+        return (false, all);
+    }
+    let run = Command::new(dir.join("target/debug").join(name))
+        .output()
+        .expect("run the built binary");
+    all.push_str(&String::from_utf8_lossy(&run.stdout));
+    all.push_str(&String::from_utf8_lossy(&run.stderr));
+    (run.status.success(), all)
+}
+
 fn try_build_stdlib_project(name: &str, main_src: &str) -> (bool, String) {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
@@ -29028,6 +29066,300 @@ fn a_detached_task_that_owns_its_data_still_builds_and_runs() {
          }\n",
     );
     assert!(ok, "the owned spelling must still compile:\n{out}");
+}
+
+// 2026-10-13: `thread::spawn_with` is a detaching sink as `spawn_local` is —
+// `JoinHandle::drop` detaches the worker — and was not on the list. A `str`
+// view of a local handed to it was clean and the worker read freed bytes
+// (ASan heap-use-after-free, freed by `Text.drop` on the main thread).
+// Found porting rust-lang/rust#164250's thread variant, which leaks through a
+// `Drop` impl. bugs/closed/a-view-handed-to-thread-spawn-with-outlives-its-owner.md
+#[test]
+fn a_view_handed_to_a_thread_is_rejected() {
+    const IMPORTS: &str = "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/thread\" as thread;\n\
+         fn worker(take s: str) -> i32 { io::println(s); return 0; }\n";
+    for (name, code, body) in [
+        (
+            "local_view",
+            "E0513",
+            "fn main() -> i32 {\n\
+             {\n\
+             let l: text::Text = \"abc\".to_text();\n\
+             let _h: thread::JoinHandle[i32] = thread::spawn_with::[str, i32](l.view(), worker);\n\
+             }\n\
+             return 0;\n\
+             }\n",
+        ),
+        // The Rust issue's shape: a destructor hands a field's view onward.
+        // `this` is borrowed for the call, so it is the parameter arm.
+        (
+            "from_a_drop",
+            "E0515",
+            "struct Q { v: str }\n\
+             impl Q {\n\
+             fn drop(ref this) {\n\
+             let _h: thread::JoinHandle[i32] = thread::spawn_with::[str, i32](this.v, worker);\n\
+             return;\n\
+             }\n\
+             }\n\
+             fn main() -> i32 {\n\
+             {\n\
+             let l: text::Text = \"abc\".to_text();\n\
+             var q: Q = Q { v: \"\" };\n\
+             q.v = l.view();\n\
+             }\n\
+             return 0;\n\
+             }\n",
+        ),
+        // The fixpoint half: a wrapper forwarding its `take` parameter
+        // inherits the fact, so its callers are checked.
+        (
+            "through_a_user_wrapper",
+            "E0513",
+            "fn go(take s: str) { let _h: thread::JoinHandle[i32] = thread::spawn_with::[str, i32](s, worker); return; }\n\
+             fn main() -> i32 {\n\
+             {\n\
+             let l: text::Text = \"abc\".to_text();\n\
+             go(l.view());\n\
+             }\n\
+             return 0;\n\
+             }\n",
+        ),
+    ] {
+        let (ok, out) = try_build_stdlib_project("mmthread", &format!("{IMPORTS}{body}"));
+        assert!(!ok, "[{name}] expected {code}, compiled instead:\n{out}");
+        assert!(out.contains(code), "[{name}] expected {code}, got:\n{out}");
+    }
+}
+
+/// The controls: an owned input and a literal-backed view are what
+/// `spawn_with` is for, joined or detached.
+#[test]
+fn a_thread_given_owned_or_literal_input_still_builds_and_runs() {
+    let (ok, out) = build_and_run_stdlib_project(
+        "mmthreadok",
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/thread\" as thread;\n\
+         fn owns(take s: text::Text) -> i32 { io::println(s.view()); return 0; }\n\
+         fn lit(take s: str) -> i32 { io::println(s); return 0; }\n\
+         fn main() -> i32 {\n\
+         {\n\
+         let l: text::Text = \"abc\".to_text();\n\
+         let h: thread::JoinHandle[i32] = thread::spawn_with::[text::Text, i32](l, owns);\n\
+         let _a: i32 = h.join();\n\
+         let h2: thread::JoinHandle[i32] = thread::spawn_with::[str, i32](\"literal\", lit);\n\
+         let _b: i32 = h2.join();\n\
+         }\n\
+         return 0;\n\
+         }\n",
+    );
+    assert!(ok, "owned and literal input must build and run:\n{out}");
+    assert!(out.contains("abc\nliteral\n"), "wrong output:\n{out}");
+}
+
+// 2026-10-13: a `take` of a view moves nothing — the bytes stay with the
+// caller's owner — and three passes treated every `take` as an ownership
+// transfer: `detect_fn_view` skipped `take` params, the flow pass seeded no
+// `take v: T` as a source, and a store through a raw pointer derived from the
+// receiver (`*this._p = v`) was invisible. A generic `T` instantiated to `str`
+// fell through all three, so every stdlib container that stores behind a raw
+// pointer outlived the `Text` its element pointed into (ASan
+// heap-use-after-free for each case below). A guard / clone shares the
+// mutex's storage, so a view kept through it is kept in the mutex too.
+// bugs/closed/a-generic-container-stores-a-view-without-declaring-it-keeps.md
+const KEPT_VIEW_IMPORTS: &str = "import \"stdlib/io\" as io;\n\
+     import \"stdlib/text\" as text;\n\
+     import \"stdlib/option\" as option;\n\
+     import \"stdlib/status\" as status;\n\
+     import \"stdlib/box\" as box;\n\
+     import \"stdlib/arc\" as arc;\n\
+     import \"stdlib/mutex\" as mutex;\n\
+     import \"stdlib/channel\" as channel;\n\
+     import \"stdlib/hash_set\" as hash_set;\n\
+     struct W[T] { v: T }\n\
+     impl W[T] { fn put(ref this, take v: T) { this.v = v; return; } }\n\
+     fn pass[T](take v: T) -> T { return v; }\n\
+     fn wrap[T](take v: T) -> W[T] { return W[T] { v: v }; }\n\
+     fn pass_str(take v: str) -> str { return v; }\n";
+
+#[test]
+fn a_view_kept_past_its_owner_through_a_take_is_rejected() {
+    for (name, body) in [
+        (
+            "box_set",
+            "fn main() -> i32 {\n\
+             match box::new::[str](\"lit\") {\n\
+             option::Option[box::Box[str]]::Some(b0) => {\n\
+             var b: box::Box[str] = b0;\n\
+             { let l: text::Text = \"abc\".to_text(); b.set(l.view()); }\n\
+             io::println(b.value());\n\
+             }\n\
+             option::Option[box::Box[str]]::None => {}\n\
+             }\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "box_new",
+            "fn main() -> i32 {\n\
+             var keep: option::Option[box::Box[str]] = option::Option[box::Box[str]]::None;\n\
+             { let l: text::Text = \"abc\".to_text(); keep = box::new::[str](l.view()); }\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "arc_new",
+            "fn main() -> i32 {\n\
+             var keep: option::Option[arc::Arc[str]] = option::Option[arc::Arc[str]]::None;\n\
+             { let l: text::Text = \"abc\".to_text(); keep = arc::new::[str](l.view()); }\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "hash_set_insert",
+            "fn main() -> i32 {\n\
+             var s: hash_set::HashSet[str] = hash_set::new::[str]();\n\
+             { let l: text::Text = \"abc\".to_text(); let _st: status::Status = s.insert(l.view()); }\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "channel_send",
+            "fn main() -> i32 {\n\
+             match channel::new::[str]() {\n\
+             option::Option[channel::Channel[str]]::Some(ch) => {\n\
+             { let l: text::Text = \"abc\".to_text(); let _s: status::Status = ch.send(l.view()); }\n\
+             match ch.receive() {\n\
+             channel::ReceiveResult[str]::Value(v) => { io::println(v); }\n\
+             channel::ReceiveResult[str]::Closed => {}\n\
+             channel::ReceiveResult[str]::Cancelled => {}\n\
+             }\n\
+             }\n\
+             option::Option[channel::Channel[str]]::None => {}\n\
+             }\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "mutex_guard_set",
+            "fn main() -> i32 {\n\
+             match mutex::new::[str](\"lit\") {\n\
+             option::Option[mutex::Mutex[str]]::Some(m) => {\n\
+             { let l: text::Text = \"abc\".to_text(); var g: mutex::MutexGuard[str] = m.lock(); g.set(l.view()); }\n\
+             let g2: mutex::MutexGuard[str] = m.lock();\n\
+             io::println(g2.value());\n\
+             }\n\
+             option::Option[mutex::Mutex[str]]::None => {}\n\
+             }\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "generic_field_store",
+            "fn main() -> i32 {\n\
+             var w: W[str] = W[str] { v: \"\" };\n\
+             { let l: text::Text = \"abc\".to_text(); w.put(l.view()); }\n\
+             io::println(w.v);\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "generic_pass",
+            "fn main() -> i32 {\n\
+             var s: str = \"\";\n\
+             { let l: text::Text = \"abc\".to_text(); s = pass::[str](l.view()); }\n\
+             io::println(s);\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "generic_pass_inferred",
+            "fn main() -> i32 {\n\
+             var s: str = \"\";\n\
+             { let l: text::Text = \"abc\".to_text(); let v: str = l.view(); s = pass(v); }\n\
+             io::println(s);\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "generic_wrap",
+            "fn main() -> i32 {\n\
+             var w: W[str] = W[str] { v: \"\" };\n\
+             { let l: text::Text = \"abc\".to_text(); w = wrap::[str](l.view()); }\n\
+             io::println(w.v);\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "concrete_take_str",
+            "fn main() -> i32 {\n\
+             var s: str = \"\";\n\
+             { let l: text::Text = \"abc\".to_text(); s = pass_str(l.view()); }\n\
+             io::println(s);\n\
+             return 0;\n\
+             }\n",
+        ),
+    ] {
+        let (ok, out) =
+            try_build_stdlib_project("mmkept", &format!("{KEPT_VIEW_IMPORTS}{body}"));
+        assert!(!ok, "[{name}] expected E0514, compiled instead:\n{out}");
+        assert!(out.contains("E0514"), "[{name}] expected E0514, got:\n{out}");
+    }
+}
+
+/// The controls: owned elements are moves, literals are 'static, and a view
+/// whose owner outlives the container is what these APIs are for. Each must
+/// still build, and run printing what it stored.
+#[test]
+fn a_container_of_owned_literal_or_outlived_views_still_builds_and_runs() {
+    let (ok, out) = build_and_run_stdlib_project(
+        "mmkeptok",
+        &format!(
+            "{KEPT_VIEW_IMPORTS}fn main() -> i32 {{\n\
+             let l: text::Text = \"outer\".to_text();\n\
+             {{\n\
+             match box::new::[text::Text](\"owned\".to_text()) {{\n\
+             option::Option[box::Box[text::Text]]::Some(b) => {{ let t: text::Text = b.unwrap(); io::println(t.view()); }}\n\
+             option::Option[box::Box[text::Text]]::None => {{}}\n\
+             }}\n\
+             match box::new::[str](l.view()) {{\n\
+             option::Option[box::Box[str]]::Some(b0) => {{\n\
+             var b: box::Box[str] = b0;\n\
+             io::println(b.value());\n\
+             b.set(\"literal\");\n\
+             io::println(b.value());\n\
+             }}\n\
+             option::Option[box::Box[str]]::None => {{}}\n\
+             }}\n\
+             var s: hash_set::HashSet[str] = hash_set::new::[str]();\n\
+             let _a: status::Status = s.insert(l.view());\n\
+             let _b: status::Status = s.insert(\"lit\");\n\
+             if s.contains(\"outer\") {{ io::println(\"set\"); }}\n\
+             match mutex::new::[str](\"m\") {{\n\
+             option::Option[mutex::Mutex[str]]::Some(m) => {{\n\
+             {{ var g: mutex::MutexGuard[str] = m.lock(); g.set(l.view()); }}\n\
+             let g2: mutex::MutexGuard[str] = m.lock();\n\
+             io::println(g2.value());\n\
+             }}\n\
+             option::Option[mutex::Mutex[str]]::None => {{}}\n\
+             }}\n\
+             let n: i32 = pass::[i32](7);\n\
+             let t: text::Text = pass(\"moved\".to_text());\n\
+             let p: str = pass_str(l.view());\n\
+             io::println(\"${{n}} ${{t.view()}} ${{p}}\");\n\
+             }}\n\
+             return 0;\n\
+             }}\n"
+        ),
+    );
+    assert!(ok, "the sound spellings must build and run:\n{out}");
+    assert!(
+        out.contains("owned\nouter\nliteral\nset\nouter\n7 moved outer\n"),
+        "wrong output:\n{out}"
+    );
 }
 
 // 2026-09-20: a generic impl's method bodies were type-checked and every
