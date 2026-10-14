@@ -696,6 +696,8 @@ fn a_view_that_answers_the_click_with_nothing_behind_it_is_refused_not_reported_
 // ---- ...and the same view inside a table IS the row --------------------------
 
 static ROW_SELECTIONS: i32 = 0;
+// Build each row as an NSTextField with no action — what a facet `label` row is.
+static ROW_IS_LABEL: bool = false;
 fn tds_number_of_rows(self_obj: *u8, cmd: *u8, tv: *u8) -> i64 { return 2 as i64; }
 fn tds_selection_did_change(self_obj: *u8, cmd: *u8, note: *u8) {
     ROW_SELECTIONS = ROW_SELECTIONS + 1;
@@ -705,7 +707,11 @@ fn tds_selection_did_change(self_obj: *u8, cmd: *u8, note: *u8) {
 // tagged here, because a row is not a facet node and its agent id rides the
 // cell rather than a key.
 fn tds_view_for_row(self_obj: *u8, cmd: *u8, tv: *u8, col: *u8, row: i64) -> *u8 {
-    let v: *u8 = synth::alloc_init_class(transparent_row_class());
+    let v: *u8 = if ROW_IS_LABEL {
+        synth::alloc_init_class({ rt::get_class(#str_ptr("NSTextField\0")) })
+    } else {
+        synth::alloc_init_class(transparent_row_class())
+    };
     { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
                         rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 20.0 }) };
     if row == (0 as i64) { agent::set_agent_id(v, "library:model:0"); }
@@ -903,6 +909,32 @@ fn a_click_on_a_list_rows_content_is_the_rows_tap() {
     assert TAPPED_ROW_SEEN == (1 as i64);
     assert ROW_SELECTIONS == 0;
     assert TRANSPARENT_CLICKS == 0;
+}
+
+#[test]
+fn a_click_on_a_label_row_is_the_rows_tap() {
+    // A facet `label` is an NSTextField, and every NSTextField answers
+    // `action` — so "is this a real control?" answered yes for the commonest
+    // row content there is. The click took the label's empty `performClick:`,
+    // answered `allowed`, and `on_item_tapped` never ran. Found driving
+    // examples/tasks_agent_loop through its agent surface.
+    // bugs/closed/an-agent-click-on-a-label-row-never-taps-it.md
+    let win = fixture_window(300.0, 200.0);
+    TAPS = 0;
+    TAPPED_ROW_SEEN = 0 as i64 - (1 as i64);
+    ROW_SELECTIONS = 0;
+    ROW_ANSWERS = true;
+    ROW_IS_LABEL = true;
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    let _tv: *u8 = probe_list_surface(win, tap_table_class(), root);
+    var s: agent::Surface = agent::open(win.raw());
+    let _n: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    assert surface::outcome_eq(s.click(auth::operator(), "library:model:1"),
+                               surface::Outcome::Allowed);
+    ROW_IS_LABEL = false;
+    assert TAPS == 1;
+    assert TAPPED_ROW_SEEN == (1 as i64);
+    assert ROW_SELECTIONS == 0;
 }
 
 #[test]

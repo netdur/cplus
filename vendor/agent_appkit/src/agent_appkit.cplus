@@ -2605,7 +2605,14 @@ fn select_row_of(v: *u8) -> bool {
 // `v` is not in a list row the table can tap.
 fn tappable_row_of(v: *u8) -> i64 {
     let none: i64 = 0 as i64 - (1 as i64);
-    if responds_to(v, #str_ptr("action\0")) { return none; }
+    // "A real control" is one whose OWN press would do something — the
+    // question `performs_click` answers for `click`, `wired` and `clickable`.
+    // It was "answers `action`", and every NSTextField does: a facet `label`
+    // is one, so the commonest row there is — a label — took its own empty
+    // `performClick:`, answered `allowed`, and never tapped the row
+    // (bugs/closed/an-agent-click-on-a-label-row-never-taps-it.md). A label
+    // with an `on_click` still answers its own press, as under a pointer.
+    if performs_click(v) { return none; }
     let table: *u8 = enclosing_table(v);
     if is_null(table) { return none; }
     if !responds_to(table, #str_ptr("cplusAgentTapRow:\0")) { return none; }
