@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Tasks_agent_loop</string>
+    <key>CFBundleDisplayName</key>
+    <string>Tasks_agent_loop</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.cplus.tasksagentloop</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!-- WHY THIS FILE EXISTS. macOS refuses a permission to an app
+         that has not said what it wants it FOR, and the refusal is
+         not a `Denied` you can handle: `permissions::request` kills
+         the process, asynchronously, after the call has already
+         returned. The string is shown to the person in the dialog,
+         so write it for them and not for the compiler.
+
+         Uncomment what this app actually asks for. Leaving one in
+         that the app never requests is harmless; leaving one OUT
+         that it does request is fatal at runtime. -->
+
+    <!--
+    <key>NSCameraUsageDescription</key>
+    <string>Tasks_agent_loop uses the camera to …</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Tasks_agent_loop uses the microphone to …</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Tasks_agent_loop uses your location to …</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Tasks_agent_loop reads your photo library to …</string>
+    -->
+</dict>
+</plist>

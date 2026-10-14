@@ -1,0 +1,216 @@
+// tasks_agent_loop — a small app built to be driven by an agent end to end:
+// a list, an editable field, a detail screen, an asynchronous operation, and a
+// visible success / error state. See README.md for the loop it exists for.
+//
+// facet is RETAINED and NOT reactive: `build` runs once, at mount, and returns
+// a live tree. To change what is on screen, find the node by key and set the
+// property — never rebuild.
+
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/list" as list;
+import "facet/text_field" as text_field;
+import "facet/button" as button;
+import "facet/screen" as screen;
+import "facet/nav" as nav;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "facet_runtime/runtime" as runtime;
+import "facet_agent/agent" as agent;
+
+import "./agent_consent" as agent_consent;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/str" as _;
+
+// ── Home: the list ───────────────────────────────────────────────────────────
+
+struct Home {
+    tasks: vec::Vec[text::Text],
+    syncs: i64,
+    context: nav::Context,
+    // The pending sync's timer. Held so it cancels when the screen goes:
+    // the callback can never outlive the state it writes.
+    pending: services::Cancellable,
+}
+
+impl Home {
+    fn new() -> Home {
+        return Home {
+            tasks: vec::new::[text::Text](),
+            syncs: 0,
+            context: nav::Context::none(),
+            pending: services::Cancellable::none(),
+        };
+    }
+
+    // Add the title in the field. A title with nothing in it is refused and
+    // says so; the field is cleared after a successful add.
+    fn on_add(ref this, sender: *u8) {
+        guard let option::Option[text_field::TextField]::Some(f) =
+            text_field::find("new_title", within: this.context.root()) else { return; };
+        // A title is what is left after trimming: "   " is no title, and
+        // "  Call Bob  " is "Call Bob". (The seeded defect this example's loop
+        // finds was `text::from_str(f.text())` — untrimmed — here.)
+        let title: text::Text = text::from_str(f.text().trim());
+        if title.view().is_empty() {
+            this.set_status("Title required");
+            return;
+        }
+        let shown: text::Text = title.clone();
+        if !this.tasks.append(title).is_ok() {
+            this.set_status("Out of memory");
+            return;
+        }
+        let _f: text_field::TextField = f.set_text("");
+        this.set_status("Added: ${shown.view()}");
+        this.reload();
+    }
+
+    // Simulated network sync: the status says it is pending, then what it did.
+    fn on_sync(ref this, sender: *u8) {
+        this.set_status("Syncing…");
+        if let option::Option::Some(b) = button::find("sync", within: this.context.root()) {
+            let _b: button::Button = b.set_enabled(false);
+        }
+        this.pending = services::after(0.4f64, this.finish_sync);
+    }
+
+    fn finish_sync(ref this) {
+        this.syncs = this.syncs + 1;
+        let n: usize = this.tasks.count();
+        this.set_status("Synced ${n} tasks");
+        if let option::Option::Some(b) = button::find("sync", within: this.context.root()) {
+            let _b: button::Button = b.set_enabled(true);
+        }
+    }
+
+    fn on_task_tapped(ref this, sender: *u8) {
+        guard let option::Option[usize]::Some(at) = component::item_index_of(sender) else { return; };
+        guard let option::Option[*text::Text]::Some(p) = this.tasks.at_ptr(at) else { return; };
+        let title: text::Text = { (*p).clone() };
+        let _pushed: bool = this.context.navigator().push("detail", arg: title.view());
+    }
+
+    fn row_at(this, i: usize) -> core::Node {
+        let title: text::Text = match this.tasks.at_ptr(i) {
+            option::Option[*text::Text]::Some(p) => { (*p).clone() }
+            option::Option[*text::Text]::None => { text::new() }
+        };
+        return @ui { label(title.view(), key: "task:${i}") }.padding(6.0);
+    }
+
+    fn set_status(this, s: str) {
+        if let option::Option::Some(l) = label::find("status", within: this.context.root()) {
+            let _l: label::Label = l.set_text(s);
+        }
+    }
+
+    fn reload(this) {
+        let n: usize = this.tasks.count();
+        if let option::Option::Some(l) = list::find("tasks", within: this.context.root()) {
+            let _l: list::List = l.set_count(n);
+        }
+        let noun: str = if n == (1 as usize) { "task" } else { "tasks" };
+        if let option::Option::Some(c) = label::find("count", within: this.context.root()) {
+            let _c: label::Label = c.set_text("${n} ${noun}");
+        }
+    }
+}
+
+impl Home: component::Component {
+    fn build(ref this) -> core::Node {
+        return @ui {
+            column {
+                label("Tasks", key: "title", font_size: 24.0, font_weight: vocab::FontWeight::Bold)
+                row {
+                    text_field("", key: "new_title", placeholder: "New task", on_submit: this.on_add)
+                        .grow(1.0)
+                    button("Add", key: "add", on_click: this.on_add)
+                }
+                    .gap(8.0)
+                label("", key: "status")
+                label("0 tasks", key: "count")
+                list(key: "tasks", on_item_tapped: this.on_task_tapped)
+                    .grow(1.0)
+                button("Sync", key: "sync", on_click: this.on_sync)
+            }
+                .grow(1.0)
+                .gap(10.0)
+                .padding(20.0)
+                .align(flex::Align::Stretch)
+        };
+    }
+}
+
+impl Home: component::Lifecycle {
+    // A list is armed after mount: its data source is this screen.
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
+        if let option::Option::Some(l) = list::find("tasks", within: this.context.root()) {
+            let _l: list::List = l.set_row(this.row_at).set_count(this.tasks.count());
+        }
+    }
+}
+
+impl Home: screen::Screen {
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+}
+
+fn home_boxed() -> screen::ScreenBox {
+    return screen::screen_box::[Home](Home::new());
+}
+
+// ── Detail: one task ─────────────────────────────────────────────────────────
+
+struct Detail { context: nav::Context }
+
+impl Detail {
+    fn back(ref this, sender: *u8) { let _popped: bool = this.context.navigator().pop(); }
+}
+
+impl Detail: component::Component {
+    fn build(ref this) -> core::Node {
+        return @ui {
+            column {
+                button("Back", key: "back", on_click: this.back)
+                label(this.context.arg(), key: "detail_title", font_size: 20.0)
+            }
+                .gap(12.0)
+                .padding(20.0)
+        };
+    }
+}
+
+impl Detail: component::Lifecycle { }
+
+impl Detail: screen::Screen {
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+}
+
+fn detail_boxed() -> screen::ScreenBox {
+    return screen::screen_box::[Detail](Detail { context: nav::Context::none() });
+}
+
+// ── The app ──────────────────────────────────────────────────────────────────
+
+fn run() -> i32 {
+    // Serving IS the opt-in: every verb an agent needs comes with these two
+    // lines. Anything that connects is admitted — see src/agent_consent.cplus
+    // to ask the user first.
+    agent::enable();
+    let app: runtime::App = runtime::App::new("tasks_agent_loop");
+    let main = app.window("home", home_boxed,
+        chrome: screen::Chrome::new(title: "Tasks", width: 420.0f64, height: 560.0f64));
+    let _r: bool = main.route("detail", detail_boxed);
+    app.agent_mcp();
+    match app.run("home") {
+        status::Status::Ok => { return 0; }
+        _other => { return 1; }
+    }
+}

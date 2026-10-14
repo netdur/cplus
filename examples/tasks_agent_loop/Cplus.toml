@@ -1,0 +1,35 @@
+[package]
+name    = "tasks_agent_loop"
+version = "0.0.1"
+edition = "2026"
+app_id  = "dev.cplus.tasksagentloop"
+
+[macos]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib        = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+
+# facet's AppKit backend and its closure.
+[macos.dependencies]
+facet_appkit = "*"
+appkit       = "*"
+objc         = "*"
+quartzcore   = "*"
+webkit       = "*"
+
+# What the agent surface in src/app.cplus links. Named here for
+# the same reason the backend's closure is: the resolver checks every
+# import against this one flat set. Delete these with that line if
+# you would rather the binary could not be inspected.
+inspector    = "*"
+facet_agent  = "*"
+agent_appkit = "*"
+agent_core   = "*"
+agent_inapp  = "*"
+agent_mcp    = "*"
+json         = "*"

@@ -1,0 +1,11 @@
+// tasks_agent_loop — the desktop entry. The same `app::run` the iOS shell
+// calls; `facet_runtime` selects its own per-platform backend, so there
+// is nothing to install here.
+
+import "./app" as app;
+
+fn main() -> i32 {
+    // The agent surface is armed in src/app.cplus, the one file
+    // every platform builds.
+    return app::run();
+}
