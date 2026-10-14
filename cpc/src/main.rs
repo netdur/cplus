@@ -523,10 +523,17 @@ fn main() -> ExitCode {
     // because the inline `--emit-*` flags run sema from inside it.
     target::set_feature_probe(probe_target_macros);
     let mut subcommand: Option<Subcommand> = None;
-    // Phase 5 Slice 5.A: deferred-dispatch input for `--emit-obj FILE`.
-    // Order-independent with `-o OUT.o` because the FILE may appear before
-    // or after the flag in the user's command line.
-    let mut emit_obj_input: Option<PathBuf> = None;
+    #[derive(Clone)]
+    enum DeferredEmit {
+        Tokens(PathBuf),
+        Ast(PathBuf),
+        Ll(PathBuf),
+        LlOpt(PathBuf),
+        Asm(PathBuf),
+        Header(PathBuf),
+        Obj(PathBuf),
+    }
+    let mut deferred_emit: Option<DeferredEmit> = None;
     let mut fmt_opts = FmtOpts::default();
     let mut fmt_inputs: Vec<PathBuf> = Vec::new();
     let mut test_opts = TestOpts::default();
@@ -582,28 +589,24 @@ fn main() -> ExitCode {
                     eprintln!("cpc: --tokens requires a FILE argument");
                     return ExitCode::FAILURE;
                 };
-                return dump_tokens(PathBuf::from(v), diag_mode);
+                deferred_emit = Some(DeferredEmit::Tokens(PathBuf::from(v)));
+                i += 2;
             }
             Some("--ast") => {
                 let Some(v) = args.get(i + 1) else {
                     eprintln!("cpc: --ast requires a FILE argument");
                     return ExitCode::FAILURE;
                 };
-                return dump_ast(PathBuf::from(v), diag_mode);
+                deferred_emit = Some(DeferredEmit::Ast(PathBuf::from(v)));
+                i += 2;
             }
             Some("--emit-ll") => {
                 let Some(v) = args.get(i + 1) else {
                     eprintln!("cpc: --emit-ll requires a FILE argument");
                     return ExitCode::FAILURE;
                 };
-                return dump_ll(
-                    PathBuf::from(v),
-                    diag_mode,
-                    build_mode,
-                    fp_contract,
-                    emit_debug_info,
-                    &sanitizers,
-                );
+                deferred_emit = Some(DeferredEmit::Ll(PathBuf::from(v)));
+                i += 2;
             }
             Some("--emit-ll-opt") => {
                 // Slice 1G: post-pass LLVM IR. Runs clang with
@@ -614,13 +617,8 @@ fn main() -> ExitCode {
                     eprintln!("cpc: --emit-ll-opt requires a FILE argument");
                     return ExitCode::FAILURE;
                 };
-                return dump_ll_or_asm(
-                    PathBuf::from(v),
-                    diag_mode,
-                    build_mode,
-                    fp_contract,
-                    ClangOutputKind::LlvmIr,
-                );
+                deferred_emit = Some(DeferredEmit::LlOpt(PathBuf::from(v)));
+                i += 2;
             }
             Some("--emit-asm") => {
                 // Slice 1G: native assembly via `clang -S` at the
@@ -630,13 +628,8 @@ fn main() -> ExitCode {
                     eprintln!("cpc: --emit-asm requires a FILE argument");
                     return ExitCode::FAILURE;
                 };
-                return dump_ll_or_asm(
-                    PathBuf::from(v),
-                    diag_mode,
-                    build_mode,
-                    fp_contract,
-                    ClangOutputKind::Assembly,
-                );
+                deferred_emit = Some(DeferredEmit::Asm(PathBuf::from(v)));
+                i += 2;
             }
             Some("--emit-header") => {
                 // Phase 5 Slice 5.E: emit a C header (`.h`) declaring
@@ -646,7 +639,8 @@ fn main() -> ExitCode {
                     eprintln!("cpc: --emit-header requires a FILE argument");
                     return ExitCode::FAILURE;
                 };
-                return dump_header(PathBuf::from(v), None, diag_mode);
+                deferred_emit = Some(DeferredEmit::Header(PathBuf::from(v)));
+                i += 2;
             }
             Some("--emit-obj") => {
                 // Phase 5 (v0.0.2 Slice 5.A): emit a relocatable object
@@ -659,7 +653,7 @@ fn main() -> ExitCode {
                     eprintln!("cpc: --emit-obj requires a FILE argument");
                     return ExitCode::FAILURE;
                 };
-                emit_obj_input = Some(PathBuf::from(v));
+                deferred_emit = Some(DeferredEmit::Obj(PathBuf::from(v)));
                 i += 2;
                 continue;
             }
@@ -996,13 +990,64 @@ fn main() -> ExitCode {
         }
     }
 
+    // Dispatch single-file `--tokens`, `--ast`, `--emit-*` flags after the
+    // full command line has been parsed so trailing flags (`--release`, `-g`,
+    // `--target`, `--fp-contract=off`, sanitizers) are respected regardless of
+    // order.
+    if let Some(action) = deferred_emit {
+        return match action {
+            DeferredEmit::Tokens(p) => dump_tokens(p, diag_mode),
+            DeferredEmit::Ast(p) => dump_ast(p, diag_mode),
+            DeferredEmit::Ll(p) => dump_ll(
+                p,
+                diag_mode,
+                build_mode,
+                fp_contract,
+                emit_debug_info,
+                &sanitizers,
+            ),
+            DeferredEmit::LlOpt(p) => dump_ll_or_asm(
+                p,
+                diag_mode,
+                build_mode,
+                fp_contract,
+                emit_debug_info,
+                &sanitizers,
+                ClangOutputKind::LlvmIr,
+            ),
+            DeferredEmit::Asm(p) => dump_ll_or_asm(
+                p,
+                diag_mode,
+                build_mode,
+                fp_contract,
+                emit_debug_info,
+                &sanitizers,
+                ClangOutputKind::Assembly,
+            ),
+            DeferredEmit::Header(p) => dump_header(p, None, diag_mode),
+            DeferredEmit::Obj(obj_in) => {
+                let Some(obj_out) = out else {
+                    eprintln!("cpc: --emit-obj requires `-o OUT.o`");
+                    return ExitCode::FAILURE;
+                };
+                dump_obj(
+                    obj_in,
+                    obj_out,
+                    diag_mode,
+                    build_mode,
+                    fp_contract,
+                    emit_debug_info,
+                    &sanitizers,
+                )
+            }
+        };
+    }
+
     // v0.0.21 multi-backend slice 1: external-builder targets stop at object
     // emission — cpc never runs their final link (Xcode/NDK/ESP-IDF own it).
     // Reject the host-link entry points up front with a pointer to the
-    // supported flows. `--emit-obj` (checked via emit_obj_input) and the
-    // `--emit-ll`/`--emit-asm` flags (already dispatched inline above) are
-    // the handoff points; `build` routes by entry/library and handoff class.
-    if target_spec.handoff == Handoff::ExternalBuilder && emit_obj_input.is_none() {
+    // supported flows.
+    if target_spec.handoff == Handoff::ExternalBuilder {
         match (subcommand, &input) {
             (Some(Subcommand::Test), _) => {
                 eprintln!(
@@ -1037,17 +1082,6 @@ fn main() -> ExitCode {
         _ => Vec::new(),
     };
 
-    // Phase 5 Slice 5.A: `--emit-obj FILE -o OUT.o` runs before any
-    // subcommand dispatch. Both args must be present; both can be in any
-    // order on the command line because we deferred them here.
-    if let Some(obj_in) = emit_obj_input {
-        let Some(obj_out) = out else {
-            eprintln!("cpc: --emit-obj requires `-o OUT.o`");
-            return ExitCode::FAILURE;
-        };
-        return dump_obj(obj_in, obj_out, diag_mode, build_mode, fp_contract);
-    }
-
     match (subcommand, input) {
         (Some(Subcommand::Build), _) => build_project(
             out,
@@ -1065,14 +1099,26 @@ fn main() -> ExitCode {
             &sanitizers,
             emit_debug_info,
         ),
-        (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode, fp_contract),
+        (Some(Subcommand::EmitLlProject), _) => emit_ll_project(
+            diag_mode,
+            build_mode,
+            fp_contract,
+            emit_debug_info,
+            &sanitizers,
+        ),
         (Some(Subcommand::PrintLinkArgs), _) => {
             print_link_args(diag_mode, build_mode, &sanitizers)
         }
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
-        (Some(Subcommand::Test), _) => {
-            run_test(test_input, test_opts, diag_mode, build_mode, &sanitizers, fp_contract)
-        }
+        (Some(Subcommand::Test), _) => run_test(
+            test_input,
+            test_opts,
+            diag_mode,
+            build_mode,
+            &sanitizers,
+            fp_contract,
+            emit_debug_info,
+        ),
         (Some(Subcommand::Lsp), _) => run_lsp(lsp_args),
         (Some(Subcommand::Check), Some(path)) => run_check(path, diag_mode),
         (Some(Subcommand::Check), None) => run_check_project(diag_mode),
@@ -3510,14 +3556,19 @@ fn build_project(
     warn_orphan_sources(&loaded_paths, &m.root, diag_mode);
     timings::inlined_from(&loaded_paths, &dep_source_dirs(&m));
     ensure_coro_end_probed();
+    let dbg_path = if emit_debug_info {
+        Some(entry.as_path())
+    } else {
+        None
+    };
     let ir = timings::phase("codegen", || {
         codegen::generate_with_mono(
             &program,
             build_mode,
             fp_contract,
-            None,
+            dbg_path,
             sanitizers,
-            emit_debug_info,
+            false,
             &mono,
         )
     });
@@ -4122,7 +4173,13 @@ fn build_lib_project(
 /// convention and entry-name spelling (`is_lib` / `c_abi_entry`), and emitting
 /// bin flags for a lib manifest makes this flag useless for exactly the bug
 /// that only appears in an archive.
-fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool) -> ExitCode {
+fn emit_ll_project(
+    diag_mode: DiagMode,
+    build_mode: BuildMode,
+    fp_contract: bool,
+    emit_debug_info: bool,
+    sanitizers: &[&str],
+) -> ExitCode {
     let manifest_path = PathBuf::from("Cplus.toml");
     let m = match manifest::load(&manifest_path) {
         Ok(m) => m,
@@ -4174,8 +4231,19 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
         Err(code) => return code,
     };
     ensure_coro_end_probed();
+    let dbg_path = if emit_debug_info {
+        Some(entry.as_path())
+    } else {
+        None
+    };
     let ir = prune_ir(codegen::generate_with_mono(
-        &program, build_mode, fp_contract, None, &[], is_lib, &mono,
+        &program,
+        build_mode,
+        fp_contract,
+        dbg_path,
+        sanitizers,
+        is_lib,
+        &mono,
     ));
     print!("{ir}");
     ExitCode::SUCCESS
@@ -4670,6 +4738,7 @@ fn run_test(
     // `cpc test --fp-contract=off` was ignored.
     // bugs/cpc-test-asan-does-not-instrument.md
     fp_contract: bool,
+    _emit_debug_info: bool,
 ) -> ExitCode {
     // Named for the package table: `cpc test` reaches here from a manifest
     // (a package suite) or from a bare file, and only the first has a name.
@@ -7303,6 +7372,8 @@ fn dump_obj(
     diag_mode: DiagMode,
     build_mode: BuildMode,
     fp_contract: bool,
+    emit_debug_info: bool,
+    sanitizers: &[&str],
 ) -> ExitCode {
     let src = match fs::read_to_string(&input) {
         Ok(s) => s,
@@ -7311,7 +7382,15 @@ fn dump_obj(
             return ExitCode::FAILURE;
         }
     };
-    let ir = match build_ir(&input, &src, diag_mode, build_mode, fp_contract, false, &[]) {
+    let ir = match build_ir(
+        &input,
+        &src,
+        diag_mode,
+        build_mode,
+        fp_contract,
+        emit_debug_info,
+        sanitizers,
+    ) {
         Ok(ir) => ir,
         Err(code) => return code,
     };
@@ -7345,15 +7424,18 @@ fn dump_obj(
             return ExitCode::FAILURE;
         }
     };
-    let status = Command::new(&prog)
-        .arg(opt)
+    let mut cmd = Command::new(&prog);
+    cmd.arg(opt)
         .arg("-Wno-override-module")
-        .args(clang_target_args(&tgt))
-        .arg("-c")
-        .arg(&tmp)
-        .arg("-o")
-        .arg(&out)
-        .status();
+        .args(clang_target_args(&tgt));
+    if emit_debug_info {
+        cmd.arg("-g");
+    }
+    if !sanitizers.is_empty() {
+        cmd.arg(format!("-fsanitize={}", sanitizers.join(",")));
+        cmd.arg("-fno-omit-frame-pointer");
+    }
+    let status = cmd.arg("-c").arg(&tmp).arg("-o").arg(&out).status();
     drop(tmp_handle);
     match status {
         Ok(s) if s.success() => ExitCode::SUCCESS,
@@ -7373,6 +7455,8 @@ fn dump_ll_or_asm(
     mode: DiagMode,
     build_mode: BuildMode,
     fp_contract: bool,
+    emit_debug_info: bool,
+    sanitizers: &[&str],
     output_kind: ClangOutputKind,
 ) -> ExitCode {
     let src = match fs::read_to_string(&path) {
@@ -7382,7 +7466,15 @@ fn dump_ll_or_asm(
             return ExitCode::FAILURE;
         }
     };
-    let ir = match build_ir(&path, &src, mode, build_mode, fp_contract, false, &[]) {
+    let ir = match build_ir(
+        &path,
+        &src,
+        mode,
+        build_mode,
+        fp_contract,
+        emit_debug_info,
+        sanitizers,
+    ) {
         Ok(ir) => ir,
         Err(code) => return code,
     };

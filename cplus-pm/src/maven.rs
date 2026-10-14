@@ -741,6 +741,40 @@ fn chain(
                     .or_insert_with(|| property.text.trim().to_string());
             }
         }
+
+        let parent = pom.child("parent").and_then(|p| {
+            let group = p.text_of("groupId")?;
+            let artifact = p.text_of("artifactId")?;
+            let version = p.text_of("version")?;
+            Some((group, artifact, version))
+        });
+        chain.poms.push(pom);
+        if let Some((group, artifact, version)) = parent {
+            at = Some(Coord::new(&group, &artifact, &version)?);
+        }
+    }
+
+    if chain.poms.is_empty() {
+        return Ok(None);
+    }
+    // `${project.*}` refers to the artifact being resolved, not to whichever
+    // POM in the chain declared the reference. Populate before interpolating
+    // `<dependencyManagement>` across the chain so child POM entries can
+    // reference both `${project.version}` and parent `<properties>`.
+    chain
+        .props
+        .entry("project.version".to_string())
+        .or_insert_with(|| coord.version.clone());
+    chain
+        .props
+        .entry("project.groupId".to_string())
+        .or_insert_with(|| coord.group.clone());
+    chain
+        .props
+        .entry("project.artifactId".to_string())
+        .or_insert_with(|| coord.artifact.clone());
+
+    for pom in &chain.poms {
         if let Some(managed) = pom.child("dependencyManagement") {
             for dep in managed.find_all("dependency") {
                 let (Some(group), Some(artifact)) =
@@ -789,36 +823,7 @@ fn chain(
                 }
             }
         }
-
-        let parent = pom.child("parent").and_then(|p| {
-            let group = p.text_of("groupId")?;
-            let artifact = p.text_of("artifactId")?;
-            let version = p.text_of("version")?;
-            Some((group, artifact, version))
-        });
-        chain.poms.push(pom);
-        if let Some((group, artifact, version)) = parent {
-            at = Some(Coord::new(&group, &artifact, &version)?);
-        }
     }
-
-    if chain.poms.is_empty() {
-        return Ok(None);
-    }
-    // `${project.*}` refers to the artifact being resolved, not to whichever
-    // POM in the chain declared the reference.
-    chain
-        .props
-        .entry("project.version".to_string())
-        .or_insert_with(|| coord.version.clone());
-    chain
-        .props
-        .entry("project.groupId".to_string())
-        .or_insert_with(|| coord.group.clone());
-    chain
-        .props
-        .entry("project.artifactId".to_string())
-        .or_insert_with(|| coord.artifact.clone());
     Ok(Some(chain))
 }
 
@@ -829,7 +834,10 @@ fn properties_of(pom: &Element) -> BTreeMap<String, String> {
             props.insert(property.name.clone(), property.text.trim().to_string());
         }
     }
-    if let Some(version) = pom.text_of("version") {
+    if let Some(version) = pom
+        .text_of("version")
+        .or_else(|| pom.child("parent").and_then(|p| p.text_of("version")))
+    {
         props.insert("project.version".to_string(), version);
     }
     props

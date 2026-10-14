@@ -27,7 +27,9 @@ import json
 import os
 import sys
 
-ROOT = "/Users/adel/Workspace/C+"
+from pathlib import Path
+
+ROOT = str(Path(__file__).resolve().parents[1])
 SPEC = f"{ROOT}/plans/portable-spec.generated.json"
 OUT = f"{ROOT}/plans/generated"
 

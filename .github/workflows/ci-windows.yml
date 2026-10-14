@@ -74,10 +74,10 @@ jobs:
           rustc --version
 
       - name: Run the workspace test suite
-        run: cargo test --workspace --release --no-fail-fast
+        run: cargo test --locked --workspace --release --no-fail-fast
 
       - name: Build release binaries
-        run: cargo build --release -p cpc -p cpc-lsp -p cpc-bindgen
+        run: cargo build --locked --release -p cpc -p cpc-lsp -p cpc-bindgen
 
       - name: Smoke-test the built cpc on a clean program
         shell: pwsh
@@ -134,7 +134,7 @@ jobs:
 
       # No rust-cache and no tests: these are the bytes that get published.
       - name: Build release binaries
-        run: cargo build --release -p cpc -p cpc-lsp -p cpc-bindgen
+        run: cargo build --locked --release -p cpc -p cpc-lsp -p cpc-bindgen
 
       - name: Zip
         shell: pwsh

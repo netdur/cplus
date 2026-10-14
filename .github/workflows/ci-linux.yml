@@ -51,7 +51,7 @@ jobs:
           clang-19 --version | head -1
 
       - name: Run the workspace test suite
-        run: cargo test --workspace --no-fail-fast
+        run: cargo test --locked --workspace --no-fail-fast
 
   build-deb:
     name: Build + apt-install + smoke-test the .deb
@@ -69,17 +69,28 @@ jobs:
       # No rust-cache: what may become a release asset is built from a clean
       # target/, not from one a test run could have written into.
       - name: Build release binaries
-        run: cargo build --release -p cpc -p cpc-lsp -p cpc-bindgen
+        run: cargo build --locked --release -p cpc -p cpc-lsp -p cpc-bindgen
 
       - name: Stage and build the .deb
         id: deb
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # Upstream version from the cpc crate; append a git short SHA so dev
-          # builds get unique, sortable versions.
+          # Upstream version from the cpc crate; on a release tag use the exact
+          # upstream version (and verify it matches the tag), otherwise append a
+          # git short SHA so dev builds get unique, sortable versions.
           UPSTREAM="$(sed -n 's/^version *= *"\(.*\)"/\1/p' cpc/Cargo.toml | head -1)"
-          SHA="$(git rev-parse --short=7 HEAD)"
-          VER="${UPSTREAM}~git${SHA}-1"
+          if [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if [[ "$UPSTREAM" != "${REF_NAME#v}" ]]; then
+              echo "cpc/Cargo.toml version ($UPSTREAM) does not match tag ($REF_NAME)" >&2
+              exit 1
+            fi
+            VER="${UPSTREAM}-1"
+          else
+            SHA="$(git rev-parse --short=7 HEAD)"
+            VER="${UPSTREAM}~git${SHA}-1"
+          fi
           PKG="cplus_${VER}_amd64"
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "pkg=$PKG"     >> "$GITHUB_OUTPUT"

@@ -64,6 +64,6 @@ jobs:
         # bug, so we keep the attribute and skip just these two here; both are
         # fully exercised by ci-linux.yml + ci-windows.yml.
         run: |
-          cargo test --workspace --no-fail-fast -- \
+          cargo test --locked --workspace --no-fail-fast -- \
             --skip extern_struct_return_sret_cross_language_g027 \
             --skip cpc_bindgen_round_trips_via_c_library

@@ -25,7 +25,9 @@ import re
 import sys
 from collections import defaultdict, OrderedDict
 
-ROOT = "/Users/adel/Workspace/C+"
+from pathlib import Path
+
+ROOT = str(Path(__file__).resolve().parents[1])
 
 # The backend whose surface we diff against. Structured so other backends slot in
 # (each is bindgen-generated with the same impl shape); a portable audit would

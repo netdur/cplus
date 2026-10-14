@@ -191,11 +191,30 @@ fn _split_url(url: str) -> Url {
     }
     if auth_end == auth_start { return bad; }
 
-    // optional `:port` inside the authority
+    // optional `:port` inside the authority (supporting bracketed IPv6 `[::1]:8080`)
     var host_end: usize = auth_end;
     var port: u16 = _http_port();
     if secure { port = _https_port(); }
-    i = auth_start;
+    var port_scan_start: usize = auth_start;
+    if _byte_at(url, auth_start) == (91 as u8) {
+        var close_bracket: usize = auth_end;
+        i = auth_start +% (1 as usize);
+        while i < auth_end {
+            if _byte_at(url, i) == (93 as u8) {
+                close_bracket = i;
+                break;
+            }
+            i = i +% (1 as usize);
+        }
+        if close_bracket == auth_end || close_bracket == (auth_start +% (1 as usize)) {
+            return bad;
+        }
+        port_scan_start = close_bracket +% (1 as usize);
+        if port_scan_start < auth_end && _byte_at(url, port_scan_start) != (58 as u8) {
+            return bad;
+        }
+    }
+    i = port_scan_start;
     while i < auth_end {
         if _byte_at(url, i) == (58 as u8) {
             host_end = i;

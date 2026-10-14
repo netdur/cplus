@@ -291,9 +291,27 @@ impl Value {
     }
     // Does the object carry `key` at all? (A present `null` still counts.)
     fn has(this, key: str) -> bool {
-        return match this.value(key) {
-            option::Option[Value]::Some(v) => true,
-            option::Option::None => false,
+        return match this {
+            Value::Object(arr) => {
+                let n: usize = arr.count();
+                var i: usize = 0;
+                var found: bool = false;
+                while i < n {
+                    match arr.at_ptr(i) {
+                        option::Option[*Member]::Some(p) => {
+                            if { (*p).key } == key {
+                                found = true;
+                                i = n;
+                            } else {
+                                i = i +% 1;
+                            }
+                        }
+                        option::Option::None => { i = n; }
+                    }
+                }
+                found
+            }
+            _ => false,
         };
     }
 }
@@ -318,7 +336,9 @@ fn buf_push(b: Buf, byte: u8) -> Buf {
     var b: Buf = b;
     if b.len == b.cap {
         let nc: usize = if b.cap == (0 as usize) { 16 as usize } else { b.cap *% (2 as usize) };
+        if nc <= b.cap { return b; }
         let raw: *u8 = { realloc(b._ptr, nc) };
+        if { #addr(raw) } == 0 { return b; }
         b._ptr = raw;
         b.cap = nc;
     }
@@ -831,10 +851,15 @@ fn escape_into(b: Buf, s: str) -> Buf {
         else if c == 13 { b = buf_push(b, '\\' as u8); b = buf_push(b, 'r' as u8); }
         else if c == 9 { b = buf_push(b, '\\' as u8); b = buf_push(b, 't' as u8); }
         else if c < 32 {
-            let hex: *u8 = { malloc(7) };
-            { snprintf(hex, 7, #str_ptr("\\u%04x\0"), c as i32); }
-            b = buf_push_bytes(b, hex, 6);
-            { free(hex); }
+            let digits: *u8 = #str_ptr("0123456789abcdef");
+            let hi_p: *u8 = { digits + (((c >> 4) & 0x0F) as usize) };
+            let lo_p: *u8 = { digits + ((c & 0x0F) as usize) };
+            b = buf_push(b, '\\' as u8);
+            b = buf_push(b, 'u' as u8);
+            b = buf_push(b, '0' as u8);
+            b = buf_push(b, '0' as u8);
+            b = buf_push(b, { *hi_p });
+            b = buf_push(b, { *lo_p });
         }
         else { b = buf_push(b, c); }
         i = i +% 1;

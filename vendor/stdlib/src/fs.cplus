@@ -287,65 +287,60 @@ impl File {
     // line with a piece of it missing.
     gen fn lines(this) -> text::Text {
         var carry: vec::Vec[u8] = vec::new::[u8]();
+        var pos: usize = 0 as usize;
         let chunk_size: usize = 4096;
-        let chunk: *u8 = { malloc(chunk_size) };
-        if chunk.is_null() {
-            return;   // cannot allocate the scan buffer; yield no lines
-        }
         loop {
+            // First drain any complete lines already buffered in `carry[pos..]`.
+            var i: usize = pos;
+            while i < carry.count() {
+                let cp: *u8 = { #slice_ptr(carry.as_slice()) };
+                let bp: *u8 = { cp + i };
+                if { *bp } == (10 as u8) {
+                    let line_p: *u8 = { cp + pos };
+                    let line_len: usize = i -% pos;
+                    let view: str = { #str_from_raw_parts(line_p, line_len) };
+                    let line: text::Text = view.to_text();
+                    pos = i +% (1 as usize);
+                    yield line;
+                    i = pos;
+                } else {
+                    i = i +% (1 as usize);
+                }
+            }
+            // Compact consumed prefix before reading the next chunk.
+            if pos > (0 as usize) {
+                let rem: usize = carry.count() -% pos;
+                var next_carry: vec::Vec[u8] = vec::new::[u8]();
+                if rem > (0 as usize) {
+                    let cp: *u8 = { #slice_ptr(carry.as_slice()) };
+                    let tail_p: *u8 = { cp + pos };
+                    if !next_carry.extend_from_raw(tail_p, rem).is_ok() {
+                        return;
+                    }
+                }
+                carry = next_carry;
+                pos = 0 as usize;
+            }
+            // Read the next 4 KiB chunk into `carry` and free the temporary
+            // buffer immediately so no raw allocation is held across `yield`.
+            let chunk: *u8 = { malloc(chunk_size) };
+            if chunk.is_null() {
+                return;
+            }
             let n: isize = { fsys::read_fd(this._fd, chunk, chunk_size) };
             if n <= (0 as isize) {
-                // EOF (n == 0) or error (n < 0). Yield any pending
-                // partial line, then stop. Read errors are silently
-                // surfaced as "no more lines" — callers needing error
-                // detail should use `read_to_end` + manual splitting.
+                { free(chunk); }
                 if carry.count() > (0 as usize) {
-                    let cs: u8[] = carry.as_slice();
-                    let cp: *u8 = { #slice_ptr(cs) };
+                    let cp: *u8 = { #slice_ptr(carry.as_slice()) };
                     let view: str = { #str_from_raw_parts(cp, carry.count()) };
                     yield view.to_text();
                 }
-                { free(chunk); }
                 return;
             }
-            let count: usize = n as usize;
-            var start: usize = 0 as usize;
-            var i: usize = 0 as usize;
-            while i < count {
-                let bp: *u8 = { chunk + i };
-                let b: u8 = { *bp };
-                if b == (10 as u8) {
-                    let chunk_p: *u8 = { chunk + start };
-                    let chunk_len: usize = i -% start;
-                    if carry.count() == (0 as usize) {
-                        let view: str = { #str_from_raw_parts(chunk_p, chunk_len) };
-                        yield view.to_text();
-                    } else {
-                        if !carry.extend_from_raw(chunk_p, chunk_len).is_ok() {
-                            { free(chunk); }
-                            return;
-                        }
-                        // Inline the slice rather than binding it: a bound `u8[]`
-                        // view of `carry` keeps `carry` borrowed through the
-                        // `remove_all()` below (borrowck is lexical), even though
-                        // the view is dead after `#slice_ptr`. The raw pointer
-                        // stays valid until `remove_all` frees the buffer — which
-                        // runs after `view` has been copied out via `to_text`.
-                        let cp: *u8 = { #slice_ptr(carry.as_slice()) };
-                        let view: str = { #str_from_raw_parts(cp, carry.count()) };
-                        yield view.to_text();
-                        carry.remove_all();
-                    }
-                    start = i +% (1 as usize);
-                }
-                i = i +% (1 as usize);
-            }
-            if start < count {
-                let rest_p: *u8 = { chunk + start };
-                if !carry.extend_from_raw(rest_p, count -% start).is_ok() {
-                    { free(chunk); }
-                    return;
-                }
+            let ok: bool = carry.extend_from_raw(chunk, n as usize).is_ok();
+            { free(chunk); }
+            if !ok {
+                return;
             }
         }
     }

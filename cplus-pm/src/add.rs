@@ -184,48 +184,48 @@ pub fn add(
     // Fetching stays the LAST rung, not the first: a project that depends on a
     // package it does not have locally still gets it.
     let raw_spec = spec.unwrap_or("*").to_string();
-    let dep = vendor::root_pending(name, &raw_spec, options.toolchain.as_ref())
-        .map_err(AddError::Vendor)?;
     let store_root = options.resolved_store_root();
-    // A PINNED spec names a specific repo, ref and version, and the local rungs
-    // cannot honour any of that — a directory called `foo` beside the project
-    // is not evidence that it is the `foo` at that URL. So a pin always fetches;
-    // the ladder is for the bare and sibling specs, which are exactly the ones
-    // that mean "the package this toolchain ships".
-    let local_first = !matches!(DepSpec::parse(&raw_spec), Ok(DepSpec::Pinned(_)));
-    let pkg_text = match local_first
-        .then(|| local_package_manifest(project_dir, name, options))
-        .flatten()
-    {
-        Some(text) => text,
-        None => {
-            let cache_root = options
-                .cache_root
-                .clone()
-                .or_else(|| store_root.as_ref().map(|r| r.join("cache")))
-                .ok_or(AddError::Vendor(VendorError::NoStoreRoot))?;
-            let repo_url = options
-                .repo_url_override
-                .clone()
-                .unwrap_or_else(|| dep.repo_url.clone());
-            let checkout = Checkout::new(&dep.repo, repo_url, &dep.tag, &cache_root);
-            let source_root = checkout
-                .ensure()
-                .map_err(|e| AddError::Vendor(VendorError::Fetch(e)))?
-                .to_path_buf();
-            let sha = checkout
-                .head_sha()
-                .map_err(|e| AddError::Vendor(VendorError::Fetch(e)))?;
-            if let Some(root) = &store_root {
-                vendor::check_tag_record(root, &dep, &sha).map_err(AddError::Vendor)?;
+
+    let read_pkg_manifest = |pkg_name: &str, pkg_spec: &str| -> Result<String, AddError> {
+        let dep = vendor::root_pending(pkg_name, pkg_spec, options.toolchain.as_ref())
+            .map_err(AddError::Vendor)?;
+        let local_first = !matches!(DepSpec::parse(pkg_spec), Ok(DepSpec::Pinned(_)));
+        match local_first
+            .then(|| local_package_manifest(project_dir, pkg_name, options))
+            .flatten()
+        {
+            Some(text) => Ok(text),
+            None => {
+                let cache_root = options
+                    .cache_root
+                    .clone()
+                    .or_else(|| store_root.as_ref().map(|r| r.join("cache")))
+                    .ok_or(AddError::Vendor(VendorError::NoStoreRoot))?;
+                let repo_url = options
+                    .repo_url_override
+                    .clone()
+                    .unwrap_or_else(|| dep.repo_url.clone());
+                let checkout = Checkout::new(&dep.repo, repo_url, &dep.tag, &cache_root);
+                let source_root = checkout
+                    .ensure()
+                    .map_err(|e| AddError::Vendor(VendorError::Fetch(e)))?
+                    .to_path_buf();
+                let sha = checkout
+                    .head_sha()
+                    .map_err(|e| AddError::Vendor(VendorError::Fetch(e)))?;
+                if let Some(root) = &store_root {
+                    vendor::check_tag_record(root, &dep, &sha).map_err(AddError::Vendor)?;
+                }
+                let pkg_dir = vendor::join_subpath(&source_root, &dep.subpath);
+                fs::read_to_string(pkg_dir.join(MANIFEST_NAME)).map_err(|source| AddError::Io {
+                    path: pkg_dir.join(MANIFEST_NAME),
+                    source,
+                })
             }
-            let pkg_dir = vendor::join_subpath(&source_root, &dep.subpath);
-            fs::read_to_string(pkg_dir.join(MANIFEST_NAME)).map_err(|source| AddError::Io {
-                path: pkg_dir.join(MANIFEST_NAME),
-                source,
-            })?
         }
     };
+
+    let pkg_text = read_pkg_manifest(name, &raw_spec)?;
     let (base_deps, platform_deps) = split_sections(&pkg_text)?;
 
     // Was the added package itself pinned by URL? Its bare siblings then
@@ -254,24 +254,76 @@ pub fn add(
         }
     };
 
-    // The package's own line, then its base closure, then the target
-    // platforms' closures.
+    // The package's own line, then its transitive base closure, then the target
+    // platforms' transitive closures.
     upsert(&mut doc, None, name, &raw_spec, &mut report.entries);
-    for (dep_name, value) in &base_deps {
-        let spec = rewrite_kv(dep_name, value);
-        upsert(&mut doc, None, dep_name, &spec, &mut report.entries);
+    let mut seen_base = std::collections::BTreeSet::new();
+    seen_base.insert(name.to_string());
+    let mut base_queue: std::collections::VecDeque<(String, String)> =
+        base_deps.into_iter().collect();
+    let mut extra_platform_seeds: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    while let Some((dep_name, value)) = base_queue.pop_front() {
+        if !seen_base.insert(dep_name.clone()) {
+            continue;
+        }
+        let spec = rewrite_kv(&dep_name, &value);
+        upsert(&mut doc, None, &dep_name, &spec, &mut report.entries);
+        if let Ok(sub_text) = read_pkg_manifest(&dep_name, &spec) {
+            if let Ok((sub_base, sub_plat)) = split_sections(&sub_text) {
+                for (k, v) in sub_base {
+                    if !seen_base.contains(&k) {
+                        base_queue.push_back((k, v));
+                    }
+                }
+                for (plat, pdeps) in sub_plat {
+                    extra_platform_seeds
+                        .entry(plat.to_string())
+                        .or_default()
+                        .extend(pdeps);
+                }
+            }
+        }
     }
     for platform in &platforms {
+        let mut seen_plat = seen_base.clone();
+        let mut plat_queue: std::collections::VecDeque<(String, String)> = Vec::new().into();
         if let Some(deps) = platform_deps.get(platform.as_str()) {
-            for (dep_name, value) in deps {
-                let spec = rewrite_kv(dep_name, value);
-                upsert(
-                    &mut doc,
-                    Some(platform),
-                    dep_name,
-                    &spec,
-                    &mut report.entries,
-                );
+            for (k, v) in deps {
+                plat_queue.push_back((k.clone(), v.clone()));
+            }
+        }
+        if let Some(extra) = extra_platform_seeds.get(platform.as_str()) {
+            for (k, v) in extra {
+                plat_queue.push_back((k.clone(), v.clone()));
+            }
+        }
+        while let Some((dep_name, value)) = plat_queue.pop_front() {
+            if !seen_plat.insert(dep_name.clone()) {
+                continue;
+            }
+            let spec = rewrite_kv(&dep_name, &value);
+            upsert(
+                &mut doc,
+                Some(platform),
+                &dep_name,
+                &spec,
+                &mut report.entries,
+            );
+            if let Ok(sub_text) = read_pkg_manifest(&dep_name, &spec) {
+                if let Ok((sub_base, sub_plat)) = split_sections(&sub_text) {
+                    for (k, v) in sub_base {
+                        if !seen_plat.contains(&k) {
+                            plat_queue.push_back((k, v));
+                        }
+                    }
+                    if let Some(pdeps) = sub_plat.get(platform.as_str()) {
+                        for (k, v) in pdeps {
+                            if !seen_plat.contains(k) {
+                                plat_queue.push_back((k.clone(), v.clone()));
+                            }
+                        }
+                    }
+                }
             }
         }
     }

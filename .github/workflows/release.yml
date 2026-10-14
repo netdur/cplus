@@ -54,8 +54,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
 
       # No rust-cache: a release is built from a clean target/.
-      - name: Build release binaries
-        run: cargo build --release -p cpc -p cpc-lsp -p cpc-bindgen
+      - name: Verify crate version matches tag and build release binaries
+        env:
+          WANT_VER: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          CRATE_VER="$(sed -n 's/^version *= *"\(.*\)"/\1/p' cpc/Cargo.toml | head -1)"
+          if [[ "$CRATE_VER" != "$WANT_VER" ]]; then
+            echo "cpc/Cargo.toml version ($CRATE_VER) does not match tag version ($WANT_VER)" >&2
+            exit 1
+          fi
+          cargo build --locked --release -p cpc -p cpc-lsp -p cpc-bindgen
 
       - name: Package tarball
         id: pkg
