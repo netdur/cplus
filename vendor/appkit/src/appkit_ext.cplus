@@ -59,11 +59,14 @@ fn new_flipped_view(frame: rt::Rect) -> ak::View {
 // no ownership at all); the target object itself is pinned to the control via
 // an associated reference, so it lives exactly as long as the control.
 
-// Associated-object keys. Any unique addresses work; the generated binding
-// uses 28672/28673, so this module takes the next block.
-fn action_ctx_handler_key() -> *u8 { return { 28680 as *u8 }; }
-fn action_ctx_userdata_key() -> *u8 { return { 28681 as *u8 }; }
-fn action_ctx_pin_key() -> *u8 { return { 28682 as *u8 }; }
+// Associated-object keys. Each key is the address of its own static byte, so
+// keys are process-unique by construction and never collide across modules.
+static ACTION_CTX_HANDLER_KEY: u8 = 0;
+static ACTION_CTX_USERDATA_KEY: u8 = 0;
+static ACTION_CTX_PIN_KEY: u8 = 0;
+fn action_ctx_handler_key() -> *u8 { return { #addr_of(ACTION_CTX_HANDLER_KEY) }; }
+fn action_ctx_userdata_key() -> *u8 { return { #addr_of(ACTION_CTX_USERDATA_KEY) }; }
+fn action_ctx_pin_key() -> *u8 { return { #addr_of(ACTION_CTX_PIN_KEY) }; }
 
 fn action_ctx_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
     let f: fn(*u8, *u8) = { synth::get_associated(self_obj, action_ctx_handler_key()) as fn(*u8, *u8) };
@@ -167,7 +170,8 @@ extern fn cplus_ext_add_action_method(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8)
 // exactly that component (a non-component ctx misses the registry and
 // no-ops). One documented rule, keyed by identity, no hidden subscriptions.
 
-fn action_after_ctx_key() -> *u8 { return { 28684 as *u8 }; }
+static ACTION_AFTER_CTX_KEY: u8 = 0;
+fn action_after_ctx_key() -> *u8 { return { #addr_of(ACTION_AFTER_CTX_KEY) }; }
 
 fn action_ctx_then_ctx_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
     let f: fn(*u8, *u8) = { synth::get_associated(self_obj, action_ctx_handler_key()) as fn(*u8, *u8) };
@@ -214,7 +218,8 @@ fn set_control_action_ctx_then_ctx(control: ak::Control, handler: fn(*u8, *u8), 
 // reuse the ActionCtx target: `handler(recognizer, ctx)`. Each recognizer pins
 // its own target (so it lives as long as the recognizer, which the view owns).
 
-fn gesture_pin_key() -> *u8 { return { 28685 as *u8 }; }
+static GESTURE_PIN_KEY: u8 = 0;
+fn gesture_pin_key() -> *u8 { return { #addr_of(GESTURE_PIN_KEY) }; }
 
 // NSEvent button masks: primary (left) = 1<<0, secondary (right) = 1<<1.
 fn primary_button_mask() -> u64 { return 1 as u64; }
@@ -324,10 +329,14 @@ fn add_local_event_filter(mask: u64, filter: fn(*u8, *u8) -> *u8, ctx: *u8) -> *
 // enough). scrollWheel: chains to super, so a scroll still bubbles up to an
 // enclosing scroll view — the handler only observes it.
 
-fn av_hover_in_key() -> *u8 { return { 28686 as *u8 }; }
-fn av_hover_out_key() -> *u8 { return { 28687 as *u8 }; }
-fn av_scroll_key() -> *u8 { return { 28688 as *u8 }; }
-fn av_ctx_key() -> *u8 { return { 28689 as *u8 }; }
+static AV_HOVER_IN_KEY: u8 = 0;
+static AV_HOVER_OUT_KEY: u8 = 0;
+static AV_SCROLL_KEY: u8 = 0;
+static AV_CTX_KEY: u8 = 0;
+fn av_hover_in_key() -> *u8 { return { #addr_of(AV_HOVER_IN_KEY) }; }
+fn av_hover_out_key() -> *u8 { return { #addr_of(AV_HOVER_OUT_KEY) }; }
+fn av_scroll_key() -> *u8 { return { #addr_of(AV_SCROLL_KEY) }; }
+fn av_ctx_key() -> *u8 { return { #addr_of(AV_CTX_KEY) }; }
 
 fn av_call(self_obj: *u8, key: *u8, sender: *u8) {
     let f: fn(*u8, *u8) = { synth::get_associated(self_obj, key) as fn(*u8, *u8) };
@@ -413,8 +422,10 @@ fn new_actionable_view(frame: rt::Rect, on_in: fn(*u8, *u8), on_out: fn(*u8, *u8
 // attaches that handler; a null handler (a clickable with only e.g. a
 // double-click) makes `performClick:` a no-op.
 
-fn agent_click_handler_key() -> *u8 { return { 28692 as *u8 }; }
-fn agent_click_ctx_key() -> *u8 { return { 28693 as *u8 }; }
+static AGENT_CLICK_HANDLER_KEY: u8 = 0;
+static AGENT_CLICK_CTX_KEY: u8 = 0;
+fn agent_click_handler_key() -> *u8 { return { #addr_of(AGENT_CLICK_HANDLER_KEY) }; }
+fn agent_click_ctx_key() -> *u8 { return { #addr_of(AGENT_CLICK_CTX_KEY) }; }
 
 fn agent_click_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
     let f: fn(*u8, *u8) = { synth::get_associated(self_obj, agent_click_handler_key()) as fn(*u8, *u8) };
@@ -472,7 +483,8 @@ struct ComposerCtx {
     opaque caller_ctx: *u8,
 }
 
-fn composer_pin_key() -> *u8 { return { 28690 as *u8 }; }
+static COMPOSER_PIN_KEY: u8 = 0;
+fn composer_pin_key() -> *u8 { return { #addr_of(COMPOSER_PIN_KEY) }; }
 
 // `+[NSEvent modifierFlags]` — the modifier keys held down right now.
 fn composer_shift_is_down() -> bool {
@@ -550,11 +562,16 @@ fn composer_do_command_imp(user: *u8, tv: *u8, sel: *u8) -> i8 {
 // dispatch correctly. Either fn-pointer may be null. The delegate is pinned to `tv`.
 fn attach_composer_delegate(tv: ak::TextView, on_change: fn(*u8, *u8), on_submit: fn(*u8, *u8), caller_ctx: *u8) {
     let cbox: *ComposerCtx = { malloc(#size_of::[ComposerCtx]()) as *ComposerCtx };
+    if cbox == { 0 as *ComposerCtx } { return; }
     { *cbox = ComposerCtx { on_change: on_change, on_submit: on_submit, caller_ctx: caller_ctx }; }
     var del: ak::TextViewDelegate = ak::TextViewDelegate_new(cbox as *u8);
     del.set_text_view_did_change_selection(composer_did_change_imp);
     del.set_text_view_do_command_by_selector(composer_do_command_imp);
     let dbox: *ak::TextViewDelegate = { malloc(#size_of::[ak::TextViewDelegate]()) as *ak::TextViewDelegate };
+    if dbox == { 0 as *ak::TextViewDelegate } {
+        { free(cbox as *u8); }
+        return;
+    }
     { *dbox = del; }
     let d: *u8 = ak::create_TextViewDelegate(dbox);
     tv.set_delegate(d);
@@ -576,7 +593,8 @@ struct SplitCtx {
     opaque resize_user: *u8,     // passed back to on_resize (the split view ptr)
 }
 
-fn split_pin_key() -> *u8 { return { 28691 as *u8 }; }
+static SPLIT_PIN_KEY: u8 = 0;
+fn split_pin_key() -> *u8 { return { #addr_of(SPLIT_PIN_KEY) }; }
 
 // Default resize hook: a split with no hosted panes (all leaf panes) does no
 // extra work when the divider moves — NSSplitView autoresizes leaf panes itself.
@@ -619,12 +637,17 @@ fn split_constrain_max_imp(user: *u8, sv: *u8, proposed: f64, divider: i64) -> f
 // leaf-only splits leave it at the default no-op.
 fn attach_split_min_widths(sv: ak::SplitView, min_first: f64, min_second: f64, on_resize: fn(*u8) = split_noop_resize, resize_user: *u8 = 0 as *u8) {
     let cbox: *SplitCtx = { malloc(#size_of::[SplitCtx]()) as *SplitCtx };
+    if cbox == { 0 as *SplitCtx } { return; }
     { *cbox = SplitCtx { min_first: min_first, min_second: min_second, on_resize: on_resize, resize_user: resize_user }; }
     var del: ak::SplitViewDelegate = ak::SplitViewDelegate_new(cbox as *u8);
     del.set_split_view_constrain_min_coordinate_of_subview_at(split_constrain_min_imp);
     del.set_split_view_constrain_max_coordinate_of_subview_at(split_constrain_max_imp);
     del.set_split_view_did_resize_subviews(split_did_resize_imp);
     let dbox: *ak::SplitViewDelegate = { malloc(#size_of::[ak::SplitViewDelegate]()) as *ak::SplitViewDelegate };
+    if dbox == { 0 as *ak::SplitViewDelegate } {
+        { free(cbox as *u8); }
+        return;
+    }
     { *dbox = del; }
     let d: *u8 = ak::create_SplitViewDelegate(dbox);
     sv.set_delegate(d);
@@ -641,9 +664,12 @@ fn attach_split_min_widths(sv: ak::SplitView, min_first: f64, min_second: f64, o
 // pinned to the view and lives exactly as long as it. `on_resize(ctx)` fires
 // after every frame change (guard on width yourself to skip height-only ones).
 
-fn frame_obs_handler_key() -> *u8 { return { 28697 as *u8 }; }
-fn frame_obs_ctx_key() -> *u8 { return { 28698 as *u8 }; }
-fn frame_obs_pin_key() -> *u8 { return { 28699 as *u8 }; }
+static FRAME_OBS_HANDLER_KEY: u8 = 0;
+static FRAME_OBS_CTX_KEY: u8 = 0;
+static FRAME_OBS_PIN_KEY: u8 = 0;
+fn frame_obs_handler_key() -> *u8 { return { #addr_of(FRAME_OBS_HANDLER_KEY) }; }
+fn frame_obs_ctx_key() -> *u8 { return { #addr_of(FRAME_OBS_CTX_KEY) }; }
+fn frame_obs_pin_key() -> *u8 { return { #addr_of(FRAME_OBS_PIN_KEY) }; }
 
 fn frame_obs_sel() -> *u8 { return rt::sel(#str_ptr("cplusFrameDidChange:\0")); }
 
@@ -724,6 +750,7 @@ static DYN_COLOR_DESC: *u8 = #zero::[*u8]();
 fn dyn_color_desc() -> *u8 {
     if DYN_COLOR_DESC != (0 as *u8) { return DYN_COLOR_DESC; }
     let p: *u8 = ext_malloc(16 as usize);
+    if p == (0 as *u8) { return rt::block_descriptor(); }
     let d: *rt::BlockDescriptor = { p as *rt::BlockDescriptor };
     { (*d).reserved = 0 as u64 };
     { (*d).size = 48 as u64 };              // sizeof(DynColorBlock)
@@ -783,9 +810,12 @@ fn appearance_is_dark(a: *u8) -> bool {
 #[link_name = "class_addMethod"]
 extern fn add_method_void_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8), types: *u8) -> i8;
 
-fn appearance_obs_handler_key() -> *u8 { return { 28701 as *u8 }; }
-fn appearance_obs_ctx_key() -> *u8 { return { 28702 as *u8 }; }
-fn appearance_obs_seen_key() -> *u8 { return { 28703 as *u8 }; }
+static APPEARANCE_OBS_HANDLER_KEY: u8 = 0;
+static APPEARANCE_OBS_CTX_KEY: u8 = 0;
+static APPEARANCE_OBS_SEEN_KEY: u8 = 0;
+fn appearance_obs_handler_key() -> *u8 { return { #addr_of(APPEARANCE_OBS_HANDLER_KEY) }; }
+fn appearance_obs_ctx_key() -> *u8 { return { #addr_of(APPEARANCE_OBS_CTX_KEY) }; }
+fn appearance_obs_seen_key() -> *u8 { return { #addr_of(APPEARANCE_OBS_SEEN_KEY) }; }
 
 // The sentinel's current effective-appearance NAME (an NSString, nil-safe).
 fn appearance_obs_name(self_obj: *u8) -> *u8 {
@@ -851,7 +881,8 @@ fn add_appearance_observer(host: ak::View, handler: fn(*u8), ctx: *u8) {
 #[link_name = "class_addMethod"]
 extern fn add_method_rect_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Rect), types: *u8) -> i8;
 
-fn line_ruler_pin_key() -> *u8 { return { 28700 as *u8 }; }
+static LINE_RULER_PIN_KEY: u8 = 0;
+fn line_ruler_pin_key() -> *u8 { return { #addr_of(LINE_RULER_PIN_KEY) }; }
 
 fn line_ruler_pad() -> f64 { return 6.0f64; }
 
@@ -976,26 +1007,38 @@ fn attach_line_number_ruler(scroll: ak::ScrollView, tv: ak::TextView, thickness:
 // handler. Payload type is plain UTF-8 text (`public.utf8-plain-text`), which
 // also matches text dragged from other apps and Finder text clippings.
 
-fn drop_handler_key() -> *u8 { return { 28690 as *u8 }; }
-fn drop_ctx_key() -> *u8 { return { 28691 as *u8 }; }
-fn drop_text_key() -> *u8 { return { 28692 as *u8 }; }
+static DROP_HANDLER_KEY: u8 = 0;
+static DROP_CTX_KEY: u8 = 0;
+static DROP_TEXT_KEY: u8 = 0;
+static DROP_POINT_X_KEY: u8 = 0;
+static DROP_POINT_Y_KEY: u8 = 0;
+static DROP_POINT_SET_KEY: u8 = 0;
+static DRAG_TARGET_KEY: u8 = 0;
+static DRAG_TARGETED_KEY: u8 = 0;
+static DRAG_OVER_CTX_KEY: u8 = 0;
+static DROP_FILES_KEY: u8 = 0;
+static DROP_REFUSED_KEY: u8 = 0;
+
+fn drop_handler_key() -> *u8 { return { #addr_of(DROP_HANDLER_KEY) }; }
+fn drop_ctx_key() -> *u8 { return { #addr_of(DROP_CTX_KEY) }; }
+fn drop_text_key() -> *u8 { return { #addr_of(DROP_TEXT_KEY) }; }
 // WHERE in the view the drop landed, stashed at the same moment the text is.
 // `draggingLocation` is in WINDOW space and a handler wants the node's own, so
 // the conversion happens here while the view is still the one that was hit.
 // Half-points survive a `usize` badly, so the point rides as two f64 in a boxed
 // pair rather than being quantised into an associated integer.
-fn drop_point_x_key() -> *u8 { return { 28693 as *u8 }; }
-fn drop_point_y_key() -> *u8 { return { 28694 as *u8 }; }
-fn drop_point_set_key() -> *u8 { return { 28695 as *u8 }; }
-fn drag_target_key() -> *u8 { return { 28702 as *u8 }; }
-fn drag_targeted_key() -> *u8 { return { 28703 as *u8 }; }
-fn drag_over_ctx_key() -> *u8 { return { 28704 as *u8 }; }
+fn drop_point_x_key() -> *u8 { return { #addr_of(DROP_POINT_X_KEY) }; }
+fn drop_point_y_key() -> *u8 { return { #addr_of(DROP_POINT_Y_KEY) }; }
+fn drop_point_set_key() -> *u8 { return { #addr_of(DROP_POINT_SET_KEY) }; }
+fn drag_target_key() -> *u8 { return { #addr_of(DRAG_TARGET_KEY) }; }
+fn drag_targeted_key() -> *u8 { return { #addr_of(DRAG_TARGETED_KEY) }; }
+fn drag_over_ctx_key() -> *u8 { return { #addr_of(DRAG_OVER_CTX_KEY) }; }
 // The FILES a drag carries, as a retained NSArray of path strings — read on
 // enter as well as on drop, so a handler can look before it accepts.
-fn drop_files_key() -> *u8 { return { 28790 as *u8 }; }
+fn drop_files_key() -> *u8 { return { #addr_of(DROP_FILES_KEY) }; }
 // Set by an enter handler that answered "not this one": the drag is refused
 // for as long as it stays over the view (no badge, no drop).
-fn drop_refused_key() -> *u8 { return { 28791 as *u8 }; }
+fn drop_refused_key() -> *u8 { return { #addr_of(DROP_REFUSED_KEY) }; }
 
 // Refuse — or stop refusing — the drag currently over `drop_view`. Cleared
 // again at the next enter, so one refused drag does not refuse the next.
@@ -1360,10 +1403,13 @@ struct Pending {
 static PENDING: vec::Vec[Pending] = #zero::[vec::Vec[Pending]]();
 static NEXT_AFTER_ID: u64 = 1 as u64;
 
+static AFTER_CB_KEY: u8 = 0;
+static AFTER_CTX_KEY: u8 = 0;
+static AFTER_ID_KEY: u8 = 0;
 fn after_sel() -> *u8 { return rt::sel(#str_ptr("cplusAfterFire:\0")); }
-fn after_cb_key() -> *u8 { return { 28710 as *u8 }; }
-fn after_ctx_key() -> *u8 { return { 28711 as *u8 }; }
-fn after_id_key() -> *u8 { return { 28712 as *u8 }; }
+fn after_cb_key() -> *u8 { return { #addr_of(AFTER_CB_KEY) }; }
+fn after_ctx_key() -> *u8 { return { #addr_of(AFTER_CTX_KEY) }; }
+fn after_id_key() -> *u8 { return { #addr_of(AFTER_ID_KEY) }; }
 
 // Drop the registry entry for `id`, returning its target (+1, now the caller's
 // to release) or null when the id is unknown — already fired, or cancelled.
@@ -1548,11 +1594,13 @@ fn frame_obs_pending_count() -> usize { return { FRAME_OBS.count() }; }
 // if it is not the axis this view owns (or is an axis with nowhere left to go),
 // hand it to the next responder so the enclosing scroll view gets it.
 
-fn scroll_owns_h_key() -> *u8 { return { 28706 as *u8 }; }
+static SCROLL_OWNS_H_KEY: u8 = 0;
+static SCROLL_LOCK_KEY: u8 = 0;
+fn scroll_owns_h_key() -> *u8 { return { #addr_of(SCROLL_OWNS_H_KEY) }; }
 // The decision taken for the CURRENT gesture: 1 = keep, 2 = forward, absent =
 // not decided yet. See scroll_wheel_imp for why this is per-gesture and not
 // per-event.
-fn scroll_lock_key() -> *u8 { return { 28707 as *u8 }; }
+fn scroll_lock_key() -> *u8 { return { #addr_of(SCROLL_LOCK_KEY) }; }
 
 // NSEventPhase bits (NSEvent.h): None 0, Began 1<<0, Stationary 1<<1,
 // Changed 1<<2, Ended 1<<3, Cancelled 1<<4, MayBegin 1<<5.
@@ -1676,7 +1724,9 @@ fn new_scroll_view(frame: rt::Rect, horizontal: bool) -> ak::ScrollView {
 // dragged content follows the cursor. SwiftUI `.draggable`. Pairs with the
 // FacetDropView destination above.
 
-fn drag_text_key() -> *u8 { return { 28698 as *u8 }; }
+static DRAG_TEXT_KEY: u8 = 0;
+static DRAG_ORIGIN_KEY: u8 = 0;
+fn drag_text_key() -> *u8 { return { #addr_of(DRAG_TEXT_KEY) }; }
 
 // NSDragOperationCopy = 1, for a local or cross-app drag.
 fn drag_source_mask_imp(self_obj: *u8, cmd: *u8, session: *u8, context: i64) -> u64 { return 1 as u64; }
@@ -1684,7 +1734,7 @@ fn drag_source_mask_imp(self_obj: *u8, cmd: *u8, session: *u8, context: i64) -> 
 // Where the press started, and whether this gesture has become a drag yet.
 // Boxed so the state is per-VIEW: two draggable cards can be pressed in
 // sequence and must not share a threshold.
-fn drag_origin_key() -> *u8 { return { 28705 as *u8 }; }
+fn drag_origin_key() -> *u8 { return { #addr_of(DRAG_ORIGIN_KEY) }; }
 
 // How far the pointer must travel before a press becomes a drag. AppKit's own
 // convention for a view that is both draggable and clickable; 3pt is the usual
@@ -1846,9 +1896,12 @@ fn new_drag_view(text: str) -> ak::View {
 // retained associated object on the ids array, so a single `user` pointer (the
 // ids array) reaches both. facet_appkit builds the items; this wires the plumbing.
 
-fn toolbar_map_key() -> *u8 { return { 28695 as *u8 }; }
-fn toolbar_del_pin_key() -> *u8 { return { 28696 as *u8 }; }
-fn toolbar_ids_pin_key() -> *u8 { return { 28697 as *u8 }; }
+static TOOLBAR_MAP_KEY: u8 = 0;
+static TOOLBAR_DEL_PIN_KEY: u8 = 0;
+static TOOLBAR_IDS_PIN_KEY: u8 = 0;
+fn toolbar_map_key() -> *u8 { return { #addr_of(TOOLBAR_MAP_KEY) }; }
+fn toolbar_del_pin_key() -> *u8 { return { #addr_of(TOOLBAR_DEL_PIN_KEY) }; }
+fn toolbar_ids_pin_key() -> *u8 { return { #addr_of(TOOLBAR_IDS_PIN_KEY) }; }
 
 fn tb_ids_imp(user: *u8, toolbar: *u8) -> *u8 { return user; }
 
@@ -1868,10 +1921,11 @@ fn make_toolbar(ids: *u8, map: *u8) -> ak::Toolbar {
     del.set_toolbar_default_item_identifiers(tb_ids_imp);
     del.set_toolbar_allowed_item_identifiers(tb_ids_imp);
     del.set_toolbar_item_for_item_identifier_will_be_inserted_into_toolbar(tb_item_imp);
+    let tb: ak::Toolbar = ak::Toolbar::new_with_identifier("facet.toolbar");
     let dbox: *ak::ToolbarDelegate = { malloc(#size_of::[ak::ToolbarDelegate]()) as *ak::ToolbarDelegate };
+    if (dbox as *u8).is_null() { return tb; }
     { *dbox = del; }
     let d: *u8 = ak::create_ToolbarDelegate(dbox);
-    let tb: ak::Toolbar = ak::Toolbar::new_with_identifier("facet.toolbar");
     tb.set_delegate(d);
     synth::retain_associated(tb.raw(), toolbar_del_pin_key(), d);
     synth::retain_associated(tb.raw(), toolbar_ids_pin_key(), ids);
@@ -2024,11 +2078,16 @@ fn window_perform_zoom(sender: *u8) {
 // used to own. The buttons' actions still target the window. Their natural
 // extent is reported via `fittingSize` so facet measures the leaf correctly.
 
-fn wb_observed_key() -> *u8 { return { 28731 as *u8 }; }
-fn wb_spacing_key() -> *u8 { return { 28732 as *u8 }; }
-fn wb_laying_out_key() -> *u8 { return { 28733 as *u8 }; }
-fn wb_hovered_key() -> *u8 { return { 28734 as *u8 }; }
-fn wb_tracking_key() -> *u8 { return { 28735 as *u8 }; }
+static WB_OBSERVED_KEY: u8 = 0;
+static WB_SPACING_KEY: u8 = 0;
+static WB_LAYING_OUT_KEY: u8 = 0;
+static WB_HOVERED_KEY: u8 = 0;
+static WB_TRACKING_KEY: u8 = 0;
+fn wb_observed_key() -> *u8 { return { #addr_of(WB_OBSERVED_KEY) }; }
+fn wb_spacing_key() -> *u8 { return { #addr_of(WB_SPACING_KEY) }; }
+fn wb_laying_out_key() -> *u8 { return { #addr_of(WB_LAYING_OUT_KEY) }; }
+fn wb_hovered_key() -> *u8 { return { #addr_of(WB_HOVERED_KEY) }; }
+fn wb_tracking_key() -> *u8 { return { #addr_of(WB_TRACKING_KEY) }; }
 
 // Native widget cells ask their containing view whether the pointer is inside
 // the button group. Reparenting the buttons leaves the titlebar's tracking

@@ -193,7 +193,8 @@ struct WindowHost {
     scale: f64,
 }
 
-fn host_key() -> *u8 { return 29010 as *u8; }
+static HOST_KEY: u8 = 0;
+fn host_key() -> *u8 { return { #addr_of(HOST_KEY) }; }
 
 fn default_should_close(ctx: *u8) -> bool { return true; }
 fn default_will_close(ctx: *u8) { return; }
@@ -771,13 +772,17 @@ fn app_appearance() -> vocab::Appearance {
 // `action` instead is deliberately target-less so the responder chain can
 // answer it — that is what makes Cut grey itself out on its own — and giving
 // it a target to validate would take that away.
-fn menu_enabled_key() -> *u8 { return 29012 as *u8; }
-fn menu_title_key() -> *u8 { return 29013 as *u8; }
+static MENU_ENABLED_KEY: u8 = 0;
+static MENU_TITLE_KEY: u8 = 0;
+static MENU_ECTX_KEY: u8 = 0;
+static MENU_TCTX_KEY: u8 = 0;
+fn menu_enabled_key() -> *u8 { return { #addr_of(MENU_ENABLED_KEY) }; }
+fn menu_title_key() -> *u8 { return { #addr_of(MENU_TITLE_KEY) }; }
 // One stashed context PER handler. It was one shared key, read by both — which
 // is only right while the two answers come from the same object, and says so
 // nowhere.
-fn menu_ectx_key() -> *u8 { return 29014 as *u8; }
-fn menu_tctx_key() -> *u8 { return 29015 as *u8; }
+fn menu_ectx_key() -> *u8 { return { #addr_of(MENU_ECTX_KEY) }; }
+fn menu_tctx_key() -> *u8 { return { #addr_of(MENU_TCTX_KEY) }; }
 static MENU_VALIDATION_READY: bool = false;
 
 fn imp_validate_menu_item(self_obj: *u8, cmd: *u8, item: *u8) -> i8 {
@@ -1255,7 +1260,8 @@ fn clear_tree_menus() {
     }
 }
 
-fn tree_menu_key() -> *u8 { return 29015 as *u8; }
+static TREE_MENU_KEY: u8 = 0;
+fn tree_menu_key() -> *u8 { return { #addr_of(TREE_MENU_KEY) }; }
 
 fn install_menu_bar(root: *core::Node) {
     clear_tree_menus();

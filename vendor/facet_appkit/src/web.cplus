@@ -56,8 +56,10 @@ import "./paint" as paint;
 // lands on the same object twice; `keys_are_distinct` is the gate, and the
 // range is what keeps the gate from having to be re-won on every regen.
 
-fn node_key() -> *u8 { return { 29020 as *u8 }; }
-fn delegate_pin_key() -> *u8 { return { 29021 as *u8 }; }
+static WEB_NODE_KEY: u8 = 0;
+static WEB_DELEGATE_PIN_KEY: u8 = 0;
+fn node_key() -> *u8 { return { #addr_of(WEB_NODE_KEY) }; }
+fn delegate_pin_key() -> *u8 { return { #addr_of(WEB_DELEGATE_PIN_KEY) }; }
 
 fn node_of(obj: *u8) -> *core::Node {
     if obj.is_null() { return 0 as *core::Node; }
@@ -525,7 +527,8 @@ fn is_web_view(v: *u8) -> bool {
 // a hybrid app and has no root to serve from.
 
 fn facet_scheme() -> str { return "facet"; }
-fn scheme_node_key() -> *u8 { return { 29022 as *u8 }; }
+static SCHEME_NODE_KEY: u8 = 0;
+fn scheme_node_key() -> *u8 { return { #addr_of(SCHEME_NODE_KEY) }; }
 
 #[link_name = "objc_msgSend"]
 extern fn msg_id_id_u64_i64_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: i64, d: *u8) -> *u8;

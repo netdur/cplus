@@ -164,13 +164,15 @@ fn apply_z_order(node: *core::Node) {
     // which is the top of the paint order. Walking ascending therefore leaves
     // the highest z last, i.e. frontmost.
     var pass: i64 = min_z_of(node, count);
-    let top: i64 = max_z_of(node, count);
-    while pass <= top {
+    while true {
+        var has_next: bool = false;
+        var next_pass: i64 = pass;
         var j: usize = 0 as usize;
         while j < count {
             match core::child_of(node, j) {
                 option::Option[*core::Node]::Some(c) => {
-                    if core::z_index(c) == pass {
+                    let z: i64 = core::z_index(c);
+                    if z == pass {
                         let cv: *u8 = core::view_of(c);
                         if cv.is_not_null() {
                             match ak::View::from_raw(cv).superview() {
@@ -180,24 +182,34 @@ fn apply_z_order(node: *core::Node) {
                                 option::Option[ak::View]::None => { }
                             }
                         }
+                    } else if z > pass {
+                        if !has_next || z < next_pass {
+                            next_pass = z;
+                            has_next = true;
+                        }
                     }
                 }
                 option::Option[*core::Node]::None => { }
             }
             j = j +% (1 as usize);
         }
-        pass = pass + (1 as i64);
+        if !has_next { break; }
+        pass = next_pass;
     }
 }
 
 fn min_z_of(node: *core::Node, count: usize) -> i64 {
     var lo: i64 = 0 as i64;
+    var seeded: bool = false;
     var i: usize = 0 as usize;
     while i < count {
         match core::child_of(node, i) {
             option::Option[*core::Node]::Some(c) => {
                 let z: i64 = core::z_index(c);
-                if z < lo { lo = z; }
+                if !seeded || z < lo {
+                    lo = z;
+                    seeded = true;
+                }
             }
             option::Option[*core::Node]::None => { }
         }
@@ -208,12 +220,16 @@ fn min_z_of(node: *core::Node, count: usize) -> i64 {
 
 fn max_z_of(node: *core::Node, count: usize) -> i64 {
     var hi: i64 = 0 as i64;
+    var seeded: bool = false;
     var i: usize = 0 as usize;
     while i < count {
         match core::child_of(node, i) {
             option::Option[*core::Node]::Some(c) => {
                 let z: i64 = core::z_index(c);
-                if z > hi { hi = z; }
+                if !seeded || z > hi {
+                    hi = z;
+                    seeded = true;
+                }
             }
             option::Option[*core::Node]::None => { }
         }

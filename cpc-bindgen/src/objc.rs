@@ -1169,36 +1169,38 @@ impl ObjcEmitter {
     /// OBJECT is pinned on the control with a RETAINED association so it outlives
     /// the control (AppKit's `target` is a weak/assign reference) with no leak.
     fn emit_action_target_block(&mut self) {
-        let handler_key = self.synth_key;
+        let _handler_key = self.synth_key;
         self.synth_key += 1;
-        let pin_key = self.synth_key;
+        let _pin_key = self.synth_key;
         self.synth_key += 1;
         self.needs_synth = true;
         self.emitted_action_target = true;
-        self.body.push_str(&format!(
+        self.body.push_str(
             "// Target/action -> typed `fn(*u8)` callback (shared, one per module).\n\
              #[link_name = \"class_addMethod\"]\n\
              extern fn cplus_action_add_method(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;\n\n\
-             fn cplus_action_handler_key() -> *u8 {{ return {{ {handler_key} as *u8 }}; }}\n\
-             fn cplus_action_pin_key() -> *u8 {{ return {{ {pin_key} as *u8 }}; }}\n\n\
-             fn cplus_action_imp(self_obj: *u8, cmd: *u8, sender: *u8) {{\n\
-             \x20   let f: fn(*u8) = {{ synth::get_associated(self_obj, cplus_action_handler_key()) as fn(*u8) }};\n\
+             static CPLUS_ACTION_HANDLER_KEY: u8 = 0;\n\
+             static CPLUS_ACTION_PIN_KEY: u8 = 0;\n\
+             fn cplus_action_handler_key() -> *u8 { return { #addr_of(CPLUS_ACTION_HANDLER_KEY) }; }\n\
+             fn cplus_action_pin_key() -> *u8 { return { #addr_of(CPLUS_ACTION_PIN_KEY) }; }\n\n\
+             fn cplus_action_imp(self_obj: *u8, cmd: *u8, sender: *u8) {\n\
+             \x20   let f: fn(*u8) = { synth::get_associated(self_obj, cplus_action_handler_key()) as fn(*u8) };\n\
              \x20   f(sender);\n\
              \x20   return;\n\
-             }}\n\n\
-             fn cplus_make_action_target(handler: fn(*u8)) -> *u8 {{\n\
+             }\n\n\
+             fn cplus_make_action_target(handler: fn(*u8)) -> *u8 {\n\
              \x20   let name: *u8 = #str_ptr(\"Cplus_ActionTarget\\0\");\n\
              \x20   var cls: *u8 = rt::get_class(name);\n\
-             \x20   if cls == {{ 0 as *u8 }} {{\n\
+             \x20   if cls == { 0 as *u8 } {\n\
              \x20       cls = synth::allocate_class_pair(rt::get_class(#str_ptr(\"NSObject\\0\")), name, 0 as usize);\n\
              \x20       let added: i8 = cplus_action_add_method(cls, rt::sel(#str_ptr(\"cplusAction:\\0\")), cplus_action_imp, #str_ptr(\"v@:@\\0\"));\n\
              \x20       synth::register_class_pair(cls);\n\
-             \x20   }}\n\
+             \x20   }\n\
              \x20   let t: *u8 = synth::alloc_init_class(cls);\n\
-             \x20   synth::set_associated(t, cplus_action_handler_key(), {{ handler as *u8 }});\n\
+             \x20   synth::set_associated(t, cplus_action_handler_key(), { handler as *u8 });\n\
              \x20   return t;\n\
-             }}\n\n"
-        ));
+             }\n\n"
+        );
     }
 
     /// The per-control convenience method (inside a class's `impl`): route this
@@ -1742,7 +1744,7 @@ impl ObjcEmitter {
             return;
         }
         self.needs_synth = true;
-        let key = self.synth_key;
+        let _key = self.synth_key;
         self.synth_key += 1;
 
         // Handler type `fn(user, <typed args>) -> <ret>`: the user handler receives
@@ -1851,7 +1853,7 @@ impl ObjcEmitter {
         }
         s.push_str("}\n\n");
 
-        s.push_str(&format!("fn {proto_ty}_key() -> *u8 {{ return {{ {key} as *u8 }}; }}\n\n"));
+        s.push_str(&format!("static {proto_ty}_KEY: u8 = 0;\nfn {proto_ty}_key() -> *u8 {{ return {{ #addr_of({proto_ty}_KEY) }}; }}\n\n"));
 
         // One IMP trampoline per callback; all share the one associated ctx. The IMP
         // receives WIRE types (a collection arrives as `*u8`); a bridged arg is read

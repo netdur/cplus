@@ -3708,7 +3708,8 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
 //     special case and the menu tier's is the only one left.
 
 fn strip_height() -> f64 { return 36.0f64; }
-fn tab_strip_key() -> *u8 { return { 29072 as *u8 }; }
+static TAB_STRIP_KEY: u8 = 0;
+fn tab_strip_key() -> *u8 { return { #addr_of(TAB_STRIP_KEY) }; }
 fn tab_node_key() -> *u8 { return { 29073 as *u8 }; }
 fn tab_control_key() -> *u8 { return { 29075 as *u8 }; }
 

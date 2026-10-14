@@ -1181,7 +1181,8 @@ fn apply_brush(view: ak::View, b: vocab::Brush) {
     { msg_void_rect(g.raw(), rt::sel(#str_ptr("setFrame:\0")), view.bounds()) };
 }
 
-fn gradient_key() -> *u8 { return 29060 as *u8; }
+static GRADIENT_KEY: u8 = 0;
+fn gradient_key() -> *u8 { return { #addr_of(GRADIENT_KEY) }; }
 
 // One gradient sublayer per view, kept on an associated key so a re-apply
 // updates it rather than stacking a second one under the first.

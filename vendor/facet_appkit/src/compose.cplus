@@ -629,7 +629,8 @@ extern fn add_method_id_point(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Point) -
 #[link_name = "object_setClass"]
 extern fn ph_set_class(obj: *u8, cls: *u8) -> *u8;
 
-fn ph_subclass_key() -> *u8 { return { 29097 as *u8 }; }
+static PH_SUBCLASS_KEY: u8 = 0;
+fn ph_subclass_key() -> *u8 { return { #addr_of(PH_SUBCLASS_KEY) }; }
 
 static PH_CLASSES: u32 = 0 as u32;
 
@@ -880,7 +881,8 @@ extern fn msg_void_rect_rect_u64_f64(recv: *u8, sel: *u8, a: rt::Rect, b: rt::Re
 fn strip_key() -> *u8 { return { 29086 as *u8 }; }
 fn spinner_key() -> *u8 { return { 29087 as *u8 }; }
 fn strip_obs_key() -> *u8 { return { 29088 as *u8 }; }
-fn refresh_handler_key() -> *u8 { return { 29088 as *u8 }; }
+static REFRESH_HANDLER_KEY: u8 = 0;
+fn refresh_handler_key() -> *u8 { return { #addr_of(REFRESH_HANDLER_KEY) }; }
 fn refresh_ctx_key() -> *u8 { return { 29089 as *u8 }; }
 
 fn strip_height() -> f64 { return 24.0f64; }
@@ -1103,8 +1105,10 @@ fn popover_node_key() -> *u8 { return { 29092 as *u8 }; }
 fn popover_opened_key() -> *u8 { return { 29093 as *u8 }; }
 fn popover_closed_key() -> *u8 { return { 29094 as *u8 }; }
 fn popover_owner_key() -> *u8 { return { 29095 as *u8 }; }
-fn popover_opened_ctx_key() -> *u8 { return { 29096 as *u8 }; }
-fn popover_closed_ctx_key() -> *u8 { return { 29097 as *u8 }; }
+static POPOVER_OPENED_CTX_KEY: u8 = 0;
+static POPOVER_CLOSED_CTX_KEY: u8 = 0;
+fn popover_opened_ctx_key() -> *u8 { return { #addr_of(POPOVER_OPENED_CTX_KEY) }; }
+fn popover_closed_ctx_key() -> *u8 { return { #addr_of(POPOVER_CLOSED_CTX_KEY) }; }
 
 // A handler's own context, or the owner node when it brought none. The owner
 // IS the natural context here — before this, `fire_popover` passed a literal
@@ -1808,7 +1812,8 @@ fn hue_shift(view: *u8, c: vocab::Color) {
 // ordinary.
 
 fn knob_color_key() -> *u8 { return { 29107 as *u8 }; }
-fn track_color_key() -> *u8 { return { 29108 as *u8 }; }
+static TRACK_COLOR_KEY: u8 = 0;
+fn track_color_key() -> *u8 { return { #addr_of(TRACK_COLOR_KEY) }; }
 
 fn flavour_track() -> u32 { return 7 as u32; }
 

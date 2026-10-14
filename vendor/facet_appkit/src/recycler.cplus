@@ -2136,7 +2136,8 @@ fn grid_item_class() -> *u8 {
 // same one twice replaces the registration — which would throw the pool away on
 // every vend. So the identifiers seen so far are remembered on the collection
 // view itself, and each is registered exactly once.
-fn grid_register_key() -> *u8 { return { 29038 as *u8 }; }
+static GRID_REGISTER_KEY: u8 = 0;
+fn grid_register_key() -> *u8 { return { #addr_of(GRID_REGISTER_KEY) }; }
 
 fn grid_registered(cv: *u8) -> *u8 {
     var set: *u8 = { synth::get_associated(cv, grid_register_key()) };

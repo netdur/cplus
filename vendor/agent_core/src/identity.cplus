@@ -254,10 +254,11 @@ fn policy_protected() -> u32 { return 1; }
 fn policy_private() -> u32 { return 2; }
 fn policy_exclude() -> u32 { return 3; }
 
-// Stable key used as the associated-object / set_data key across backends.
-// Integer cast (not a static address) so every package agrees without sharing
-// a single-object symbol. Distinct from facet_appkit's tree pin keys (28692+).
-fn affordance_key() -> *u8 { return { 28701 as *u8 }; }
+// Stable key used as the associated-object key across ObjC backends.
+// Each key is the address of its own static byte, so it never collides with
+// generated delegate keys or other modules' associated-object slots.
+static AFFORDANCE_KEY: u8 = 0;
+fn affordance_key() -> *u8 { return { #addr_of(AFFORDANCE_KEY) }; }
 
 // The declared sensitivity, pinned on a native widget the same way the
 // affordance is. Its OWN key rather than spare bits in the affordance word:
@@ -265,7 +266,8 @@ fn affordance_key() -> *u8 { return { 28701 as *u8 }; }
 // when it builds a control; an application declares sensitivity about its own
 // data), and a read-modify-write shared word means whichever writes second
 // erases the other. A missing key reads as `policy_none`.
-fn policy_key() -> *u8 { return { 28702 as *u8 }; }
+static POLICY_KEY: u8 = 0;
+fn policy_key() -> *u8 { return { #addr_of(POLICY_KEY) }; }
 
 // NUL-terminated string key for GObject `g_object_set_data` (GTK).
 fn policy_gobject_key() -> *u8 { return { #str_ptr("cplus-agent-policy\0") }; }

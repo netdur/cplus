@@ -242,7 +242,7 @@ fn imp_hover(self_obj: *u8, cmd: *u8, g: *u8) {
     return;
 }
 
-fn hover_key() -> *u8 { return 29075 as *u8; }
+fn hover_key() -> *u8 { return 29074 as *u8; }
 
 fn install_hover(view: *u8) {
     if { synth::get_associated(view, hover_key()) } != (0 as *u8) { return; }

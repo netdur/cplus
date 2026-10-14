@@ -94,12 +94,13 @@ impl StaticArena16K {
         let buf_base: usize = { #addr(#addr_of(this)) };
         let cursor: usize = buf_base +% this._used;
         let remainder: usize = cursor % align;
-        let aligned: usize = if remainder == (0 as usize) { cursor } else { cursor +% (align -% remainder) };
-        let new_offset: usize = (aligned -% buf_base) +% count;
-        if new_offset > (16384 as usize) {
+        let pad: usize = if remainder == (0 as usize) { 0 as usize } else { align -% remainder };
+        let rem: usize = (16384 as usize) -% this._used;
+        if pad > rem || count > (rem -% pad) {
             return option::Option[*u8]::None;
         }
-        this._used = new_offset;
+        let aligned: usize = cursor +% pad;
+        this._used = this._used +% pad +% count;
         let p: *u8 = { aligned as *u8 };
         if zeroed {
             { memset(p, 0 as i32, count); }
@@ -107,7 +108,7 @@ impl StaticArena16K {
         return option::Option[*u8]::Some(p);
     }
 
-    fn alloc[T](ref this, take value: T) -> option::Option[*T] {
+    fn alloc[T: Copy](ref this, take value: T) -> option::Option[*T] {
         let bytes: usize = #size_of::[T]();
         let align: usize = #align_of::[T]();
         let opt: option::Option[*u8] = this.alloc_bytes(bytes, aligned_to: align);
@@ -153,12 +154,13 @@ impl StaticArena64K {
         let buf_base: usize = { #addr(#addr_of(this)) };
         let cursor: usize = buf_base +% this._used;
         let remainder: usize = cursor % align;
-        let aligned: usize = if remainder == (0 as usize) { cursor } else { cursor +% (align -% remainder) };
-        let new_offset: usize = (aligned -% buf_base) +% count;
-        if new_offset > (65536 as usize) {
+        let pad: usize = if remainder == (0 as usize) { 0 as usize } else { align -% remainder };
+        let rem: usize = (65536 as usize) -% this._used;
+        if pad > rem || count > (rem -% pad) {
             return option::Option[*u8]::None;
         }
-        this._used = new_offset;
+        let aligned: usize = cursor +% pad;
+        this._used = this._used +% pad +% count;
         let p: *u8 = { aligned as *u8 };
         if zeroed {
             { memset(p, 0 as i32, count); }
@@ -166,7 +168,7 @@ impl StaticArena64K {
         return option::Option[*u8]::Some(p);
     }
 
-    fn alloc[T](ref this, take value: T) -> option::Option[*T] {
+    fn alloc[T: Copy](ref this, take value: T) -> option::Option[*T] {
         let bytes: usize = #size_of::[T]();
         let align: usize = #align_of::[T]();
         let opt: option::Option[*u8] = this.alloc_bytes(bytes, aligned_to: align);
@@ -460,3 +462,21 @@ fn test_64k_reset_recovers_capacity() {
     assert a.used() == (0 as usize);
     assert a.remaining() == (65536 as usize);
 }
+
+#[test]
+fn test_alloc_bytes_usize_max_does_not_wrap() {
+    let max_usize: usize = (0 as usize) -% (1 as usize);
+    var a16: StaticArena16K = StaticArena16K::new();
+    let _ = a16.alloc_bytes(8 as usize);
+    match a16.alloc_bytes(max_usize) {
+        option::Option[*u8]::Some(_) => { assert false; }
+        option::Option[*u8]::None => { assert true; }
+    };
+    var a64: StaticArena64K = StaticArena64K::new();
+    let _ = a64.alloc_bytes(8 as usize);
+    match a64.alloc_bytes(max_usize) {
+        option::Option[*u8]::Some(_) => { assert false; }
+        option::Option[*u8]::None => { assert true; }
+    };
+}
+
