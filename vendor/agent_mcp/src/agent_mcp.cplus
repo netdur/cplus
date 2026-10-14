@@ -1704,6 +1704,7 @@ extern fn poll(fds: *u8, nfds: u32, timeout: i32) -> i32;
 // promised to match C's, and this one crosses that seam.
 const POLLFD_SIZE: usize = 8 as usize;
 const POLLIN: i16 = 1i16;
+const POLLOUT: i16 = 4i16;
 // POLLERR(0x8) | POLLHUP(0x10) | POLLNVAL(0x20) — set by the kernel whatever
 // the caller asked for, and each means this connection has nothing more to say.
 const POLL_DEAD: i16 = 56i16;
@@ -1715,6 +1716,24 @@ const POLL_WAIT_MS: i32 = 200;
 // wait is a worse one, so the cap exists to be REFUSED at rather than queued
 // behind — see the accept branch.
 const MAX_CONNS: usize = 32 as usize;
+const LINE_MAX_BYTES: usize = 8192 as usize;
+// How long an in-flight request (once its first byte has arrived) or response
+// write may sit incomplete before the connection is evicted. An idle keep-alive
+// connection with no buffered request bytes is unaffected; a client that starts
+// a line or HTTP request and stalls mid-way is closed when this budget expires.
+const REQUEST_DEADLINE_MS: i64 = 5000 as i64;
+static REQUEST_DEADLINE_OVERRIDE_MS: i64 = 0 as i64;
+
+fn request_deadline_ms() -> i64 {
+    if REQUEST_DEADLINE_OVERRIDE_MS > (0 as i64) {
+        return REQUEST_DEADLINE_OVERRIDE_MS;
+    }
+    return REQUEST_DEADLINE_MS;
+}
+
+fn set_request_deadline_ms(ms: i64) {
+    REQUEST_DEADLINE_OVERRIDE_MS = ms;
+}
 
 fn put_i32_le(p: *u8, at: usize, v: i32) {
     let u: u32 = v as u32;
@@ -1748,7 +1767,8 @@ fn pollfd_revents(p: *u8, i: usize) -> i16 {
     return get_i16_le(p, i *% POLLFD_SIZE +% (6 as usize));
 }
 
-// A connection the door is holding open, and the identity that belongs to it.
+// A connection the door is holding open, its identity, and its nonblocking
+// per-client receive buffer.
 //
 // `client` IS THE POINT. `CLIENT_NAME` is a process-global that dispatch and
 // the consent policy read, and its own comment calls it "the connection's own
@@ -1756,9 +1776,16 @@ fn pollfd_revents(p: *u8, i: usize) -> i16 {
 // Holding several at once makes that scope real: each connection owns its
 // name here, and the loop restores it into the global immediately before
 // handing a request to `handle_request`.
+//
+// `buf` and `started_ms` keep a partial request from stalling the whole server:
+// bytes are drained nonblockingly as they arrive, and a request is dispatched
+// only once its framing (a newline or the declared HTTP Content-Length) is
+// complete, or evicted once `started_ms` passes `request_deadline_ms()`.
 struct McpConn {
     fd: i32,
     client: text::Text,
+    buf: vec::Vec[u8],
+    started_ms: i64,
 }
 // READING, WRITING AND CLOSING GO THROUGH `netsys`, NOT THROUGH LIBC.
 //
@@ -2447,18 +2474,69 @@ fn current_pid() -> i32 {
     return { getpid() };
 }
 
+// Wait up to `deadline_ms` (epoch millis; 0 means unbounded until cancelled)
+// for `fd` to become readable (`!for_write`) or writable (`for_write`).
+// Returns 1 when ready, 0 on deadline expiry, -1 on error, -2 on cancellation.
+fn wait_fd_until(fd: i32, for_write: bool, deadline_ms: i64) -> i32 {
+    loop {
+        if thread::park_begin() {
+            thread::park_end();
+            return - 2;
+        }
+        var wait_ms: i32 = 50;
+        if deadline_ms > (0 as i64) {
+            let rem: i64 = deadline_ms - time::now_millis();
+            if rem <= (0 as i64) {
+                thread::park_end();
+                return 0;
+            }
+            if rem < (wait_ms as i64) {
+                wait_ms = rem as i32;
+            }
+        }
+        if #platform() == "windows" {
+            let wr: i32 = netsys::wait_ready(fd, for_write, wait_ms);
+            thread::park_end();
+            if wr < 0 { return - 1; }
+            if wr > 0 { return 1; }
+            continue;
+        }
+        var pfd: [u8; 8] = [0; 8];
+        let ev: i16 = if for_write { POLLOUT } else { POLLIN };
+        pollfd_put(#addr_of(pfd[0]), 0 as usize, fd, ev);
+        let r: i32 = { poll(#addr_of(pfd[0]), 1 as u32, wait_ms) };
+        thread::park_end();
+        if r < 0 {
+            if netsys::errno() == netsys::eintr() { continue; }
+            return - 1;
+        }
+        if r > 0 {
+            let rev: i16 = pollfd_revents(#addr_of(pfd[0]), 0 as usize);
+            if (rev & ev) != 0i16 || (rev & POLL_DEAD) != 0i16 {
+                return 1;
+            }
+        }
+    }
+}
+
 // Read one newline-terminated line into `buf` (without the newline). Returns the
-// byte length, -1 on EOF before any byte was read, or -2 when this thread was
+// byte length, -1 on EOF or request-deadline expiry, or -2 when this thread was
 // CANCELLED (`JoinHandle::cancel`) — the fix for the report's "a worker parked
 // in read_line on a socket nobody will write to again is parked for the life
-// of the process". A line longer than `cap` is truncated at `cap`. A partial
-// line at the moment of cancellation is discarded: the server is shutting
-// down, not answering.
-fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
+// of the process". Once the first byte of a line has arrived (or when the caller
+// supplies an in-flight `deadline_ms`), the remainder of the line must arrive
+// before the deadline or the stalled peer is dropped (-1).
+fn read_line(fd: i32, buf_ptr: *u8, cap: usize, deadline_ms: i64 = 0 as i64) -> i64 {
     var n: usize = 0;
+    var active_deadline: i64 = deadline_ms;
     loop {
         if n >= cap {
             break;
+        }
+        if active_deadline > (0 as i64) {
+            let w: i32 = wait_fd_until(fd, false, active_deadline);
+            if w == (- 2) { return - 2; }
+            if w <= 0 { return - 1; }
         }
         var byte: u8 = 0;
         if thread::park_begin() {
@@ -2472,14 +2550,23 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
                 if netsys::errno() == netsys::eintr() {
                     continue;               // the loop's park_begin re-checks
                 }
-                if #platform() == "windows" && netsys::errno() == netsys::eagain() {
-                    if netsys::wait_ready(fd, false, 100) >= 0 { continue; }
+                if netsys::errno() == netsys::eagain() {
+                    if active_deadline == (0 as i64) {
+                        active_deadline = time::now_millis() + request_deadline_ms();
+                    }
+                    let w: i32 = wait_fd_until(fd, false, active_deadline);
+                    if w == (- 2) { return - 2; }
+                    if w > 0 { continue; }
+                    return - 1;
                 }
             }
             if n == 0 {
                 return - 1;
             }
             break;
+        }
+        if active_deadline == (0 as i64) {
+            active_deadline = time::now_millis() + request_deadline_ms();
         }
         if byte == ('\n' as u8) {
             break;
@@ -2490,10 +2577,12 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
     return n as i64;
 }
 
-// Every socket send suppresses SIGPIPE on Darwin and Linux. A departed
-// client ends this response and connection, rather than the host process.
+// Every socket send suppresses SIGPIPE on Darwin and Linux, and is bounded by
+// `request_deadline_ms()` so a peer that stops draining its receive window
+// cannot stall the server on a write either.
 fn write_all(fd: i32, ptr: *u8, len: usize) -> bool {
     var off: usize = 0;
+    let deadline: i64 = time::now_millis() + request_deadline_ms();
     while off < len {
         if thread::park_begin() { thread::park_end(); return false; }
         let w: isize = { netsys::send_fd(fd, ptr + off, len -% off) };
@@ -2501,8 +2590,8 @@ fn write_all(fd: i32, ptr: *u8, len: usize) -> bool {
         if w <= 0 {
             if w < 0 {
                 if netsys::errno() == netsys::eintr() { continue; }
-                if #platform() == "windows" && netsys::errno() == netsys::eagain() {
-                    if netsys::wait_ready(fd, true, 100) >= 0 { continue; }
+                if netsys::errno() == netsys::eagain() {
+                    if wait_fd_until(fd, true, deadline) > 0 { continue; }
                 }
             }
             return false;
@@ -2645,6 +2734,133 @@ struct RequestDispatcher {
     call: fn(*u8, str, str) -> DispatchReply,
 }
 
+fn buf_ptr(ref buf: vec::Vec[u8]) -> *u8 {
+    match buf.at_ptr(0 as usize) {
+        option::Option[*u8]::Some(p) => { return p; }
+        option::Option[*u8]::None => { return 0 as *u8; }
+    }
+}
+
+fn clone_bytes(v: *vec::Vec[u8]) -> vec::Vec[u8] {
+    let n: usize = { (*v).count() };
+    if n == (0 as usize) { return vec::new::[u8](); }
+    var out: vec::Vec[u8] = vec::with_capacity::[u8](n);
+    let _s: status::Status = out.append_slice({ (*v).as_slice() });
+    return out;
+}
+
+// Drop the leading `n` bytes from a connection's receive buffer.
+fn buf_consume(ref buf: vec::Vec[u8], n: usize) {
+    let total: usize = buf.count();
+    if n >= total {
+        buf.remove_all();
+        return;
+    }
+    let p: *u8 = buf_ptr(buf);
+    let rem: usize = total -% n;
+    var i: usize = 0 as usize;
+    while i < rem {
+        let b: u8 = { *(p + n + i) };
+        let _s: status::Status = buf.set(b, at: i);
+        i = i +% (1 as usize);
+    }
+    buf.truncate(rem);
+}
+
+// Drain all bytes currently readable on nonblocking `fd` into `buf` (up to
+// `max_buf`). Returns 0 when the socket would block (`EAGAIN`), 1 when the peer
+// closed its write side (EOF), or -1 on a socket error.
+fn drain_nonblocking(fd: i32, ref buf: vec::Vec[u8], ref started_ms: i64, max_buf: usize) -> i32 {
+    var chunk: [u8; 4096] = [0; 4096];
+    while buf.count() < max_buf {
+        var want: usize = max_buf -% buf.count();
+        if want > (4096 as usize) { want = 4096 as usize; }
+        let r: isize = { netsys::recv_fd(fd, #addr_of(chunk[0]), want) };
+        if r > (0 as isize) {
+            if started_ms == (0 as i64) {
+                started_ms = time::now_millis();
+            }
+            let n: usize = r as usize;
+            var i: usize = 0 as usize;
+            while i < n {
+                let _a: status::Status = buf.append(chunk[i]);
+                i = i +% (1 as usize);
+            }
+            continue;
+        }
+        if r == (0 as isize) {
+            return 1;
+        }
+        let e: i32 = netsys::errno();
+        if e == netsys::eintr() { continue; }
+        if e == netsys::eagain() { return 0; }
+        return - 1;
+    }
+    return 0;
+}
+
+// Process any complete newline-delimited requests currently buffered in `buf`.
+// Answers 0 to keep the connection open (waiting for more bytes), 1 on thread
+// cancellation, or 2 when the connection has ended or violated framing limits.
+fn serve_line_conn(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    policy: fn(auth::Request) -> auth::Grant,
+    fd: i32,
+    ref buf: vec::Vec[u8],
+    ref started_ms: i64,
+    drain_state: i32,
+    max_buf: usize,
+) -> i32 {
+    if drain_state < 0 { return 2; }
+    loop {
+        if thread::cancelled() { return 1; }
+        let count: usize = buf.count();
+        if count == (0 as usize) {
+            started_ms = 0 as i64;
+            if drain_state == 1 { return 2; }
+            return 0;
+        }
+        let p: *u8 = buf_ptr(buf);
+        var nl: usize = count;
+        var i: usize = 0 as usize;
+        while i < count {
+            if { *(p + i) } == ('\n' as u8) {
+                nl = i;
+                break;
+            }
+            i = i +% (1 as usize);
+        }
+        if nl == count {
+            if drain_state != 1 {
+                if count >= max_buf { return 2; }
+                return 0;
+            }
+        }
+        var line_len: usize = nl;
+        if line_len > LINE_MAX_BYTES { line_len = LINE_MAX_BYTES; }
+        let line: str = { #str_from_raw_parts(p, line_len) };
+        let resp: text::Text = handle_request(surf, vt, sub, auth::serve(policy), line);
+        let consumed: usize = if nl < count { nl +% (1 as usize) } else { count };
+        buf_consume(buf, consumed);
+        if resp.count() > 0 {
+            let rs: str = { resp };
+            if !write_all(fd, #str_ptr(rs), #str_len(rs)) { return 2; }
+            let nl_byte: u8 = '\n' as u8;
+            if !write_all(fd, { #addr_of(nl_byte) }, 1) { return 2; }
+        }
+        if buf.count() == (0 as usize) {
+            started_ms = 0 as i64;
+        } else {
+            started_ms = time::now_millis();
+        }
+        if drain_state == 1 && buf.count() == (0 as usize) {
+            return 2;
+        }
+    }
+}
+
 fn accept_loop(
     surf: *u8,
     vt: backend::Backend,
@@ -2675,16 +2891,16 @@ fn accept_loop(
     // does not expose, and would have put the consent policy under concurrency
     // it has never seen.
     var conns: vec::Vec[McpConn] = vec::new::[McpConn]();
-    // One pair of buffers for the whole door, not per connection: only one
-    // request is ever being served, so 72K is a property of the door rather
-    // than of how many clients are attached.
-    let head_buf: *u8 = { malloc(HTTP_MAX_HEAD) };
-    let body_buf: *u8 = { malloc(HTTP_MAX_BODY) };
     let pfds: *u8 = { malloc((MAX_CONNS +% (1 as usize)) *% POLLFD_SIZE) };
-    if head_buf.is_null() || body_buf.is_null() || pfds.is_null() {
+    if pfds.is_null() {
         { let _c: i32 = netsys::close_fd(fd); }
         return - 9;
     }
+    let max_conn_buf: usize = if http {
+        HTTP_MAX_HEAD +% HTTP_MAX_BODY +% (64 as usize)
+    } else {
+        HTTP_MAX_BODY
+    };
     var stop: bool = false;
     while !stop {
         pollfd_put(pfds, 0 as usize, fd, POLLIN);
@@ -2696,18 +2912,22 @@ fn accept_loop(
             i = i +% (1 as usize);
         }
         let n: u32 = { (conns.count() +% (1 as usize)) as u32 };
+        var poll_timeout: i32 = POLL_WAIT_MS;
+        let dl_ms: i64 = request_deadline_ms();
+        if dl_ms > (0 as i64) && dl_ms < (poll_timeout as i64) {
+            poll_timeout = dl_ms as i32;
+        }
 
         // The cancellation check straddles the wait, exactly as it straddled
         // `accept` before: parked while blocked, awake before anything is
         // touched.
         if thread::park_begin() { thread::park_end(); break; }
-        let ready: i32 = { poll(pfds, n, POLL_WAIT_MS) };
+        let ready: i32 = { poll(pfds, n, poll_timeout) };
         thread::park_end();
         if ready < 0 {
             if netsys::errno() == netsys::eintr() { continue; }
             break;
         }
-        if ready == 0 { continue; }          // nothing to do; go round again
 
         // HOW MANY THIS ROUND ACTUALLY WATCHED. Taken BEFORE the accept below,
         // because a connection admitted now has no `revents` in this round's
@@ -2716,11 +2936,11 @@ fn accept_loop(
         // inherited the `POLLIN|POLLHUP` of the one that closed before it and
         // was shut without its request ever being read, which the client saw
         // as a connection reset. The new one is served on the next poll.
-        let watched: usize = conns.count();
+        let watched: usize = if ready > 0 { conns.count() } else { 0 as usize };
 
         // A NEW CALLER FIRST, so a client that connects while another is busy
         // is admitted rather than left in the backlog.
-        if (pollfd_revents(pfds, 0 as usize) & POLLIN) != 0i16 {
+        if ready > 0 && (pollfd_revents(pfds, 0 as usize) & POLLIN) != 0i16 {
             let conn: i32 = { accept(fd, 0 as *u8, 0 as *u32) };
             if conn >= 0 {
                 // A CLIENT GOING AWAY MUST NOT KILL THE SERVER. Without this, a
@@ -2730,11 +2950,12 @@ fn accept_loop(
                 // `nc`. See netsys::set_nosigpipe and
                 // demo/bugs/02-iris-terminated-without-crash-report.md.
                 let _np: i32 = netsys::set_nosigpipe(conn);
-                // Windows cannot interrupt a blocking recv/send with a signal.
-                // Nonblocking I/O plus bounded readiness waits lets shutdown
-                // cancel even a peer that stops halfway through its HTTP body.
-                let interruptible: i32 = netsys::make_interruptible(conn);
-                if interruptible != 0 { let closed: i32 = netsys::close_fd(conn); continue; }
+                // Every accepted connection is nonblocking on ALL platforms:
+                // a client that sends half a line or half an HTTP request must
+                // accumulate in its own `McpConn.buf` and yield back to `poll`,
+                // never park the single server thread inside `recv_fd`.
+                let nonblock: i32 = netsys::set_nonblocking(conn);
+                if nonblock != 0 { let _closed: i32 = netsys::close_fd(conn); continue; }
                 if conns.count() >= MAX_CONNS {
                     // REFUSED, NOT QUEUED. The bug this loop exists to fix is a
                     // caller waiting forever on a door that never opens; a
@@ -2745,7 +2966,12 @@ fn accept_loop(
                     // empty — inheriting the previous one's is inheriting
                     // whatever the user decided about them.
                     let _a: status::Status = conns.append(
-                        McpConn { fd: conn, client: text::new() });
+                        McpConn {
+                            fd: conn,
+                            client: text::new(),
+                            buf: vec::new::[u8](),
+                            started_ms: 0 as i64,
+                        });
                 }
             }
         }
@@ -2760,38 +2986,74 @@ fn accept_loop(
             if re == 0i16 { continue; }
             var cfd: i32 = - 1;
             var name: text::Text = text::new();
+            var cbuf: vec::Vec[u8] = vec::new::[u8]();
+            var started_ms: i64 = 0 as i64;
             if let option::Option::Some(c) = conns.at_ptr(k) {
                 cfd = { (*c).fd };
                 name = { (*c).client }.clone();
+                cbuf = clone_bytes({ #addr_of((*c).buf) });
+                started_ms = { (*c).started_ms };
             }
             if cfd < 0 { continue; }
             // READABLE WINS OVER HUNG UP, and the order matters: a peer that
             // sent a request and closed its write side reports both at once,
             // and treating that as "gone" throws the request away unanswered.
-            // Serving it answers first and discovers the end afterwards — the
-            // read returns nothing and `serve_*_once` says so.
             var done: bool = (re & POLLIN) == 0i16 && (re & POLL_DEAD) != 0i16;
             var served: i32 = 0;
             if !done {
+                var drain_state: i32 = drain_nonblocking(cfd, cbuf, started_ms, max_conn_buf);
+                if drain_state == 0 && (re & POLL_DEAD) != 0i16 {
+                    drain_state = 1;
+                }
                 // THE CONNECTION'S OWN IDENTITY, restored before dispatch and
                 // taken back after: `initialize` writes the global, and that
                 // answer belongs to this connection alone.
                 let dispatched: bool = http && dispatcher.call != (0 as fn(*u8, str, str) -> DispatchReply);
                 if !dispatched { adopt_client(name.clone()); }
                 if http {
-                    served = serve_http_once(surf, vt, sub, policy, cfd, head_buf, body_buf, dispatcher, #addr_of(name));
+                    served = serve_http_conn(
+                        surf, vt, sub, policy, cfd, cbuf, started_ms,
+                        drain_state, dispatcher, #addr_of(name));
                 } else {
-                    served = serve_fd_once(surf, vt, sub, policy, cfd);
+                    served = serve_line_conn(
+                        surf, vt, sub, policy, cfd, cbuf, started_ms,
+                        drain_state, max_conn_buf);
                 }
                 let after: text::Text = if dispatched { name.clone() } else { text::from_str(current_client()) };
                 let _s: status::Status = conns.set(
-                    McpConn { fd: cfd, client: after }, at: k);
+                    McpConn {
+                        fd: cfd,
+                        client: after,
+                        buf: cbuf,
+                        started_ms: started_ms,
+                    },
+                    at: k);
                 if served == 1 { stop = true; }
                 if served != 0 { done = true; }
             }
             if done {
                 { let _c: i32 = netsys::close_fd(cfd); }
                 let _r: option::Option[McpConn] = conns.remove(at: k);
+            }
+        }
+
+        // Evict any connection that started a request and stalled past the
+        // request deadline without completing its line or HTTP body.
+        let now_ms: i64 = time::now_millis();
+        let limit_ms: i64 = request_deadline_ms();
+        var s: usize = conns.count();
+        while s > (0 as usize) {
+            s = s -% (1 as usize);
+            var expired_fd: i32 = - 1;
+            if let option::Option::Some(c) = conns.at_ptr(s) {
+                let st: i64 = { (*c).started_ms };
+                if st > (0 as i64) && (now_ms - st) >= limit_ms {
+                    expired_fd = { (*c).fd };
+                }
+            }
+            if expired_fd >= 0 {
+                { let _c: i32 = netsys::close_fd(expired_fd); }
+                let _r: option::Option[McpConn] = conns.remove(at: s);
             }
         }
     }
@@ -2802,8 +3064,6 @@ fn accept_loop(
         if let option::Option::Some(c) = conns.at_ptr(j) { { let _c: i32 = netsys::close_fd({ (*c).fd }); } }
     }
     { free(pfds); }
-    { free(body_buf); }
-    { free(head_buf); }
     { let _c: i32 = netsys::close_fd(fd); }
     if unlink_on_exit { unlink_bound_socket(); }
     return 0;
@@ -2973,15 +3233,36 @@ fn header_number(line: str) -> usize {
     return v;
 }
 
+fn note_http_header_line(ref head: HttpHead, line: str, lines: usize) {
+    if lines == 0 {
+        head.is_post = text::from_str(line).has_prefix("POST ");
+    } else {
+        if header_is(line, "content-length") {
+            head.has_length = true;
+            head.content_length = header_number(line);
+        }
+        if header_is(line, "origin") { head.has_origin = true; }
+        if header_is(line, "host") {
+            if !is_loopback_host(header_value(line)) { head.foreign_host = true; }
+        }
+        if header_is(line, "content-type") { head.is_json = is_json_type(header_value(line)); }
+        if header_is(line, "mcp-session-id") {
+            head.session_id = text::from_str(header_value(line));
+        }
+    }
+}
+
 // Read the request line and headers, stopping at the blank line that ends them.
 // `read_line` strips the LF and leaves the CR, so a blank line arrives as "\r"
-// or as nothing at all.
+// or as nothing at all. Once the first line has arrived, the remaining header
+// lines share a single request deadline.
 fn read_http_head(fd: i32, buf: *u8, cap: usize) -> HttpHead {
     var head: HttpHead = no_head();
     var lines: usize = 0;
+    var deadline: i64 = 0 as i64;
     loop {
-        let n: i64 = read_line(fd, buf, cap);
-        if n < 0 { return no_head(); }        // EOF or cancelled
+        let n: i64 = read_line(fd, buf, cap, deadline);
+        if n < 0 { return no_head(); }        // EOF, timed out or cancelled
         var len: usize = n as usize;
         if len > 0 {
             if { *(buf + (len -% 1)) } == ('\r' as u8) { len = len -% 1; }
@@ -2993,34 +3274,26 @@ fn read_http_head(fd: i32, buf: *u8, cap: usize) -> HttpHead {
             head.ok = true;
             return head;
         }
-        let line: str = { #str_from_raw_parts(buf, len) };
-        if lines == 0 {
-            head.is_post = text::from_str(line).has_prefix("POST ");
-        } else {
-            if header_is(line, "content-length") {
-                head.has_length = true;
-                head.content_length = header_number(line);
-            }
-            if header_is(line, "origin") { head.has_origin = true; }
-            if header_is(line, "host") {
-                if !is_loopback_host(header_value(line)) { head.foreign_host = true; }
-            }
-            if header_is(line, "content-type") { head.is_json = is_json_type(header_value(line)); }
-            if header_is(line, "mcp-session-id") {
-                head.session_id = text::from_str(header_value(line));
-            }
+        if deadline == (0 as i64) {
+            deadline = time::now_millis() + request_deadline_ms();
         }
+        let line: str = { #str_from_raw_parts(buf, len) };
+        note_http_header_line(head, line, lines);
         lines = lines +% 1;
         if lines > 64 { return no_head(); }   // a head this long is not one
     }
 }
 
-// Exactly `len` bytes, or false. A body shorter than its declared length is a
-// truncated request, not a short one: parsing what arrived would act on half a
-// message.
+// Exactly `len` bytes within `request_deadline_ms()`, or false. A body shorter
+// than its declared length is a truncated request, not a short one: parsing
+// what arrived would act on half a message.
 fn read_exact(fd: i32, buf: *u8, len: usize) -> bool {
     var got: usize = 0;
+    let deadline: i64 = time::now_millis() + request_deadline_ms();
     while got < len {
+        if wait_fd_until(fd, false, deadline) <= 0 {
+            return false;
+        }
         if thread::park_begin() {
             thread::park_end();
             return false;
@@ -3030,9 +3303,7 @@ fn read_exact(fd: i32, buf: *u8, len: usize) -> bool {
         if r <= 0 {
             if r < 0 {
                 if netsys::errno() == netsys::eintr() { continue; }
-                if #platform() == "windows" && netsys::errno() == netsys::eagain() {
-                    if netsys::wait_ready(fd, false, 100) >= 0 { continue; }
-                }
+                if netsys::errno() == netsys::eagain() { continue; }
             }
             return false;
         }
@@ -3056,6 +3327,218 @@ fn write_http_response(fd: i32, status_line: str, content_type: str, body: str, 
     };
     write_str(fd, head.view());
     if #str_len(body) > 0 { write_str(fd, body); }
+}
+
+fn dispatch_http_body(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    policy: fn(auth::Request) -> auth::Grant,
+    fd: i32,
+    ref head: HttpHead,
+    body: str,
+    dispatcher: RequestDispatcher,
+    client: *text::Text,
+) -> i32 {
+    LAST_WAS_INITIALIZE = false;
+    var req_client: text::Text = text::new();
+    if head.session_id.count() > 0 {
+        req_client = http_session_client(head.session_id.view());
+    }
+    if req_client.count() == 0 && client.is_not_null() && (*client).count() > 0 {
+        req_client = (*client).clone();
+    }
+    if req_client.count() == 0 && HTTP_CLIENT_NAME.count() > 0 {
+        req_client = HTTP_CLIENT_NAME.clone();
+    }
+    if client.is_not_null() { *client = req_client.clone(); }
+    if dispatcher.call == (0 as fn(*u8, str, str) -> DispatchReply) {
+        adopt_client(req_client.clone());
+    }
+
+    var resp: text::Text = text::new();
+    if dispatcher.call != (0 as fn(*u8, str, str) -> DispatchReply) {
+        assert client.is_not_null();
+        let reply: DispatchReply = (dispatcher.call)(dispatcher.context, body, (*client).view());
+        if thread::cancelled() { return 1; }
+        resp = reply.body.clone();
+        *client = reply.client.clone();
+    } else {
+        resp = handle_request(surf, vt, sub, auth::serve(policy), body);
+        if client.is_not_null() { *client = text::from_str(current_client()); }
+    }
+
+    let after_client: text::Text = if client.is_not_null() { (*client).clone() }
+                                   else { text::from_str(current_client()) };
+    var session_hdr: text::Text = head.session_id.clone();
+    if LAST_WAS_INITIALIZE {
+        HTTP_CLIENT_NAME = after_client.clone();
+        if session_hdr.count() == 0 {
+            session_hdr = mint_http_session(after_client.view());
+        } else {
+            put_http_session(session_hdr.view(), after_client.view());
+        }
+    } else if after_client.count() > 0 {
+        HTTP_CLIENT_NAME = after_client.clone();
+        if session_hdr.count() > 0 {
+            put_http_session(session_hdr.view(), after_client.view());
+        }
+    }
+    // A NOTIFICATION IS ENTITLED TO NO REPLY, and over HTTP that is 202 with
+    // no body rather than silence — the client is waiting on a response
+    // whatever happens, so silence would hang it.
+    if resp.count() == 0 {
+        write_http_response(fd, "202 Accepted", "application/json", "", session_hdr.view());
+    } else {
+        write_http_response(fd, "200 OK", "application/json", { resp.view() }, session_hdr.view());
+    }
+    return 0;
+}
+
+// Process any complete HTTP requests currently buffered in `buf` for a
+// multiplexed connection in `accept_loop`. If headers or the declared
+// `Content-Length` body are still incomplete, returns 0 immediately so other
+// clients are served while this connection finishes transmitting (or until its
+// `started_ms` hits `request_deadline_ms()`).
+fn serve_http_conn(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    policy: fn(auth::Request) -> auth::Grant,
+    fd: i32,
+    ref buf: vec::Vec[u8],
+    ref started_ms: i64,
+    drain_state: i32,
+    dispatcher: RequestDispatcher = #zero::[RequestDispatcher](),
+    client: *text::Text = 0 as *text::Text,
+) -> i32 {
+    if drain_state < 0 { return 2; }
+    loop {
+        if thread::cancelled() { return 1; }
+        let count: usize = buf.count();
+        if count == (0 as usize) {
+            started_ms = 0 as i64;
+            if drain_state == 1 { return 2; }
+            return 0;
+        }
+        let p: *u8 = buf_ptr(buf);
+        var head: HttpHead = no_head();
+        var lines: usize = 0 as usize;
+        var pos: usize = 0 as usize;
+        var body_start: usize = 0 as usize;
+        var need_more_head: bool = false;
+        var skipped_blank: bool = false;
+        while pos < count {
+            var nl: usize = count;
+            var i: usize = pos;
+            while i < count {
+                if { *(p + i) } == ('\n' as u8) {
+                    nl = i;
+                    break;
+                }
+                i = i +% (1 as usize);
+            }
+            if nl == count {
+                need_more_head = true;
+                break;
+            }
+            var line_len: usize = nl -% pos;
+            if line_len > (0 as usize) {
+                if { *(p + pos + (line_len -% (1 as usize))) } == ('\r' as u8) {
+                    line_len = line_len -% (1 as usize);
+                }
+            }
+            if line_len == (0 as usize) {
+                if lines == (0 as usize) {
+                    buf_consume(buf, nl +% (1 as usize));
+                    skipped_blank = true;
+                    break;
+                }
+                head.ok = true;
+                body_start = nl +% (1 as usize);
+                break;
+            }
+            if (nl +% (1 as usize)) > HTTP_MAX_HEAD {
+                return 2;
+            }
+            let line: str = { #str_from_raw_parts(p + pos, line_len) };
+            note_http_header_line(head, line, lines);
+            lines = lines +% (1 as usize);
+            if lines > (64 as usize) {
+                return 2;
+            }
+            pos = nl +% (1 as usize);
+        }
+        if skipped_blank {
+            if buf.count() == (0 as usize) { started_ms = 0 as i64; }
+            continue;
+        }
+        if !head.ok {
+            if need_more_head || pos == count {
+                if count >= HTTP_MAX_HEAD || drain_state != 0 {
+                    return 2;
+                }
+                return 0;
+            }
+            return 2;
+        }
+        if !head.is_post {
+            buf_consume(buf, body_start);
+            write_http_response(fd, "405 Method Not Allowed", "text/plain",
+                                "this endpoint takes JSON-RPC over POST\n");
+            if buf.count() == (0 as usize) { started_ms = 0 as i64; }
+            else { started_ms = time::now_millis(); }
+            continue;
+        }
+        if head.has_origin {
+            write_http_response(fd, "403 Forbidden", "text/plain",
+                                "cross-origin requests are refused: this endpoint serves local MCP clients, not web pages\n");
+            return 2;
+        }
+        if head.foreign_host {
+            write_http_response(fd, "403 Forbidden", "text/plain",
+                                "Host must be 127.0.0.1, localhost or [::1]\n");
+            return 2;
+        }
+        if !head.is_json {
+            write_http_response(fd, "415 Unsupported Media Type", "text/plain",
+                                "send Content-Type: application/json\n");
+            return 2;
+        }
+        if head.content_length > HTTP_MAX_BODY {
+            write_http_response(fd, "413 Payload Too Large", "text/plain",
+                                "request body too large\n");
+            return 2;
+        }
+        if head.content_length == (0 as usize) {
+            buf_consume(buf, body_start);
+            write_http_response(fd, "400 Bad Request", "text/plain",
+                                "empty body\n");
+            if buf.count() == (0 as usize) { started_ms = 0 as i64; }
+            else { started_ms = time::now_millis(); }
+            continue;
+        }
+        let total_needed: usize = body_start +% head.content_length;
+        if count < total_needed {
+            if drain_state != 0 {
+                return 2;
+            }
+            return 0;
+        }
+        let bp: *u8 = buf_ptr(buf);
+        let body_ptr: *u8 = { bp + body_start };
+        let body: str = { #str_from_raw_parts(body_ptr, head.content_length) };
+        let rc: i32 = dispatch_http_body(
+            surf, vt, sub, policy, fd, head, body, dispatcher, client);
+        buf_consume(buf, total_needed);
+        if rc != 0 { return rc; }
+        if buf.count() == (0 as usize) {
+            started_ms = 0 as i64;
+            if drain_state == 1 { return 2; }
+            return 0;
+        }
+        started_ms = time::now_millis();
+    }
 }
 
 // Serve HTTP on one accepted connection until the peer closes it.
@@ -3122,7 +3605,7 @@ fn serve_http_once(
     client: *text::Text = 0 as *text::Text,
 ) -> i32 {
     loop {
-        let head: HttpHead = read_http_head(fd, head_buf, HTTP_MAX_HEAD);
+        var head: HttpHead = read_http_head(fd, head_buf, HTTP_MAX_HEAD);
         if !head.ok { return 2; }
 
         if !head.is_post {
@@ -3171,59 +3654,8 @@ fn serve_http_once(
         if !read_exact(fd, body_buf, head.content_length) { return 2; }
 
         let body: str = { #str_from_raw_parts(body_buf, head.content_length) };
-        LAST_WAS_INITIALIZE = false;
-        var req_client: text::Text = text::new();
-        if head.session_id.count() > 0 {
-            req_client = http_session_client(head.session_id.view());
-        }
-        if req_client.count() == 0 && client.is_not_null() && (*client).count() > 0 {
-            req_client = (*client).clone();
-        }
-        if req_client.count() == 0 && HTTP_CLIENT_NAME.count() > 0 {
-            req_client = HTTP_CLIENT_NAME.clone();
-        }
-        if client.is_not_null() { *client = req_client.clone(); }
-        if dispatcher.call == (0 as fn(*u8, str, str) -> DispatchReply) {
-            adopt_client(req_client.clone());
-        }
-
-        var resp: text::Text = text::new();
-        if dispatcher.call != (0 as fn(*u8, str, str) -> DispatchReply) {
-            assert client.is_not_null();
-            let reply: DispatchReply = (dispatcher.call)(dispatcher.context, body, (*client).view());
-            if thread::cancelled() { return 1; }
-            resp = reply.body.clone();
-            *client = reply.client.clone();
-        } else {
-            resp = handle_request(surf, vt, sub, auth::serve(policy), body);
-            if client.is_not_null() { *client = text::from_str(current_client()); }
-        }
-
-        let after_client: text::Text = if client.is_not_null() { (*client).clone() }
-                                       else { text::from_str(current_client()) };
-        var session_hdr: text::Text = head.session_id.clone();
-        if LAST_WAS_INITIALIZE {
-            HTTP_CLIENT_NAME = after_client.clone();
-            if session_hdr.count() == 0 {
-                session_hdr = mint_http_session(after_client.view());
-            } else {
-                put_http_session(session_hdr.view(), after_client.view());
-            }
-        } else if after_client.count() > 0 {
-            HTTP_CLIENT_NAME = after_client.clone();
-            if session_hdr.count() > 0 {
-                put_http_session(session_hdr.view(), after_client.view());
-            }
-        }
-        // A NOTIFICATION IS ENTITLED TO NO REPLY, and over HTTP that is 202 with
-        // no body rather than silence — the client is waiting on a response
-        // whatever happens, so silence would hang it.
-        if resp.count() == 0 {
-            write_http_response(fd, "202 Accepted", "application/json", "", session_hdr.view());
-        } else {
-            write_http_response(fd, "200 OK", "application/json", { resp.view() }, session_hdr.view());
-        }
-        return 0;                            // one served; the caller comes back
+        return dispatch_http_body(
+            surf, vt, sub, policy, fd, head, body, dispatcher, client);
     }
 }
 
@@ -5784,4 +6216,128 @@ fn tools_call_passes_unwrapped_verb_and_arguments_token_to_policy() {
         "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"describe_ui\",\"arguments\":{\"token\":\"autofill-approved\"}}}");
     assert tok.contains("4242424242424242");
 }
+
+fn _accept_loop_uds_worker(take lfd: i64) -> i64 {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8);
+    let rc: i32 = accept_loop(
+        #addr_of(FAKE_SURF) as *u8,
+        fake_backend(),
+        sub,
+        allow_all,
+        lfd as i32,
+        false,
+        http: false);
+    return rc as i64;
+}
+
+fn _connect_uds_test(path: str) -> i32 {
+    let plen: usize = #str_len(path);
+    var addr: [u8; 110] = [0; 110];
+    if sockaddr_has_len_byte() {
+        addr[1] = 1;
+    } else {
+        addr[0] = 1;
+    }
+    let pbytes: *u8 = #str_ptr(path);
+    var i: usize = 0;
+    while i < plen {
+        addr[(2 as usize) +% i] = { *(pbytes + i) };
+        i = i +% 1;
+    }
+    let addrlen: u32 = ((2 as usize) +% plen +% (1 as usize)) as u32;
+    let fd: i32 = { socket(1, 1, 0) };
+    if fd < 0 { return - 1; }
+    if { connect(fd, #addr_of(addr[0]), addrlen) } != 0 {
+        { let _c: i32 = netsys::close_fd(fd); }
+        return - 1;
+    }
+    return fd;
+}
+
+#[test]
+fn an_incomplete_client_request_does_not_block_other_clients_and_times_out() {
+    if !has_uds() { return; }
+    set_request_deadline_ms(120 as i64);
+    let path: text::Text = "/tmp/cplus-mcp-stall-${current_pid()}.sock";
+    let lfd: i32 = bind_uds(path.view());
+    assert lfd >= 0;
+    assert listen_on(lfd) == 0;
+
+    let srv: thread::JoinHandle[i64] =
+        thread::spawn_with::[i64, i64](lfd as i64, _accept_loop_uds_worker);
+
+    // Client 1 connects and sends a partial JSON-RPC line WITHOUT a newline.
+    let c1: i32 = _connect_uds_test(path.view());
+    assert c1 >= 0;
+    let partial: str = "{\"jsonrpc\":\"2.0\",\"id\":99";
+    assert write_all(c1, #str_ptr(partial), #str_len(partial));
+    usleep(20000);
+
+    // Client 2 connects while Client 1's request is still incomplete, sends a
+    // full request line, and must receive its response without waiting for
+    // Client 1.
+    let c2: i32 = _connect_uds_test(path.view());
+    assert c2 >= 0;
+    let req2: str = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"describe_ui\"}\n";
+    assert write_all(c2, #str_ptr(req2), #str_len(req2));
+    var buf2: [u8; 2048] = [0; 2048];
+    let n2: i64 = read_line(c2, { #addr_of(buf2[0]) }, 2048);
+    assert n2 > 0;
+    assert response_contains({ #addr_of(buf2[0]) }, n2 as usize, "\"id\":7");
+    assert response_contains({ #addr_of(buf2[0]) }, n2 as usize, "exposed-node");
+    { let _c: i32 = netsys::close_fd(c2); }
+
+    // After the request deadline elapses, the server evicts stalled Client 1
+    // (closing its socket so recv returns 0 / EOF).
+    usleep(220000);
+    var probe: u8 = 0;
+    let r1: isize = { netsys::recv_fd(c1, #addr_of(probe), 1 as usize) };
+    assert r1 <= (0 as isize);
+    { let _c: i32 = netsys::close_fd(c1); }
+
+    srv.cancel();
+    let _j: i64 = srv.join();
+    unlink_bound_socket();
+    set_request_deadline_ms(0 as i64);
+}
+
+#[test]
+fn an_incomplete_http_request_is_buffered_nonblockingly_and_times_out() {
+    set_request_deadline_ms(100 as i64);
+    var fds: [i32; 2] = [-1, -1];
+    assert { netsys::socket_pair(#addr_of(fds) as *i32) } == 0;
+    // Peer sends HTTP headers declaring a 200-byte body, but writes only 2 bytes
+    // and keeps the socket open without sending the rest.
+    let partial_http: str =
+        "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 200\r\n\r\n{}";
+    assert write_all(fds[1], #str_ptr(partial_http), #str_len(partial_http));
+
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8);
+    // 1. Nonblocking per-client path (`serve_http_conn`) returns 0 immediately
+    //    so `accept_loop` can serve other connections while bytes are missing.
+    let _nb: i32 = netsys::set_nonblocking(fds[0]);
+    var cbuf: vec::Vec[u8] = vec::new::[u8]();
+    var started_ms: i64 = 0 as i64;
+    let ds: i32 = drain_nonblocking(fds[0], cbuf, started_ms, HTTP_MAX_HEAD +% HTTP_MAX_BODY);
+    assert ds == 0;
+    assert started_ms > (0 as i64);
+    var cname: text::Text = text::new();
+    let rc_nb: i32 = serve_http_conn(
+        #addr_of(FAKE_SURF) as *u8, fake_backend(), sub, allow_all,
+        fds[0], cbuf, started_ms, ds, client: #addr_of(cname));
+    assert rc_nb == 0;
+
+    // 2. Direct single-fd path (`read_exact`) enforces `request_deadline_ms()`
+    //    and returns false instead of blocking forever on the missing 198 bytes.
+    var body_buf: [u8; 256] = [0; 256];
+    let t0: i64 = time::now_millis();
+    assert !read_exact(fds[0], { #addr_of(body_buf[0]) }, 198 as usize);
+    let elapsed: i64 = time::now_millis() - t0;
+    assert elapsed >= (60 as i64);
+
+    { let _c0: i32 = netsys::close_fd(fds[0]); }
+    { let _c1: i32 = netsys::close_fd(fds[1]); }
+    set_request_deadline_ms(0 as i64);
+}
+
 

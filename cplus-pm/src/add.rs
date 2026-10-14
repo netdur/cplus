@@ -216,7 +216,9 @@ pub fn add(
                 if let Some(root) = &store_root {
                     vendor::check_tag_record(root, &dep, &sha).map_err(AddError::Vendor)?;
                 }
-                let pkg_dir = vendor::join_subpath(&source_root, &dep.subpath);
+                let pkg_dir =
+                    vendor::contained_package_dir(&source_root, &dep.subpath, &dep.name)
+                        .map_err(AddError::Vendor)?;
                 fs::read_to_string(pkg_dir.join(MANIFEST_NAME)).map_err(|source| AddError::Io {
                     path: pkg_dir.join(MANIFEST_NAME),
                     source,

@@ -71,6 +71,14 @@ pub enum VendorError {
     /// such as `vendor -> ..` — so a write or delete there would land in a
     /// directory the project does not own (audit F02).
     VendorOutsideProject { vendor: PathBuf, resolved: PathBuf },
+    /// A package directory inside a fetched checkout resolves outside the
+    /// checkout — for example via a committed symlink `vendor/pkg -> ../../other`
+    /// — which would make installation copy files from another local project.
+    PackageOutsideCheckout {
+        name: String,
+        package_dir: PathBuf,
+        resolved: PathBuf,
+    },
 }
 
 /// Where a package landed.
@@ -413,13 +421,7 @@ pub fn install(
                 check_tag_record(root, &dep, &sha)?;
             }
 
-            let package_src = join_subpath(&source_root, &dep.subpath);
-            if !package_src.join(MANIFEST_NAME).is_file() {
-                return Err(VendorError::MissingPackageDir {
-                    name: dep.name.clone(),
-                    path: package_src,
-                });
-            }
+            let package_src = contained_package_dir(&source_root, &dep.subpath, &dep.name)?;
 
             // ONLY OURS IS REPLACED. The comment above promises an unstamped
             // directory is never deleted, but the code spared it only when its
@@ -680,6 +682,62 @@ pub(crate) fn join_subpath(root: &Path, subpath: &str) -> PathBuf {
     }
 }
 
+/// Resolve a package directory inside a fetched checkout and verify that its
+/// canonical path stays inside the checkout.
+///
+/// `copy_tree` skips symlinks *inside* the package directory, but `fs::read_dir`
+/// on `package_src` itself follows symlinks — so a committed symlink at the
+/// package subpath (e.g. `vendor/pkg -> ../../../other-project` or `vendor -> ..`)
+/// would otherwise read `Cplus.toml` and copy every file from another local
+/// directory into the store or `vendor/`.
+pub(crate) fn contained_package_dir(
+    source_root: &Path,
+    subpath: &str,
+    name: &str,
+) -> Result<PathBuf, VendorError> {
+    let package_src = join_subpath(source_root, subpath);
+    let checkout = fs::canonicalize(source_root).map_err(|source| VendorError::Io {
+        path: source_root.to_path_buf(),
+        source,
+    })?;
+    if fs::symlink_metadata(&package_src).is_err() {
+        return Err(VendorError::MissingPackageDir {
+            name: name.to_string(),
+            path: package_src,
+        });
+    }
+    let resolved = match fs::canonicalize(&package_src) {
+        Ok(p) => p,
+        Err(_) => {
+            return Err(VendorError::MissingPackageDir {
+                name: name.to_string(),
+                path: package_src,
+            });
+        }
+    };
+    if !resolved.starts_with(&checkout) {
+        return Err(VendorError::PackageOutsideCheckout {
+            name: name.to_string(),
+            package_dir: package_src,
+            resolved,
+        });
+    }
+    let manifest_path = resolved.join(MANIFEST_NAME);
+    let manifest_meta = fs::symlink_metadata(&manifest_path).map_err(|_| {
+        VendorError::MissingPackageDir {
+            name: name.to_string(),
+            path: package_src.clone(),
+        }
+    })?;
+    if manifest_meta.file_type().is_symlink() || !manifest_meta.is_file() {
+        return Err(VendorError::MissingPackageDir {
+            name: name.to_string(),
+            path: package_src,
+        });
+    }
+    Ok(resolved)
+}
+
 /// The pin line identifying what a package was installed from.
 fn stamp_pin(dep: &Pending) -> String {
     format!("{}@{} {}", dep.repo, dep.version, dep.subpath)
@@ -848,6 +906,16 @@ impl fmt::Display for VendorError {
                 "{} resolves to {}, outside the project; refusing to write or delete there. \
                  Make vendor/ a real directory, or vendor the package in place by hand.",
                 vendor.display(),
+                resolved.display()
+            ),
+            VendorError::PackageOutsideCheckout {
+                name,
+                package_dir,
+                resolved,
+            } => write!(
+                f,
+                "package `{name}` at {} resolves to {}, outside the fetched checkout; refusing to read or copy files from outside the repository",
+                package_dir.display(),
                 resolved.display()
             ),
             VendorError::InvalidName { name } => write!(
@@ -1460,4 +1528,48 @@ mod tests {
         assert!(again.packages[0].fresh);
         assert_eq!(fs::read_to_string(&io).unwrap(), "// v27\n");
     }
+
+    #[test]
+    fn a_symlinked_package_dir_leaving_the_checkout_is_refused() {
+        // A malicious dependency repository can commit a symlink at the package
+        // subpath (`vendor/evil -> <other-local-project>`). Even though
+        // `copy_tree` skips symlinks *inside* the package directory, `read_dir`
+        // on `package_src` itself follows symlinks — which would copy files from
+        // another local project into `vendor/`.
+        let ws = TempDir::new().unwrap();
+        let victim = ws.path().join("other-local-project");
+        write(
+            &victim.join("Cplus.toml"),
+            "[package]\nname = \"evil\"\nversion = \"0.0.26\"\n",
+        );
+        write(&victim.join("src/secret.cplus"), "// PRIVATE SOURCE\n");
+
+        let repo = ws.path().join("malicious-repo");
+        fs::create_dir_all(repo.join("vendor")).unwrap();
+        git(&repo, &["init", "-q"]);
+        std::os::unix::fs::symlink(&victim, repo.join("vendor/evil")).unwrap();
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-qm", "v0.0.26"]);
+        git(&repo, &["tag", "v0.0.26"]);
+
+        let project = TempDir::new().unwrap();
+        write(
+            &project.path().join("Cplus.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.0.1\"\n\n[dependencies]\nevil = \"https://github.com/netdur/cplus/tree/main/vendor/evil@0.0.26\"\n",
+        );
+        let store = TempDir::new().unwrap();
+        let mut opts = options(&repo, store.path());
+        opts.local = true;
+
+        let err = install(project.path(), &opts).unwrap_err();
+        assert!(
+            matches!(err, VendorError::PackageOutsideCheckout { ref name, .. } if name == "evil"),
+            "expected PackageOutsideCheckout, got: {err:?}"
+        );
+        assert!(
+            !project.path().join("vendor/evil").exists(),
+            "nothing from the external local project may be copied into vendor/"
+        );
+    }
 }
+
