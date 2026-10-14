@@ -7981,12 +7981,6 @@ fn run_init(args: &[OsString]) -> ExitCode {
         .clone()
         .unwrap_or_else(|| manifest::default_app_id(&proj_name));
 
-    let src = root.join("src");
-    if let Err(e) = std::fs::create_dir_all(&src) {
-        eprintln!("cpc init: could not create {}: {e}", src.display());
-        return ExitCode::FAILURE;
-    }
-
     // D15: a bare `*` is the toolchain's own package at the toolchain's
     // version — `cpc pm install` supplies the context, and the store tier
     // version-locks stdlib to this compiler by construction. Third-party
@@ -8066,6 +8060,14 @@ fn run_init(args: &[OsString]) -> ExitCode {
         }
         None => ios,
     };
+
+    // Created only once every flag has been judged: a refused `--kind` used
+    // to leave an empty `<name>/src/` behind (2026-10-14).
+    let src = root.join("src");
+    if let Err(e) = std::fs::create_dir_all(&src) {
+        eprintln!("cpc init: could not create {}: {e}", src.display());
+        return ExitCode::FAILURE;
+    }
 
     // The platforms a facet backend is scaffolded for. A gui project naming
     // anything else still gets `src/app.cplus` and an entry that calls it —

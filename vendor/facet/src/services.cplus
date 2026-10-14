@@ -195,14 +195,27 @@ fn observe_size(n: *core::Node, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable
 // the task through the backend's reactor watch (see facet_appkit); awaiting
 // another async fn resumes through the executor's pending queue. After any
 // await the tree may have changed — the usual discipline applies (namespaced
-// keys miss harmlessly; `attached(this)` / `found()` to know).
+// keys miss harmlessly; a cursor's `found()` to know).
 //
-//     fn on_click(ref this, sender: *u8) { spawn_ui(this.refresh()); }
-//     async fn refresh(ref this) {
+// A SPAWNED TASK OWNS WHAT IT TOUCHES. It is detached — nothing joins it and
+// there is no cancellation — so it cannot borrow a screen: `spawn_ui(
+// this.refresh())` with `async fn refresh(ref this)` is E0515, because the
+// task would outlive the screen it points into. (This comment showed exactly
+// that form until 2026-10-14, with an `attached(this)` that does not exist;
+// examples/tasks_agent_loop found both.) Pass owned values in and find the
+// tree by key when it resumes:
+//
+//     fn on_click(ref this, sender: *u8) { spawn_ui(refresh("list".to_text())); }
+//     async fn refresh(take key: text::Text) {
 //         await time::sleep(milliseconds: 150 as u64);
-//         if !attached(this) { return; }
-//         find("list").add_child(...);
+//         if let option::Option::Some(l) = label::find(key.view()) { ... }
 //     }
+//
+// To write a SCREEN's own state after a delay, use `after` instead and hold
+// its `Cancellable` in the screen: the timer then cancels when the screen goes,
+// so the callback can never run against freed state.
+//
+//     this.pending = services::after(0.4f64, this.finish_sync);
 //
 // A spawned task runs to completion or not at all past a suspension the
 // backend cannot wake (no backend installed = the portable no-op posture).

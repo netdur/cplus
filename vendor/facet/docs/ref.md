@@ -637,7 +637,7 @@ for a complete screen example and the removed-API migration table.
 | `after(seconds, cb, ctx:) -> Cancellable` | one-shot timer |
 | `observe_size(n, cb, ctx:) -> Cancellable` | fire after every resize |
 | `run_on_main(work, ctx)` | hop to the UI thread |
-| `spawn_ui(future)` | a task that resumes on the UI thread |
+| `spawn_ui(future)` | a task that resumes on the UI thread; it is detached, so it must OWN what it touches (a `ref this` task is E0515) — for a screen's own state after a delay, hold `after`'s `Cancellable` in the screen |
 | `worker_start(input, f)` | work off the UI thread |
 | `run_job(job, then:, ctx:)` | a cancellable unit with a completion |
 

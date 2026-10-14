@@ -275,6 +275,22 @@ fn init_without_ios_stays_a_hello_world() {
 // ---- cpc init --kind ----
 
 #[test]
+fn a_refused_init_leaves_nothing_behind() {
+    // `--kind gui` with no `--platform` is refused — and used to leave an empty
+    // `<name>/src/` behind, because the directory was made before the flags
+    // were judged. A retry with the right flags then scaffolded into a
+    // directory that already existed. Found driving examples/tasks_agent_loop.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .arg("init").arg("--kind").arg("gui").arg("refused")
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(!out.status.success(), "gui without a platform is refused");
+    assert!(!dir.path().join("refused").exists(), "a refused init must create nothing");
+}
+
+#[test]
 fn kind_gui_scaffolds_a_facet_app_for_a_desktop_only_project() {
     // The case that fell through before --kind existed: a macOS-only facet
     // project got the printing hello-world, and reaching a window from there
