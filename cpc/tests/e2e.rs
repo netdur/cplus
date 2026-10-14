@@ -29095,6 +29095,101 @@ fn a_prebuilt_packages_computed_keeps_flow_survives_its_header() {
     assert!(out.status.success(), "the sound spelling must build and link:\n{all}");
 }
 
+/// bugs/closed/a-method-returning-a-view-of-its-parameter-ties-nothing.md —
+/// the method's return flow is computed from its body, so the body has to
+/// survive `cpc headers` or a consumer through `lib/include/` loses the tie.
+/// The other half: a method whose return comes only from the RECEIVER is
+/// still stripped, and through its header it ties nothing to its argument.
+#[test]
+fn a_methods_returned_parameter_flow_survives_its_header() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    const LIB: &str = "struct Pick { name: str }\n\
+         fn new() -> Pick { return Pick { name: \"stored\" }; }\n\
+         impl Pick {\n\
+         fn pick(this, s: str) -> str { return s; }\n\
+         fn get(this, key: str) -> str { return this.name; }\n\
+         }\n";
+    let scaffold = |dir: &std::path::Path, main_src: &str| {
+        std::fs::create_dir_all(dir.join("vendor/pickpkg/src")).unwrap();
+        std::fs::write(
+            dir.join("vendor/pickpkg/Cplus.toml"),
+            "[package]\nname = \"pickpkg\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+             [dependencies]\nstdlib = \"*\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("vendor/pickpkg/src/pick.cplus"), LIB).unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("Cplus.toml"),
+            "[package]\nname = \"pickuser\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+             [dependencies]\nstdlib = \"*\"\npickpkg = \"*\"\n",
+        )
+        .unwrap();
+        symlink_dir(
+            format!("{}/../vendor/stdlib", env!("CARGO_MANIFEST_DIR")),
+            dir.join("vendor/stdlib"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("src/main.cplus"), main_src).unwrap();
+    };
+    let build = |dir: &std::path::Path| {
+        let out = Command::new(cpc).arg("build").current_dir(dir).output().expect("invoke cpc build");
+        (
+            out.status.success(),
+            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+        )
+    };
+
+    let hdir = tempdir();
+    scaffold(&hdir, "fn main() -> i32 { return 0; }\n");
+    let out = Command::new(cpc)
+        .arg("headers")
+        .current_dir(hdir.join("vendor/pickpkg"))
+        .output()
+        .expect("invoke cpc headers");
+    assert!(out.status.success(), "cpc headers failed");
+    let header = std::fs::read_to_string(hdir.join("vendor/pickpkg/lib/include/pick.cplus"))
+        .expect("read generated header");
+    assert!(
+        header.contains("fn pick(this, s: str) -> str { return s; }"),
+        "the body is the only record of the return flow — it must ship:\n{header}"
+    );
+    assert!(
+        header.contains("fn get(this, key: str) -> str ;"),
+        "a receiver-only return carries no parameter flow and stays stripped:\n{header}"
+    );
+
+    const BAD: &str = "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"pickpkg/pick\" as pick;\n\
+         fn main() -> i32 {\n\
+         let p: pick::Pick = pick::new();\n\
+         var v: str = \"a\";\n\
+         { let t: text::Text = \"item\".to_text(); v = p.pick(t.view()); }\n\
+         io::println(v);\n\
+         return 0;\n\
+         }\n";
+    let bdir = tempdir();
+    scaffold(&bdir, BAD);
+    let (ok, all) = build(&bdir);
+    assert!(!ok && all.contains("E0514"), "expected E0514 through the header:\n{all}");
+
+    const GOOD: &str = "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"pickpkg/pick\" as pick;\n\
+         fn main() -> i32 {\n\
+         let p: pick::Pick = pick::new();\n\
+         var v: str = \"a\";\n\
+         { let key: text::Text = \"k\".to_text(); v = p.get(key.view()); }\n\
+         io::println(v);\n\
+         return 0;\n\
+         }\n";
+    let gdir = tempdir();
+    scaffold(&gdir, GOOD);
+    let (ok, all) = build(&gdir);
+    assert!(ok, "a lookup through its header must not tie its key:\n{all}");
+}
+
 /// bugs/a-detached-future-outlives-the-storage-it-borrows.md — `spawn_local`
 /// hands the future to the reactor and returns, so the borrows the future
 /// carries have to outlive every frame. The tie an async call establishes is

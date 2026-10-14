@@ -905,6 +905,12 @@ struct FnEntry {
     /// A free fn's own generic parameter names (`new[T]` → `["T"]`), for
     /// `generic_ret_positions`. Empty for methods and non-generic fns.
     generic_names: Vec<String>,
+    /// A body-less declaration (a `lib/include` header). `cpc headers` ships
+    /// the body of every method whose return carries a borrow-position
+    /// parameter (`computed_flow_sites`), so a STRIPPED method is known to
+    /// carry none — `method_ret_param_positions` ties nothing for it rather
+    /// than every position.
+    is_declaration: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1150,6 +1156,7 @@ impl SigTable {
                             param_tys: f.params.iter().map(|p| p.ty.clone()).collect(),
                             ret_ty: f.return_type.clone(),
                             generic_names: generic_names.clone(),
+                            is_declaration: f.is_declaration,
                         },
                     );
                 }
@@ -1268,6 +1275,7 @@ impl SigTable {
                                 param_tys: m.params.iter().map(|p| p.ty.clone()).collect(),
                                 ret_ty: m.return_type.clone(),
                                 generic_names: Vec::new(),
+                                is_declaration: m.is_declaration,
                             },
                         );
                     }
@@ -1425,6 +1433,43 @@ fn generic_ret_positions(
             }
         })
         .map(|(i, _)| i)
+        .collect()
+}
+
+/// The non-receiver arguments a METHOD call's result may borrow from.
+///
+/// Method elision only ever tied the RECEIVER (`SelfReceiver`), so
+/// `fn pick(this, s: str) -> str { return s; }` handed back a view of its
+/// argument that nothing tied, and `v = p.pick(o.view())` outlived `o`
+/// (ASan heap-use-after-free) — bugs/closed/a-method-returning-a-view-of-
+/// its-parameter-ties-nothing.md. A type rule would be wrong the other way:
+/// `fn get(this, key: str) -> str` returns the RECEIVER's storage, and tying
+/// the result to the key's owner would reject sound lookups. So the body
+/// decides: the flow pass's `computed_ret_flow` bits name the parameters
+/// whose value can reach the return. A method with its own generic
+/// parameters (the pass skips those) falls back to every position, the
+/// sound direction; a header declaration falls back to none, because
+/// `cpc headers` keeps the body of any method that has such a flow.
+///
+/// Gated twice: the return type must be able to hold a borrow (not a plain
+/// Copy scalar), and the argument must carry one (`arg_may_be_view`).
+fn method_ret_param_positions(
+    entry: &FnEntry,
+    oracle: &CopyOracle,
+    n_args: usize,
+    arg_may_be_view: &dyn Fn(usize) -> bool,
+) -> Vec<usize> {
+    let Some(ret) = entry.ret_ty.as_ref() else {
+        return Vec::new();
+    };
+    if !(oracle.type_contains_view(ret) || !oracle.is_copy(ret)) {
+        return Vec::new();
+    }
+    let bits = entry
+        .computed_ret_flow
+        .unwrap_or(if entry.is_declaration { 0 } else { u64::MAX });
+    (0..n_args.min(64))
+        .filter(|i| bits & (1u64 << i) != 0 && arg_may_be_view(*i))
         .collect()
 }
 
@@ -3944,6 +3989,29 @@ impl<'p> Analyzer<'p> {
                 if entry.return_borrow.as_ref() == Some(&ReturnBorrowSource::SelfReceiver) {
                     out.push((place, flavor));
                 }
+                let may_be_view = |i: usize| {
+                    args.get(i).is_some_and(|a| {
+                        !self.classify_borrow_source(a).is_empty()
+                            || place_from_expr(a).is_some_and(|p| {
+                                self.binding_borrows_from
+                                    .get(&p.root)
+                                    .is_some_and(|o| !o.is_empty())
+                                    || self
+                                        .binding_type(&p.root)
+                                        .is_some_and(|t| self.oracle.type_contains_view(t))
+                            })
+                    })
+                };
+                for i in method_ret_param_positions(entry, self.oracle, args.len(), &may_be_view) {
+                    match place_from_arg(args, i) {
+                        Some(p) => out.push((p, BorrowFlavor::Shared)),
+                        None => {
+                            if let Some(a) = args.get(i) {
+                                out.extend(self.classify_borrow_source(a));
+                            }
+                        }
+                    }
+                }
                 out
             }
             // `Enum::Variant(payload)` — payload views escape into the value.
@@ -4459,6 +4527,18 @@ impl<'a> ViewRules<'a> {
     /// `SelfReceiver` — filtered to returns that actually carry a view, so
     /// Rule E2's non-Copy-aggregate returns don't count. Sema used to
     /// re-derive this from its own tables; one answer, one place.
+    /// The method entry a `receiver.method(..)` call resolves to, by the
+    /// receiver's inferred type.
+    fn method_entry_of(&self, receiver: &Expr, method: &str) -> Option<&FnEntry> {
+        let ty = self.infer_ty(receiver)?;
+        let base = match &ty.kind {
+            TypeKind::Path(n) => n.clone(),
+            TypeKind::Generic { name, .. } => name.clone(),
+            _ => return None,
+        };
+        self.sigs.method_entry(&base, method)
+    }
+
     fn method_produces_view(&self, receiver: &Expr, method: &str) -> bool {
         let Some(ty) = self.infer_ty(receiver) else {
             return false;
@@ -4531,6 +4611,21 @@ impl<'a> ViewRules<'a> {
                     }
                     for src in self.async_frame_sources_of(callee, args) {
                         roots.extend(self.view_source_roots(src));
+                    }
+                    if let Some(entry) = self.method_entry_of(receiver, &name.name) {
+                        let may_be_view = |i: usize| {
+                            args.get(i).is_some_and(|a| {
+                                !self.view_source_roots(a).is_empty()
+                                    || self
+                                        .infer_ty(a)
+                                        .is_some_and(|t| self.oracle.type_contains_view(&t))
+                            })
+                        };
+                        for i in method_ret_param_positions(entry, self.oracle, args.len(), &may_be_view) {
+                            if let Some(a) = args.get(i) {
+                                roots.extend(self.view_source_roots(a));
+                            }
+                        }
                     }
                 }
                 ExprKind::Ident(fn_name) => {
@@ -5593,7 +5688,13 @@ impl<'a> ViewRules<'a> {
     /// literal, whose parts and args live only for the statement.
     fn temp_arg_of_returned_view(&self, e: &Expr) -> Option<(String, String)> {
         let core = Self::trivial_tail(e);
-        let ExprKind::Call { callee, args, .. } = &core.kind else {
+        let ExprKind::Call {
+            callee,
+            args,
+            type_args,
+            ..
+        } = &core.kind
+        else {
             return None;
         };
         let (entry, shown) = match &callee.kind {
@@ -5609,10 +5710,25 @@ impl<'a> ViewRules<'a> {
             }
             _ => return None,
         };
-        let sources: Vec<u32> = match entry.return_borrow.as_ref()? {
-            ReturnBorrowSource::Param(i) => vec![*i],
-            ReturnBorrowSource::MultiParam(is) => is.clone(),
-            ReturnBorrowSource::SelfReceiver => return None,
+        // Every position the result may borrow from: the signature's
+        // `return_borrow`, a method's computed parameter flow, or a generic
+        // fn's instantiation. Any argument there that is a temporary dangles.
+        let every = |_: usize| true;
+        let sources: Vec<u32> = match entry.return_borrow.as_ref() {
+            Some(ReturnBorrowSource::Param(i)) => vec![*i],
+            Some(ReturnBorrowSource::MultiParam(is)) => is.clone(),
+            Some(ReturnBorrowSource::SelfReceiver) | None => {
+                let found: Vec<usize> = match &callee.kind {
+                    ExprKind::Field { .. } => {
+                        method_ret_param_positions(entry, self.oracle, args.len(), &every)
+                    }
+                    _ => generic_ret_positions(entry, type_args, self.oracle, &every),
+                };
+                if found.is_empty() {
+                    return None;
+                }
+                found.into_iter().map(|i| i as u32).collect()
+            }
         };
         for i in sources {
             let Some(arg) = args.get(i as usize) else {
@@ -7236,11 +7352,18 @@ pub fn computed_flow_sites(prog: &Program) -> std::collections::BTreeSet<Span> {
             ItemKind::Impl(b) => {
                 for m in &b.methods {
                     let key = format!("{}.{}", b.target.name, m.name.name);
+                    // A kept parameter, or one whose value can be RETURNED
+                    // (`fn pick(this, s: str) -> str { return s; }`): either
+                    // fact lives only in the body.
                     if sigs.methods.get(&key).is_some_and(|e| {
                         e.computed_keeps
                             .iter()
                             .enumerate()
                             .any(|(i, k)| *k && borrow_pos(e, i))
+                            || e.computed_ret_flow.is_some_and(|bits| {
+                                (0..e.param_tys.len().min(64))
+                                    .any(|i| bits & (1u64 << i) != 0 && borrow_pos(e, i))
+                            })
                     }) {
                         out.insert(m.name.span);
                     }
@@ -14046,6 +14169,10 @@ fn first(a: str, b: str) -> str { if true { return a; } return b; }
 struct Tpl { s: str }
 fn keep_tpl(t: Tpl) -> Tpl { return t; }
 fn count_tpl(t: Tpl) -> i32 { return 0; }
+struct Pick { n: i32 }
+impl Pick { fn pick(this, s: str) -> str { return s; } }
+struct Dict { k: LStr }
+impl Dict { fn get(this, key: str) -> str { return this.k; } }
 ";
 
     #[test]
@@ -14060,9 +14187,10 @@ fn count_tpl(t: Tpl) -> i32 { return 0; }
             ("view_of_a_temporary", "fn f() { let v: str = keep_str(mk().view()); peek(v); return; }"),
             ("one_call_deeper", "fn f() { let v: str = keep_str(keep_str(mk())); peek(v); return; }"),
             ("one_of_several_sources", "fn f() { let v: str = first(\"a\", mk()); peek(v); return; }"),
-            // Not here: `p.pick(mk())`. A METHOD returning a view of its
-            // parameter records no `return_borrow` at all, so not even a named
-            // owner is tied — bugs/a-method-returning-a-view-of-its-parameter-ties-nothing.md.
+            // A METHOD returning a view of its parameter: the computed return
+            // flow names `s` (bugs/closed/a-method-returning-a-view-of-its-
+            // parameter-ties-nothing.md).
+            ("method_returning_its_parameter", "fn f() { let p: Pick = Pick { n: 1 }; let v: str = p.pick(mk()); peek(v); return; }"),
             ("assignment", "fn f() { var v: str = \"a\"; v = keep_str(mk()); peek(v); return; }"),
             ("returned", "fn g() -> str { return keep_str(mk()); }"),
             ("captured_in_a_carrier", "fn f() { let s: Slot = Slot { s: keep_str(mk()), n: 1 }; return; }"),
@@ -14084,6 +14212,22 @@ fn count_tpl(t: Tpl) -> i32 { return 0; }
     }
 
     #[test]
+    fn a_method_returning_a_view_of_its_parameter_ties_it() {
+        // The bug report's repro: the free-fn form was E0514 all along, the
+        // method form was clean and read freed bytes.
+        let bad = "fn f() -> i32 { var v: str = \"a\"; let p: Pick = Pick { n: 1 }; { let o: LStr = mk(); v = p.pick(o.view()); } return peek(v); }";
+        let codes = check_src(&format!("{LANG_STR_PRELUDE}{COERCE_PRELUDE}{RETURNED_VIEW_PRELUDE}{bad}"));
+        assert!(codes.iter().any(|c| c == "E0514"), "expected E0514, got {codes:?}");
+        let returned = "fn g(p: Pick) -> str { let o: LStr = mk(); return p.pick(o.view()); }";
+        let codes = check_src(&format!("{LANG_STR_PRELUDE}{COERCE_PRELUDE}{RETURNED_VIEW_PRELUDE}{returned}"));
+        assert!(codes.iter().any(|c| c == "E0513"), "expected E0513, got {codes:?}");
+        // The lookup ties to the receiver, not the key: a key that dies first is fine.
+        let lookup = "fn f() -> i32 { let d: Dict = Dict { k: mk() }; var v: str = \"a\"; { let key: LStr = mk(); v = d.get(key.view()); } return peek(v); }";
+        let codes = check_src(&format!("{LANG_STR_PRELUDE}{COERCE_PRELUDE}{RETURNED_VIEW_PRELUDE}{lookup}"));
+        assert!(codes.is_empty(), "a lookup must not tie its key, got {codes:?}");
+    }
+
+    #[test]
     fn a_returned_view_whose_argument_has_a_lifetime_stays_clean() {
         // A named owner outlives the statement (the tie judges it later), a
         // literal's bytes are 'static, and a result passed straight on is
@@ -14095,6 +14239,9 @@ fn count_tpl(t: Tpl) -> i32 { return 0; }
             ("passed_straight_on", "fn f() { let r: i32 = peek(keep_str(mk())); return; }"),
             ("template_passed_straight_on", "fn f() { let n: i32 = 1; let r: i32 = count_tpl(keep_tpl(\"a ${n}\")); return; }"),
             ("parameter_forwarded", "fn g(s: str) -> str { return keep_str(s); }"),
+            // The lookup returns the RECEIVER's storage; the temporary key
+            // only selects. No type rule could tell these apart; the body can.
+            ("method_lookup_with_a_temporary_key", "fn f() { let d: Dict = Dict { k: mk() }; let v: str = d.get(mk()); peek(v); return; }"),
         ];
         let flagged: Vec<(&str, Vec<String>)> = clean
             .iter()

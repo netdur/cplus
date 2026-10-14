@@ -158,6 +158,18 @@ terminal and events there are none. What the flow pass finds in bulk is Copy
 values stored into a receiver (`grow_to(ref this, new_cap: usize)`), which tie
 nothing and are filtered out.
 
+A method's RETURN flow is the second fact that lives only in its body
+(2026-10-13). Elision tied a method's result to its receiver and never to a
+parameter, so `fn pick(this, s: str) -> str { return s; }` handed back an
+untied view. The tie now comes from the computed return flow, not from the
+signature: `fn get(this, key: str) -> str { return this.v; }` has the same
+signature and must NOT tie the key, and only the body tells the two apart.
+`cpc headers` therefore also keeps the body of a method whose return flow
+reaches a borrow-position parameter, and a stripped declaration ties no
+parameter — the header is the record that none does. A method with its own
+generic parameters is not flow-analyzed and ties every view-carrying
+argument, the sound default.
+
 Translating the flow into an attribute instead is not available today:
 `#[keeps(...)]` takes only `this` or `nothing`, so it cannot name WHICH
 parameter is kept, and it has no free-function form for the
