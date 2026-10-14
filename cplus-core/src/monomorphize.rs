@@ -2480,6 +2480,24 @@ fn mangle_call_from_ast(
     )
 }
 
+/// Expand all `ItemKind::TypeAlias` items across `prog` when any exist,
+/// returning a borrowed `Cow` when the program has no type aliases.
+/// Cycle-safe so passes that run independently of sema (like `borrowck`)
+/// cannot loop on cyclic aliases.
+pub(crate) fn expand_program_aliases(prog: &Program) -> std::borrow::Cow<'_, Program> {
+    let mut aliases: std::collections::BTreeMap<String, Type> = std::collections::BTreeMap::new();
+    for item in &prog.items {
+        if let ItemKind::TypeAlias(ta) = &item.kind {
+            aliases.insert(ta.name.name.clone(), ta.target.clone());
+        }
+    }
+    if aliases.is_empty() {
+        std::borrow::Cow::Borrowed(prog)
+    } else {
+        std::borrow::Cow::Owned(rewrite_aliases_in_program(prog.clone(), &aliases))
+    }
+}
+
 /// Phase 11 polish (2026-05-13): walk the program and substitute every
 /// `TypeKind::Path(name)` where `name` is a type alias with the alias's
 /// target. Recursive through nested types (Array, RawPtr, FnPtr, Generic
@@ -2555,37 +2573,49 @@ fn rewrite_aliases_in_program(
 }
 
 fn rewrite_alias_type(t: &mut Type, aliases: &std::collections::BTreeMap<String, Type>) {
+    let mut seen = std::collections::BTreeSet::new();
+    rewrite_alias_type_inner(t, aliases, &mut seen);
+}
+
+fn rewrite_alias_type_inner(
+    t: &mut Type,
+    aliases: &std::collections::BTreeMap<String, Type>,
+    seen: &mut std::collections::BTreeSet<String>,
+) {
     match &mut t.kind {
         TypeKind::Path(name) => {
             if let Some(target) = aliases.get(name) {
-                let mut new_t = target.clone();
-                rewrite_alias_type(&mut new_t, aliases);
-                *t = new_t;
+                if seen.insert(name.clone()) {
+                    let mut new_t = target.clone();
+                    rewrite_alias_type_inner(&mut new_t, aliases, seen);
+                    seen.remove(name);
+                    *t = new_t;
+                }
             }
         }
-        TypeKind::Array { elem, .. } => rewrite_alias_type(elem, aliases),
-        TypeKind::RawPtr(inner) => rewrite_alias_type(inner, aliases),
+        TypeKind::Array { elem, .. } => rewrite_alias_type_inner(elem, aliases, seen),
+        TypeKind::RawPtr(inner) => rewrite_alias_type_inner(inner, aliases, seen),
         TypeKind::FnPtr {
             params,
             return_type,
             ..
         } => {
             for p in params {
-                rewrite_alias_type(p, aliases);
+                rewrite_alias_type_inner(p, aliases, seen);
             }
             if let Some(rt) = return_type {
-                rewrite_alias_type(rt, aliases);
+                rewrite_alias_type_inner(rt, aliases, seen);
             }
         }
         TypeKind::Generic { args, .. } => {
             for a in args {
-                rewrite_alias_type(a, aliases);
+                rewrite_alias_type_inner(a, aliases, seen);
             }
         }
-        TypeKind::Slice(inner) => rewrite_alias_type(inner, aliases),
+        TypeKind::Slice(inner) => rewrite_alias_type_inner(inner, aliases, seen),
         TypeKind::Tuple(elems) => {
             for t in elems {
-                rewrite_alias_type(t, aliases);
+                rewrite_alias_type_inner(t, aliases, seen);
             }
         }
     }

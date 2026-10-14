@@ -1712,13 +1712,13 @@ impl Lower {
         for item in &mut prog.items {
             match &mut item.kind {
                 ItemKind::Function(f) => {
-                    subst_block(&mut f.body, consts);
-                    subst_attr_exprs(&mut f.attributes, consts);
+                    subst_block(&mut f.body, &f.params, consts);
+                    subst_attr_exprs(&mut f.attributes, &f.params, consts);
                 }
                 ItemKind::Impl(b) => {
                     for m in &mut b.methods {
-                        subst_block(&mut m.body, consts);
-                        subst_attr_exprs(&mut m.attributes, consts);
+                        subst_block(&mut m.body, &m.params, consts);
+                        subst_attr_exprs(&mut m.attributes, &m.params, consts);
                     }
                 }
                 ItemKind::Struct(_)
@@ -2184,13 +2184,171 @@ impl ExprRewriter for LenResolver<'_> {
 }
 
 /// issue-01: const substitution rides the generic walk — the only node it has
-/// an opinion about is an `Ident` naming a `const`.
+/// an opinion about is an `Ident` naming a `const` (when not shadowed by a
+/// parameter or lexical local binding).
 struct ConstSubst<'a> {
     consts: &'a std::collections::HashMap<String, (Expr, Type)>,
+    scopes: Vec<std::collections::HashSet<String>>,
+}
+
+impl ConstSubst<'_> {
+    fn is_shadowed(&self, name: &str) -> bool {
+        self.scopes.iter().any(|s| s.contains(name))
+    }
+
+    fn bind(&mut self, name: &str) {
+        if let Some(s) = self.scopes.last_mut() {
+            s.insert(name.to_string());
+        }
+    }
+
+    fn walk_scoped_block(&mut self, b: &Block) -> Block {
+        self.scopes.push(std::collections::HashSet::new());
+        let out = walk_block(b, self);
+        self.scopes.pop();
+        out
+    }
 }
 
 impl ExprRewriter for ConstSubst<'_> {
+    fn visit_stmt(&mut self, s: &Stmt) -> Option<Stmt> {
+        let kind = match &s.kind {
+            StmtKind::Let {
+                mutable,
+                name,
+                ty,
+                init,
+            } => {
+                let ty = ty.as_ref().map(|t| crate::ast::walk_type(t, self));
+                let init = init.as_ref().map(|e| walk_expr(e, self));
+                self.bind(&name.name);
+                StmtKind::Let {
+                    mutable: *mutable,
+                    name: name.clone(),
+                    ty,
+                    init,
+                }
+            }
+            StmtKind::LetDestructure {
+                mutable,
+                type_name,
+                fields,
+                init,
+            } => {
+                let init = walk_expr(init, self);
+                for f in fields {
+                    self.bind(&f.name);
+                }
+                StmtKind::LetDestructure {
+                    mutable: *mutable,
+                    type_name: type_name.clone(),
+                    fields: fields.clone(),
+                    init,
+                }
+            }
+            StmtKind::While {
+                cond,
+                body,
+                attributes,
+            } => StmtKind::While {
+                cond: walk_expr(cond, self),
+                body: self.walk_scoped_block(body),
+                attributes: attributes.clone(),
+            },
+            StmtKind::Loop(body, attributes) => {
+                StmtKind::Loop(self.walk_scoped_block(body), attributes.clone())
+            }
+            StmtKind::For(fl, attributes) => {
+                let fl = match fl {
+                    ForLoop::Range { var, iter, body } => {
+                        let iter = walk_expr(iter, self);
+                        let mut scope = std::collections::HashSet::new();
+                        scope.insert(var.name.clone());
+                        self.scopes.push(scope);
+                        let body = self.walk_scoped_block(body);
+                        self.scopes.pop();
+                        ForLoop::Range {
+                            var: var.clone(),
+                            iter,
+                            body,
+                        }
+                    }
+                    ForLoop::CStyle {
+                        init,
+                        cond,
+                        update,
+                        body,
+                    } => {
+                        self.scopes.push(std::collections::HashSet::new());
+                        let init = init.as_ref().map(|st| Box::new(crate::ast::walk_stmt(st, self)));
+                        let cond = cond.as_ref().map(|c| walk_expr(c, self));
+                        let update = update.iter().map(|u| walk_expr(u, self)).collect();
+                        let body = self.walk_scoped_block(body);
+                        self.scopes.pop();
+                        ForLoop::CStyle {
+                            init,
+                            cond,
+                            update,
+                            body,
+                        }
+                    }
+                };
+                StmtKind::For(fl, attributes.clone())
+            }
+            _ => return None,
+        };
+        Some(Stmt { kind, span: s.span })
+    }
+
     fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+        match &e.kind {
+            ExprKind::Block(b) => {
+                return Some(Expr {
+                    kind: ExprKind::Block(self.walk_scoped_block(b)),
+                    span: e.span,
+                });
+            }
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
+                return Some(Expr {
+                    kind: ExprKind::If {
+                        cond: Box::new(walk_expr(cond, self)),
+                        then: self.walk_scoped_block(then),
+                        else_branch: else_branch.as_ref().map(|eb| Box::new(walk_expr(eb, self))),
+                    },
+                    span: e.span,
+                });
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                let scrutinee = Box::new(walk_expr(scrutinee, self));
+                let arms = arms
+                    .iter()
+                    .map(|a| {
+                        let mut scope = std::collections::HashSet::new();
+                        for b in collect_pattern_bindings(&a.pattern) {
+                            scope.insert(b.name);
+                        }
+                        self.scopes.push(scope);
+                        let pattern = crate::ast::walk_pattern(&a.pattern, self);
+                        let body = walk_expr(&a.body, self);
+                        self.scopes.pop();
+                        MatchArm {
+                            pattern,
+                            body,
+                            span: a.span,
+                        }
+                    })
+                    .collect();
+                return Some(Expr {
+                    kind: ExprKind::Match { scrutinee, arms },
+                    span: e.span,
+                });
+            }
+            _ => {}
+        }
         // Replace this node entirely if it's an Ident naming a const. Span
         // is taken from the original use site so diagnostics still point
         // there if a later pass complains about the substituted literal.
@@ -2204,6 +2362,9 @@ impl ExprRewriter for ConstSubst<'_> {
         let ExprKind::Ident(name) = &e.kind else {
             return None;
         };
+        if self.is_shadowed(name) {
+            return None;
+        }
         let (value, decl_ty) = self.consts.get(name)?;
         // GAP 3 (v0.0.19): the cloned const *value* still carries the
         // const's definition-site byte spans. With multi-file builds, a
@@ -2225,8 +2386,18 @@ impl ExprRewriter for ConstSubst<'_> {
     }
 }
 
-fn subst_block(b: &mut Block, consts: &std::collections::HashMap<String, (Expr, Type)>) {
-    let resolved = walk_block(b, &mut ConstSubst { consts });
+fn subst_block(
+    b: &mut Block,
+    params: &[Param],
+    consts: &std::collections::HashMap<String, (Expr, Type)>,
+) {
+    let param_scope: std::collections::HashSet<String> =
+        params.iter().map(|p| p.name.name.clone()).collect();
+    let mut subst = ConstSubst {
+        consts,
+        scopes: vec![param_scope, std::collections::HashSet::new()],
+    };
+    let resolved = walk_block(b, &mut subst);
     *b = resolved;
 }
 
@@ -2234,12 +2405,19 @@ fn subst_block(b: &mut Block, consts: &std::collections::HashMap<String, (Expr, 
 /// same substitution the body gets.
 fn subst_attr_exprs(
     attrs: &mut [Attribute],
+    params: &[Param],
     consts: &std::collections::HashMap<String, (Expr, Type)>,
 ) {
+    let param_scope: std::collections::HashSet<String> =
+        params.iter().map(|p| p.name.name.clone()).collect();
     for a in attrs {
         for arg in &mut a.args {
             if let AttrArg::Expr(e) = arg {
-                **e = walk_expr(e, &mut ConstSubst { consts });
+                let mut subst = ConstSubst {
+                    consts,
+                    scopes: vec![param_scope.clone()],
+                };
+                **e = walk_expr(e, &mut subst);
             }
         }
     }
@@ -3325,31 +3503,31 @@ impl Lower {
                                     bail!(e.span, "mixed types in constant expression");
                                 };
                                 let wrap = |x| cint_wrap(x, ty);
-                                let v = match op {
-                                    Add => a + b,
-                                    Sub => a - b,
-                                    Mul => a * b,
-                                    AddWrap => wrap(a + b),
-                                    SubWrap => wrap(a - b),
-                                    MulWrap => wrap(a * b),
+                                let v_opt = match op {
+                                    Add => a.checked_add(b),
+                                    Sub => a.checked_sub(b),
+                                    Mul => a.checked_mul(b),
+                                    AddWrap => Some(wrap(a.wrapping_add(b))),
+                                    SubWrap => Some(wrap(a.wrapping_sub(b))),
+                                    MulWrap => Some(wrap(a.wrapping_mul(b))),
                                     Div => {
                                         if b == 0 {
                                             bail!(e.span, "division by zero in constant expression");
                                         }
-                                        a / b
+                                        a.checked_div(b)
                                     }
                                     Mod => {
                                         if b == 0 {
                                             bail!(e.span, "modulo by zero in constant expression");
                                         }
-                                        a % b
+                                        a.checked_rem(b)
                                     }
-                                    BitAnd => a & b,
-                                    BitOr => a | b,
-                                    BitXor => a ^ b,
+                                    BitAnd => Some(a & b),
+                                    BitOr => Some(a | b),
+                                    BitXor => Some(a ^ b),
                                     _ => unreachable!(),
                                 };
-                                if !cint_in_range(v, ty) {
+                                let Some(v) = v_opt.filter(|&v| cint_in_range(v, ty)) else {
                                     bail!(
                                         e.span,
                                         "constant arithmetic overflows `{}`; use `{}` to wrap",
@@ -3361,7 +3539,7 @@ impl Lower {
                                             _ => "+%",
                                         }
                                     );
-                                }
+                                };
                                 Ok(CVal::Int { v, ty })
                             }
                             CVal::Float { v: a, bits, .. } => {
@@ -6252,5 +6430,44 @@ fn main() -> i32 { return 0; }\n";
         assert!(diags.is_empty(), "{:?}", first_codes(&diags));
         let (_, labels) = method_call_in_main(&prog, "on");
         assert_eq!(labels, 1, "not decided here — sema uses the receiver's type");
+    }
+
+    #[test]
+    fn const_eval_large_u64_mul_does_not_panic_on_i128_overflow() {
+        let wrap_src = "const W: u64 = 0xffff_ffff_ffff_ffffu64 *% 2u64;\n\
+                        fn main() -> i32 { return 0; }\n";
+        let (_, wrap_diags) = run(wrap_src);
+        assert!(wrap_diags.is_empty(), "expected clean *%, got {wrap_diags:?}");
+
+        let ovf_src = "const BAD: u64 = 0xffff_ffff_ffff_ffffu64 * 0xffff_ffff_ffff_ffffu64;\n\
+                       fn main() -> i32 { return 0; }\n";
+        let (_, ovf_diags) = run(ovf_src);
+        assert_eq!(first_codes(&ovf_diags), vec!["E0921"]);
+    }
+
+    #[test]
+    fn const_subst_respects_local_and_param_shadowing() {
+        let src = "const X: i32 = 99;\n\
+                   fn by_param(X: i32) -> i32 { return X; }\n\
+                   fn by_local() -> i32 { var X: i32 = 1; X = 2; return X; }\n\
+                   fn unshadowed() -> i32 { return X; }\n";
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        // `by_param` and `by_local` keep `Ident("X")`; `unshadowed` gets the Cast(99).
+        let p_ret = &fn_named(&prog, "by_param").body.stmts[0];
+        assert!(matches!(
+            p_ret,
+            Stmt { kind: StmtKind::Return(Some(Expr { kind: ExprKind::Ident(n), .. })), .. } if n == "X"
+        ));
+        let l_ret = &fn_named(&prog, "by_local").body.stmts[2];
+        assert!(matches!(
+            l_ret,
+            Stmt { kind: StmtKind::Return(Some(Expr { kind: ExprKind::Ident(n), .. })), .. } if n == "X"
+        ));
+        let u_ret = &fn_named(&prog, "unshadowed").body.stmts[0];
+        assert!(matches!(
+            u_ret,
+            Stmt { kind: StmtKind::Return(Some(Expr { kind: ExprKind::Cast { .. }, .. })), .. }
+        ));
     }
 }

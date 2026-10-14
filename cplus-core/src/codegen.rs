@@ -6080,7 +6080,9 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
                 walk_expr(target, table, next_id, out);
                 walk_expr(value, table, next_id, out);
             }
-            ExprKind::Cast { expr: inner, .. } => walk_expr(inner, table, next_id, out),
+            ExprKind::Cast { expr: inner, .. } | ExprKind::CastChecked { expr: inner, .. } => {
+                walk_expr(inner, table, next_id, out)
+            }
             ExprKind::Range { start, end, .. } => {
                 if let Some(s) = start {
                     walk_expr(s, table, next_id, out);
@@ -6102,9 +6104,19 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
                     walk_expr(&f.value, table, next_id, out);
                 }
             }
-            ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
+            ExprKind::ArrayLit { elements }
+            | ExprKind::TupleLit { elements }
+            | ExprKind::GenericEnumCall { args: elements, .. } => {
                 for e in elements {
                     walk_expr(e, table, next_id, out);
+                }
+            }
+            ExprKind::ArrayFill { fill, .. } => {
+                walk_expr(fill, table, next_id, out);
+            }
+            ExprKind::Asm { operands, .. } => {
+                for op in operands {
+                    walk_expr(&op.value, table, next_id, out);
                 }
             }
             // v0.0.10 Phase 4: `#name(args...)` intrinsics may carry
@@ -6807,6 +6819,10 @@ fn render_static_literal(
             let v = render_static_literal(fill, elem, types, sigs)?;
             if v == "0" || v == "0x0000000000000000" || v == "zeroinitializer" {
                 return Some("zeroinitializer".to_string());
+            }
+            const MAX_STATIC_ARRAY_FILL: u32 = 1_048_576;
+            if *count > MAX_STATIC_ARRAY_FILL {
+                return None;
             }
             let elem_ll = llvm_ty(elem, types);
             let parts: Vec<String> = (0..*count).map(|_| format!("{elem_ll} {v}")).collect();
@@ -8921,6 +8937,7 @@ fn gen_enum_method(
     if m.is_gen {
         gen_gen_enum_method(
             out, enum_id, &enum_name, m, &sig, sigs, types, str_lits, mode, test_mode, md, tramps,
+            is_lib,
         );
         return;
     }
@@ -9068,7 +9085,19 @@ fn gen_enum_method(
         next_idx += 1;
     }
 
-    let _ = state.gen_block_expr(&m.body);
+    for a in &m.attributes {
+        if a.path.name != "requires" {
+            continue;
+        }
+        for arg in &a.args {
+            if let crate::ast::AttrArg::Expr(e) = arg {
+                state.gen_assert(e);
+            }
+        }
+    }
+    state.take_ensures(&m.attributes);
+    state.gen_body_block(&m.body);
+    state.gen_ensures(None);
 
     // If the body is value-producing (non-Unit return), make sure we
     // emit a final ret. Otherwise fall through to ret void.
@@ -9108,6 +9137,7 @@ fn gen_gen_enum_method(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
+    is_lib: bool,
 ) {
     let mangled = mangle(enum_name, &m.name.name);
     let inner_ty = match &m.return_type {
@@ -9119,16 +9149,24 @@ fn gen_gen_enum_method(
     let iter_ret_ty = sig.return_type.clone();
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
-    let linkage = if m.is_export { "" } else { "internal " };
+    let lib_public = lib_public_name(is_lib, &m.name.name);
+    let linkage = if m.is_export || m.is_declaration {
+        ""
+    } else if lib_public {
+        "weak_odr "
+    } else {
+        "internal "
+    };
     // v0.0.8 fix C: non-export gen enum method → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&mangled)
     } else {
         ""
     };
+    let keyword = if m.is_declaration { "declare" } else { "define" };
     let enum_ty = Ty::Enum(enum_id);
 
-    write!(out, "define {}{}{} @{}(", linkage, cc, iter_llvm, mangled).unwrap();
+    write!(out, "{} {}{}{} @{}(", keyword, linkage, cc, iter_llvm, mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     if let Some(rcv) = sig.receiver {
@@ -9154,6 +9192,10 @@ fn gen_gen_enum_method(
         first = false;
     }
     out.push(')');
+    if m.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(&md.fn_attrs.borrow());
     out.push_str(" presplitcoroutine {\nentry:\n");
 
@@ -11588,7 +11630,6 @@ impl<'a> FnState<'a> {
                     ));
                 }
                 // 2. Auto-drop owning fields, reverse declaration order.
-                let llvm_ty = self.lty(ty);
                 let fields: Vec<(usize, Ty)> = self.types.struct_defs[id.0 as usize]
                     .fields
                     .iter()
@@ -11599,10 +11640,7 @@ impl<'a> FnState<'a> {
                     if !self.needs_drop(&fty) {
                         continue;
                     }
-                    let fp = self.next_tmp();
-                    self.emit(&format!(
-                        "{fp} = getelementptr inbounds {llvm_ty}, ptr {p_val}, i32 0, i32 {i}"
-                    ));
+                    let (fp, _) = self.field_addr(*id, i, p_val);
                     self.gen_drop_in_place(&fty, &fp);
                 }
             }
@@ -14208,6 +14246,8 @@ impl<'a> FnState<'a> {
             .map(|(t, v)| format!("{t} {v}"))
             .collect::<Vec<_>>()
             .join(", ");
+
+        let constraints = escape_llvm_str(&constraints);
 
         if out_slots.is_empty() {
             self.emit(&format!(
@@ -29771,5 +29811,40 @@ fn main() -> i32 {\n\
         assert_eq!(f64_to_f16_bits(6.103515625e-05), 0x0400);
         // A subnormal half: 2^-24 (smallest positive subnormal).
         assert_eq!(f64_to_f16_bits(5.960464477539063e-08), 0x0001);
+    }
+
+    #[test]
+    fn enum_unit_method_falloff_drops_locals_and_planned_struct_drop_uses_byte_offset_core07_08_09() {
+        let ir = gen_src_mono(
+            "struct Guard { x: i32 }\n\
+             impl Guard { fn drop(ref this) { return; } }\n\
+             struct Planned { a: i64, b: i8, g: Guard, c: i8 }\n\
+             enum Mode { A, B }\n\
+             impl Mode {\n\
+                 fn run(this) {\n\
+                     var g: Guard = Guard { x: 0 };\n\
+                     let _t: (str, i32) = (\"tuple_str_lit\", 1);\n\
+                 }\n\
+             }\n\
+             fn main() -> i32 {\n\
+                 var p: Planned = Planned { a: 1, b: 2, g: Guard { x: 0 }, c: 3 };\n\
+                 let m: Mode = Mode::A;\n\
+                 m.run();\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(
+            ir.contains("tuple_str_lit"),
+            "string literal inside TupleLit must be emitted (CORE-09):\n{ir}"
+        );
+        // Mode.run must call Guard.drop before ret void (CORE-08).
+        let mode_run_start = ir.find("void @Mode.run(").expect("Mode.run in IR");
+        let mode_run_body = &ir[mode_run_start..];
+        let mode_run_end = mode_run_body.find("\n}\n").expect("end of Mode.run");
+        assert!(
+            mode_run_body[..mode_run_end].contains("@Guard.drop("),
+            "Mode.run falloff must drop local Guard (CORE-08):\n{}",
+            &mode_run_body[..mode_run_end]
+        );
     }
 }

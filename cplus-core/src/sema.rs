@@ -3585,9 +3585,18 @@ impl SemaCx<'_> {
                 // *type* — they register a *value name* in a separate
                 // pass (`collect_consts_and_statics`) after type names
                 // are known. Nothing to do here.
-                // v0.0.15: module-scope `#asm("...")` is inert in sema —
-                // raw assembly, no name, no type to register or check.
-                ItemKind::Const(_) | ItemKind::Static(_) | ItemKind::ModuleAsm(_) => {}
+                ItemKind::Const(_) | ItemKind::Static(_) => {}
+                ItemKind::ModuleAsm(asm_str) => {
+                    if let Some(dir) = asm_has_file_directive(&asm_str.template) {
+                        self.err(
+                            "E0918",
+                            format!(
+                                "`#asm` cannot use `{dir}` directive to read host files; use `#include_bytes` or `#include_str` instead"
+                            ),
+                            item.span,
+                        );
+                    }
+                }
             }
         }
         self.current_file = None;
@@ -4581,7 +4590,7 @@ impl SemaCx<'_> {
     /// RESOLVED identity — its generic template's declared name, or its own —
     /// never of the leaf. Two packages may each declare a `Handle`, and an
     /// `impl Handle: Send {}` in one of them says nothing about the other.
-    fn marker_blocked(&self, ty: &Ty, marker: &str, visited: &mut Vec<u32>) -> bool {
+    fn marker_blocked(&self, ty: &Ty, marker: &str, visited: &mut Vec<(bool, u32)>) -> bool {
         match ty {
             Ty::RawPtr(_) => true,
             Ty::Array(elem, _) => self.marker_blocked(elem, marker, visited),
@@ -4596,10 +4605,11 @@ impl SemaCx<'_> {
                 if self.is_builtin_marker_blocked(&ident, marker) {
                     return true;
                 }
-                if visited.contains(&id.0) {
+                let key = (false, id.0);
+                if visited.contains(&key) {
                     return false;
                 }
-                visited.push(id.0);
+                visited.push(key);
                 let fields = self.structs[id.0 as usize].fields.clone();
                 let blocked = fields
                     .iter()
@@ -4618,10 +4628,11 @@ impl SemaCx<'_> {
                 if self.is_builtin_marker_blocked(&ident, marker) {
                     return true;
                 }
-                if visited.contains(&id.0) {
+                let key = (true, id.0);
+                if visited.contains(&key) {
                     return false;
                 }
-                visited.push(id.0);
+                visited.push(key);
                 let payloads: Vec<Ty> = self.enums[id.0 as usize]
                     .variants
                     .iter()
@@ -10251,18 +10262,27 @@ impl SemaCx<'_> {
                 span);
             return Ty::Error;
         }
-        // Resolve `path` relative to the current source file (mirrors
-        // include_bytes' behaviour). For minimal viable scope, only the
-        // entry file is consulted.
-        let base = self
-            .file
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
+        // Resolve `path` relative to the calling source file (mirrors
+        // include_bytes' behaviour).
+        let base: std::path::PathBuf = match self
+            .span_file_ctx(span)
+            .or_else(|| self.current_file.as_ref().and_then(|f| self.files.get(f)))
+        {
+            Some(fc) => fc
+                .path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default(),
+            None => self
+                .file
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default(),
+        };
         // Sandbox the shader source path (E0918) before spawning the Metal
         // toolchain — same package boundary as `#include_*`. Rejecting here
         // also keeps an escaping/absolute path from driving `xcrun` at all.
-        if include_path_escapes_package(&base, path) {
+        if path.starts_with('-') || include_path_escapes_package(&base, path) {
             self.err(
                 "E0918",
                 format!(
@@ -10273,7 +10293,11 @@ impl SemaCx<'_> {
             );
             return Ty::Error;
         }
-        let shader_path = base.join(path);
+        let shader_path = if base.as_os_str().is_empty() {
+            std::path::PathBuf::from(".").join(path)
+        } else {
+            base.join(path)
+        };
         // Invoke xcrun + metallib via `Command::new`. Two-step:
         //   xcrun -sdk macosx metal -c <src> -o <tmp.air>
         //   xcrun -sdk macosx metallib <tmp.air> -o <tmp.metallib>
@@ -11141,11 +11165,38 @@ impl SemaCx<'_> {
         &mut self,
         template: &str,
         operands: &[AsmOperand],
-        _clobbers: &[String],
-        _span: ByteSpan,
+        clobbers: &[String],
+        span: ByteSpan,
     ) -> Ty {
+        if let Some(dir) = asm_has_file_directive(template) {
+            self.err(
+                "E0918",
+                format!(
+                    "`#asm` cannot use `{dir}` directive to read host files; use `#include_bytes` or `#include_str` instead"
+                ),
+                span,
+            );
+        }
+        for c in clobbers {
+            if !is_valid_asm_reg_name(c) {
+                self.err(
+                    "E0894",
+                    format!("invalid `#asm` clobber register `{c}`"),
+                    span,
+                );
+            }
+        }
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for op in operands {
+            if let AsmReg::Explicit(r) = &op.reg {
+                if !is_valid_asm_reg_name(r) {
+                    self.err(
+                        "E0894",
+                        format!("invalid `#asm` explicit register `{r}` on operand `{}`", op.name),
+                        op.span,
+                    );
+                }
+            }
             if !seen.insert(op.name.as_str()) {
                 self.err(
                     "E0890",
@@ -11173,13 +11224,12 @@ impl SemaCx<'_> {
             }
             let vty = match op.dir {
                 AsmDir::In => self.check_expr(&op.value, None),
-                AsmDir::Out | AsmDir::InOut => {
+                AsmDir::Out => {
                     if let ExprKind::Ident(name) = &op.value.kind {
                         if let Some(info) = self.lookup_local(name).cloned() {
                             // Writing a previously-assigned binding requires
                             // `mut`; the first write to a `let x: T;` initializes
-                            // it (allowed, like assignment). `inout` always reads
-                            // first, so it needs an assigned, mutable binding.
+                            // it (allowed, like assignment).
                             if info.assigned && !info.mutable {
                                 self.err(
                                     "E0305",
@@ -11193,6 +11243,8 @@ impl SemaCx<'_> {
                             for scope in self.scopes.iter_mut().rev() {
                                 if let Some(i) = scope.get_mut(name) {
                                     i.assigned = true;
+                                    i.moved = false;
+                                    i.moved_at = None;
                                     break;
                                 }
                             }
@@ -11201,6 +11253,36 @@ impl SemaCx<'_> {
                             // Unknown name — let the normal resolver surface it.
                             self.check_expr(&op.value, None)
                         }
+                    } else {
+                        self.err(
+                            "E0895",
+                            format!(
+                                "`#asm` `out`/`inout` operand `{}` must be a plain variable, not a field or index. Write the result into a `var`, then copy it into the place",
+                                op.name
+                            ),
+                            op.span,
+                        );
+                        Ty::Error
+                    }
+                }
+                AsmDir::InOut => {
+                    if let ExprKind::Ident(name) = &op.value.kind {
+                        // `inout` always reads first, so check initialization /
+                        // move state via `check_expr` and require `var`.
+                        let ty = self.check_expr(&op.value, None);
+                        if let Some(info) = self.lookup_local(name).cloned() {
+                            if !info.mutable {
+                                self.err(
+                                    "E0305",
+                                    format!(
+                                        "`#asm` writes operand `{}` but `{}` is not a `var` binding",
+                                        op.name, name
+                                    ),
+                                    op.span,
+                                );
+                            }
+                        }
+                        ty
                     } else {
                         self.err(
                             "E0895",
@@ -11378,6 +11460,45 @@ impl SemaCx<'_> {
                 return None;
             }
         };
+        const MAX_INCLUDE_BYTES: usize = 64 * 1024 * 1024;
+        let meta = match std::fs::metadata(&abs_path) {
+            Ok(m) => m,
+            Err(e) => {
+                self.err(
+                    "E0870",
+                    format!(
+                        "`#{macro_name}` failed to stat `{}`: {}",
+                        abs_path.display(),
+                        e,
+                    ),
+                    span,
+                );
+                return None;
+            }
+        };
+        if !meta.is_file() {
+            self.err(
+                "E0870",
+                format!(
+                    "`#{macro_name}` path `{}` is not a regular file",
+                    abs_path.display(),
+                ),
+                span,
+            );
+            return None;
+        }
+        if meta.len() > MAX_INCLUDE_BYTES as u64 {
+            self.err(
+                "E0872",
+                format!(
+                    "`#{macro_name}` file `{}` is {} bytes; exceeds 64 MiB sanity limit",
+                    abs_path.display(),
+                    meta.len(),
+                ),
+                span,
+            );
+            return None;
+        }
         let bytes = match std::fs::read(&abs_path) {
             Ok(b) => b,
             Err(e) => {
@@ -11393,7 +11514,6 @@ impl SemaCx<'_> {
                 return None;
             }
         };
-        const MAX_INCLUDE_BYTES: usize = 64 * 1024 * 1024;
         if bytes.len() > MAX_INCLUDE_BYTES {
             self.err(
                 "E0872",
@@ -12407,20 +12527,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
 
     fn bind_payload_as_error(&mut self, payload: &[Pattern], scrutinee_owned: bool) {
         for pp in payload {
-            let PatternKind::Binding(name) = &pp.kind else {
-                continue;
-            };
-            self.scopes.last_mut().unwrap().insert(
-                name.name.clone(),
-                LocalInfo {
-                    ty: Ty::Error,
-                    mutable: false,
-                    moved: false,
-                    moved_at: None,
-                    assigned: true,
-                    owns_value: scrutinee_owned,
-                },
-            );
+            match &pp.kind {
+                PatternKind::Binding(name) => {
+                    self.scopes.last_mut().unwrap().insert(
+                        name.name.clone(),
+                        LocalInfo {
+                            ty: Ty::Error,
+                            mutable: false,
+                            moved: false,
+                            moved_at: None,
+                            assigned: true,
+                            owns_value: scrutinee_owned,
+                        },
+                    );
+                }
+                PatternKind::Variant { payload: inner, .. } => {
+                    self.bind_payload_as_error(inner, scrutinee_owned);
+                }
+                PatternKind::Wildcard | PatternKind::Lit(_) => {}
+            }
         }
     }
 
@@ -19119,19 +19244,27 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         .lookup_local(name)
                         .map(|i| i.ty.clone())
                         .unwrap_or(Ty::Error);
-                    if target_ty != Ty::Error {
+                    let value_ty = if target_ty != Ty::Error {
                         // TEXT.R1: `var s: Text; s = "lit";` — the literal
                         // constructs an owned Text; don't run the str-vs-struct
                         // check that would reject it.
-                        if !self.is_str_lit_to_lang_string(value, &target_ty) {
-                            self.check_expr(value, Some(target_ty.clone()));
+                        if self.is_str_lit_to_lang_string(value, &target_ty) {
+                            target_ty.clone()
+                        } else {
+                            self.check_expr(value, Some(target_ty.clone()))
                         }
                     } else {
-                        let _ = self.check_expr(value, None);
+                        self.check_expr(value, None)
+                    };
+                    if value_ty != Ty::Error {
+                        self.reject_partial_move_of_drop(value, &value_ty);
+                        self.mark_moved_through_wrappers(value, &value_ty);
                     }
                     for scope in self.scopes.iter_mut().rev() {
                         if let Some(info) = scope.get_mut(name) {
                             info.assigned = true;
+                            info.moved = false;
+                            info.moved_at = None;
                             break;
                         }
                     }
@@ -21170,7 +21303,18 @@ fn include_path_escapes_package(base_dir: &std::path::Path, requested: &str) -> 
     } else {
         base_dir.join(requested_path)
     };
-    !lexical_normalize(&joined).starts_with(lexical_normalize(&root))
+    if !lexical_normalize(&joined).starts_with(lexical_normalize(&root)) {
+        return true;
+    }
+    if let (Ok(canon_joined), Ok(canon_root)) = (
+        std::fs::canonicalize(&joined),
+        std::fs::canonicalize(&root),
+    ) {
+        if !canon_joined.starts_with(&canon_root) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Slice 7GEN.5a: unify a possibly-Param-bearing signature type
@@ -21228,10 +21372,7 @@ fn match_pattern_binding_names(p: &Pattern) -> Vec<String> {
         PatternKind::Binding(n) => vec![n.name.clone()],
         PatternKind::Variant { payload, .. } => payload
             .iter()
-            .filter_map(|pp| match &pp.kind {
-                PatternKind::Binding(n) => Some(n.name.clone()),
-                _ => None,
-            })
+            .flat_map(match_pattern_binding_names)
             .collect(),
         PatternKind::Wildcard | PatternKind::Lit(_) => Vec::new(),
     }
@@ -23097,17 +23238,49 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
     false
 }
 
+fn is_valid_asm_reg_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
+
+fn asm_has_file_directive(template: &str) -> Option<&'static str> {
+    for stmt in template.split(['\n', ';']) {
+        let trimmed = stmt.trim_start();
+        for dir in [".incbin", ".include"] {
+            if trimmed.len() >= dir.len()
+                && trimmed[..dir.len()].eq_ignore_ascii_case(dir)
+                && trimmed[dir.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| c.is_whitespace() || c == '"')
+            {
+                return Some(dir);
+            }
+        }
+    }
+    None
+}
+
 /// Phase 11 / ObjC interop: find `#[link_name = "..."]` on an item's
-/// attribute list and return the string value. Returns `None` if absent.
-/// Attribute-shape validation has already run via attrs::check, so any
-/// `link_name` here is guaranteed to have the right arg shape.
+/// attribute list and return the string value. Returns `None` if absent
+/// or if the symbol name contains invalid characters.
 fn extract_link_name(attrs: &[Attribute]) -> Option<String> {
     attrs.iter().find_map(|a| {
         if a.path.name != "link_name" {
             return None;
         }
         match a.args.as_slice() {
-            [AttrArg::Str(s, _)] => Some(s.clone()),
+            [AttrArg::Str(s, _)]
+                if !s.is_empty()
+                    && s.bytes().enumerate().all(|(i, b)| {
+                        b.is_ascii_alphabetic()
+                            || matches!(b, b'_' | b'$' | b'.')
+                            || (i > 0 && b.is_ascii_digit())
+                    }) =>
+            {
+                Some(s.clone())
+            }
             _ => None,
         }
     })
@@ -38019,6 +38192,132 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
             codes_of(&ds).is_empty(),
             "a sole candidate needs no receiver type, got {:?}",
             codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn deferred_init_rejects_partial_move_and_marks_moved_core01() {
+        let src = "struct Buf { p: *u8 }\n\
+                   impl Buf { fn drop(ref this) { return; } }\n\
+                   struct Holder { b: Buf }\n\
+                   impl Holder { fn drop(ref this) { return; } }\n\
+                   fn bad_partial() {\n\
+                       var h: Holder = Holder { b: Buf { p: 0 as *u8 } };\n\
+                       let x: Buf;\n\
+                       x = h.b;\n\
+                   }\n";
+        let ds = check_src(src);
+        assert!(
+            codes_of(&ds).contains(&"E0509"),
+            "expected E0509 on partial move into deferred let, got {:?}",
+            codes_of(&ds)
+        );
+
+        let src2 = "struct Buf { p: *u8 }\n\
+                    impl Buf { fn drop(ref this) { return; } }\n\
+                    struct Pair { b: Buf }\n\
+                    fn bad_double_use() {\n\
+                        var b: Buf = Buf { p: 0 as *u8 };\n\
+                        let p: Pair;\n\
+                        p = Pair { b: b };\n\
+                        let _again: Buf = b;\n\
+                    }\n";
+        let ds2 = check_src(src2);
+        assert!(
+            codes_of(&ds2).contains(&"E0335"),
+            "expected E0335 after wrapper move into deferred let, got {:?}",
+            codes_of(&ds2)
+        );
+    }
+
+    #[test]
+    fn send_check_does_not_collide_struct_id_with_enum_id_core05() {
+        let src = "interface Send {}\n\
+                   struct Safe { x: i32 }\n\
+                   enum Bad { Ptr(*u8), Loop(Safe) }\n\
+                   struct Holder { s: Safe, b: Bad }\n\
+                   fn require_send[T: Send](take _v: T) {}\n\
+                   fn main() -> i32 {\n\
+                       require_send::[Holder](Holder { s: Safe { x: 1 }, b: Bad::Ptr(0 as *u8) });\n\
+                       return 0;\n\
+                   }\n";
+        let ds = check_src(src);
+        assert!(
+            codes_of(&ds).contains(&"E0502"),
+            "expected E0502 on non-Send enum sharing numeric ID with Send struct, got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn nested_variant_pattern_on_borrowed_scrutinee_rejects_drop_move_core06() {
+        let src = "struct Buf { x: i32 }\n\
+                   impl Buf { fn drop(ref this) { return; } }\n\
+                   enum Inner { Has(Buf), Empty }\n\
+                   enum Outer { Wrap(Inner), None }\n\
+                   fn inspect(ref o: Outer) -> Buf {\n\
+                       return match o {\n\
+                           Outer::Wrap(Inner::Has(b)) => b,\n\
+                           _ => Buf { x: 0 },\n\
+                       };\n\
+                   }\n";
+        let ds = check_src(src);
+        assert!(
+            codes_of(&ds).contains(&"E0337"),
+            "expected E0337 on nested variant pattern moving Drop payload from ref scrutinee, got {:?}",
+            codes_of(&ds)
+        );
+
+        let src_owned = "struct Buf { x: i32 }\n\
+                         impl Buf { fn drop(ref this) { return; } }\n\
+                         enum Inner { Has(Buf), Empty }\n\
+                         enum Outer { Wrap(Inner), None }\n\
+                         fn consume(take o: Outer) -> Buf {\n\
+                             let _b: Buf = match o {\n\
+                                 Outer::Wrap(Inner::Has(b)) => b,\n\
+                                 _ => Buf { x: 0 },\n\
+                             };\n\
+                             return match o {\n\
+                                 Outer::Wrap(Inner::Has(b2)) => b2,\n\
+                                 _ => Buf { x: 0 },\n\
+                             };\n\
+                         }\n";
+        let ds_owned = check_src(src_owned);
+        assert!(
+            codes_of(&ds_owned).contains(&"E0335"),
+            "expected E0335 on re-reading owned scrutinee after nested variant pattern bound Drop payload, got {:?}",
+            codes_of(&ds_owned)
+        );
+    }
+
+    #[test]
+    fn asm_inout_requires_initialized_operand_and_rejects_incbin_core10() {
+        let uninit_inout = "fn f() -> i64 {\n\
+                                var x: i64;\n\
+                                #asm(\"mov {v}, {v}\", v = inout(reg) x);\n\
+                                return x;\n\
+                            }\n";
+        let ds = check_src(uninit_inout);
+        assert!(
+            codes_of(&ds).contains(&"E0345"),
+            "expected E0345 on uninitialized inout(#asm) operand, got {:?}",
+            codes_of(&ds)
+        );
+
+        let incbin = "fn f() { #asm(\".incbin \\\"/etc/passwd\\\"\"); }\n";
+        let ds2 = check_src(incbin);
+        assert!(
+            codes_of(&ds2).contains(&"E0918"),
+            "expected E0918 on .incbin in #asm, got {:?}",
+            codes_of(&ds2)
+        );
+
+        let bad_clobber = "fn f() { #asm(\"nop\", clobber(\"eax},{ebx\")); }\n";
+        let ds3 = check_src(bad_clobber);
+        assert!(
+            codes_of(&ds3).contains(&"E0894"),
+            "expected E0894 on malformed clobber in #asm, got {:?}",
+            codes_of(&ds3)
         );
     }
 }

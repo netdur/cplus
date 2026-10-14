@@ -1494,7 +1494,7 @@ impl CodeGraph {
         let in_context;
         let mut items: Vec<ScopeEntry> = Vec::new();
 
-        if before >= 2 && &src[before - 2..before] == "::" {
+        if src[..before].ends_with("::") {
             context = "path";
             let q_end = trim_ws_back(src, before - 2);
             let q = src[ident_start(src, q_end)..q_end].to_string();
@@ -4573,5 +4573,14 @@ mod tests {
         assert!(g.scope_at("src.nope", 10).is_empty());
         let j: serde_json::Value = serde_json::from_str(&g.scope_at_json("src.nope", 10)).unwrap();
         assert!(j["bindings"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn complete_at_after_multibyte_utf8_does_not_panic() {
+        let src = "// café\nfn run() -> i32 { return 0; }";
+        let g = CodeGraph::build(&project(src));
+        for at in 0..=(src.len() as u32) {
+            let _ = g.complete_at("src", src, at);
+        }
     }
 }

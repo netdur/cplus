@@ -1543,7 +1543,21 @@ fn relative_import_escapes_root(import_dir: &Path, rel: &str, manifest_root: &Pa
         }
     }
     let resolved: PathBuf = parts.iter().collect();
-    !resolved.starts_with(&root)
+    if !resolved.starts_with(&root) {
+        return true;
+    }
+    if let Ok(canon) = resolved.canonicalize() {
+        if !canon.starts_with(&root) {
+            return true;
+        }
+    }
+    let with_ext = resolved.with_extension("cplus");
+    if let Ok(canon) = with_ext.canonicalize() {
+        if !canon.starts_with(&root) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Platform-specific source override. Some modules have an OS-specific

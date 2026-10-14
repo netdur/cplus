@@ -2824,7 +2824,14 @@ fn prebuilt_archive_name(pkg: &str) -> String {
 fn search_path_args(dir: &str, platform: &str) -> Vec<String> {
     let mut out = vec![format!("-L{dir}")];
     if platform != "windows" {
-        out.push(format!("-Wl,-rpath,{dir}"));
+        if dir.contains(',') {
+            out.push("-Xlinker".to_string());
+            out.push("-rpath".to_string());
+            out.push("-Xlinker".to_string());
+            out.push(dir.to_string());
+        } else {
+            out.push(format!("-Wl,-rpath,{dir}"));
+        }
     }
     out
 }
@@ -9059,5 +9066,10 @@ mod link_arg_tests {
         assert_eq!(search_path_args("/opt/lib", "macos"), vec!["-L/opt/lib", "-Wl,-rpath,/opt/lib"]);
         // A PE image has no rpath; lld-link only warned about it (#4).
         assert_eq!(search_path_args("C:/cuda/lib/x64", "windows"), vec!["-LC:/cuda/lib/x64"]);
+        // A path containing a comma uses -Xlinker to prevent flag injection via -Wl, splitting.
+        assert_eq!(
+            search_path_args("/opt/dir,with,comma", "macos"),
+            vec!["-L/opt/dir,with,comma", "-Xlinker", "-rpath", "-Xlinker", "/opt/dir,with,comma"]
+        );
     }
 }

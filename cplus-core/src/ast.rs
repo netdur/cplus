@@ -921,15 +921,17 @@ pub fn scrutinee_reads_in_place(e: &Expr) -> bool {
 /// Note this is about the *scrutinee's* storage only. An owned **temporary**
 /// scrutinee (`match f() { ... }`) has no source binding to keep alive, so the
 /// match must tear it down regardless of what its patterns bind.
-pub fn match_binds_a_name(arms: &[MatchArm]) -> bool {
-    arms.iter().any(|arm| match &arm.pattern.kind {
+pub fn pattern_binds_a_name(pat: &Pattern) -> bool {
+    match &pat.kind {
         // A literal pattern binds nothing; `lower` desugars it away entirely.
         PatternKind::Wildcard | PatternKind::Lit(_) => false,
         PatternKind::Binding(_) => true,
-        PatternKind::Variant { payload, .. } => payload
-            .iter()
-            .any(|p| matches!(p.kind, PatternKind::Binding(_))),
-    })
+        PatternKind::Variant { payload, .. } => payload.iter().any(pattern_binds_a_name),
+    }
+}
+
+pub fn match_binds_a_name(arms: &[MatchArm]) -> bool {
+    arms.iter().any(|arm| pattern_binds_a_name(&arm.pattern))
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -837,7 +837,15 @@ fn target_path_escapes(root: &Path, joined: &Path) -> bool {
             other => out.push(other),
         }
     }
-    !out.starts_with(root)
+    if !out.starts_with(root) {
+        return true;
+    }
+    if let Ok(canon) = out.canonicalize() {
+        if !canon.starts_with(root) {
+            return true;
+        }
+    }
+    false
 }
 
 /// On-disk schema. Kept distinct from the public `Manifest` so we can apply

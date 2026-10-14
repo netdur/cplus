@@ -274,6 +274,9 @@ fn fmt_state(s: &PlaceState) -> String {
 #[derive(Debug, Default, Clone)]
 pub struct CopyOracle {
     types: HashMap<String, TypeInfo>,
+    /// Type aliases (`type Alias = Target;`) recorded from the program so
+    /// pre-monomorphize queries resolve aliases to their underlying types.
+    aliases: HashMap<String, Type>,
     /// STRM v3 (2026-08-01): names of struct/enum types that transitively
     /// CONTAIN a view (`str` / `T[]` field or payload). Drives the widened
     /// Rule E-VIEW: a fn returning such a type from view-typed / view-
@@ -299,6 +302,31 @@ struct TypeInfo {
 }
 
 impl CopyOracle {
+    /// Follow a chain of `type A = B;` aliases to its underlying `Type`,
+    /// stopping on cycles or unknown names.
+    pub fn resolve_alias<'a>(&'a self, mut ty: &'a Type) -> &'a Type {
+        let mut seen = std::collections::BTreeSet::new();
+        while let TypeKind::Path(name) = &ty.kind {
+            if !seen.insert(name.as_str()) {
+                break;
+            }
+            let Some(next) = self.aliases.get(name) else {
+                break;
+            };
+            ty = next;
+        }
+        ty
+    }
+
+    /// True iff `ty` (after resolving type aliases) is `str` or a slice `T[]`.
+    pub fn is_view_ty(&self, ty: &Type) -> bool {
+        match &self.resolve_alias(ty).kind {
+            TypeKind::Slice(_) => true,
+            TypeKind::Path(n) => n == "str",
+            _ => false,
+        }
+    }
+
     /// True iff `name` appears in a STORED position of `ty`: the type
     /// itself, a Generic argument, a slice/array element, or the pointee of
     /// an OWNING raw pointer. Fn-pointer signatures are not storage — a
@@ -351,8 +379,8 @@ impl CopyOracle {
     pub fn build(prog: &Program) -> Self {
         let mut oracle = CopyOracle::default();
 
-        // Pass 1: register every user-defined type. Initial is_copy =
-        // true for the fixpoint's lattice; the iteration only ever
+        // Pass 1: register every user-defined type and type alias. Initial
+        // is_copy = true for the fixpoint's lattice; the iteration only ever
         // monotonically flips trues to falses (Copy is structural — a
         // type is non-Copy as soon as any component is non-Copy).
         for item in &prog.items {
@@ -374,6 +402,9 @@ impl CopyOracle {
                             is_drop: false,
                         },
                     );
+                }
+                ItemKind::TypeAlias(ta) => {
+                    oracle.aliases.insert(ta.name.name.clone(), ta.target.clone());
                 }
                 _ => {}
             }
@@ -571,6 +602,7 @@ impl CopyOracle {
     /// the view-carrying set. AST-level twin of sema's `ty_contains_view`;
     /// the two must agree.
     pub fn type_contains_view(&self, ty: &Type) -> bool {
+        let ty = self.resolve_alias(ty);
         match &ty.kind {
             TypeKind::Slice(_) => true,
             TypeKind::Path(name) => name == "str" || self.view_carrying.contains(name),
@@ -617,6 +649,7 @@ impl CopyOracle {
     /// workers it lent to, so its loans have to survive to scope exit or the
     /// whole guarantee is a comment.
     pub fn type_has_drop(&self, ty: &Type) -> bool {
+        let ty = self.resolve_alias(ty);
         match &ty.kind {
             TypeKind::Path(name) => self.types.get(name).map(|i| i.is_drop).unwrap_or(false),
             // A generic base with a destructor has one for every
@@ -640,6 +673,7 @@ impl CopyOracle {
     /// type names. This is the gate E0370 uses: emit only when we are
     /// *sure* the binding is non-Copy.
     pub fn definitely_non_copy(&self, ty: &Type) -> bool {
+        let ty = self.resolve_alias(ty);
         match &ty.kind {
             TypeKind::Path(name) => {
                 if is_primitive_name(name) {
@@ -682,6 +716,7 @@ impl CopyOracle {
     }
 
     fn is_type_copy_internal(&self, ty: &Type) -> bool {
+        let ty = self.resolve_alias(ty);
         match &ty.kind {
             TypeKind::Path(name) => {
                 if is_primitive_name(name) {
@@ -1709,48 +1744,16 @@ impl<'a> FlowCtx<'a> {
     /// Patterns without written args stay untyped — a conservative miss,
     /// the same posture as unannotated bindings.
     fn type_payload_bindings(&mut self, p: &Pattern) {
-        let PatternKind::Variant {
-            enum_name,
-            type_args,
-            variant_name,
-            payload,
-        } = &p.kind
-        else {
-            return;
-        };
-        if type_args.is_empty() || payload.is_empty() {
-            return;
-        }
-        let base = base_type_name(&enum_name.name);
-        let Some(generics) = self.sigs.enum_generics.get(base) else {
-            return;
-        };
-        let Some(ptys) = self
-            .sigs
-            .enum_payloads
-            .get(base)
-            .and_then(|v| v.get(&variant_name.name))
-        else {
-            return;
-        };
-        let map: HashMap<String, Type> = generics
-            .iter()
-            .cloned()
-            .zip(type_args.iter().cloned())
-            .collect();
-        for (i, pat) in payload.iter().enumerate() {
-            let PatternKind::Binding(b) = &pat.kind else {
-                continue;
-            };
-            let Some(t) = ptys.get(i) else { continue };
-            let resolved = subst_type(t, &map);
+        let mut out = HashMap::new();
+        collect_pattern_payload_types(p, None, self.sigs, &mut out);
+        for (b, resolved) in out {
             let name = match &resolved.kind {
                 TypeKind::Path(p) => Some(base_type_name(p).to_string()),
                 TypeKind::Generic { name, .. } => Some(base_type_name(name).to_string()),
                 _ => None,
             };
             if let Some(n) = name {
-                self.types.insert(b.name.clone(), n);
+                self.types.insert(b, n);
             }
         }
     }
@@ -2092,6 +2095,71 @@ fn collect_pattern_names(p: &Pattern, out: &mut Vec<String>) {
         }
         // Binds nothing, and `lower` desugars it away before this runs.
         PatternKind::Wildcard | PatternKind::Lit(_) => {}
+    }
+}
+
+/// Recursively resolve the declared types of bindings introduced by a
+/// (possibly nested) `PatternKind::Variant` pattern.
+fn collect_pattern_payload_types(
+    pat: &Pattern,
+    expected_ty: Option<&Type>,
+    sigs: &SigTable,
+    out: &mut HashMap<String, Type>,
+) {
+    let PatternKind::Variant {
+        enum_name,
+        type_args,
+        variant_name,
+        payload,
+    } = &pat.kind
+    else {
+        return;
+    };
+    if payload.is_empty() {
+        return;
+    }
+    let ptys = sigs
+        .enum_payloads
+        .get(&enum_name.name)
+        .or_else(|| sigs.enum_payloads.get(base_type_name(&enum_name.name)))
+        .and_then(|vs| vs.get(&variant_name.name));
+    let Some(ptys) = ptys else {
+        return;
+    };
+    let generics = sigs
+        .enum_generics
+        .get(&enum_name.name)
+        .or_else(|| sigs.enum_generics.get(base_type_name(&enum_name.name)));
+    let map: HashMap<String, Type> = match generics {
+        None => HashMap::new(),
+        Some(gp) => {
+            let args: Vec<Type> = if !type_args.is_empty() {
+                type_args.clone()
+            } else {
+                match expected_ty.map(|t| &t.kind) {
+                    Some(TypeKind::Generic { name, args })
+                        if name == &enum_name.name
+                            || base_type_name(name) == base_type_name(&enum_name.name) =>
+                    {
+                        args.clone()
+                    }
+                    _ => return,
+                }
+            };
+            gp.iter().cloned().zip(args).collect()
+        }
+    };
+    for (bp, t) in payload.iter().zip(ptys.iter()) {
+        let sub_ty = subst_type(t, &map);
+        match &bp.kind {
+            PatternKind::Binding(id) => {
+                out.insert(id.name.clone(), sub_ty);
+            }
+            PatternKind::Variant { .. } => {
+                collect_pattern_payload_types(bp, Some(&sub_ty), sigs, out);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -4286,43 +4354,9 @@ impl<'p> Analyzer<'p> {
     /// type. Generic enums substitute the pattern's explicit type args
     /// when present, else the scrutinee's inferred `Generic` args.
     fn register_pattern_types(&mut self, pat: &Pattern, scrutinee: &Expr) {
-        let PatternKind::Variant {
-            enum_name,
-            type_args,
-            variant_name,
-            payload,
-        } = &pat.kind
-        else {
-            return;
-        };
-        let Some(variants) = self.sigs.enum_payloads.get(&enum_name.name) else {
-            return;
-        };
-        let Some(ptys) = variants.get(&variant_name.name) else {
-            return;
-        };
-        let map: HashMap<String, Type> = match self.sigs.enum_generics.get(&enum_name.name) {
-            None => HashMap::new(),
-            Some(gp) => {
-                let args: Vec<Type> = if !type_args.is_empty() {
-                    type_args.clone()
-                } else {
-                    match self.infer_expr_type(scrutinee).map(|t| t.kind) {
-                        Some(TypeKind::Generic { name, args }) if name == enum_name.name => args,
-                        _ => return,
-                    }
-                };
-                gp.iter().cloned().zip(args).collect()
-            }
-        };
-        let hits: Vec<(String, Type)> = payload
-            .iter()
-            .zip(ptys.iter())
-            .filter_map(|(bp, t)| match &bp.kind {
-                PatternKind::Binding(id) => Some((id.name.clone(), subst_type(t, &map))),
-                _ => None,
-            })
-            .collect();
+        let scrut_ty = self.infer_expr_type(scrutinee);
+        let mut hits = HashMap::new();
+        collect_pattern_payload_types(pat, scrut_ty.as_ref(), self.sigs, &mut hits);
         for (n, t) in hits {
             self.inferred_types.insert(n, t);
         }
@@ -5984,43 +6018,9 @@ impl<'a> ViewRules<'a> {
     /// these a payload binding is untyped and every type-gated rule skips
     /// it, which is how a view of a matched-out owner escaped.
     fn payload_types(&self, pat: &Pattern, scrutinee: &Expr) -> HashMap<String, Type> {
+        let scrut_ty = self.infer_ty(scrutinee);
         let mut out = HashMap::new();
-        let PatternKind::Variant {
-            enum_name,
-            type_args,
-            variant_name,
-            payload,
-        } = &pat.kind
-        else {
-            return out;
-        };
-        let Some(ptys) = self
-            .sigs
-            .enum_payloads
-            .get(&enum_name.name)
-            .and_then(|vs| vs.get(&variant_name.name))
-        else {
-            return out;
-        };
-        let map: HashMap<String, Type> = match self.sigs.enum_generics.get(&enum_name.name) {
-            None => HashMap::new(),
-            Some(gp) => {
-                let args: Vec<Type> = if !type_args.is_empty() {
-                    type_args.clone()
-                } else {
-                    match self.infer_ty(scrutinee).map(|t| t.kind) {
-                        Some(TypeKind::Generic { name, args }) if name == enum_name.name => args,
-                        _ => return out,
-                    }
-                };
-                gp.iter().cloned().zip(args).collect()
-            }
-        };
-        for (bp, t) in payload.iter().zip(ptys.iter()) {
-            if let PatternKind::Binding(id) = &bp.kind {
-                out.insert(id.name.clone(), subst_type(t, &map));
-            }
-        }
+        collect_pattern_payload_types(pat, scrut_ty.as_ref(), self.sigs, &mut out);
         out
     }
 
@@ -7528,6 +7528,8 @@ fn promote_erased_return_flows(prog: &Program, oracle: &CopyOracle, sigs: &mut S
 /// stripping the body deletes it — see
 /// bugs/headers-drop-computed-keeps-flows.md.
 pub fn computed_flow_sites(prog: &Program) -> std::collections::BTreeSet<Span> {
+    let expanded = crate::monomorphize::expand_program_aliases(prog);
+    let prog = expanded.as_ref();
     let oracle = CopyOracle::build(prog);
     let mut sigs = SigTable::collect(prog, &oracle);
     compute_receiver_flows(prog, &oracle, &mut sigs);
@@ -7678,6 +7680,8 @@ fn compute_detach_flows(prog: &Program, sigs: &mut SigTable) {
 }
 
 fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<(Option<String>, RawDiag)>) {
+    let expanded = crate::monomorphize::expand_program_aliases(prog);
+    let prog = expanded.as_ref();
     let oracle = CopyOracle::build(prog);
     let mut sigs = SigTable::collect(prog, &oracle);
     // Contract §5: patch computed receiver flows (transitive keeps) into
@@ -7880,8 +7884,7 @@ impl Analyzer<'_> {
                     // as `let s: str = t.view();`.
                     if borrow_sources.is_empty() {
                         if let Some(decl) = ty {
-                            let is_view_ty = matches!(&decl.kind, TypeKind::Slice(_))
-                                || matches!(&decl.kind, TypeKind::Path(p) if p == "str");
+                            let is_view_ty = self.oracle.is_view_ty(decl);
                             if is_view_ty {
                                 if let Some(place) = place_from_expr(e) {
                                     if self.binding_is_non_copy(&place.root) {
@@ -7931,7 +7934,12 @@ impl Analyzer<'_> {
                     self.record_storage_alias(&name.name, e);
                 }
             }
-            StmtKind::LetDestructure { fields, init, .. } => {
+            StmtKind::LetDestructure {
+                type_name,
+                fields,
+                init,
+                ..
+            } => {
                 // Destructuring consumes `init` wholly and re-owns each field as
                 // a new binding. Walk the init for its sub-expression
                 // transitions, then mark every field binding Owned.
@@ -7948,12 +7956,25 @@ impl Analyzer<'_> {
                 // together, so over-pinning is harmless). Owning-field
                 // destructures classify to no sources and stay plain `Owned`.
                 let borrow_sources = self.classify_borrow_source(init);
+                let head_ty = Type {
+                    kind: TypeKind::Path(type_name.name.clone()),
+                    span: type_name.span,
+                };
+                let resolved_head = self.oracle.resolve_alias(&head_ty);
+                let head_sname = match &resolved_head.kind {
+                    TypeKind::Path(sname) | TypeKind::Generic { name: sname, .. } => {
+                        Some(sname.clone())
+                    }
+                    _ => None,
+                };
                 let init_ty = self.infer_expr_type(init);
-                if let Some(Type {
-                    kind: TypeKind::Path(sname),
-                    ..
-                }) = &init_ty
-                {
+                let sname = head_sname.or_else(|| {
+                    init_ty.as_ref().and_then(|t| match &self.oracle.resolve_alias(t).kind {
+                        TypeKind::Path(s) | TypeKind::Generic { name: s, .. } => Some(s.clone()),
+                        _ => None,
+                    })
+                });
+                if let Some(sname) = &sname {
                     if let Some(fs) = self.sigs.struct_fields.get(sname) {
                         let hits: Vec<(String, Type)> = fields
                             .iter()
@@ -8114,8 +8135,46 @@ impl Analyzer<'_> {
                     }
                     vec![name.name.clone()]
                 }
-                StmtKind::LetDestructure { fields, .. } => {
-                    fields.iter().map(|f| f.name.clone()).collect()
+                StmtKind::LetDestructure {
+                    type_name,
+                    fields,
+                    init,
+                    ..
+                } => {
+                    let head_ty = Type {
+                        kind: TypeKind::Path(type_name.name.clone()),
+                        span: type_name.span,
+                    };
+                    let resolved_head = self.oracle.resolve_alias(&head_ty);
+                    let init_ty = self.infer_expr_type(init);
+                    let struct_fields = match &resolved_head.kind {
+                        TypeKind::Path(sname) | TypeKind::Generic { name: sname, .. } => {
+                            self.sigs.struct_fields.get(sname)
+                        }
+                        _ => None,
+                    }
+                    .or_else(|| {
+                        init_ty.as_ref().and_then(|t| match &self.oracle.resolve_alias(t).kind {
+                            TypeKind::Path(sname) | TypeKind::Generic { name: sname, .. } => {
+                                self.sigs.struct_fields.get(sname)
+                            }
+                            _ => None,
+                        })
+                    });
+                    let init_has_drop = self.oracle.type_has_drop(&resolved_head)
+                        || init_ty.as_ref().is_some_and(|t| self.oracle.type_has_drop(t));
+                    fields
+                        .iter()
+                        .filter(|f| {
+                            if let Some(fs) = struct_fields {
+                                if let Some(ft) = fs.get(&f.name) {
+                                    return !self.oracle.type_has_drop(ft);
+                                }
+                            }
+                            !init_has_drop
+                        })
+                        .map(|f| f.name.clone())
+                        .collect()
                 }
                 _ => continue,
             };
@@ -9610,30 +9669,40 @@ impl Analyzer<'_> {
     /// receiver: lending the same data to a scope twice is precisely the
     /// aliasing a scoped thread pool must refuse, and "the same borrower" is
     /// no defence when the borrower hands each lend to a different thread.
+    fn find_overlapping_borrow(
+        &self,
+        target: &Place,
+        state: &BTreeMap<Place, PlaceState>,
+    ) -> Option<(Place, String, Span, bool)> {
+        for (borrowed_place, borrowers) in &self.live_borrows {
+            if borrowed_place.root != target.root || borrowers.is_empty() {
+                continue;
+            }
+            if matches!(target.overlap(borrowed_place), PlaceOverlap::Disjoint) {
+                continue;
+            }
+            let is_excl = match state.get(borrowed_place) {
+                Some(PlaceState::BorrowedExclusive(_)) => true,
+                Some(PlaceState::BorrowedShared(_)) => false,
+                _ => continue,
+            };
+            if let Some((borrower, span)) = borrowers.iter().next() {
+                return Some((borrowed_place.clone(), borrower.clone(), *span, is_excl));
+            }
+        }
+        None
+    }
+
     fn check_ref_arg_against_borrows(&mut self, arg: &Expr, state: &BTreeMap<Place, PlaceState>) {
         let Some(place) = place_from_expr(arg) else {
             return;
         };
-        let root = Place::root(&place.root);
-        // Either flavour of loan conflicts with a fresh exclusive claim. The
-        // exclusive arm is not decoration: a `ref` position of a
-        // `#[keeps(this)]` call now records `BorrowedExclusive`, which is the
-        // state a second `s.lend(c, w2)` has to see.
-        if !matches!(
-            state.get(&root),
-            Some(PlaceState::BorrowedShared(_)) | Some(PlaceState::BorrowedExclusive(_))
-        ) {
-            return;
-        }
         // NO COPY GATE. §2.9's "`ref` on a Copy type is local mutability, not
-        // a borrow" describes a call that returns; a live loan on the place
-        // means someone is still holding the pointer, and `ref` is
-        // by-pointer for every type. Gating this on non-Copy is what let two
-        // workers take `struct Cell { n: i64 }` exclusively at once.
-        let Some((borrower, borrow_span)) = self
-            .live_borrows
-            .get(&root)
-            .and_then(|s| s.iter().next().map(|(n, sp)| (n.clone(), *sp)))
+        // a borrow" describes a call that returns; a live loan on an
+        // overlapping place means someone is still holding the pointer, and
+        // `ref` is by-pointer for every type.
+        let Some((_borrowed_place, borrower, borrow_span, _is_excl)) =
+            self.find_overlapping_borrow(&place, state)
         else {
             return;
         };
@@ -9662,8 +9731,8 @@ impl Analyzer<'_> {
     /// `heal` reassignment of a MOVED binding is not a conflict (nothing
     /// borrows a moved-out place), and neither is writing through a raw
     /// pointer — the raw seam is the developer's, by design. Everything else
-    /// that names a live-borrowed root and writes to it is refused, with the
-    /// borrower named.
+    /// that names a live-borrowed place (or overlapping sub-place) and writes
+    /// to it is refused, with the borrower named.
     fn check_write_against_borrows(&mut self, target: &Expr, state: &BTreeMap<Place, PlaceState>) {
         let Some(place) = place_from_expr(target) else {
             return;
@@ -9672,20 +9741,8 @@ impl Analyzer<'_> {
         if matches!(target.kind, ExprKind::Unary { op: UnaryOp::Deref, .. }) {
             return;
         }
-        let root = Place::root(&place.root);
-        // A write conflicts with a loan of either flavour. (An exclusive loan
-        // reaches the dedicated E0383 path only for READS; the write path is
-        // here, so both states have to be named.)
-        if !matches!(
-            state.get(&root),
-            Some(PlaceState::BorrowedShared(_)) | Some(PlaceState::BorrowedExclusive(_))
-        ) {
-            return;
-        }
-        let Some((borrower, borrow_span)) = self
-            .live_borrows
-            .get(&root)
-            .and_then(|s| s.iter().next().map(|(n, sp)| (n.clone(), *sp)))
+        let Some((_borrowed_place, borrower, borrow_span, _is_excl)) =
+            self.find_overlapping_borrow(&place, state)
         else {
             return;
         };
@@ -9742,57 +9799,46 @@ impl Analyzer<'_> {
             Some(ClaimKind::Exclusive) | Some(ClaimKind::Move)
         );
         let place = Place::root(recv_name);
-        let Some(st) = state.get(&place) else { return };
-        match st {
-            PlaceState::BorrowedShared(_) if receiver_mutates => {
-                let (borrower, borrow_span) = self
-                    .live_borrows
-                    .get(&place)
-                    .and_then(|s| s.iter().next().map(|(n, sp)| (n.clone(), *sp)))
-                    .map(|(n, s)| (n, Some(s)))
-                    .unwrap_or_else(|| ("(unknown)".to_string(), None));
-                self.diags.push(RawDiag {
-                    code: "E0381",
-                    message: format!(
-                        "cannot call `{recv_name}.{method_name}(...)` while `{recv_name}` is shared-borrowed by `{borrower}`"
+        let Some((_borrowed_place, borrower, borrow_span, is_excl)) =
+            self.find_overlapping_borrow(&place, state)
+        else {
+            return;
+        };
+        if !is_excl && receiver_mutates {
+            self.diags.push(RawDiag {
+                code: "E0381",
+                message: format!(
+                    "cannot call `{recv_name}.{method_name}(...)` while `{recv_name}` is shared-borrowed by `{borrower}`"
+                ),
+                primary: receiver.span,
+                suggestion: Some((
+                    receiver.span,
+                    recv_name.clone(),
+                    format!(
+                        "method calls on `{recv_name}` may require exclusive access; \
+                         while `{borrower}` is alive, no overlapping access is admitted. \
+                         Drop `{borrower}` before calling the method, or restructure \
+                         so the call happens before the borrow is established."
                     ),
-                    primary: receiver.span,
-                    suggestion: Some((
-                        receiver.span,
-                        recv_name.clone(),
-                        format!(
-                            "method calls on `{recv_name}` may require exclusive access; \
-                             while `{borrower}` is alive, no overlapping access is admitted. \
-                             Drop `{borrower}` before calling the method, or restructure \
-                             so the call happens before the borrow is established."
-                        ),
-                    )),
-                    label: borrow_span.map(|s| (s, format!("`{borrower}` borrows `{recv_name}` here"))),
-                });
-            }
-            PlaceState::BorrowedExclusive(borrower) if borrower != recv_name => {
-                let borrow_span = self
-                    .live_borrows
-                    .get(&place)
-                    .and_then(|m| m.get(borrower))
-                    .copied();
-                self.diags.push(RawDiag {
-                    code: "E0383",
-                    message: format!(
-                        "cannot call `{recv_name}.{method_name}(...)` while `{recv_name}` is exclusively borrowed by `{borrower}`"
+                )),
+                label: Some((borrow_span, format!("`{borrower}` borrows `{recv_name}` here"))),
+            });
+        } else if is_excl && borrower != *recv_name {
+            self.diags.push(RawDiag {
+                code: "E0383",
+                message: format!(
+                    "cannot call `{recv_name}.{method_name}(...)` while `{recv_name}` is exclusively borrowed by `{borrower}`"
+                ),
+                primary: receiver.span,
+                suggestion: Some((
+                    receiver.span,
+                    recv_name.clone(),
+                    format!(
+                        "while `{borrower}` is alive, no overlapping access to `{recv_name}` is admitted."
                     ),
-                    primary: receiver.span,
-                    suggestion: Some((
-                        receiver.span,
-                        recv_name.clone(),
-                        format!(
-                            "while `{borrower}` is alive, no overlapping access to `{recv_name}` is admitted."
-                        ),
-                    )),
-                    label: borrow_span.map(|s| (s, format!("`{borrower}` exclusively borrows `{recv_name}` here"))),
-                });
-            }
-            _ => {}
+                )),
+                label: Some((borrow_span, format!("`{borrower}` exclusively borrows `{recv_name}` here"))),
+            });
         }
     }
 
@@ -15413,5 +15459,74 @@ fn mk_m() -> M[str] { return M[str] { _ctrl: { 0 as *u8 } }; }
                 "[{name}] must not be denied, got {codes:?}"
             );
         }
+    }
+
+    #[test]
+    fn type_alias_to_str_view_is_tracked_by_borrowck_core02() {
+        let src = "type View = str;\n\
+                   struct Text { x: i32 }\n\
+                   impl Text {\n\
+                       fn drop(ref this) { return; }\n\
+                       fn as_str(this) -> View { return \"hi\"; }\n\
+                   }\n\
+                   fn bad() -> View {\n\
+                       var t: Text = Text { x: 1 };\n\
+                       let v: View = t.as_str();\n\
+                       return v;\n\
+                   }\n";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0513"),
+            "expected E0513 on returning view through type alias, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn destructured_drop_guard_is_not_nll_released_early_core03() {
+        let src = "struct Guard { s: str }\n\
+                   impl Guard { fn drop(ref this) { return; } }\n\
+                   struct Pair { g: Guard, v: i32 }\n\
+                   struct Boxed { x: i32 }\n\
+                   impl Boxed {\n\
+                       fn drop(ref this) { return; }\n\
+                       fn lock(this) -> Pair {\n\
+                           return Pair { g: Guard { s: \"locked\" }, v: this.x };\n\
+                       }\n\
+                       fn mutate(ref this) { this.x = 2; return; }\n\
+                   }\n\
+                   fn test_it() {\n\
+                       var b: Boxed = Boxed { x: 1 };\n\
+                       let Pair { g, v } = b.lock();\n\
+                       let _read: i32 = v;\n\
+                       b.mutate();\n\
+                   }\n";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0381" || c == "E0372"),
+            "expected E0381/E0372 while destructured Drop guard `g` is in scope, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn whole_struct_ref_conflicts_with_live_field_view_core04() {
+        let src = "struct Text { x: i32 }\n\
+                   impl Text {\n\
+                       fn drop(ref this) { return; }\n\
+                       fn as_str(this) -> str { return \"a\"; }\n\
+                   }\n\
+                   struct Holder { a: Text, b: i32 }\n\
+                   fn reset(ref h: Holder) { h.b = 0; return; }\n\
+                   fn bad() -> i32 {\n\
+                       var h: Holder = Holder { a: Text { x: 1 }, b: 1 };\n\
+                       let s: str = h.a.as_str();\n\
+                       reset(h);\n\
+                       if s == \"a\" { return 1; }\n\
+                       return 0;\n\
+                   }\n";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0381"),
+            "expected E0381 when mutating whole struct while field view `s` is live, got {codes:?}"
+        );
     }
 }

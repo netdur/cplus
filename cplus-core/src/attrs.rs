@@ -765,6 +765,30 @@ impl Ctx {
                         }
                     }
                 }
+                if spec.name == "link_name" {
+                    if let [AttrArg::Str(v, _)] = attr.args.as_slice() {
+                        let valid = !v.is_empty()
+                            && v.bytes().enumerate().all(|(i, b)| {
+                                b.is_ascii_alphabetic()
+                                    || matches!(b, b'_' | b'$' | b'.')
+                                    || (i > 0 && b.is_ascii_digit())
+                            });
+                        if !valid {
+                            let primary = self.make_span(attr.span);
+                            self.diags.push(Diagnostic {
+                                severity: Severity::Error,
+                                code: DiagCode("E0355"),
+                                message: format!(
+                                    "invalid symbol name `{v}` in `#[link_name]`: must be a non-empty identifier (`[A-Za-z_$.][A-Za-z0-9_$.]*`)"
+                                ),
+                                primary,
+                                labels: Vec::new(),
+                                notes: Vec::new(),
+                                suggestions: Vec::new(),
+                            });
+                        }
+                    }
+                }
             }
             ArgsSpec::OptionalStr => {
                 let ok = matches!(attr.args.as_slice(), [] | [AttrArg::Str(_, _)]);
@@ -1702,5 +1726,20 @@ mod tests {
         // duplicate — the uniqueness rule is per-name.
         let diags = check_src("#[repr(C)] #[watch] struct S { x: i32 }");
         assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn link_name_rejects_invalid_symbol_characters_e0355() {
+        for bad in [
+            "#[link_name = \"\"] extern fn f();",
+            "#[link_name = \"foo(i32)\\ndefine i32 @pwn\"] extern fn f();",
+            "#[link_name = \"foo bar\"] extern fn f();",
+            "#[link_name = \"9bad\"] extern fn f();",
+        ] {
+            let diags = check_src(bad);
+            assert_eq!(codes(&diags), vec!["E0355"], "for: {bad}");
+        }
+        let ok = check_src("#[link_name = \"sqlite3_open_v2\"] extern fn f();");
+        assert!(ok.is_empty(), "expected clean, got: {:?}", codes(&ok));
     }
 }
