@@ -1049,12 +1049,22 @@ fn main() -> ExitCode {
     }
 
     match (subcommand, input) {
-        (Some(Subcommand::Build), _) => {
-            build_project(out, diag_mode, build_mode, fp_contract, &sanitizers)
-        }
-        (Some(Subcommand::Package), _) => {
-            run_package(out, diag_mode, build_mode, fp_contract, &sanitizers)
-        }
+        (Some(Subcommand::Build), _) => build_project(
+            out,
+            diag_mode,
+            build_mode,
+            fp_contract,
+            &sanitizers,
+            emit_debug_info,
+        ),
+        (Some(Subcommand::Package), _) => run_package(
+            out,
+            diag_mode,
+            build_mode,
+            fp_contract,
+            &sanitizers,
+            emit_debug_info,
+        ),
         (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode, fp_contract),
         (Some(Subcommand::PrintLinkArgs), _) => {
             print_link_args(diag_mode, build_mode, &sanitizers)
@@ -1508,18 +1518,17 @@ fn clang_major(prog: &str) -> Option<u32> {
 fn coro_end_returns_void() -> bool {
     static CACHE: OnceLock<bool> = OnceLock::new();
     *CACHE.get_or_init(|| {
-        let dir = env::temp_dir();
-        let pid = std::process::id();
-        let probe = dir.join(format!("cpc_coro_probe_{pid}.ll"));
-        let obj = dir.join(format!("cpc_coro_probe_{pid}.o"));
         let ir = "define void @__cpc_coro_probe() {\n\
                   \x20 call void @llvm.coro.end(ptr null, i1 false, token none)\n\
                   \x20 ret void\n\
                   }\n\
                   declare void @llvm.coro.end(ptr, i1, token)\n";
-        if std::fs::write(&probe, ir).is_err() {
+        let Ok(probe_handle) = make_temp_file("cpc_coro_probe_", ".ll", ir.as_bytes()) else {
             return true;
-        }
+        };
+        let Ok(obj_handle) = make_temp_file("cpc_coro_probe_", ".o", b"") else {
+            return true;
+        };
         // v0.0.21 rung 2: probe the toolchain that will consume this
         // process's IR — the active target's clang (e.g. NDK clang) when it
         // resolves, else the host clang (pure IR-emission paths must work
@@ -1529,13 +1538,13 @@ fn coro_end_returns_void() -> bool {
         let output = Command::new(&prog)
             .arg("-x")
             .arg("ir")
-            .arg(&probe)
+            .arg(probe_handle.path())
             .arg("-c")
             .arg("-o")
-            .arg(&obj)
+            .arg(obj_handle.path())
             .output();
-        let _ = std::fs::remove_file(&probe);
-        let _ = std::fs::remove_file(&obj);
+        drop(probe_handle);
+        drop(obj_handle);
         match output {
             Ok(o) => !String::from_utf8_lossy(&o.stderr).contains("incorrect return type"),
             Err(_) => true,
@@ -3008,6 +3017,7 @@ fn run_package(
     build_mode: BuildMode,
     fp_contract: bool,
     sanitizers: &[&str],
+    emit_debug_info: bool,
 ) -> ExitCode {
     if !cfg!(target_os = "macos") {
         eprintln!("cpc package: only macOS is implemented — it produces a `.app`.");
@@ -3018,7 +3028,14 @@ fn run_package(
     // PACKAGE IMPLIES BUILD. There is no useful "package the stale one", and a
     // bundle wrapping yesterday's binary is a bug that looks like a build
     // system being fast.
-    let code = build_project(out, diag_mode, build_mode, fp_contract, sanitizers);
+    let code = build_project(
+        out,
+        diag_mode,
+        build_mode,
+        fp_contract,
+        sanitizers,
+        emit_debug_info,
+    );
     if code != ExitCode::SUCCESS {
         return code;
     }
@@ -3267,6 +3284,7 @@ fn build_project(
     build_mode: BuildMode,
     fp_contract: bool,
     sanitizers: &[&str],
+    emit_debug_info: bool,
 ) -> ExitCode {
     let manifest_path = PathBuf::from("Cplus.toml");
     let m = match manifest::load(&manifest_path) {
@@ -3493,7 +3511,15 @@ fn build_project(
     timings::inlined_from(&loaded_paths, &dep_source_dirs(&m));
     ensure_coro_end_probed();
     let ir = timings::phase("codegen", || {
-        codegen::generate_with_mono(&program, build_mode, fp_contract, None, sanitizers, false, &mono)
+        codegen::generate_with_mono(
+            &program,
+            build_mode,
+            fp_contract,
+            None,
+            sanitizers,
+            emit_debug_info,
+            &mono,
+        )
     });
     let ir = timings::phase("prune", || prune_ir(ir));
 
@@ -3615,7 +3641,7 @@ fn build_project(
         }
     }
     let status = timings::phase("clang + link", || {
-        run_clang(&tmp, &out_path, build_mode, false, sanitizers, &link_args)
+        run_clang(&tmp, &out_path, build_mode, emit_debug_info, sanitizers, &link_args)
     });
     timings::report_project(&m.package.name);
     drop(tmp_handle); // explicit cleanup on the secure temp path
@@ -8883,7 +8909,9 @@ fn run_init(args: &[OsString]) -> ExitCode {
     let cpc_path = env::current_exe()
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "cpc".to_string());
+        .unwrap_or_else(|| "cpc".to_string())
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
     let mcp_json = format!(
         "{{\n  \"mcpServers\": {{\n    \"cplus\": {{\n      \"command\": \"{cpc_path}\",\n      \"args\": [\"mcp\"]\n    }}\n  }}\n}}\n"
     );

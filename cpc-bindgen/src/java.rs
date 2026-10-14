@@ -392,6 +392,11 @@ impl Emitter {
         for (i, (_, mm)) in mapped.iter().enumerate() {
             sig.push_str(&format!(", arg{i}: {}", mm.cplus));
         }
+        let ret_cplus = if rmap.is_string {
+            "jni::jobject".to_string()
+        } else {
+            rmap.cplus.clone()
+        };
         let ret_ty = if m.is_ctor {
             format!(" -> {}", cls.simple)
         } else if ret == "V" {
@@ -399,7 +404,7 @@ impl Emitter {
         } else if ret == "Z" {
             " -> bool".to_string()
         } else {
-            format!(" -> {}", rmap.cplus)
+            format!(" -> {ret_cplus}")
         };
         self.out.push_str(&format!("    fn {fname}({sig}){ret_ty} {{\n"));
 
@@ -462,7 +467,7 @@ impl Emitter {
             } else {
                 self.out.push_str(&format!(
                     "        let r: {} = {{ (*(*{raw})).{call}({raw}, cls, mid, {argp}) }};\n",
-                    if ret == "Z" { "jni::jboolean".to_string() } else { rmap.cplus.clone() }
+                    if ret == "Z" { "jni::jboolean".to_string() } else { ret_cplus.clone() }
                 ));
             }
         } else {
@@ -474,7 +479,7 @@ impl Emitter {
             } else {
                 self.out.push_str(&format!(
                     "        let r: {} = {{ (*(*{raw})).{call}({raw}, this._obj, mid, {argp}) }};\n",
-                    if ret == "Z" { "jni::jboolean".to_string() } else { rmap.cplus.clone() }
+                    if ret == "Z" { "jni::jboolean".to_string() } else { ret_cplus.clone() }
                 ));
             }
         }
@@ -575,6 +580,7 @@ pub fn generate(classpath: &str, classes: &[String], runtime: &str) -> Result<St
     Ok(emit_with_runtime(&parsed, runtime))
 }
 
+#[allow(dead_code)]
 pub fn emit(parsed: &[Class]) -> String {
     emit_with_runtime(parsed, "android_view/runtime")
 }
@@ -685,6 +691,7 @@ pub fn emit_with_runtime(parsed: &[Class], runtime: &str) -> String {
                         }
                     }
                 }
+                fname = crate::sanitize_ident(&fname);
                 // A field reader colliding with a method keeps both reachable.
                 if used.contains(&fname) {
                     fname.push_str("_field");

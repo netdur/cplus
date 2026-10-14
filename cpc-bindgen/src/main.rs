@@ -1294,6 +1294,10 @@ impl Emitter {
         map_c_type_to_cplus(&self.expand(qt, 16), &self.seen_records, self.llp64)
     }
 
+    fn map_field_type(&self, qt: &str) -> Result<String, String> {
+        map_c_field_type_to_cplus(&self.expand(qt, 16), &self.seen_records, self.llp64)
+    }
+
     /// True iff `decl` originated from the user's header (not a system include).
     /// For each top-level decl (in TU order), decide whether it comes from our
     /// header rather than an #included system/dependency header.
@@ -1611,7 +1615,7 @@ impl Emitter {
                 .and_then(|t| t.get("qualType"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let cplus_ty = match self.map_type(qt) {
+            let cplus_ty = match self.map_field_type(qt) {
                 Ok(t) => t,
                 Err(why) => {
                     self.out
@@ -2122,6 +2126,31 @@ fn bitfield_width(field: &serde_json::Value) -> Option<u32> {
     None
 }
 
+    // Fixed-size array in a struct field (`T[N]`): preserve inline `[Elem; N]`
+    // layout instead of decaying to `*Elem`.
+fn map_c_field_type_to_cplus(
+    c_ty: &str,
+    complete: &std::collections::HashSet<String>,
+    llp64: bool,
+) -> Result<String, String> {
+    let trimmed = c_ty.trim();
+    if !trimmed.replace(' ', "").contains("(*") {
+        if let Some(without_close) = trimmed.strip_suffix(']') {
+            if let Some(open_bracket) = without_close.rfind('[') {
+                let len_str = without_close[open_bracket + 1..].trim();
+                if let Ok(n) = len_str.parse::<usize>() {
+                    if n > 0 {
+                        let inner = without_close[..open_bracket].trim();
+                        let elem = map_c_field_type_to_cplus(inner, complete, llp64)?;
+                        return Ok(format!("[{elem}; {n}]"));
+                    }
+                }
+            }
+        }
+    }
+    map_c_type_to_cplus(c_ty, complete, llp64)
+}
+
 /// Append `_` when a C / Objective-C identifier collides with a C+ keyword (an
 /// ObjC `type`/`for` param, a C `void *opaque` field, ...). Shared by both the C
 /// and ObjC front-ends.
@@ -2143,9 +2172,9 @@ pub(crate) fn sanitize_ident(name: &str) -> String {
     const RESERVED: &[&str] = &[
         "as", "assert", "async", "await", "borrow", "break", "const", "continue", "defer", "else",
         "enum", "export", "extern", "false", "fn", "for", "gen", "guard", "if", "impl", "import",
-        "in", "interface", "let", "loop", "match", "mod", "move", "mut", "opaque", "pub", "ref",
-        "restrict", "return", "self", "Self", "static", "struct", "take", "this", "This", "trait",
-        "true", "try", "type", "union", "unsafe", "use", "var", "while", "yield",
+        "in", "interface", "let", "loop", "match", "mod", "move", "mut", "null", "opaque", "pub",
+        "ref", "restrict", "return", "self", "Self", "static", "struct", "take", "this", "This",
+        "trait", "true", "try", "type", "union", "unsafe", "use", "var", "where", "while", "yield",
     ];
     if RESERVED.contains(&name) {
         return format!("{name}_");

@@ -545,8 +545,11 @@ fn handle_hover(state: &mut ServerState, params: &HoverParams) -> HandlerResult 
         return null();
     };
     let value = format!("```cplus\n{}: {}\n```", spot.what, spot.ty);
-    // Highlight the spot's own span (ASCII identifiers ⇒ bytes == chars).
-    let width = spot.span.end.saturating_sub(spot.span.start);
+    // Highlight the spot's own span in UTF-16 code units.
+    let width = src
+        .get(spot.span.start as usize..spot.span.end as usize)
+        .map(|s| s.encode_utf16().count() as u32)
+        .unwrap_or_else(|| spot.span.end.saturating_sub(spot.span.start));
     let start = Position {
         line: spot.location.line.saturating_sub(1),
         character: spot.location.col.saturating_sub(1),
@@ -1070,7 +1073,10 @@ fn publish_diagnostics_for(conn: &Connection, state: &mut ServerState, uri: &Url
         }
     };
 
-    let by_file = compute_diagnostics(&path, &snap.text);
+    let mut overlays = overlays_from(&state.docs);
+    let canon = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    overlays.insert(canon, snap.text.clone());
+    let by_file = compute_diagnostics(&path, &snap.text, overlays);
 
     // Cache the originals + push the mapped LSP shape. We clear any
     // entries from `last_diagnostics` that the current run didn't refresh
@@ -1123,6 +1129,7 @@ fn push_diagnostics(conn: &Connection, uri: &Url, diags: &[Diagnostic], version:
 fn compute_diagnostics(
     open_path: &Path,
     open_text: &str,
+    overlays: BTreeMap<PathBuf, String>,
 ) -> BTreeMap<PathBuf, Vec<cplus_core::diagnostics::Diagnostic>> {
     let mut by_file: BTreeMap<PathBuf, Vec<cplus_core::diagnostics::Diagnostic>> = BTreeMap::new();
 
@@ -1160,14 +1167,23 @@ fn compute_diagnostics(
                 &manifest.root,
                 is_lib,
                 Some(&deps),
-                BTreeMap::new(),
+                overlays,
             ) {
                 Ok(mut loaded) => {
+                    let entry_canon =
+                        std::fs::canonicalize(&entry).unwrap_or_else(|_| entry.clone());
+                    let entry_src: String = loaded
+                        .files
+                        .values()
+                        .find(|(p, _)| *p == entry || *p == entry_canon)
+                        .map(|(_, s)| s.clone())
+                        .or_else(|| std::fs::read_to_string(&entry).ok())
+                        .unwrap_or_else(|| open_text.to_string());
                     // Phase 5 slice 5ATTR.1: attribute validation runs first.
                     let attr_diags = attrs::check_multi(
                         &loaded.program,
                         entry.clone(),
-                        open_text,
+                        &entry_src,
                         loaded.files.clone(),
                     );
                     for d in attr_diags {
@@ -1176,7 +1192,7 @@ fn compute_diagnostics(
                     let lower_diags = lower::lower_multi(
                         &mut loaded.program,
                         &entry,
-                        open_text,
+                        &entry_src,
                         loaded.files.clone(),
                     );
                     for d in lower_diags {
@@ -1185,7 +1201,7 @@ fn compute_diagnostics(
                     let diags = sema::check_multi(
                         &loaded.program,
                         entry.clone(),
-                        open_text,
+                        &entry_src,
                         loaded.files.clone(),
                     );
                     for d in diags {
@@ -1197,7 +1213,7 @@ fn compute_diagnostics(
                     let bc_diags = borrowck::check_multi(
                         &loaded.program,
                         &entry,
-                        open_text,
+                        &entry_src,
                         &loaded.files,
                     );
                     for d in bc_diags {
@@ -1373,21 +1389,27 @@ fn map_diagnostic(d: &cplus_core::diagnostics::Diagnostic) -> Diagnostic {
             character: d.primary.end.col.saturating_sub(1),
         },
     };
+    let message = if d.notes.is_empty() {
+        d.message.clone()
+    } else {
+        // Notes don't carry their own span in cplus-core today — render
+        // them as a newline-joined trailer on the message so editors
+        // surface them inline.
+        let mut msg = d.message.clone();
+        for note in &d.notes {
+            msg.push_str("\nnote: ");
+            msg.push_str(note);
+        }
+        msg
+    };
     Diagnostic {
         range,
         severity,
         code: Some(NumberOrString::String(d.code.0.to_string())),
         code_description: None,
         source: Some("cpc".to_string()),
-        message: d.message.clone(),
-        related_information: if d.notes.is_empty() {
-            None
-        } else {
-            // Notes don't carry their own span in cplus-core today — render
-            // them as a newline-joined trailer on the message so editors
-            // surface them inline.
-            None
-        },
+        message,
+        related_information: None,
         tags: None,
         data: None,
     }

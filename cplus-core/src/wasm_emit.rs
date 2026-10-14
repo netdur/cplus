@@ -331,10 +331,19 @@ impl Emitter {
                         ));
                     }
                     out.push((name.name.clone(), n));
+                    if let Some(init) = init {
+                        self.collect_locals_in_expr(init, out, seen)?;
+                    }
                 }
-                StmtKind::While { body, .. } => self.collect_locals(body, out, seen)?,
+                StmtKind::While { cond, body, .. } => {
+                    self.collect_locals_in_expr(cond, out, seen)?;
+                    self.collect_locals(body, out, seen)?;
+                }
                 StmtKind::Loop(body, _) => self.collect_locals(body, out, seen)?,
-                StmtKind::Expr(e) => self.collect_locals_in_expr(e, out, seen)?,
+                StmtKind::Expr(e)
+                | StmtKind::Return(Some(e))
+                | StmtKind::Assert(e)
+                | StmtKind::Defer(e) => self.collect_locals_in_expr(e, out, seen)?,
                 _ => {}
             }
         }
@@ -350,15 +359,39 @@ impl Emitter {
         out: &mut Vec<(String, Num)>,
         seen: &mut HashSet<String>,
     ) -> Result<(), Diagnostic> {
-        if let ExprKind::If { then, else_branch, .. } = &e.kind {
-            self.collect_locals(then, out, seen)?;
-            if let Some(eb) = else_branch {
-                if let ExprKind::Block(b) = &eb.kind {
-                    self.collect_locals(b, out, seen)?;
-                } else if matches!(eb.kind, ExprKind::If { .. }) {
+        match &e.kind {
+            ExprKind::Block(b) => self.collect_locals(b, out, seen)?,
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
+                self.collect_locals_in_expr(cond, out, seen)?;
+                self.collect_locals(then, out, seen)?;
+                if let Some(eb) = else_branch {
                     self.collect_locals_in_expr(eb, out, seen)?;
                 }
             }
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.collect_locals_in_expr(lhs, out, seen)?;
+                self.collect_locals_in_expr(rhs, out, seen)?;
+            }
+            ExprKind::Assign { target, value, .. } => {
+                self.collect_locals_in_expr(target, out, seen)?;
+                self.collect_locals_in_expr(value, out, seen)?;
+            }
+            ExprKind::Unary { operand, .. } => {
+                self.collect_locals_in_expr(operand, out, seen)?;
+            }
+            ExprKind::Cast { expr, .. } => {
+                self.collect_locals_in_expr(expr, out, seen)?;
+            }
+            ExprKind::Call { args, .. } | ExprKind::Intrinsic { args, .. } => {
+                for a in args {
+                    self.collect_locals_in_expr(a, out, seen)?;
+                }
+            }
+            _ => {}
         }
         Ok(())
     }

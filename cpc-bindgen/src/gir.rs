@@ -1894,12 +1894,12 @@ fn sanitize_sym(s: &str) -> String {
 fn is_keyword(s: &str) -> bool {
     matches!(
         s,
-        "_" | "fn" | "let" | "mut" | "const" | "static" | "if" | "else" | "while"
-            | "for" | "in" | "return" | "true" | "false" | "as" | "unsafe" | "extern"
+        "_" | "fn" | "let" | "mut" | "var" | "const" | "static" | "if" | "else" | "while"
+            | "for" | "in" | "return" | "true" | "false" | "null" | "as" | "unsafe" | "extern"
             | "struct" | "enum" | "union" | "match" | "trait" | "impl" | "pub"
             | "export" | "use" | "mod" | "import" | "this" | "defer" | "try" | "break"
-            | "continue" | "loop" | "move" | "restrict" | "guard" | "assert" | "borrow"
-            | "opaque" | "interface" | "type" | "async" | "gen" | "yield" | "await"
+            | "continue" | "loop" | "move" | "ref" | "restrict" | "guard" | "assert" | "borrow"
+            | "opaque" | "interface" | "type" | "where" | "async" | "gen" | "yield" | "await"
     )
 }
 

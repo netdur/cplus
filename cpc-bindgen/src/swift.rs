@@ -1457,11 +1457,41 @@ fn swift_plumbing(prefix: &str) -> String {
 /// slice, and substitute the generic parameter name(s) with `<elem>` in the decl
 /// / params / return. A still-generic return (`View<elem>`) is left intact so
 /// `emit_member` self-gates (it isn't a bound handle type).
+fn replace_ident(haystack: &str, ident: &str, replacement: &str) -> String {
+    if ident.is_empty() {
+        return haystack.to_string();
+    }
+    let is_id_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(haystack.len());
+    let mut rest = haystack;
+    let mut prev_id = false;
+    while let Some(pos) = rest.find(ident) {
+        let before = &rest[..pos];
+        let after = &rest[pos + ident.len()..];
+        let prev_ok = if let Some(ch) = before.chars().last() {
+            !is_id_char(ch)
+        } else {
+            !prev_id
+        };
+        let next_ok = after.chars().next().map(|ch| !is_id_char(ch)).unwrap_or(true);
+        out.push_str(before);
+        if prev_ok && next_ok {
+            out.push_str(replacement);
+        } else {
+            out.push_str(ident);
+        }
+        prev_id = ident.chars().last().map(is_id_char).unwrap_or(false);
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 fn instantiate_symbol(sym: &Value, gnames: &[String], elem: &str) -> Value {
     let subst = |sp: &str| -> String {
         let mut s = sp.to_string();
         for g in gnames {
-            s = s.replace(g.as_str(), elem);
+            s = replace_ident(&s, g.as_str(), elem);
         }
         s
     };
@@ -1691,6 +1721,7 @@ pub fn generate_bridge(
             "    fn drop(ref this) {{\n        if !is_null(this._raw) {{ {{ {prefix}_release(this._raw); }} this._raw = null(); }}\n        return;\n    }}\n"
         ));
         let mut had_init = false;
+        let mut seen_methods: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         if let Some(members) = members_by_type.get(name) {
             for m in members {
                 let mpath = path_of(m);
@@ -1730,6 +1761,13 @@ pub fn generate_bridge(
                     skip(&mut skip_reasons, &mut skipped, &mut impl_body, &mpath, "extra init variant (one `new` per type in M1)".into());
                     continue;
                 }
+                let member_base = selector_parts(&last_component(m)).0;
+                if (kind_of(m) == "swift.method" || kind_of(m) == "swift.type.method")
+                    && seen_methods.contains(&member_base)
+                {
+                    skip(&mut skip_reasons, &mut skipped, &mut impl_body, &mpath, "extra overload variant (one method per base name in M1)".into());
+                    continue;
+                }
                 match emit_member(m, &ident, name, &prefix, &type_names, &copy_safe, &spec.raw_enums, spec.noncopyable_owners.contains(name), "") {
                     Ok(e) => {
                         thunks.push_str(&e.thunk);
@@ -1739,6 +1777,8 @@ pub fn generate_bridge(
                         emitted += 1;
                         if kind_of(m) == "swift.init" {
                             had_init = true;
+                        } else if kind_of(m) == "swift.method" || kind_of(m) == "swift.type.method" {
+                            seen_methods.insert(member_base);
                         }
                     }
                     Err(reason) => skip(&mut skip_reasons, &mut skipped, &mut impl_body, &mpath, reason),

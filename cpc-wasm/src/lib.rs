@@ -124,8 +124,13 @@ fn run_wat(source: &str) -> serde_json::Value {
     match wasm_emit::generate_wat(&prog, &path, source, &mono.value_types) {
         Ok(wat) => {
             // Assemble in-process so the page gets runnable bytes directly.
-            let wasm = wat::parse_str(&wat).ok();
-            finish_wat(&diags, Some(wat), wasm)
+            match wat::parse_str(&wat) {
+                Ok(wasm) => finish_wat(&diags, Some(wat), Some(wasm)),
+                Err(e) => {
+                    diags.push(single_diag(&format!("wat assembly error: {e}")));
+                    finish_wat(&diags, Some(wat), None)
+                }
+            }
         }
         Err(d) => {
             diags.push(d);

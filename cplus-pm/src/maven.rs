@@ -1017,6 +1017,33 @@ fn has_entries(dir: &Path) -> bool {
     fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
 }
 
+fn reject_symlinks_recursive(dir: &Path, archive: &Path) -> Result<(), MavenError> {
+    let entries = fs::read_dir(dir).map_err(|source| MavenError::Io {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| MavenError::Io {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+        let ft = entry.file_type().map_err(|source| MavenError::Io {
+            path: entry.path(),
+            source,
+        })?;
+        if ft.is_symlink() {
+            return Err(MavenError::Explode {
+                archive: archive.to_path_buf(),
+                stderr: format!("refusing symlink entry in AAR: {}", entry.path().display()),
+            });
+        }
+        if ft.is_dir() {
+            reject_symlinks_recursive(&entry.path(), archive)?;
+        }
+    }
+    Ok(())
+}
+
 /// Unzip an AAR. Idempotent: an already-exploded archive is left alone, so a
 /// repeat install does no work. An AAR always ships a manifest, so that is
 /// the marker — `classes.jar` is not, because a code-less facade has none.
@@ -1024,8 +1051,10 @@ fn explode(archive: &Path, into: &Path) -> Result<(), MavenError> {
     if into.join("AndroidManifest.xml").is_file() {
         return Ok(());
     }
-    fs::create_dir_all(into).map_err(|source| MavenError::Io {
-        path: into.to_path_buf(),
+    let stage = into.with_extension(format!("tmp-explode-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&stage);
+    fs::create_dir_all(&stage).map_err(|source| MavenError::Io {
+        path: stage.clone(),
         source,
     })?;
     let output = Command::new("unzip")
@@ -1033,24 +1062,47 @@ fn explode(archive: &Path, into: &Path) -> Result<(), MavenError> {
         .arg("-o")
         .arg(archive)
         .arg("-d")
-        .arg(into)
+        .arg(&stage)
         .output()
-        .map_err(|source| MavenError::NoUnzip { source })?;
+        .map_err(|source| {
+            let _ = fs::remove_dir_all(&stage);
+            MavenError::NoUnzip { source }
+        })?;
     if !output.status.success() {
+        let _ = fs::remove_dir_all(&stage);
         return Err(MavenError::Explode {
             archive: archive.to_path_buf(),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
         });
     }
+    if let Err(e) = reject_symlinks_recursive(&stage, archive) {
+        let _ = fs::remove_dir_all(&stage);
+        return Err(e);
+    }
     // Every AAR has a manifest — `classes.jar` it may legitimately lack (see
     // `Artifact::classes`). No manifest means the download is not the file
     // its extension claims, and every later step would be confusing.
-    if !into.join("AndroidManifest.xml").is_file() {
+    if !stage.join("AndroidManifest.xml").is_file() {
+        let _ = fs::remove_dir_all(&stage);
         return Err(MavenError::Explode {
             archive: archive.to_path_buf(),
             stderr: "no AndroidManifest.xml inside — not an AAR".to_string(),
         });
     }
+    let _ = fs::remove_dir_all(into);
+    if let Some(parent) = into.parent() {
+        fs::create_dir_all(parent).map_err(|source| MavenError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::rename(&stage, into).map_err(|source| {
+        let _ = fs::remove_dir_all(&stage);
+        MavenError::Io {
+            path: into.to_path_buf(),
+            source,
+        }
+    })?;
     Ok(())
 }
 

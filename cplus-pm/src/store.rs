@@ -52,13 +52,19 @@ pub fn default_root() -> Option<PathBuf> {
 /// Pre-1.0 every release is its own universe (`v0.0.29`); from 1.0 the line
 /// is `major.minor` (`v1.2`) and only patch fixes move within it (D14).
 pub fn tier(toolchain_version: &str) -> String {
-    let mut parts = toolchain_version.split('.');
+    let clean: String = toolchain_version
+        .trim()
+        .chars()
+        .filter(|&c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+        .collect();
+    let clean = clean.replace("..", ".");
+    let mut parts = clean.split('.');
     let major = parts.next().unwrap_or("0");
     if major.trim() != "0" {
         let minor = parts.next().unwrap_or("0");
         return format!("v{}.{}", major.trim(), minor.trim());
     }
-    format!("v{}", toolchain_version.trim())
+    format!("v{}", clean.trim())
 }
 
 /// Paths of one store rooted at `root` for one toolchain tier.

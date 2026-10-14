@@ -76,6 +76,18 @@ impl DepSpec {
 
         // Sibling: a bare version / wildcard, no URL.
         if !value.contains(TREE_MARKER) && !value.contains("://") {
+            if value != "*"
+                && (value.contains('/')
+                    || value.contains('\\')
+                    || value.contains("..")
+                    || value.contains('\n')
+                    || value.contains('\r')
+                    || value.contains('\0'))
+            {
+                return Err(SpecError::MissingVersion {
+                    value: value.to_string(),
+                });
+            }
             let version = if value == "*" {
                 None
             } else {
@@ -97,7 +109,14 @@ impl Pinned {
                 value: value.to_string(),
             })?;
         let version = version.trim();
-        if version.is_empty() {
+        if version.is_empty()
+            || version.contains('/')
+            || version.contains('\\')
+            || version.contains("..")
+            || version.contains('\n')
+            || version.contains('\r')
+            || version.contains('\0')
+        {
             return Err(SpecError::MissingVersion {
                 value: value.to_string(),
             });
