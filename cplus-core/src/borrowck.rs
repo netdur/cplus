@@ -1473,6 +1473,58 @@ fn method_ret_param_positions(
         .collect()
 }
 
+/// The arguments a call through a FUNCTION VALUE may return a view of.
+///
+/// A named callee's tie comes from its body or its signature (`detect_fn_view`,
+/// computed flows); a function value has neither by name, only its type —
+/// and the call tied nothing, so `let f: fn(str) -> str = keep; v =
+/// f(o.view());` let `v` outlive `o` (ASan heap-use-after-free) while the
+/// same call written `keep(o.view())` was E0514. A function value is not a
+/// raw pointer: no `*`, `as *T`, `#addr` or `extern` appears, so this is the
+/// safe tier and it must not crash.
+///
+/// The type is all there is, so this is `detect_fn_view`'s rule applied to
+/// it: when the return can hold a view, the result borrows every argument
+/// at a view-carrying position, or a borrowed (non-`take`) non-Copy one.
+fn fn_value_ret_positions(
+    fn_ty: &Type,
+    oracle: &CopyOracle,
+    arg_may_be_view: &dyn Fn(usize) -> bool,
+) -> Vec<usize> {
+    let TypeKind::FnPtr {
+        params,
+        param_takes,
+        return_type,
+        ..
+    } = &fn_ty.kind
+    else {
+        return Vec::new();
+    };
+    // A function-value type is always concrete, so "can the return hold a
+    // view" is answered exactly — an owned `Text` return copies and borrows
+    // nothing.
+    let Some(ret) = return_type.as_deref() else {
+        return Vec::new();
+    };
+    if !oracle.type_contains_view(ret) {
+        return Vec::new();
+    }
+    params
+        .iter()
+        .enumerate()
+        .filter(|(i, t)| {
+            let take = param_takes.get(*i).copied().unwrap_or(false);
+            let pos = if take {
+                oracle.type_contains_view(t)
+            } else {
+                oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
+            };
+            pos && arg_may_be_view(*i)
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
 fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
     let kind = match &ty.kind {
         TypeKind::Path(name) => {
@@ -3895,7 +3947,36 @@ impl<'p> Analyzer<'p> {
         match &callee.kind {
             ExprKind::Ident(fn_name) => {
                 let Some(entry) = self.sigs.fns.get(fn_name) else {
-                    return Vec::new();
+                    // A call through a function VALUE: its type is the contract.
+                    let Some(fn_ty) = self.binding_type(fn_name).cloned() else {
+                        return Vec::new();
+                    };
+                    let may_be_view = |i: usize| {
+                        args.get(i).is_some_and(|a| {
+                            !self.classify_borrow_source(a).is_empty()
+                                || place_from_expr(a).is_some_and(|p| {
+                                    self.binding_borrows_from
+                                        .get(&p.root)
+                                        .is_some_and(|o| !o.is_empty())
+                                        || self.binding_type(&p.root).is_some_and(|t| {
+                                            self.oracle.type_contains_view(t)
+                                                || self.oracle.definitely_non_copy(t)
+                                        })
+                                })
+                        })
+                    };
+                    let mut out: Vec<(Place, BorrowFlavor)> = Vec::new();
+                    for i in fn_value_ret_positions(&fn_ty, self.oracle, &may_be_view) {
+                        match place_from_arg(args, i) {
+                            Some(p) => out.push((p, BorrowFlavor::Shared)),
+                            None => {
+                                if let Some(a) = args.get(i) {
+                                    out.extend(self.classify_borrow_source(a));
+                                }
+                            }
+                        }
+                    }
+                    return out;
                 };
                 // An async call hands back a FRAME holding its by-pointer
                 // arguments; that tie is independent of any elision rule, so
@@ -4631,6 +4712,18 @@ impl<'a> ViewRules<'a> {
                 ExprKind::Ident(fn_name) => {
                     for src in self.async_frame_sources_of(callee, args) {
                         roots.extend(self.view_source_roots(src));
+                    }
+                    if !self.sigs.fns.contains_key(fn_name) {
+                        // A call through a function value — see
+                        // `fn_value_ret_positions`.
+                        if let Some(fn_ty) = self.lookup(fn_name).and_then(|l| l.ty.clone()) {
+                            let every = |_: usize| true;
+                            for i in fn_value_ret_positions(&fn_ty, self.oracle, &every) {
+                                if let Some(a) = args.get(i) {
+                                    roots.extend(self.view_source_roots(a));
+                                }
+                            }
+                        }
                     }
                     if let Some(entry) = self.sigs.fns.get(fn_name) {
                         let may_be_view = |i: usize| {
@@ -14225,6 +14318,41 @@ impl Dict { fn get(this, key: str) -> str { return this.k; } }
         let lookup = "fn f() -> i32 { let d: Dict = Dict { k: mk() }; var v: str = \"a\"; { let key: LStr = mk(); v = d.get(key.view()); } return peek(v); }";
         let codes = check_src(&format!("{LANG_STR_PRELUDE}{COERCE_PRELUDE}{RETURNED_VIEW_PRELUDE}{lookup}"));
         assert!(codes.is_empty(), "a lookup must not tie its key, got {codes:?}");
+    }
+
+    #[test]
+    fn a_call_through_a_function_value_ties_like_a_direct_call() {
+        // A function VALUE is not a raw pointer — no door was opened — so a
+        // view it hands back must be tied exactly as the direct call's is.
+        // It tied nothing: the same program was E0514 written `keep(..)` and a
+        // heap-use-after-free written `f(..)`.
+        let pre = "fn keep_s(s: str) -> str { return s; }\nfn len_s(s: str) -> usize { return 0 as usize; }\n";
+        let bad: &[(&str, &str, &str)] = &[
+            ("local_value", "E0514", "fn f() -> i32 { let g: fn(str) -> str = keep_s; var v: str = \"a\"; { let o: LStr = mk(); v = g(o.view()); } return peek(v); }"),
+            ("returned", "E0513", "fn f() -> str { let g: fn(str) -> str = keep_s; let o: LStr = mk(); return g(o.view()); }"),
+            ("callback_parameter", "E0514", "fn f(g: fn(str) -> str) -> i32 { var v: str = \"a\"; { let o: LStr = mk(); v = g(o.view()); } return peek(v); }"),
+        ];
+        let missed: Vec<String> = bad
+            .iter()
+            .filter_map(|(name, code, tail)| {
+                let codes = check_src(&format!("{LANG_STR_PRELUDE}{COERCE_PRELUDE}{RETURNED_VIEW_PRELUDE}{pre}{tail}"));
+                (!codes.iter().any(|c| c == code)).then(|| format!("{name}: want {code}, got {codes:?}"))
+            })
+            .collect();
+        assert!(missed.is_empty(), "not raised: {missed:?}");
+        let clean: &[(&str, &str)] = &[
+            ("owner_outlives", "fn f() -> i32 { let g: fn(str) -> str = keep_s; let o: LStr = mk(); let v: str = g(o.view()); return peek(v); }"),
+            ("literal", "fn f() -> i32 { let g: fn(str) -> str = keep_s; var v: str = \"a\"; { v = g(\"lit\"); } return peek(v); }"),
+            ("scalar_return", "fn f() -> usize { let g: fn(str) -> usize = len_s; var n: usize = 0 as usize; { let o: LStr = mk(); n = g(o.view()); } return n; }"),
+        ];
+        let noisy: Vec<String> = clean
+            .iter()
+            .filter_map(|(name, tail)| {
+                let codes = check_src(&format!("{LANG_STR_PRELUDE}{COERCE_PRELUDE}{RETURNED_VIEW_PRELUDE}{pre}{tail}"));
+                (!codes.is_empty()).then(|| format!("{name}: {codes:?}"))
+            })
+            .collect();
+        assert!(noisy.is_empty(), "sound code rejected: {noisy:?}");
     }
 
     #[test]

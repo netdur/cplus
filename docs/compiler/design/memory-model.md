@@ -9,6 +9,29 @@
 > [phase6-borrow-exclusive.md](phase6-borrow-exclusive.md); the running audit
 > ledger is `plans/memory-model-hardening.md`.
 
+## 0. What is promised, and to whom
+
+C+ is not Rust and makes no claim of memory safety for every program. It has
+two tiers, the way Dart has its language and `dart:ffi`:
+
+- **The safe tier** is the language and the stdlib used without opening the
+  door below. A program that stays in it should never read freed memory,
+  free twice, or leave a view dangling, however its features are combined:
+  views, containers, generics, methods, function values, threads, tasks.
+  When one does, it is a bug in this checker, and whether anyone would write
+  it on purpose does not matter.
+- **The manual tier** opens with an operation that flags itself in the
+  syntax: a raw dereference `*p`, a cast `x as *T`, `#addr`, `#addr_of`, an
+  `extern` call (spec §6). From there on the developer manages that memory,
+  as with Dart FFI: what you allocate, you free. The checker still helps
+  (E0510, E0516, `opaque`, `#[keeps]`), but it does not promise.
+
+Two things are outside the safe tier's promise: a reference cycle of
+`Arc`/`Rc` leaks (there is no cycle collector), and `assert`, overflow and
+divide-by-zero are deliberate stops, not memory faults. The stdlib is written
+in the manual tier internally; its authors carry that responsibility so its
+users do not.
+
 ## 1. Terms
 
 - **View** — a value that reads memory owned by another value: `str`, slice
