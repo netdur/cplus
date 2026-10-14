@@ -679,6 +679,9 @@ fn live_hidden(view: *u8) -> bool {
     var cur: *u8 = view;
     var depth: i32 = 0 as i32;
     while !is_null(cur) && depth < (64 as i32) {
+        if is_kind(cur, #str_ptr("UIWindow\0")) {
+            return false;
+        }
         if responds_to(cur, #str_ptr("isHidden\0")) {
             if { rt::msg_i8(cur, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8) {
                 return true;

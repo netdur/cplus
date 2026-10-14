@@ -265,15 +265,26 @@ fn _parse_headers(block: str) -> vec::Vec[http::Header] {
 
 // ---- the exchange ----------------------------------------------------------------
 
-static _GLOBAL_READY: bool = false;
+static _GLOBAL_STATE: i32 = 0 as i32;
 
 // `curl_easy_init` initialises the library implicitly and the manual says that
-// is NOT thread-safe. Doing it once here is the documented fix, and a process
-// that never sends a request never pays for it.
+// is NOT thread-safe. Doing it once here with a 3-state atomic (0 = uninit,
+// 1 = initializing, 2 = ready) ensures concurrent callers wait until
+// `curl_global_init` has finished, and a process that never sends a request
+// never pays for it.
 fn _ensure_global() {
-    if _GLOBAL_READY { return; }
-    _GLOBAL_READY = true;
-    let _rc: i32 = { curl_global_init(_global_default()) };
+    let state_ptr: *i32 = { #addr_of(_GLOBAL_STATE) };
+    if { #atomic_load_i32_acquire(state_ptr) } == (2 as i32) {
+        return;
+    }
+    let prev: i32 = { #atomic_cmpxchg_i32_acqrel(state_ptr, 0 as i32, 1 as i32) };
+    if prev == (0 as i32) {
+        let _rc: i32 = { curl_global_init(_global_default()) };
+        { #atomic_store_i32_release(state_ptr, 2 as i32); }
+        return;
+    }
+    while { #atomic_load_i32_acquire(state_ptr) } != (2 as i32) {
+    }
 }
 
 fn _cstring_of(s: str) -> option::Option[text::CString] {
