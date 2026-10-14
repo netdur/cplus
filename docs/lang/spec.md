@@ -1052,7 +1052,7 @@ span, and optional labels/notes/suggestions. Codes group by phase:
 |---|---|
 | `E0001`–`E0005` | lexical (unexpected char, unterminated comment/string, bad number) |
 | `E00XX`, `E01XX` | parser (generic), builder-block parse |
-| `E0300`–`E033x` | types, inference, casts, fields, calls (`E0302` type mismatch, `E0315` illegal cast, `E0320` no such field, `E0333` missing return) |
+| `E0300`–`E033x` | types, inference, casts, fields, calls (`E0302` type mismatch, `E0310` type-alias cycle, `E0315` illegal cast, `E0320` no such field, `E0333` missing return) |
 | `E0340`–`E0360` | `match`, pattern-let, `break`/`continue` context (`E0347`–`E0352` pattern-let, `E0353` break/continue outside loop). `E0349` and `E0360` are reserved and unused |
 | `E0370`–`E0385` | borrow conflicts, moves |
 | `E0401`–`E0412` | modules, paths, visibility (`E0403` private, `E0404`/`E0405` unknown item) |

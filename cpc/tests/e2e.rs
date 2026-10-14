@@ -13181,7 +13181,7 @@ fn a_drop_handing_its_pointer_to_a_no_op_helper_is_e0510() {
 }
 
 #[test]
-fn phase11_type_alias_cycle_rejected_e0510() {
+fn phase11_type_alias_cycle_rejected_e0310() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("alias_cycle.cplus");
@@ -13200,8 +13200,8 @@ fn phase11_type_alias_cycle_rejected_e0510() {
     assert!(!out.status.success(), "cyclic alias should reject");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("E0510"),
-        "expected E0510 in stderr: {stderr}"
+        stderr.contains("E0310"),
+        "expected E0310 in stderr: {stderr}"
     );
 }
 

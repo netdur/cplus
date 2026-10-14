@@ -169,9 +169,9 @@ explanations live in the linked topic file.
   A lone literal is fine (`4294967295 as u64` is `u32::MAX`); the
   operation is the trap. Widen the LEFT operand before the shift
   (`1u64 << 40`), or build the mask in a `const`, which folds at the
-  declared width and rejects overflow. The constant forms warn (W0007); a
-  variable shift distance (`(1 << n) as u64`) does not, so the habit still
-  matters.
+  declared width and rejects overflow. W0007 warns on the constant forms
+  and on `(1 << n) as u64` with a variable `n`; other runtime arithmetic
+  over a literal is not checked, so the habit still matters.
 - **No array→slice coercion.** `[T; N]` does not pass where `T[]` is
   expected; go through a `Vec` and `as_slice`, or index.
 - **A view at a binding needs a named owner** — and a brace-block tail

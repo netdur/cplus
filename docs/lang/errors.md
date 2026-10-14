@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **199 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **152** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **200 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **153** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -243,6 +243,20 @@ fn main() { }
 **Fix.** Declare it as `fn main() -> i32` (or `async fn main() -> i32`; the compiler drives an async entry).
 
 <sub>repro: checked · cplus-core/src/sema.rs:3597 · test cplus-core/src/sema.rs:main_must_return_i32_e0309</sub>
+
+### E0310 · Type alias refers to itself
+
+Resolving a `type` alias reached the same alias again — directly (`type A = A;`) or through others (`type A = B; type B = A;`). A transparent alias stands for its target, so a cycle has nothing to stand for. (Reported as E0510 before 2026-10-14, which is raw-pointer accountability's code.)
+
+```cplus
+type A = B;
+type B = A;
+fn main() -> i32 { let x: A = 0; return x; }
+```
+
+**Fix.** Point one alias in the cycle at a real type, or declare a `struct` when a recursive type is what you meant (recursion then goes through a pointer or a `Box`).
+
+<sub>repro: checked · cplus-core/src/sema.rs:resolve_type · test cpc/tests/e2e.rs:phase11_type_alias_cycle_rejected_e0310</sub>
 
 ### E0312 · Function used as value
 
@@ -2848,9 +2862,9 @@ fn main() -> i32 { return parse(); }
 
 <sub>repro: checked · cplus-core/src/sema.rs:warn_if_deprecated · test cplus-core/src/sema.rs:deprecated_fn_and_method_uses_warn_w0006</sub>
 
-### W0007 · Constant expression that silently loses its value
+### W0007 · Integer expression computed narrower than it is used
 
-A constant expression does not produce the value it reads as, and nothing rejects it. Two shapes. (1) A shift whose distance is a literal at or past the bit width of its LEFT operand: every bit is shifted out. (2) An arithmetic expression over integer literals whose result does not fit the type it is computed in: it wraps. Both are made quiet by the same rule — an unsuffixed integer literal is `i32` BEFORE any cast — so `(1 << 40) as u64` is 256 and `(1000000 * 1000000) as i64` is not 10^12. The overflow form traps in debug and wraps in RELEASE; the shift form never traps.
+A constant expression does not produce the value it reads as, and nothing rejects it. Two shapes. (1) A shift whose distance is a literal at or past the bit width of its LEFT operand: every bit is shifted out. (2) An arithmetic expression over integer literals whose result does not fit the type it is computed in: it wraps. (3) A shift of an unsuffixed literal by a NON-constant distance, cast wider afterwards — `(1 << n) as u64`: there is no constant to fold, but the widening cast shows a wide value was meant, and any `n` of 32 or more loses every bit first. All three are made quiet by the same rule — an unsuffixed integer literal is `i32` BEFORE any cast — so `(1 << 40) as u64` is 256 and `(1000000 * 1000000) as i64` is not 10^12. The overflow form traps in debug and wraps in RELEASE; the shift forms never trap.
 
 ```cplus
 fn main() -> i32 { let m: u64 = (1 << 40) as u64; return 0; }

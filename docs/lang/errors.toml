@@ -318,6 +318,23 @@ fn main() { }
 '''
 
 [[code]]
+id = "E0310"
+title = "Type alias refers to itself"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:resolve_type"
+test = "cpc/tests/e2e.rs:phase11_type_alias_cycle_rejected_e0310"
+cause = "Resolving a `type` alias reached the same alias again — directly (`type A = A;`) or through others (`type A = B; type B = A;`). A transparent alias stands for its target, so a cycle has nothing to stand for. (Reported as E0510 before 2026-10-14, which is raw-pointer accountability's code.)"
+fix = "Point one alias in the cycle at a real type, or declare a `struct` when a recursive type is what you meant (recursion then goes through a pointer or a `Box`)."
+example = '''
+type A = B;
+type B = A;
+fn main() -> i32 { let x: A = 0; return x; }
+'''
+[[code]]
 id = "E0312"
 title = "Function used as value"
 category = "Names, types, and items"
@@ -3358,7 +3375,7 @@ fn main() -> i32 { return parse(); }
 
 [[code]]
 id = "W0007"
-title = "Constant expression that silently loses its value"
+title = "Integer expression computed narrower than it is used"
 category = "Warnings"
 severity = "warning"
 repro = "checked"
@@ -3366,7 +3383,7 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:check_binary"
 test = "cplus-core/src/sema.rs:constant_expressions_that_lose_their_value_warn_w0007"
-cause = "A constant expression does not produce the value it reads as, and nothing rejects it. Two shapes. (1) A shift whose distance is a literal at or past the bit width of its LEFT operand: every bit is shifted out. (2) An arithmetic expression over integer literals whose result does not fit the type it is computed in: it wraps. Both are made quiet by the same rule — an unsuffixed integer literal is `i32` BEFORE any cast — so `(1 << 40) as u64` is 256 and `(1000000 * 1000000) as i64` is not 10^12. The overflow form traps in debug and wraps in RELEASE; the shift form never traps."
+cause = "A constant expression does not produce the value it reads as, and nothing rejects it. Two shapes. (1) A shift whose distance is a literal at or past the bit width of its LEFT operand: every bit is shifted out. (2) An arithmetic expression over integer literals whose result does not fit the type it is computed in: it wraps. (3) A shift of an unsuffixed literal by a NON-constant distance, cast wider afterwards — `(1 << n) as u64`: there is no constant to fold, but the widening cast shows a wide value was meant, and any `n` of 32 or more loses every bit first. All three are made quiet by the same rule — an unsuffixed integer literal is `i32` BEFORE any cast — so `(1 << 40) as u64` is 256 and `(1000000 * 1000000) as i64` is not 10^12. The overflow form traps in debug and wraps in RELEASE; the shift forms never trap."
 fix = "Widen the LEFT operand before the operation rather than casting after it: suffix the literal (`1u64 << 40`, `1000000i64 * 1000000i64`) or cast it (`(1 as u64) << 40`). A `const` is the other blessed form and the one to reach for with a named value — it folds at the DECLARED width, so `const MASK: u64 = (1u64 << 40) - 1u64;` and `const N: i64 = 1000000 * 1000000;` are both correct."
 example = '''
 fn main() -> i32 { let m: u64 = (1 << 40) as u64; return 0; }

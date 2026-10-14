@@ -840,8 +840,8 @@ let m: u64 = (1u64 << 40) - 1u64;          // ✓ widened before the shift
 const MASK: u64 = (1u64 << 40) - 1u64;     // ✓ const expressions fold at compile time
 ```
 
-W0007 warns on the constant forms (a literal shift distance, literal
-arithmetic that overflows); a variable shift distance gets no warning.
+W0007 warns on all three forms: a literal shift distance, literal arithmetic
+that overflows, and `(1 << n) as <wider>` with a variable `n`.
 
 **Arithmetic traps on overflow in debug and wraps in release.** `+% -% *%`
 always wrap and are what you write when wrapping is the intent — they are

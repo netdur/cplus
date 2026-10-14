@@ -1670,7 +1670,7 @@ struct SemaCx<'a> {
     /// Consulted by `resolve_type` BEFORE the transparent-alias table.
     distinct_defs: HashMap<String, Ty>,
     /// Cycle-detection set for `resolve_type` recursion through aliases.
-    /// `type A = B; type B = A;` fires E0510 when the second resolve
+    /// `type A = B; type B = A;` fires E0310 when the second resolve
     /// re-enters the same name.
     resolving_aliases: std::collections::HashSet<String>,
     /// Every field name that is `fn`-pointer-typed on ANY struct, keyed
@@ -2856,6 +2856,57 @@ impl SemaCx<'_> {
                 "handle it: `let s: status::Status = ...; if !s.is_ok() { return s; }`".to_string(),
                 "or discard it on purpose: `let _ = ...;`".to_string(),
             ],
+        );
+    }
+
+    /// W0007, the shape the constant check cannot see: `(1 << n) as u64`.
+    /// An unsuffixed literal is `i32`, so the shift happens at 32 bits and a
+    /// distance of 32 or more is lost BEFORE the cast widens anything — and
+    /// with a variable distance there is no constant to fold, so nothing said
+    /// so (2026-10-14; the skill names this exact line). The cast to a wider
+    /// integer is the evidence the author wanted the wide value.
+    fn warn_if_narrow_shift_widened(&mut self, expr: &Expr, from: &Ty, to: &Ty) {
+        let (Some(fw), Some(tw)) = (int_bit_width(from, self), int_bit_width(to, self)) else {
+            return;
+        };
+        if tw <= fw {
+            return;
+        }
+        let mut core = expr;
+        while let ExprKind::Block(b) = &core.kind {
+            match (&b.stmts.is_empty(), &b.tail) {
+                (true, Some(t)) => core = t,
+                _ => return,
+            }
+        }
+        let ExprKind::Binary {
+            op: BinOp::Shl,
+            lhs,
+            rhs,
+        } = &core.kind
+        else {
+            return;
+        };
+        let ExprKind::IntLit(v, NumSuffix::None) = &lhs.kind else {
+            return;
+        };
+        // A literal distance is the constant form, already W0007 at the shift.
+        if matches!(rhs.kind, ExprKind::IntLit(..)) {
+            return;
+        }
+        let to_name = to.name();
+        self.warn_note(
+            "W0007",
+            format!(
+                "`{v} << ...` is computed as `{}` and only then cast to `{to_name}`: a shift \
+                 distance of {fw} or more loses every bit before the cast widens anything",
+                from.name()
+            ),
+            core.span,
+            vec![format!(
+                "widen the LEFT operand so the shift happens at the width you want: \
+                 `({v} as {to_name}) << ...`, or suffix the literal"
+            )],
         );
     }
 
@@ -12883,6 +12934,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             );
             return Ty::Error;
         }
+        self.warn_if_narrow_shift_widened(expr, &from, &to);
         // Phase 11 / P3 from the null-handling design: integer-to-raw-pointer
         // casts express FFI null (`0 as *u8`) and typed pointers from raw
         // addresses.
@@ -19408,11 +19460,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
                 // Phase 11 polish: transparent type alias. Recurse into
                 // the target. Cycle detection via the resolving set —
-                // E0510 if the same alias name appears mid-resolution.
+                // E0310 if the same alias name appears mid-resolution. (It was
+                // E0510 until 2026-10-14, the raw-pointer accountability code:
+                // one code, two unrelated meanings, and the catalogue's E0510
+                // test pointed at this one.)
                 if let Some(target) = self.type_aliases.get(name).cloned() {
                     if !self.resolving_aliases.insert(name.clone()) {
                         self.err(
-                            "E0510",
+                            "E0310",
                             format!("type alias `{}` references itself", name),
                             t.span,
                         );
@@ -28182,8 +28237,23 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             ds.iter().map(|d| d.code.0).collect::<Vec<_>>()
         );
 
+        // The variable-distance shape (2026-10-14): no constant to fold, and
+        // the widening cast is the evidence a wide value was meant.
+        let ds = check_src_lowered(
+            "fn f(n: i32) -> u64 { return (1 << n) as u64; } fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "W0007" && d.message.contains("only then cast to `u64`")),
+            "expected W0007 for a variable shift widened after the fact, got: {:?}",
+            ds.iter().map(|d| (d.code.0, d.message.clone())).collect::<Vec<_>>()
+        );
+
         // …and stays quiet where the expression is well-formed.
         for src in [
+            "fn f(n: i32) -> u64 { return 1u64 << n; } fn main() -> i32 { return 0; }",
+            "fn f(n: i32) -> u64 { return (1 as u64) << n; } fn main() -> i32 { return 0; }",
+            "fn f(n: i32) -> i32 { return (1 << n) as i32; } fn main() -> i32 { return 0; }",
+            "fn f(n: i32) -> i32 { return 1 << n; } fn main() -> i32 { return 0; }",
             "fn main() -> i32 { let _m: u64 = 1u64 << 40; return 0; }",
             "fn main() -> i32 { let _m: i32 = 1 << 31; return 0; }",
             "const M: u64 = (1u64 << 40) - 1u64; fn main() -> i32 { return 0; }",
