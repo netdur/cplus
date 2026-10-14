@@ -925,6 +925,11 @@ struct SigTable {
     /// conservative (no borrow recorded), matching the pre-mono posture of
     /// the rest of this pass.
     struct_fields: HashMap<String, HashMap<String, Type>>,
+    /// Interface method signatures by method NAME, for a call whose receiver
+    /// is a generic parameter: the implementation varies per instantiation,
+    /// so the declared signature is the only contract. See
+    /// `interface_ret_positions`.
+    interface_methods: HashMap<String, Vec<InterfaceMethod>>,
     /// Enum names, so `Enum::Variant(args)` calls are recognized as payload
     /// aggregates (views in the payload borrow like any aggregate capture)
     /// rather than associated-fn calls.
@@ -1159,6 +1164,14 @@ impl SigTable {
                             is_declaration: f.is_declaration,
                         },
                     );
+                }
+                ItemKind::Interface(i) => {
+                    for m in &i.methods {
+                        t.interface_methods
+                            .entry(m.name.name.clone())
+                            .or_default()
+                            .push(m.clone());
+                    }
                 }
                 ItemKind::Struct(s) => {
                     t.struct_fields.insert(
@@ -1523,6 +1536,53 @@ fn fn_value_ret_positions(
         })
         .map(|(i, _)| i)
         .collect()
+}
+
+/// A method call whose receiver is a GENERIC PARAMETER (`p.pick(s)` with
+/// `p: T`, `T: Picker`): no entry is found by the receiver's type name, so
+/// the call tied nothing and `v = p.pick(o.view())` outlived `o` (ASan
+/// heap-use-after-free) while the concrete call was E0514. Interfaces
+/// dispatch per instantiation, so no body can speak for every implementor;
+/// the interface's declared signature is the contract. Conservative, like
+/// `fn_value_ret_positions`: when any interface method of this name can
+/// return a view, the result borrows the receiver and every argument at a
+/// view-carrying (or borrowed non-Copy) position.
+fn interface_ret_positions(
+    sigs: &SigTable,
+    method: &str,
+    oracle: &CopyOracle,
+    arg_may_be_view: &dyn Fn(usize) -> bool,
+) -> Option<Vec<usize>> {
+    let ms = sigs.interface_methods.get(method)?;
+    let mut out: Vec<usize> = Vec::new();
+    let mut any = false;
+    for m in ms {
+        let Some(ret) = m.return_type.as_ref() else { continue };
+        if !oracle.type_contains_view(ret) {
+            continue;
+        }
+        any = true;
+        for (i, p) in m.params.iter().enumerate() {
+            let pos = if p.is_take {
+                oracle.type_contains_view(&p.ty)
+            } else {
+                oracle.type_contains_view(&p.ty) || oracle.definitely_non_copy(&p.ty)
+            };
+            if pos && arg_may_be_view(i) && !out.contains(&i) {
+                out.push(i);
+            }
+        }
+    }
+    any.then_some(out)
+}
+
+/// Is `type_name` something no method table knows — a generic parameter
+/// standing for whatever instantiates it?
+fn is_unresolved_receiver(sigs: &SigTable, type_name: &str) -> bool {
+    let prefix = format!("{type_name}.");
+    !sigs.methods.keys().any(|k| k.starts_with(&prefix))
+        && !sigs.struct_fields.contains_key(type_name)
+        && !sigs.enums.contains(type_name)
 }
 
 fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
@@ -4057,7 +4117,40 @@ impl<'p> Analyzer<'p> {
                     return Vec::new();
                 };
                 let Some(entry) = self.sigs.method_entry(&type_name, &method_name.name) else {
-                    return Vec::new();
+                    if !is_unresolved_receiver(self.sigs, &type_name) {
+                        return Vec::new();
+                    }
+                    let may_be_view = |i: usize| {
+                        args.get(i).is_some_and(|a| {
+                            !self.classify_borrow_source(a).is_empty()
+                                || place_from_expr(a).is_some_and(|p| {
+                                    self.binding_borrows_from
+                                        .get(&p.root)
+                                        .is_some_and(|o| !o.is_empty())
+                                        || self.binding_type(&p.root).is_some_and(|t| {
+                                            self.oracle.type_contains_view(t)
+                                                || self.oracle.definitely_non_copy(t)
+                                        })
+                                })
+                        })
+                    };
+                    let Some(positions) =
+                        interface_ret_positions(self.sigs, &method_name.name, self.oracle, &may_be_view)
+                    else {
+                        return Vec::new();
+                    };
+                    let mut out: Vec<(Place, BorrowFlavor)> = vec![(place, BorrowFlavor::Shared)];
+                    for i in positions {
+                        match place_from_arg(args, i) {
+                            Some(p) => out.push((p, BorrowFlavor::Shared)),
+                            None => {
+                                if let Some(a) = args.get(i) {
+                                    out.extend(self.classify_borrow_source(a));
+                                }
+                            }
+                        }
+                    }
+                    return out;
                 };
                 let flavor = entry.return_borrow_flavor.unwrap_or(BorrowFlavor::Shared);
                 let mut out: Vec<(Place, BorrowFlavor)> = Vec::new();
@@ -4692,6 +4785,25 @@ impl<'a> ViewRules<'a> {
                     }
                     for src in self.async_frame_sources_of(callee, args) {
                         roots.extend(self.view_source_roots(src));
+                    }
+                    if self.method_entry_of(receiver, &name.name).is_none() {
+                        let unresolved = self.infer_ty(receiver).is_some_and(|t| match &t.kind {
+                            TypeKind::Path(n) => is_unresolved_receiver(self.sigs, n),
+                            _ => false,
+                        });
+                        if unresolved {
+                            let every = |_: usize| true;
+                            if let Some(positions) =
+                                interface_ret_positions(self.sigs, &name.name, self.oracle, &every)
+                            {
+                                roots.extend(self.view_source_roots(receiver));
+                                for i in positions {
+                                    if let Some(a) = args.get(i) {
+                                        roots.extend(self.view_source_roots(a));
+                                    }
+                                }
+                            }
+                        }
                     }
                     if let Some(entry) = self.method_entry_of(receiver, &name.name) {
                         let may_be_view = |i: usize| {
@@ -14344,6 +14456,40 @@ impl Dict { fn get(this, key: str) -> str { return this.k; } }
             ("owner_outlives", "fn f() -> i32 { let g: fn(str) -> str = keep_s; let o: LStr = mk(); let v: str = g(o.view()); return peek(v); }"),
             ("literal", "fn f() -> i32 { let g: fn(str) -> str = keep_s; var v: str = \"a\"; { v = g(\"lit\"); } return peek(v); }"),
             ("scalar_return", "fn f() -> usize { let g: fn(str) -> usize = len_s; var n: usize = 0 as usize; { let o: LStr = mk(); n = g(o.view()); } return n; }"),
+        ];
+        let noisy: Vec<String> = clean
+            .iter()
+            .filter_map(|(name, tail)| {
+                let codes = check_src(&format!("{LANG_STR_PRELUDE}{COERCE_PRELUDE}{RETURNED_VIEW_PRELUDE}{pre}{tail}"));
+                (!codes.is_empty()).then(|| format!("{name}: {codes:?}"))
+            })
+            .collect();
+        assert!(noisy.is_empty(), "sound code rejected: {noisy:?}");
+    }
+
+    #[test]
+    fn an_interface_method_through_a_generic_receiver_ties_its_arguments() {
+        // `p.pick(o.view())` with `p: T`, `T: Picker`: no method entry is found
+        // by the type name `T`, so it tied nothing — a heap-use-after-free —
+        // while the concrete `P` call was E0514. The interface signature is
+        // the contract; the implementation varies per instantiation.
+        let pre = "interface Picker { fn pick(this, s: str) -> str; fn size(this, s: str) -> usize; }\n";
+        let bad: &[(&str, &str, &str)] = &[
+            ("outlived", "E0514", "fn f[T: Picker](p: T) -> i32 { var v: str = \"a\"; { let o: LStr = mk(); v = p.pick(o.view()); } return peek(v); }"),
+            ("returned", "E0513", "fn f[T: Picker](p: T) -> str { let o: LStr = mk(); return p.pick(o.view()); }"),
+        ];
+        let missed: Vec<String> = bad
+            .iter()
+            .filter_map(|(name, code, tail)| {
+                let codes = check_src(&format!("{LANG_STR_PRELUDE}{COERCE_PRELUDE}{RETURNED_VIEW_PRELUDE}{pre}{tail}"));
+                (!codes.iter().any(|c| c == code)).then(|| format!("{name}: want {code}, got {codes:?}"))
+            })
+            .collect();
+        assert!(missed.is_empty(), "not raised: {missed:?}");
+        let clean: &[(&str, &str)] = &[
+            ("owner_outlives", "fn f[T: Picker](p: T) -> i32 { let o: LStr = mk(); let v: str = p.pick(o.view()); return peek(v); }"),
+            ("scalar_return", "fn f[T: Picker](p: T) -> usize { var n: usize = 0 as usize; { let o: LStr = mk(); n = p.size(o.view()); } return n; }"),
+            ("literal", "fn f[T: Picker](p: T) -> i32 { var v: str = \"a\"; { v = p.pick(\"lit\"); } return peek(v); }"),
         ];
         let noisy: Vec<String> = clean
             .iter()
