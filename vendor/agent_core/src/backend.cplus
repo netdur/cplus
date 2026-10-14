@@ -126,6 +126,7 @@ fn inherit_hidden(ref nodes: vec::Vec[UiNode]) {
                     option::Option[usize]::None => { }
                 }
                 if parent_hidden { { (*n).is_hidden = true }; }
+                if { (*n).is_hidden } { { (*n).actionable = false }; }
             }
             option::Option[*UiNode]::None => { }
         }

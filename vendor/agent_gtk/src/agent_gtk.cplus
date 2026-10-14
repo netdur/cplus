@@ -359,7 +359,15 @@ fn live_enabled(widget: *u8) -> bool {
 }
 
 fn live_hidden(widget: *u8) -> bool {
-    return { gtk_widget_get_visible(widget) } == (0 as i32);
+    if is_null(widget) { return false; }
+    if { gtk_widget_get_visible(widget) } == (0 as i32) { return true; }
+    var cur: *u8 = { gtk_widget_get_parent(widget) };
+    while !is_null(cur) {
+        if is_a(cur, #str_ptr("GtkWindow\0")) { return false; }
+        if { gtk_widget_get_visible(cur) } == (0 as i32) { return true; }
+        cur = { gtk_widget_get_parent(cur) };
+    }
+    return false;
 }
 
 // ---- the surface -------------------------------------------------------------
@@ -393,7 +401,7 @@ fn walk(ref reg: identity::Registry, ref refs: vec::Vec[WidgetRef], widget: *u8,
     } else {
         reg.add_child(parent_reg, option::Option[str]::Some(convert::cstr_to_str_unsafe(pinned)), role)
     };
-    reg.set_enabled(reg_node, live_enabled(widget));
+    reg.set_enabled(reg_node, live_enabled(widget) && !live_hidden(widget));
     // SENSITIVITY. Without this the walk marked every node `tier_open` and
     // `readable: true`, so a node the application put behind `agent: Private`
     // was served wide — and facet_gtk now pins that tier on every C_AGENT
@@ -886,17 +894,17 @@ fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode
                 // so it came out of the view an agent plans from with an empty
                 // string, for a control it can write. Read now rather than
                 // stored: the knob moves between walks.
+                let live_w: *u8 = widget_for_id(s, { (*n).id.view() });
                 var shown: text::Text = text::from_str({ (*n).name.view() });
                 if identity::role_eq({ (*n).role }, identity::Role::Value) {
-                    let live: *u8 = widget_for_id(s, { (*n).id.view() });
-                    if !is_null(live) { shown = node_text(live, { (*n).role }); }
+                    if !is_null(live_w) { shown = node_text(live_w, { (*n).role }); }
                 }
                 if !out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
-                    is_hidden: false,
+                    is_hidden: if is_null(live_w) { false } else { live_hidden(live_w) },
                     text: shown,
                     name: text::from_str({ (*n).name.view() }),
                     description: text::from_str({ (*n).description.view() }),

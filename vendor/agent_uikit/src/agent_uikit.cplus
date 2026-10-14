@@ -676,8 +676,19 @@ fn live_enabled(view: *u8) -> bool {
 }
 
 fn live_hidden(view: *u8) -> bool {
-    if !responds_to(view, #str_ptr("isHidden\0")) { return false; }
-    return { rt::msg_i8(view, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8);
+    var cur: *u8 = view;
+    var depth: i32 = 0 as i32;
+    while !is_null(cur) && depth < (64 as i32) {
+        if responds_to(cur, #str_ptr("isHidden\0")) {
+            if { rt::msg_i8(cur, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8) {
+                return true;
+            }
+        }
+        if !responds_to(cur, #str_ptr("superview\0")) { return false; }
+        cur = { rt::msg_id(cur, rt::sel(#str_ptr("superview\0"))) };
+        depth = depth + (1 as i32);
+    }
+    return false;
 }
 
 // A view that left the live UI: still alive (retained by the surface) but no
@@ -726,7 +737,7 @@ fn subview_at(view: *u8, i: usize) -> *u8 {
 // `dialog`: -1 for an ordinary entry; for an open native dialog's entries, the
 // button's index, DIALOG_TEXT for its title/message/group, DIALOG_FIELD for a
 // prompt's field (spendwise S20 D1).
-struct ViewRef { opaque p: *u8, tab: i64, opaque node: *core::Node, dialog: i64 }
+struct ViewRef { opaque p: *u8, tab: i64, opaque node: *core::Node, dialog: i64, hidden: bool }
 
 const DIALOG_NONE: i64 = -1 as i64;
 const DIALOG_TEXT: i64 = -2 as i64;
@@ -750,7 +761,8 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8,
         option::Option[text::Text]::None =>
             reg.add_child(parent_reg, option::Option[str]::None, role),
     };
-    reg.set_enabled(reg_node, live_enabled(view));
+    let node_hidden: bool = live_hidden(view);
+    reg.set_enabled(reg_node, live_enabled(view) && !node_hidden);
     // SENSITIVITY FIRST. Everything below reads content off the widget and the
     // registry's guards answer against the flag that is already set — so the
     // declaration has to land before the first read, not after it.
@@ -772,7 +784,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8,
     let ds: text::Text = view_a11y_string(view, "accessibilityHint\0");
     if { ds.is_empty() } == false { reg.set_description(reg_node, { ds.view() }); }
     let _r: *u8 = rt::retain(view);
-    let _a: status_of_append = append_ref(views, view);
+    let _ = views.append(ViewRef { p: view, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE, hidden: node_hidden });
 
     let n: usize = subview_count(view);
     var i: usize = 0 as usize;
@@ -786,9 +798,9 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8,
 // A tiny alias so the append's Status has a name at the call site without
 // importing status just for it.
 struct status_of_append { _u: i32 }
-fn append_ref(ref views: vec::Vec[ViewRef], view: *u8) -> status_of_append {
+fn append_ref(ref views: vec::Vec[ViewRef], view: *u8, hidden: bool) -> status_of_append {
     let _s: status_of_append = status_of_append { _u: 0 };
-    let _ = views.append(ViewRef { p: view, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
+    let _ = views.append(ViewRef { p: view, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE, hidden: hidden });
     return _s;
 }
 
@@ -801,7 +813,8 @@ fn append_ref(ref views: vec::Vec[ViewRef], view: *u8) -> status_of_append {
 // Button named by its title; a click is `Popup::pick`, which selects AND fires
 // the app's `on_selected_index_changed`.
 fn add_item_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
-                  view: *u8, parent: usize, base: str, n: *core::Node) {
+                  view: *u8, parent: usize, base: str, n: *core::Node,
+                  owner_hidden: bool, owner_enabled: bool) {
     match fpopup::from(n) {
         option::Option[fpopup::Popup]::Some(pp) => {
             let chosen: i64 = pp.selected_index();
@@ -810,11 +823,11 @@ fn add_item_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
                 let id: text::Text = "${base}:item:${i}";
                 let child: usize = reg.add_child(parent, option::Option[str]::Some({ id.view() }),
                                                  identity::Role::Button);
-                reg.set_enabled(child, live_enabled(view) && popup_item_enabled(n, i));
+                reg.set_enabled(child, owner_enabled && !owner_hidden && popup_item_enabled(n, i));
                 reg.set_name(child, pp.item(i));
                 if (i as i64) == chosen { reg.set_description(child, "selected"); }
                 let _r: *u8 = rt::retain(view);
-                let _ = views.append(ViewRef { p: view, tab: i as i64, node: n, dialog: DIALOG_NONE });
+                let _ = views.append(ViewRef { p: view, tab: i as i64, node: n, dialog: DIALOG_NONE, hidden: owner_hidden });
                 i = i +% (1 as usize);
             }
         }
@@ -845,7 +858,8 @@ fn pick_item_now(n: *core::Node, at: i64) -> surface::Outcome {
 }
 
 fn add_tab_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
-                 view: *u8, parent: usize, base: str, n: *core::Node) {
+                 view: *u8, parent: usize, base: str, n: *core::Node,
+                 owner_hidden: bool, owner_enabled: bool) {
     var showing: i64 = -1 as i64;
     match ftabs::from(n) {
         option::Option[ftabs::Tabs]::Some(t) => { showing = t.selected_index(); }
@@ -869,11 +883,11 @@ fn add_tab_parts(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
         let id: text::Text = "${base}:tab:${ident}";
         let child: usize = reg.add_child(parent, option::Option[str]::Some({ id.view() }),
                                          identity::Role::Button);
-        reg.set_enabled(child, live_enabled(view));
+        reg.set_enabled(child, owner_enabled && !owner_hidden);
         reg.set_name(child, { label.view() });
         if (i as i64) == showing { reg.set_description(child, "selected"); }
         let _r: *u8 = rt::retain(view);
-        let _ = views.append(ViewRef { p: view, tab: i as i64, node: n, dialog: DIALOG_NONE });
+        let _ = views.append(ViewRef { p: view, tab: i as i64, node: n, dialog: DIALOG_NONE, hidden: owner_hidden });
         i = i +% (1 as usize);
     }
     return;
@@ -981,6 +995,14 @@ fn click_tab(n: *core::Node, at: i64) -> surface::Outcome {
 // view is where "now" lives. `core::view_of` is the bridge, set at mount.
 fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
               n: *core::Node, parent_reg: usize) {
+    walk_facet_in(reg, views, n, parent_reg, false, true);
+}
+
+fn walk_facet_in(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
+                 n: *core::Node, parent_reg: usize,
+                 ancestor_hidden: bool, ancestor_enabled: bool) {
+    let hidden_here: bool = ancestor_hidden || core::is_hidden(n);
+    let enabled_here: bool = ancestor_enabled && core::is_enabled(n);
     var me: usize = parent_reg;
     let key: str = { (*n).key() };
     if key != "" {
@@ -990,7 +1012,9 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
         if !is_null(view) {
             let role: identity::Role = resolve_role(view);
             me = reg.add_child(parent_reg, option::Option[str]::Some(key), role);
-            reg.set_enabled(me, live_enabled(view));
+            let node_hidden: bool = hidden_here || live_hidden(view);
+            let node_enabled: bool = enabled_here && live_enabled(view) && !node_hidden;
+            reg.set_enabled(me, node_enabled);
             reg.set_policy(me, effective_policy(view));
             let label: text::Text = view_a11y_string(view, "accessibilityLabel\0");
             if { label.is_empty() } == false {
@@ -1005,12 +1029,16 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             if picker_text::is_picker(n) {
                 // A date or time picker keeps its facet node: its value is the
                 // facet date, read and PICKED through it (spendwise S22).
-                let _ = views.append(ViewRef { p: view, tab: -1 as i64, node: n, dialog: DIALOG_NONE });
+                let _ = views.append(ViewRef { p: view, tab: -1 as i64, node: n, dialog: DIALOG_NONE, hidden: node_hidden });
             } else {
-                let _a: status_of_append = append_ref(views, view);
+                let _a: status_of_append = append_ref(views, view, node_hidden);
             }
-            if core::kind_of(n) == props::K_TABS { add_tab_parts(reg, views, view, me, key, n); }
-            if core::kind_of(n) == props::K_POPUP { add_item_parts(reg, views, view, me, key, n); }
+            if core::kind_of(n) == props::K_TABS {
+                add_tab_parts(reg, views, view, me, key, n, node_hidden, node_enabled);
+            }
+            if core::kind_of(n) == props::K_POPUP {
+                add_item_parts(reg, views, view, me, key, n, node_hidden, node_enabled);
+            }
 
             // A ROW IS NOT A FACET NODE — the same exception the AppKit walk
             // makes, for the same reason. The row IS content and the backend
@@ -1069,7 +1097,9 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
     let count: usize = core::child_count_of(n);
     while i < count {
         match core::child_of(n, i) {
-            option::Option[*core::Node]::Some(c) => { walk_facet(reg, views, c, me); }
+            option::Option[*core::Node]::Some(c) => {
+                walk_facet_in(reg, views, c, me, hidden_here, enabled_here);
+            }
             option::Option[*core::Node]::None => { }
         }
         i = i +% (1 as usize);
@@ -1078,7 +1108,7 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
     // they are, and so the one that gets this instead of the view walk above.
     // The row is built, keyed and wired by the application; it is simply not a
     // CHILD, because it is realised into a cell the backend owns.
-    walk_realised_rows(reg, views, n, me);
+    walk_realised_rows(reg, views, n, me, hidden_here, enabled_here);
     return;
 }
 
@@ -1091,7 +1121,8 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
 // in the REALISED rows, which are a couple of dozen however long the list is,
 // and it runs when somebody asks rather than per frame.
 fn walk_realised_rows(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
-                      n: *core::Node, me: usize) {
+                      n: *core::Node, me: usize,
+                      ancestor_hidden: bool, ancestor_enabled: bool) {
     guard let option::Option[frelist::Relist]::Some(h) = frelist::from(n) else { return; };
     let count: usize = h.realised_count();
     if count == (0 as usize) { return; }
@@ -1121,7 +1152,7 @@ fn walk_realised_rows(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             i = i +% (1 as usize);
         }
         if found == false { return; }
-        walk_facet(reg, views, best, me);
+        walk_facet_in(reg, views, best, me, ancestor_hidden, ancestor_enabled);
         taken = best_at;
         first = false;
         done = done +% (1 as usize);
@@ -1171,15 +1202,16 @@ fn walk_window(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window
         option::Option[text::Text]::None =>
             reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window),
     };
+    let win_hidden: bool = live_hidden(native_view(window));
     let _rw: *u8 = rt::retain(window);
-    let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
+    let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE, hidden: win_hidden });
 
     var ri: usize = 0 as usize;
     while ri < { roots.count() } {
         match { roots.at_ptr(ri) } {
             option::Option[**core::Node]::Some(rp) => {
                 let r: *core::Node = { *rp };
-                if !is_null(r as *u8) { walk_facet(reg, views, r, win_reg); }
+                if !is_null(r as *u8) { walk_facet_in(reg, views, r, win_reg, false, true); }
             }
             option::Option[**core::Node]::None => { }
         }
@@ -1192,7 +1224,7 @@ fn open(window: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
     // NodeId 0 is the synthetic app root — no backing view.
-    let _ = views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
+    let _ = views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE, hidden: false });
     walk_window(reg, views, window);
     let modal: bool = add_dialog(reg, views, window);
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views, modal: modal };
@@ -1251,7 +1283,7 @@ fn observe_only_from(ref reg: identity::Registry, first: usize) {
 fn open_app() -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
-    let _ = views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE });
+    let _ = views.append(ViewRef { p: null(), tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_NONE, hidden: false });
     var seen: vec::Vec[usize] = vec::new::[usize]();
     var first_win: *u8 = null();
     let n: usize = app::window_count();
@@ -1288,24 +1320,24 @@ fn add_dialog(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window:
     let prefix: str = native_dialog::kind_prefix(d.kind);
     let group: usize = reg.add_child(reg.root(), option::Option[str]::Some(prefix), identity::Role::Window);
     let _g: *u8 = rt::retain(window);
-    let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
+    let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT, hidden: false });
     let title_key: text::Text = "${prefix}:title";
     let t: usize = reg.add_child(group, option::Option[str]::Some({ title_key.view() }), identity::Role::Text);
     reg.set_name(t, { d.title.view() });
     let _t: *u8 = rt::retain(window);
-    let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
+    let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT, hidden: false });
     if !d.message.is_empty() {
         let message_key: text::Text = "${prefix}:message";
         let m: usize = reg.add_child(group, option::Option[str]::Some({ message_key.view() }), identity::Role::Text);
         reg.set_name(m, { d.message.view() });
         let _m: *u8 = rt::retain(window);
-        let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT });
+        let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_TEXT, hidden: false });
     }
     if d.kind == native_dialog::KIND_PROMPT {
         let f: usize = reg.add_child(group, option::Option[str]::Some("prompt:value"), identity::Role::Input);
         reg.set_name(f, { d.field.view() });
         let _f: *u8 = rt::retain(window);
-        let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_FIELD });
+        let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: DIALOG_FIELD, hidden: false });
     }
     var i: usize = 0 as usize;
     while i < d.buttons.count() {
@@ -1315,7 +1347,7 @@ fn add_dialog(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window:
                 let b: usize = reg.add_child(group, option::Option[str]::Some({ key.view() }), identity::Role::Button);
                 reg.set_name(b, { (*title).view() });
                 let _b: *u8 = rt::retain(window);
-                let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: i as i64 });
+                let _ = views.append(ViewRef { p: window, tab: -1 as i64, node: 0 as *core::Node, dialog: i as i64, hidden: false });
             }
             option::Option[*text::Text]::None => { }
         }
@@ -1417,6 +1449,25 @@ impl Surface {
         };
     }
 
+    fn is_node_hidden(this, node: usize) -> bool {
+        var cur: usize = node;
+        while cur > (0 as usize) {
+            match this.views.at_ptr(cur) {
+                option::Option[*ViewRef]::Some(r) => {
+                    if { (*r).hidden } { return true; }
+                    let p: *u8 = native_view({ (*r).p });
+                    if !is_null(p) && live_hidden(p) { return true; }
+                }
+                option::Option[*ViewRef]::None => {}
+            }
+            match this.reg.parent_of(cur) {
+                option::Option[usize]::Some(p) => { cur = p; }
+                option::Option[usize]::None => { return false; }
+            }
+        }
+        return false;
+    }
+
     // A date or time picker's own facet node, or null. Not a tab part: a part
     // carries its OWNER's node.
     fn picker_node_of(this, node: usize) -> *core::Node {
@@ -1479,7 +1530,7 @@ impl Surface {
                 role: role,
                 class_name: class_name_text(view),
                 frame: mcpb::Rect { x: f.x, y: f.y, w: f.w, h: f.h },
-                is_hidden: if this.dialog_of(node) != DIALOG_NONE { false } else { live_hidden(view) },
+                is_hidden: if this.dialog_of(node) != DIALOG_NONE { false } else { this.is_node_hidden(node) },
                 text: if !may_read { text::new() }
                       else if this.dialog_of(node) != DIALOG_NONE { text::from_str(this.reg.name_of(node)) }
                       else { this.live_text(node, view, role) },
@@ -1953,7 +2004,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     role: { (*n).role },
                     class_name: text::new(),
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
-                    is_hidden: if is_null(live) || dlg != DIALOG_NONE { false } else { live_hidden(live) },
+                    is_hidden: if dlg != DIALOG_NONE { false } else { (*s).is_node_hidden(at) },
                     text: shown,
                     name: text::from_str({ (*n).name.view() }),
                     description: text::from_str({ (*n).description.view() }),

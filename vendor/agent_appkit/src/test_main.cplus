@@ -3444,3 +3444,53 @@ fn a_window_under_a_sheet_refuses_clicks_until_the_sheet_ends() {
     assert surface::outcome_eq(after.click(auth::operator(), "under"), surface::Outcome::Allowed);
     app::reset_default_for_tests();
 }
+
+// bugs/a-hidden-screens-controls-take-agent-actions.md: when a screen container
+// is hidden (either on its native view or on its facet Node), controls inside
+// it must report `is_hidden: true`, `actionable: false`, and refuse `click` /
+// `set_text` with `NotActionable`.
+#[test]
+fn a_control_inside_a_hidden_screen_refuses_actions() {
+    let win = fixture_window(300.0, 200.0);
+    let screen = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    content_of(win).add_subview(screen);
+    let btn = add_button(screen, "add");
+    agent::set_agent_id(btn.as_view().raw(), "add");
+
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
+
+    // Hide the enclosing screen view, leaving `btn.isHidden == false`.
+    { rt::msg_void_i8(screen.raw(), rt::sel(#str_ptr("setHidden:\0")), 1) };
+
+    CLICKS = 0;
+    var s: agent::Surface = agent::open_app();
+    assert surface::outcome_eq(s.click(auth::operator(), "add"), surface::Outcome::NotActionable);
+    assert CLICKS == 0;
+
+    let exposed: vec::Vec[mcpb::UiNode] = agent::mcp_describe_exposed(#addr_of(s) as *u8, auth::operator());
+    var saw_add: bool = false;
+    var i: usize = 0;
+    while i < exposed.count() {
+        if let option::Option::Some(n) = exposed.at_ptr(i) {
+            if (*n).id.view() == "add" {
+                saw_add = true;
+                assert (*n).is_hidden;
+                assert !(*n).actionable;
+            }
+        }
+        i = i +% 1;
+    }
+    assert saw_add;
+
+    // Unhide the screen view, then hide the facet screen node (unkeyed parent).
+    { rt::msg_void_i8(screen.raw(), rt::sel(#str_ptr("setHidden:\0")), 0) };
+    if let option::Option::Some(screen_node) = core::child_of(#addr_of(root), 0) {
+        (*screen_node).set_visible(false);
+    }
+    var s2: agent::Surface = agent::open_app();
+    assert surface::outcome_eq(s2.click(auth::operator(), "add"), surface::Outcome::NotActionable);
+    assert CLICKS == 0;
+    app::reset_default_for_tests();
+}
+

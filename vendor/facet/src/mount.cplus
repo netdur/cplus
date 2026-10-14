@@ -1342,7 +1342,7 @@ fn switch_to(outlet: *core::Node, key: str) -> bool {
         }
         k = k +% (1 as usize);
     }
-    core::touch(outlet, props::C_FLUSH);
+    core::touch(outlet, props::C_LAYOUT | props::C_FLUSH);
     return true;
 }
 

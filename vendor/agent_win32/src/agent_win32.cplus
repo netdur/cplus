@@ -430,7 +430,7 @@ fn next_child_of(child: *u8) -> *u8 {
 // state, the declared tier, and the content name — in that order, because
 // `set_content_name` refuses a node the tier has already made sensitive.
 fn add_window_node(ref reg: identity::Registry, keys: *vec::Vec[KeyedWindow], hwnd: *u8,
-                   parent_reg: usize, role: identity::Role) -> usize {
+                   parent_reg: usize, role: identity::Role, check_hidden: bool) -> usize {
     let pinned: *u8 = get_agent_id(hwnd);
     let named: str = if is_null(pinned) { key_for(keys, hwnd) } else { cstr_to_str(pinned) };
     let reg_node: usize = if named == "" {
@@ -438,7 +438,8 @@ fn add_window_node(ref reg: identity::Registry, keys: *vec::Vec[KeyedWindow], hw
     } else {
         reg.add_child(parent_reg, option::Option[str]::Some(named), role)
     };
-    reg.set_enabled(reg_node, live_enabled(hwnd));
+    let hidden: bool = check_hidden && live_hidden(hwnd);
+    reg.set_enabled(reg_node, live_enabled(hwnd) && !hidden);
     // SENSITIVITY, read off the window: facet_agent pins `agent: Private` /
     // `Protected` / `Hidden` here at mount (`set_agent_policy`) and nothing
     // read it back, so the pin had nowhere to land.
@@ -456,14 +457,14 @@ fn add_window_node(ref reg: identity::Registry, keys: *vec::Vec[KeyedWindow], hw
 // Z-order. `refs` stays index-aligned with the registry: each `add_child` is
 // paired with exactly one `refs.append`.
 fn walk(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], keys: *vec::Vec[KeyedWindow],
-        hwnd: *u8, parent_reg: usize) {
+        hwnd: *u8, parent_reg: usize, check_hidden: bool) {
     let role: identity::Role = resolve_role(hwnd);
-    let reg_node: usize = add_window_node(reg, keys, hwnd, parent_reg, role);
+    let reg_node: usize = add_window_node(reg, keys, hwnd, parent_reg, role, check_hidden);
     let _ = refs.append(HwndRef { p: hwnd });
 
     var child: *u8 = first_child_of(hwnd);
     while !is_null(child) {
-        walk(reg, refs, keys, child, reg_node);
+        walk(reg, refs, keys, child, reg_node, check_hidden);
         child = next_child_of(child);
     }
     return;
@@ -475,13 +476,14 @@ fn walk(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], keys: *vec::Ve
 fn walk_window(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], keys: *vec::Vec[KeyedWindow],
                window: *u8) {
     if is_null(window) { return; }
+    let check_hidden: bool = ({ GetWindowLongPtrA(window, gwl_style()) } & (0x10000000 as i64)) != (0 as i64);
     let app_root: usize = reg.root();
-    let win_reg: usize = add_window_node(reg, keys, window, app_root, identity::Role::Window);
+    let win_reg: usize = add_window_node(reg, keys, window, app_root, identity::Role::Window, check_hidden);
     let _ = refs.append(HwndRef { p: window });
 
     var child: *u8 = first_child_of(window);
     while !is_null(child) {
-        walk(reg, refs, keys, child, win_reg);
+        walk(reg, refs, keys, child, win_reg, check_hidden);
         child = next_child_of(child);
     }
     return;
@@ -876,12 +878,14 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                 // carries no window text, so the lean view (where the name is
                 // the text) showed nothing at all for a control an agent can
                 // drive. `node_text` asks the control's own message.
+                let live: *u8 = match { (*s).reg.lookup({ (*n).id.view() }) } {
+                    option::Option[usize]::Some(idx) => { (*s).hwnd_of(idx) },
+                    option::Option[usize]::None => null(),
+                };
+                let win_root: *u8 = (*s).hwnd_of(1 as usize);
+                let top_vis: bool = !is_null(win_root) && (({ GetWindowLongPtrA(win_root, gwl_style()) } & (0x10000000 as i64)) != (0 as i64));
                 var shown: text::Text = text::from_str({ (*n).name.view() });
                 if identity::role_eq({ (*n).role }, identity::Role::Value) {
-                    let live: *u8 = match { (*s).reg.lookup({ (*n).id.view() }) } {
-                        option::Option[usize]::Some(idx) => { (*s).hwnd_of(idx) },
-                        option::Option[usize]::None => null(),
-                    };
                     if !is_null(live) { shown = node_text(live); }
                 }
                 if !out.append(mcpb::UiNode {
@@ -889,7 +893,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     role: { (*n).role },
                     class_name: text::new(),
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
-                    is_hidden: false,
+                    is_hidden: top_vis && !is_null(live) && live_hidden(live),
                     text: shown,
                     name: text::from_str({ (*n).name.view() }),
                     description: text::from_str({ (*n).description.view() }),

@@ -1035,7 +1035,73 @@ fn server_name() -> str {
     return SERVER_NAME.view();
 }
 
-fn forget_client() { CLIENT_NAME = text::new(); return; }
+static HTTP_CLIENT_NAME: text::Text = #zero::[text::Text]();
+static LAST_WAS_INITIALIZE: bool = false;
+
+struct HttpSession {
+    id: text::Text,
+    client: text::Text,
+}
+
+static HTTP_SESSIONS: vec::Vec[HttpSession] = #zero::[vec::Vec[HttpSession]]();
+static HTTP_SESSION_SEQ: u64 = 0u64;
+const HTTP_SESSION_MAX: usize = 64usize;
+
+fn http_session_client(id: str) -> text::Text {
+    if id == "" { return text::new(); }
+    var i: usize = 0;
+    while i < HTTP_SESSIONS.count() {
+        match HTTP_SESSIONS.at_ptr(i) {
+            option::Option[*HttpSession]::Some(s) => {
+                if { (*s).id.view() } == id {
+                    return { (*s).client }.clone();
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return text::new();
+}
+
+fn put_http_session(id: str, client: str) {
+    if id == "" { return; }
+    var i: usize = 0;
+    while i < HTTP_SESSIONS.count() {
+        match HTTP_SESSIONS.at_ptr(i) {
+            option::Option[*HttpSession]::Some(s) => {
+                if { (*s).id.view() } == id {
+                    let _u: status::Status = HTTP_SESSIONS.set(
+                        HttpSession { id: text::from_str(id), client: text::from_str(client) },
+                        at: i);
+                    return;
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    while HTTP_SESSIONS.count() >= HTTP_SESSION_MAX {
+        let _dropped: option::Option[HttpSession] = HTTP_SESSIONS.remove(0 as usize);
+    }
+    let _a: status::Status = HTTP_SESSIONS.append(
+        HttpSession { id: text::from_str(id), client: text::from_str(client) });
+}
+
+fn mint_http_session(client: str) -> text::Text {
+    HTTP_SESSION_SEQ = HTTP_SESSION_SEQ +% (1 as u64);
+    let sid: text::Text = "mcp-session-${HTTP_SESSION_SEQ}";
+    put_http_session(sid.view(), client);
+    return sid;
+}
+
+fn forget_client() {
+    CLIENT_NAME = text::new();
+    HTTP_CLIENT_NAME = text::new();
+    LAST_WAS_INITIALIZE = false;
+    HTTP_SESSIONS.remove_all();
+    return;
+}
 
 // PUT A CONNECTION'S IDENTITY BACK before its next request is dispatched.
 //
@@ -1057,11 +1123,14 @@ fn current_client() -> str { return CLIENT_NAME.view(); }
 // the initialize that introduces them.
 fn note_client(req: json::Value) {
     let m: text::Text = val_as_text(obj_get(req, "method"));
-    if { m.view() } != "initialize" { return; }
+    if { m.view() } != "initialize" {
+        LAST_WAS_INITIALIZE = false;
+        return;
+    }
+    LAST_WAS_INITIALIZE = true;
     let params: json::Value = obj_get(req, "params");
     let info: json::Value = obj_get(params, "clientInfo");
     let name: text::Text = val_as_text(obj_get(info, "name"));
-    if name.count() == 0 { return; }
     CLIENT_NAME = name;
 }
 
@@ -1202,14 +1271,29 @@ fn dispatch(
     // mid-session and a policy that re-reads it is the only version where that
     // means anything. The grant is then threaded down as a parameter — see
     // `backend::Backend` for why it is never stored on the surface.
-    let token: text::Text = token_of(params);
+    var token: text::Text = token_of(params);
+    var gated_name: text::Text = text::new();
+    var gated_method: str = method;
+    if method == "tools/call" {
+        if token.count() == 0 {
+            token = token_of(obj_get(params, "arguments"));
+        }
+        if params.has("name") {
+            gated_name = val_as_text(obj_get(params, "name"));
+            let gn: str = { gated_name.view() };
+            if gn != "" && !text::from_str(gn).has_prefix("tools/") && gn != "initialize" {
+                gated_method = gn;
+            }
+        }
+    }
     // WHO AND WHAT, not just whether. A policy asked to prompt has to be able to
     // say "X wants to do Y"; `current_client()` is what the caller named itself
-    // in `initialize` and `method` is the verb about to run, so an app can gate
-    // per verb — read freely, ask before a write — instead of once per session.
+    // in `initialize` and `gated_method` is the verb about to run, so an app can
+    // gate per verb — read freely, ask before a write — instead of once per
+    // session, whether the request arrived flat or wrapped in `tools/call`.
     let grant: auth::Grant = gate.check(
         auth::request_with_token(auth::Channel::External, { token.view() },
-                                 client: current_client(), method: method));
+                                 client: current_client(), method: gated_method));
     // An empty grant can do nothing at all, so it is refused here rather than
     // one verb at a time. Every other refusal is per node and per tier, and
     // says which.
@@ -2784,11 +2868,13 @@ struct HttpHead {
     has_origin: bool,
     foreign_host: bool,
     is_json: bool,
+    session_id: text::Text,
 }
 
 fn no_head() -> HttpHead {
     return HttpHead { ok: false, is_post: false, has_length: false, content_length: 0,
-                      has_origin: false, foreign_host: false, is_json: false };
+                      has_origin: false, foreign_host: false, is_json: false,
+                      session_id: text::new() };
 }
 
 // The value after `name:`, spaces trimmed.
@@ -2920,6 +3006,9 @@ fn read_http_head(fd: i32, buf: *u8, cap: usize) -> HttpHead {
                 if !is_loopback_host(header_value(line)) { head.foreign_host = true; }
             }
             if header_is(line, "content-type") { head.is_json = is_json_type(header_value(line)); }
+            if header_is(line, "mcp-session-id") {
+                head.session_id = text::from_str(header_value(line));
+            }
         }
         lines = lines +% 1;
         if lines > 64 { return no_head(); }   // a head this long is not one
@@ -2959,9 +3048,12 @@ fn write_str(fd: i32, s: str) {
 // One response. `body` may be empty, in which case Content-Length: 0 is still
 // sent — a client reading a keep-alive connection needs the length to know where
 // this response ends and the next begins.
-fn write_http_response(fd: i32, status_line: str, content_type: str, body: str) {
-    let head: text::Text =
-        "HTTP/1.1 ${status_line}\r\nContent-Type: ${content_type}\r\nContent-Length: ${#str_len(body)}\r\n\r\n";
+fn write_http_response(fd: i32, status_line: str, content_type: str, body: str, session_id: str = "") {
+    let head: text::Text = if #str_len(session_id) > 0 {
+        "HTTP/1.1 ${status_line}\r\nContent-Type: ${content_type}\r\nMcp-Session-Id: ${session_id}\r\nContent-Length: ${#str_len(body)}\r\n\r\n"
+    } else {
+        "HTTP/1.1 ${status_line}\r\nContent-Type: ${content_type}\r\nContent-Length: ${#str_len(body)}\r\n\r\n"
+    };
     write_str(fd, head.view());
     if #str_len(body) > 0 { write_str(fd, body); }
 }
@@ -2969,8 +3061,9 @@ fn write_http_response(fd: i32, status_line: str, content_type: str, body: str) 
 // Serve HTTP on one accepted connection until the peer closes it.
 //
 // One request, one response, in order, on a connection that stays open — the
-// same shape `serve_fd` has, which is why the identity and consent model needs
-// no changes to work here.
+// same shape `serve_fd` has, with HTTP session/loopback identity fallback so
+// one-request-per-connection HTTP clients retain the name they introduced in
+// `initialize`.
 fn serve_http_fd(
     surf: *u8,
     vt: backend::Backend,
@@ -2979,8 +3072,7 @@ fn serve_http_fd(
     fd: i32,
 ) -> i32 {
     let _np: i32 = netsys::set_nosigpipe(fd);
-    // A NEW CONNECTION IS A NEW CALLER, exactly as on the socket transports.
-    forget_client();
+    var conn_client: text::Text = text::new();
     // ON THE HEAP, AND NOT BECAUSE IT IS TIDIER. A serve worker's stack is 64K;
     // a 64K body buffer plus an 8K head buffer is 72K of locals, and zeroing
     // them walked straight off the end into the next thread's guard page —
@@ -2997,7 +3089,8 @@ fn serve_http_fd(
     let head_buf: *u8 = { malloc(HTTP_MAX_HEAD) };
     if head_buf.is_null() { { free(body_buf); } return 0; }
     loop {
-        let r: i32 = serve_http_once(surf, vt, sub, policy, fd, head_buf, body_buf);
+        let r: i32 = serve_http_once(surf, vt, sub, policy, fd, head_buf, body_buf,
+                                     client: #addr_of(conn_client));
         if r != 0 {
             { free(head_buf); }
             { free(body_buf); }
@@ -3078,6 +3171,22 @@ fn serve_http_once(
         if !read_exact(fd, body_buf, head.content_length) { return 2; }
 
         let body: str = { #str_from_raw_parts(body_buf, head.content_length) };
+        LAST_WAS_INITIALIZE = false;
+        var req_client: text::Text = text::new();
+        if head.session_id.count() > 0 {
+            req_client = http_session_client(head.session_id.view());
+        }
+        if req_client.count() == 0 && client.is_not_null() && (*client).count() > 0 {
+            req_client = (*client).clone();
+        }
+        if req_client.count() == 0 && HTTP_CLIENT_NAME.count() > 0 {
+            req_client = HTTP_CLIENT_NAME.clone();
+        }
+        if client.is_not_null() { *client = req_client.clone(); }
+        if dispatcher.call == (0 as fn(*u8, str, str) -> DispatchReply) {
+            adopt_client(req_client.clone());
+        }
+
         var resp: text::Text = text::new();
         if dispatcher.call != (0 as fn(*u8, str, str) -> DispatchReply) {
             assert client.is_not_null();
@@ -3087,14 +3196,32 @@ fn serve_http_once(
             *client = reply.client.clone();
         } else {
             resp = handle_request(surf, vt, sub, auth::serve(policy), body);
+            if client.is_not_null() { *client = text::from_str(current_client()); }
+        }
+
+        let after_client: text::Text = if client.is_not_null() { (*client).clone() }
+                                       else { text::from_str(current_client()) };
+        var session_hdr: text::Text = head.session_id.clone();
+        if LAST_WAS_INITIALIZE {
+            HTTP_CLIENT_NAME = after_client.clone();
+            if session_hdr.count() == 0 {
+                session_hdr = mint_http_session(after_client.view());
+            } else {
+                put_http_session(session_hdr.view(), after_client.view());
+            }
+        } else if after_client.count() > 0 {
+            HTTP_CLIENT_NAME = after_client.clone();
+            if session_hdr.count() > 0 {
+                put_http_session(session_hdr.view(), after_client.view());
+            }
         }
         // A NOTIFICATION IS ENTITLED TO NO REPLY, and over HTTP that is 202 with
         // no body rather than silence — the client is waiting on a response
         // whatever happens, so silence would hang it.
         if resp.count() == 0 {
-            write_http_response(fd, "202 Accepted", "application/json", "");
+            write_http_response(fd, "202 Accepted", "application/json", "", session_hdr.view());
         } else {
-            write_http_response(fd, "200 OK", "application/json", { resp.view() });
+            write_http_response(fd, "200 OK", "application/json", { resp.view() }, session_hdr.view());
         }
         return 0;                            // one served; the caller comes back
     }
@@ -5600,3 +5727,61 @@ fn a_client_closing_after_its_request_ends_the_failed_response_connection() {
     assert ended == 2;
     let _finished = { netsys::close_fd(fds[0]) };
 }
+
+// bugs/http-activity-never-names-its-client.md: one-connection-per-request HTTP
+// clients (`urllib.request.urlopen`, `curl`) open a fresh TCP socket per POST,
+// so resetting `CLIENT_NAME` on each new HTTP socket lost the handshake's
+// `clientInfo.name` before the very next action.
+#[test]
+fn http_requests_across_separate_connections_keep_their_client_name() {
+    forget_actions();
+    forget_client();
+    var out1: [u8; 4096] = [0; 4096];
+    let b1: str = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"agent_check\"}}}";
+    let req1: text::Text =
+        "POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(b1)}\r\n\r\n${b1}";
+    let n1: usize = http_round_trip(req1.view(), { #addr_of(out1[0]) }, 4096);
+    assert n1 > 0;
+    assert response_contains({ #addr_of(out1[0]) }, n1, "Mcp-Session-Id: mcp-session-");
+
+    // Second connection, no Mcp-Session-Id header (loopback zero-header script).
+    var out2: [u8; 4096] = [0; 4096];
+    let b2: str = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"click\",\"params\":{\"id\":\"save\"}}";
+    let req2: text::Text =
+        "POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(b2)}\r\n\r\n${b2}";
+    let n2: usize = http_round_trip(req2.view(), { #addr_of(out2[0]) }, 4096);
+    assert n2 > 0;
+
+    // Third connection: read `activity` and verify the action names `agent_check`.
+    var out3: [u8; 4096] = [0; 4096];
+    let b3: str = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"activity\"}";
+    let req3: text::Text =
+        "POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(b3)}\r\n\r\n${b3}";
+    let n3: usize = http_round_trip(req3.view(), { #addr_of(out3[0]) }, 4096);
+    assert n3 > 0;
+    assert response_contains({ #addr_of(out3[0]) }, n3, "\"client\":\"agent_check\"");
+    assert !response_contains({ #addr_of(out3[0]) }, n3, "\"client\":\"unidentified\"");
+}
+
+#[test]
+fn tools_call_passes_unwrapped_verb_and_arguments_token_to_policy() {
+    forget_client();
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    // Per-verb policy (`reads_only`) must refuse `click` even when wrapped in `tools/call`.
+    let read: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(reads_only),
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"describe_ui\",\"arguments\":{}}}");
+    assert read.contains("result");
+    assert !read.contains("-32001");
+
+    let write: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(reads_only),
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"click\",\"arguments\":{\"id\":\"btn\"}}}");
+    assert write.contains("-32001");
+
+    // Token inside `arguments` on `tools/call` reaches `token_policy`.
+    let tok: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(token_policy),
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"describe_ui\",\"arguments\":{\"token\":\"autofill-approved\"}}}");
+    assert tok.contains("4242424242424242");
+}
+

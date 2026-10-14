@@ -607,7 +607,17 @@ impl Registry {
             option::Option[*bool]::Some(p) => { *p },
             option::Option::None => false,
         };
-        return ceiling && this.is_enabled(node);
+        if !ceiling { return false; }
+        var cur: option::Option[usize] = option::Option[usize]::Some(node);
+        loop {
+            match cur {
+                option::Option[usize]::Some(i) => {
+                    if !this.is_enabled(i) { return false; }
+                    cur = this.parent_of(i);
+                }
+                option::Option::None => { return true; }
+            }
+        }
     }
 
     // --- sensitivity (layer 1b) ------------------------------------------
@@ -1634,3 +1644,16 @@ fn repeated_keys_in_two_windows_keep_both_addresses() {
     match r.lookup("save") { option::Option::Some(n) => { assert n == first; } option::Option::None => { assert false; } }
     match r.lookup("window-b/save") { option::Option::Some(n) => { assert n == second; } option::Option::None => { assert false; } }
 }
+
+#[test]
+fn disabled_ancestor_makes_descendants_not_actionable() {
+    var r = new();
+    let screen = r.add_child(r.root(), option::Option[str]::Some("detail"), Role::Group);
+    let btn = r.add_child(screen, option::Option[str]::Some("detail:delete"), Role::Button);
+    assert r.is_agent_actionable(btn);
+    assert r.can_act(auth::operator(), btn);
+    r.set_enabled(screen, false);
+    assert !r.is_agent_actionable(btn);
+    assert !r.can_act(auth::operator(), btn);
+}
+

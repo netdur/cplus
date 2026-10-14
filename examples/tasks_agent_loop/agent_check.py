@@ -171,8 +171,11 @@ def main():
     act = rpc("activity")
     entries = act.get("actions", []) if isinstance(act, dict) else []
     verbs = [e.get("verb") for e in entries]
+    clients = [e.get("client") for e in entries]
     check("activity records the run's actions in order",
           len(entries) >= 10 and verbs[:2] == ["set_text", "click"], str(verbs[:6]))
+    check("activity names the initialized client over HTTP",
+          bool(entries) and all(c == "agent_check" for c in clients), str(clients[:6]))
 
     failed = [n for n, ok in RESULTS if not ok]
     print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} passed")
