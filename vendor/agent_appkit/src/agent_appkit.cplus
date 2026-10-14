@@ -685,14 +685,14 @@ fn walk_runs(storage: *u8) -> vec::Vec[surface::TextRun] {
         if eff.length == 0 { eff.length = units -% at; }
         let start_b: u64 = byte_offset_of(src, at);
         let end_b: u64 = byte_offset_of(src, at +% eff.length);
-        let _ = out.append(surface::TextRun {
+        if !out.append(surface::TextRun {
             start: start_b,
             length: end_b -% start_b,
             color: run_color_hex(attrs),
             is_bold: run_has_trait(attrs, 2),        // NSBoldFontMask
             is_italic: run_has_trait(attrs, 1),      // NSItalicFontMask
             is_underlined: has_attribute(attrs, "NSUnderline"),
-        });
+        }).is_ok() { return vec::new::[surface::TextRun](); }
         at = at +% eff.length;
     }
     return out;
@@ -1913,7 +1913,7 @@ impl Surface {
             // `text: ""` while drawing a card title, and since `readable`
             // only reaches the wire on a gated node, nothing said so.
             let may_read: bool = this.reg.can_read_value_walked(grant, node);
-            let _ = out.append(AppKitNode {
+            if !out.append(AppKitNode {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(view),
@@ -1946,7 +1946,7 @@ impl Surface {
                 clickable: view_clickable(view, this.part_of(node)),
                 wired: view_wired(view, this.part_of(node)),
                 parent: parent,
-            });
+            }).is_ok() { return vec::new::[AppKitNode](); }
             node = node +% 1;
         }
         return out;
@@ -1981,12 +1981,12 @@ impl Surface {
             } else {
                 false
             };
-            let _ = out.append(LayoutDiagnostic {
+            if !out.append(LayoutDiagnostic {
                 id: text::from_str(this.reg.resolved_id(node)),
                 class_name: class_name_text(view),
                 uses_autolayout: !translates,
                 has_ambiguous_layout: ambiguous,
-            });
+            }).is_ok() { return vec::new::[LayoutDiagnostic](); }
             node = node +% 1;
         }
         return out;
@@ -2366,7 +2366,7 @@ fn mcp_describe_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     while i < local.count() {
         match local.at_ptr(i) {
             option::Option[*AppKitNode]::Some(n) => {
-                let _ = out.append(mcpb::UiNode {
+                if !out.append(mcpb::UiNode {
                     id: ctext((*n).id.view()),
                     role: { (*n).role },
                     class_name: ctext((*n).class_name.view()),
@@ -2386,7 +2386,7 @@ fn mcp_describe_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     clickable: { (*n).clickable },
                     wired: option::Option[bool]::Some({ (*n).wired }),
                     parent: { (*n).parent },
-                });
+                }).is_ok() { return vec::new::[mcpb::UiNode](); }
             }
             option::Option::None => {}
         }
@@ -2893,7 +2893,7 @@ fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode
                 if identity::role_eq({ (*n).role }, identity::Role::Value) {
                     if !is_null(live) { shown = (*s).live_text(at, live, { (*n).role }); }
                 }
-                let _ = out.append(mcpb::UiNode {
+                if !out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
@@ -2908,7 +2908,7 @@ fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode
                     clickable: view_clickable(live, part),
                     wired: option::Option[bool]::Some(view_wired(live, part)),
                     parent: { (*n).parent },
-                });
+                }).is_ok() { return vec::new::[mcpb::UiNode](); }
             }
             option::Option::None => {}
         }

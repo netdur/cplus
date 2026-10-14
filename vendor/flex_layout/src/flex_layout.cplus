@@ -2336,7 +2336,7 @@ fn resolve_tracks(tracks: vec::Vec[GridTrack], count: usize, avail: f64, gap: f6
             TrackUnit::Fr => track_value_at(tracks, t) * fr_unit,
             TrackUnit::Auto => size_at(auto_content, t),
         };
-        let _ = out.append(f_max(0.0, size));
+        if !out.append(f_max(0.0, size)).is_ok() { return vec::new::[f64](); }
         t = t +% 1;
     }
     return out;
@@ -2348,21 +2348,21 @@ fn copy_f64(v: vec::Vec[f64]) -> vec::Vec[f64] {
     var o: vec::Vec[f64] = vec::new::[f64]();
     var i: usize = 0;
     let n: usize = v.count();
-    while i < n { let _ = o.append(size_at(v, i)); i = i +% 1; }
+    while i < n { if !o.append(size_at(v, i)).is_ok() { return vec::new::[f64](); } i = i +% 1; }
     return o;
 }
 // A copy of `v` padded with zeros (or truncated) to exactly `count` entries.
 fn pad_tracks(v: vec::Vec[f64], count: usize) -> vec::Vec[f64] {
     var o: vec::Vec[f64] = vec::new::[f64]();
     var i: usize = 0;
-    while i < count { let _ = o.append(if i < v.count() { size_at(v, i) } else { 0.0 }); i = i +% 1; }
+    while i < count { if !o.append(if i < v.count() { size_at(v, i) } else { 0.0 }).is_ok() { return vec::new::[f64](); } i = i +% 1; }
     return o;
 }
 // The `span` consecutive track sizes starting at `start`.
 fn track_slice(sizes: vec::Vec[f64], start: usize, span: usize) -> vec::Vec[f64] {
     var o: vec::Vec[f64] = vec::new::[f64]();
     var k: usize = start;
-    while k < start + span && k < sizes.count() { let _ = o.append(size_at(sizes, k)); k = k +% 1; }
+    while k < start + span && k < sizes.count() { if !o.append(size_at(sizes, k)).is_ok() { return vec::new::[f64](); } k = k +% 1; }
     return o;
 }
 
@@ -2485,7 +2485,7 @@ fn track_offsets(sizes: vec::Vec[f64], gap: f64, start: f64) -> vec::Vec[f64] {
     var t: usize = 0;
     let n: usize = sizes.count();
     while t < n {
-        let _ = out.append(acc);
+        if !out.append(acc).is_ok() { return vec::new::[f64](); }
         acc = acc + size_at(sizes, t) + gap;
         t = t +% 1;
     }

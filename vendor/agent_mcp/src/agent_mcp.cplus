@@ -651,69 +651,69 @@ fn core_tools() -> vec::Vec[json::Value] {
         "\"exposed\" (default) is the curated set the developer chose to expose — small and high-signal. \"full\" is the whole walked tree including auto-keyed structural nodes, and is a superset."));
     let _ = p_describe.append(prop("prefix", "string",
         "Answer only with nodes whose id starts with this, e.g. \"board:detail:\". Absent means the whole view. Use it: a whole-tree answer runs to tens of thousands of characters, and the id path is a path, so the question you are asking almost always has a prefix."));
-    let _ = out.append(tool("describe_ui",
+    if !out.append(tool("describe_ui",
         "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, wired, parent. The three flags are different questions and you need all three: `actionable` is whether you are ALLOWED to act, `clickable` is whether a click would LAND, and `wired` is whether it would reach a handler — a control can pass the first two and still do nothing. `wired` absent means this backend cannot answer it, which is not the same as false. EVERY WINDOW THE APP HAS OPEN is in one answer, each window a node of role \"window\" addressed by the name the app opened it under — so a node's window is its parent chain, and there is no \"current window\" to set. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it. Long text is CLIPPED here and marked `text_truncated` with the full `text_len`; `read_text` answers the whole value.",
-        p_describe, no_required()));
+        p_describe, no_required())).is_ok() { return vec::new::[json::Value](); }
 
     var p_click: vec::Vec[json::Member] = no_props();
     let _ = p_click.append(prop("id", "string", "The node id, from describe_ui."));
-    let _ = out.append(tool("click",
+    if !out.append(tool("click",
         "Activate a control the way a person clicking it would. Answers an outcome: \"allowed\", \"not_actionable\" (disabled or not a control), or \"not_found\".",
-        p_click, required1("id")));
+        p_click, required1("id"))).is_ok() { return vec::new::[json::Value](); }
 
     var p_set_text: vec::Vec[json::Member] = no_props();
     let _ = p_set_text.append(prop("id", "string", "The node id of a text input."));
     let _ = p_set_text.append(prop("value", "string", "The text to place in it. An explicit empty string clears the field."));
     let _ = p_set_text.append(prop("base_version", "number", "Optional edit version returned by read_text. Supply it when present; on version_conflict, read again before retrying."));
-    let _ = out.append(tool("set_text",
+    if !out.append(tool("set_text",
         "Replace the contents of a text input. \"value\" is required: absent would read as an empty string and silently clear the field.",
-        p_set_text, required2("id", "value")));
+        p_set_text, required2("id", "value"))).is_ok() { return vec::new::[json::Value](); }
 
     var p_hit: vec::Vec[json::Member] = no_props();
     let _ = p_hit.append(prop("id", "string", "The node id to test."));
-    let _ = out.append(tool("hit_test",
+    if !out.append(tool("hit_test",
         "Whether this node is the one that would actually receive a click at its own position, or whether something else is over it. Use when a click reports allowed but nothing happens.",
-        p_hit, required1("id")));
+        p_hit, required1("id"))).is_ok() { return vec::new::[json::Value](); }
 
     var p_caret: vec::Vec[json::Member] = no_props();
     let _ = p_caret.append(prop("id", "string", "The node id of a text control."));
     let _ = p_caret.append(prop("at", "number", "Offset in BYTES of the control's own text."));
     let _ = p_caret.append(prop("length", "number", "Selection length in bytes; 0 (default) is an insertion point."));
-    let _ = out.append(tool("set_caret",
+    if !out.append(tool("set_caret",
         "Place the caret, or select a range, inside a text control.",
-        p_caret, required2("id", "at")));
+        p_caret, required2("id", "at"))).is_ok() { return vec::new::[json::Value](); }
 
     var p_readtext: vec::Vec[json::Member] = no_props();
     let _ = p_readtext.append(prop("id", "string", "Node id, from describe_ui."));
-    let _ = out.append(tool("read_text",
+    if !out.append(tool("read_text",
         "The WHOLE text of one node. `describe_ui` clips a long value and marks it `text_truncated` with a `text_len` — this is how you get the rest. A node behind a tier you cannot read answers the same empty string it does there: asking twice is not a way past the gate. When supported and readable, version is the stamp to pass to set_text.base_version.",
-        p_readtext, required1("id")));
+        p_readtext, required1("id"))).is_ok() { return vec::new::[json::Value](); }
 
     var p_runs: vec::Vec[json::Member] = no_props();
     let _ = p_runs.append(prop("id", "string", "The node id of a text control."));
-    let _ = out.append(tool("read_runs",
+    if !out.append(tool("read_runs",
         "The styled runs of a text control — the text with its attributes, rather than the flattened string describe_ui reports.",
-        p_runs, required1("id")));
+        p_runs, required1("id"))).is_ok() { return vec::new::[json::Value](); }
 
     var p_menu: vec::Vec[json::Member] = no_props();
     let _ = p_menu.append(prop("path", "string", "\"Menu/Item\", by the titles as built — for example \"File/Save\"."));
-    let _ = out.append(tool("invoke_menu",
+    if !out.append(tool("invoke_menu",
         "Pick a menu item, validation and all. A menu item is not a node and cannot be reached by id; a disabled one answers \"not_actionable\", the same word a node gets.",
-        p_menu, required1("path")));
+        p_menu, required1("path"))).is_ok() { return vec::new::[json::Value](); }
 
     var p_scroll: vec::Vec[json::Member] = no_props();
     let _ = p_scroll.append(prop("id", "string", "The node id to bring into view."));
-    let _ = out.append(tool("scroll_to",
+    if !out.append(tool("scroll_to",
         "Scroll a node into view. Needed before interacting with something outside a scroll container's visible region.",
-        p_scroll, required1("id")));
+        p_scroll, required1("id"))).is_ok() { return vec::new::[json::Value](); }
 
-    let _ = out.append(tool("poll_event",
+    if !out.append(tool("poll_event",
         "The next queued semantic event, or null when there is none. This is the asynchronous half: it is how an agent notices that the USER did something while it was working.",
-        no_props(), no_required()));
+        no_props(), no_required())).is_ok() { return vec::new::[json::Value](); }
 
-    let _ = out.append(tool("activity",
+    if !out.append(tool("activity",
         "What has been DONE to this application through this surface — every click, text write, caret move, menu invocation and scroll, in order, with who asked, what it targeted and whether it worked. For a person supervising an agent, and for an agent reviewing its own work. Content is never recorded: a text write is logged as its length.",
-        no_props(), no_required()));
+        no_props(), no_required())).is_ok() { return vec::new::[json::Value](); }
 
     return out;
 }
@@ -888,7 +888,7 @@ fn all_tools() -> vec::Vec[json::Value] {
         var extra: vec::Vec[json::Value] = d();
         while extra.count() > 0 {
             match extra.remove(0) {
-                option::Option[json::Value]::Some(v) => { let _ = out.append(v); }
+                option::Option[json::Value]::Some(v) => { if !out.append(v).is_ok() { return vec::new::[json::Value](); } }
                 option::Option::None => { return out; }
             }
         }

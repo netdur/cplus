@@ -825,7 +825,7 @@ fn html_markup(source: str) -> text::Text {
                 option::Option[usize]::Some(i) => i,
                 option::Option::None => rest.count(),
             };
-            let _ = out.append(rest.prefix(len));
+            if !out.append(rest.prefix(len)).is_ok() { return text::new(); }
             at = at +% len;
             continue;
         }
@@ -840,20 +840,20 @@ fn html_markup(source: str) -> text::Text {
             else if ch == (62 as u8) { break; }
             end = end +% (1 as usize);
         }
-        if end == rest.count() { let _ = out.append(rest); break; }
+        if end == rest.count() { if !out.append(rest).is_ok() { return text::new(); } break; }
         let tag: str = { #str_from_raw_parts(#str_ptr(rest) + (1 as usize), end -% (1 as usize)) }.trim();
         let folded: text::Text = paint::transformed(tag, vocab::TextTransform::Lowercase);
         let name: str = folded.view();
-        if name == "br" || name == "br/" || name == "br /" { let _ = out.append("\n"); }
-        else if name == "code" { let _ = out.append("<tt>"); }
-        else if name == "/code" { let _ = out.append("</tt>"); }
-        else if name == "strong" { let _ = out.append("<b>"); }
-        else if name == "/strong" { let _ = out.append("</b>"); }
-        else if name == "em" { let _ = out.append("<i>"); }
-        else if name == "/em" { let _ = out.append("</i>"); }
-        else if name == "del" || name == "strike" { let _ = out.append("<s>"); }
-        else if name == "/del" || name == "/strike" { let _ = out.append("</s>"); }
-        else { let _ = out.append(rest.prefix(end +% (1 as usize))); }
+        if name == "br" || name == "br/" || name == "br /" { if !out.append("\n").is_ok() { return text::new(); } }
+        else if name == "code" { if !out.append("<tt>").is_ok() { return text::new(); } }
+        else if name == "/code" { if !out.append("</tt>").is_ok() { return text::new(); } }
+        else if name == "strong" { if !out.append("<b>").is_ok() { return text::new(); } }
+        else if name == "/strong" { if !out.append("</b>").is_ok() { return text::new(); } }
+        else if name == "em" { if !out.append("<i>").is_ok() { return text::new(); } }
+        else if name == "/em" { if !out.append("</i>").is_ok() { return text::new(); } }
+        else if name == "del" || name == "strike" { if !out.append("<s>").is_ok() { return text::new(); } }
+        else if name == "/del" || name == "/strike" { if !out.append("</s>").is_ok() { return text::new(); } }
+        else { if !out.append(rest.prefix(end +% (1 as usize))).is_ok() { return text::new(); } }
         at = at +% end +% (1 as usize);
     }
     return out;

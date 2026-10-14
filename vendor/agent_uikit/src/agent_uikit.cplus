@@ -1474,7 +1474,7 @@ impl Surface {
             // reports `text: ""` while it is drawing a title.
             let may_read: bool = this.reg.can_read_value_walked(grant, node);
             let f: rt::Rect = { rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))) };
-            let _ = out.append(mcpb::UiNode {
+            if !out.append(mcpb::UiNode {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(view),
@@ -1497,7 +1497,7 @@ impl Surface {
                 // `None` says "not answered", which is the only honest value.
                 wired: option::Option[bool]::None,
                 parent: parent,
-            });
+            }).is_ok() { return vec::new::[mcpb::UiNode](); }
             node = node +% (1 as usize);
         }
         return out;
@@ -1948,7 +1948,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                 if identity::role_eq({ (*n).role }, identity::Role::Value) {
                     if !is_null(live) { shown = (*s).live_text(at, live, { (*n).role }); }
                 }
-                let _ = out.append(mcpb::UiNode {
+                if !out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
@@ -1965,7 +1965,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     // rather than guessing. See backend::UiNode.wired.
                     wired: option::Option[bool]::None,
                     parent: { (*n).parent },
-                });
+                }).is_ok() { return vec::new::[mcpb::UiNode](); }
             }
             option::Option[*identity::NodeView]::None => { }
         }
@@ -2231,14 +2231,14 @@ fn walk_runs(storage: *u8) -> vec::Vec[surface::TextRun] {
         if eff.length == (0 as u64) { eff.length = units -% at; }
         let start_b: u64 = byte_offset_of(src, at);
         let end_b: u64 = byte_offset_of(src, at +% eff.length);
-        let _ = out.append(surface::TextRun {
+        if !out.append(surface::TextRun {
             start: start_b,
             length: end_b -% start_b,
             color: run_color_hex(attrs),
             is_bold: run_has_trait(attrs, 2 as u64),
             is_italic: run_has_trait(attrs, 1 as u64),
             is_underlined: has_attribute(attrs, "NSUnderline"),
-        });
+        }).is_ok() { return vec::new::[surface::TextRun](); }
         at = at +% eff.length;
     }
     return out;

@@ -682,7 +682,7 @@ impl Surface {
                 }
                 option::Option[usize]::None => option::Option[usize]::None,
             };
-            let _ = out.append(Win32Node {
+            if !out.append(Win32Node {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(hwnd),
@@ -691,7 +691,7 @@ impl Surface {
                 text: node_text(hwnd),
                 actionable: this.reg.is_exposed(node) && this.reg.is_agent_actionable(node),
                 parent: parent,
-            });
+            }).is_ok() { return vec::new::[Win32Node](); }
             node = node +% (1 as usize);
         }
         return out;
@@ -799,7 +799,7 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     while i < local.count() {
         match local.at_ptr(i) {
             option::Option[*Win32Node]::Some(n) => {
-                let _ = out.append(mcpb::UiNode {
+                if !out.append(mcpb::UiNode {
                     id: ctext((*n).id.view()),
                     role: { (*n).role },
                     class_name: ctext((*n).class_name.view()),
@@ -835,7 +835,7 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     // rather than guessing. See backend::UiNode.wired.
                     wired: option::Option[bool]::None,
                     parent: { (*n).parent },
-                });
+                }).is_ok() { return vec::new::[mcpb::UiNode](); }
             }
             option::Option[*Win32Node]::None => {}
         }
@@ -884,7 +884,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     };
                     if !is_null(live) { shown = node_text(live); }
                 }
-                let _ = out.append(mcpb::UiNode {
+                if !out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
@@ -906,7 +906,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     // rather than guessing. See backend::UiNode.wired.
                     wired: option::Option[bool]::None,
                     parent: { (*n).parent },
-                });
+                }).is_ok() { return vec::new::[mcpb::UiNode](); }
             }
             option::Option[*identity::NodeView]::None => {}
         }

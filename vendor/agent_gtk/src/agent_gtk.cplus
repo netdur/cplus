@@ -537,7 +537,7 @@ impl Surface {
             // parameter, so a gate that only held in the curated view would
             // hold until the model tried the other one.
             let may_read: bool = this.reg.can_read_value_walked(grant, node);
-            let _ = out.append(GtkNode {
+            if !out.append(GtkNode {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(widget),
@@ -548,7 +548,7 @@ impl Surface {
                 tier: this.reg.tier_of(node),
                 readable: may_read,
                 parent: parent,
-            });
+            }).is_ok() { return vec::new::[GtkNode](); }
             node = node +% (1 as usize);
         }
         return out;
@@ -823,7 +823,7 @@ fn mcp_describe_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     while i < local.count() {
         match local.at_ptr(i) {
             option::Option[*GtkNode]::Some(n) => {
-                let _ = out.append(mcpb::UiNode {
+                if !out.append(mcpb::UiNode {
                     id: ctext((*n).id.view()),
                     role: { (*n).role },
                     class_name: ctext((*n).class_name.view()),
@@ -858,7 +858,7 @@ fn mcp_describe_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     wired: option::Option[bool]::Some(
                         widget_wired(widget_for_id(s, { (*n).id.view() }))),
                     parent: { (*n).parent },
-                });
+                }).is_ok() { return vec::new::[mcpb::UiNode](); }
             }
             option::Option[*GtkNode]::None => {}
         }
@@ -891,7 +891,7 @@ fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode
                     let live: *u8 = widget_for_id(s, { (*n).id.view() });
                     if !is_null(live) { shown = node_text(live, { (*n).role }); }
                 }
-                let _ = out.append(mcpb::UiNode {
+                if !out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
@@ -912,7 +912,7 @@ fn mcp_describe_exposed_now(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode
                     wired: option::Option[bool]::Some(
                         widget_wired(widget_for_id(s, { (*n).id.view() }))),
                     parent: { (*n).parent },
-                });
+                }).is_ok() { return vec::new::[mcpb::UiNode](); }
             }
             option::Option[*identity::NodeView]::None => {}
         }

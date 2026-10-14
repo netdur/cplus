@@ -271,7 +271,7 @@ fn _describe(p: *u8, grant: auth::Grant, exposed: bool) -> vec::Vec[backend::UiN
                 if let result::Result::Ok(r)=peer.get_bounding_rectangle() { frame=backend::Rect {x:r.x as f64,y:r.y as f64,w:r.width as f64,h:r.height as f64}; }
             }
             let value: text::Text=if readable { native::value((*n).object,(*n).peer) } else { text::new() };
-            let _ = out.append(backend::UiNode {id:text::from_str(snap.reg.resolved_id(i)),role:snap.reg.role_of(i),class_name:cls,frame:frame,is_hidden:(*n).hidden,text:value,name:name,description:description,actionable:snap.reg.can_act(grant,i),clickable:native::clickable((*n).peer),wired:option::Option[bool]::None,tier:snap.reg.tier_of(i),readable:readable,parent:parent});
+            if !out.append(backend::UiNode {id:text::from_str(snap.reg.resolved_id(i)),role:snap.reg.role_of(i),class_name:cls,frame:frame,is_hidden:(*n).hidden,text:value,name:name,description:description,actionable:snap.reg.can_act(grant,i),clickable:native::clickable((*n).peer),wired:option::Option[bool]::None,tier:snap.reg.tier_of(i),readable:readable,parent:parent}).is_ok() { return vec::new::[backend::UiNode](); }
         }
         i=i+1;
     }

@@ -793,7 +793,7 @@ impl Registry {
                     }
                 }
                 let _ = pos.append(out.count() as i64);
-                let _ = out.append(NodeView {
+                if !out.append(NodeView {
                     id: text::from_str(this.id_view(i)),
                     role: this.role_of(i),
                     name: text::from_str(this.name_of(i)),
@@ -807,7 +807,7 @@ impl Registry {
                     actionable: this.can_act(grant, i),
                     tier: this.tier_of(i),
                     readable: this.can_read_value(grant, i),
-                });
+                }).is_ok() { return vec::new::[NodeView](); }
             } else {
                 let _ = pos.append((0 as i64) -% (1 as i64));
             }
