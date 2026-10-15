@@ -221,6 +221,11 @@ declared imports, lowers + sema + borrowck + codegen the whole project,
 and writes the linked binary to `target/{debug,release}/<name>` (or to
 OUT if `-o` is given). The manifest names the project; the entry file
 must define `fn main() -> i32`.
+
+The project's ./assets/* are staged in target/assets/<target>/<mode>/ and,
+without `-o`, placed beside the binary, where a bare binary's
+`appenv::resource_dir()` points. An asset's name is its path inside
+assets/. `cpc build --print-asset-dir --help` says more.
 "
         }
         Some(Subcommand::Check) => {
