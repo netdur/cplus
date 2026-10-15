@@ -3127,6 +3127,17 @@ fn run_package(
         eprintln!("cpc package: could not copy the binary: {e}");
         return ExitCode::FAILURE;
     }
+    let assets_src = m.root.join("assets");
+    if assets_src.is_dir() {
+        if let Err(e) = copy_dir_contents(&assets_src, &resources) {
+            eprintln!(
+                "cpc package: could not copy {} into {}: {e}",
+                assets_src.display(),
+                resources.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    }
     // `CFBundleExecutable` MUST match the file in Contents/MacOS or the bundle
     // will not launch, and the error names none of this.
     let src_plist = m.root.join("macos").join("Info.plist");
@@ -3204,6 +3215,21 @@ fn run_package(
         println!("      needs its usage-description key there, or `request` kills the process.");
     }
     ExitCode::SUCCESS
+}
+
+fn copy_dir_contents(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dest_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_contents(&entry.path(), &dest_path)?;
+        } else {
+            std::fs::copy(entry.path(), dest_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// W0008: the platform file this build hands to the platform's own tools

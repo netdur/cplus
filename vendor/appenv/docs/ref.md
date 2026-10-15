@@ -257,6 +257,22 @@ Reads an asset as owned UTF-8 text with the same names, roots and read errors as
 `read_asset`. Empty text and embedded NUL are preserved. Returns `InvalidData`
 for malformed UTF-8; it neither replaces invalid bytes nor removes a BOM.
 
+### `asset_path`
+
+```cplus
+fn asset_path(name: str) -> result::Result[text::Text, Error]
+```
+
+Resolves a packaged asset to an owned native filesystem path suitable for APIs
+that require a file on disk (such as `mmap`-backed AI model loaders). On Apple
+and desktop platforms it verifies that the asset exists as a regular readable
+file inside `resource_dir()` and returns its path without copying. On Android
+it streams the APK asset into `no_backup_dir()/assets/<name>` in 64 KiB chunks
+via an atomic temporary-file rename, reusing the existing file on subsequent
+calls when its byte length matches `AAsset_getLength64` and its modification
+time is at least as new as the installed APK (`app_path()`). Validation and
+error cases match `read_asset`.
+
 ## Installed identity
 
 Each present value is owned UTF-8 `Text`. Missing/empty values and failed native

@@ -120,7 +120,7 @@ def check_docs():
     public = set(re.findall(r"^fn ([a-z][a-z_]+)\(", (SOURCE / "appenv.cplus").read_text(), re.M))
     reference = set(re.findall(r"^### `([a-z_]+)`$", (TESTS.parent / "docs/ref.md").read_text(), re.M))
     assert public == reference, (public - reference, reference - public)
-    assert len(public) == 20, public
+    assert len(public) == 24, public
     print(f"appenv reference: all {len(public)} public functions documented")
     with tempfile.TemporaryDirectory(prefix="appenv-docs-") as directory:
         probe = Path(directory)

@@ -177,6 +177,24 @@ fn read_asset_text(name: str) -> result::Result[text::Text, Error] {
     }
 }
 
+// Resolve a packaged asset to a readable native file path. Apple and desktop
+// return the existing path inside `resource_dir()`; Android streams the APK
+// asset into `no_backup_dir()` on demand and reuses it while its size matches
+// and its mtime is at least as new as the installed APK.
+fn asset_path(name: str) -> result::Result[text::Text, Error] {
+    if !_is_valid_asset_name(name) { return result::Result[text::Text, Error]::Err(Error::InvalidInput); }
+    var out: text::Text = text::from_str("");
+    let code: u32 = _appenv_asset_path_v1(#str_ptr(name), #str_len(name), #addr_of(out));
+    if code == (0 as u32) { return result::Result[text::Text, Error]::Ok(out); }
+    let error: Error = match code {
+        1 => Error::Unavailable,
+        2 => Error::NotFound,
+        4 => Error::OutOfMemory,
+        _ => Error::ReadFailed,
+    };
+    return result::Result[text::Text, Error]::Err(error);
+}
+
 fn _storage(kind: u32, namespace: str) -> result::Result[text::Text, Error] {
     if #str_len(namespace) > (0 as usize) && !_is_valid_namespace(namespace) {
         return result::Result[text::Text, Error]::Err(Error::InvalidInput);
@@ -296,6 +314,7 @@ fn _appenv_rejects_invalid_storage_names_before_native_lookup() {
 // implementation function private without a source import cycle or raw API.
 extern fn _appenv_lookup_v1(kind: u32, metadata: bool, into: *text::Text) -> bool;
 extern fn _appenv_read_asset_v1(name: *u8, count: usize, into: *vec::Vec[u8]) -> u32;
+extern fn _appenv_asset_path_v1(name: *u8, count: usize, into: *text::Text) -> u32;
 extern fn _appenv_exclude_from_backup_v1(p: *u8, count: usize) -> u32;
 
 fn _lookup(kind: u32, metadata: bool = false) -> option::Option[text::Text] {
@@ -423,6 +442,10 @@ fn _appenv_asset_names_are_relative_and_portable() {
     assert _is_valid_asset_name("+@-settings.json");
     assert !_is_valid_asset_name("a.");
     match read_asset("../escape") {
+        result::Result::Err(e) => { assert e == Error::InvalidInput; }
+        result::Result::Ok(v) => { assert false; }
+    }
+    match asset_path("../escape") {
         result::Result::Err(e) => { assert e == Error::InvalidInput; }
         result::Result::Ok(v) => { assert false; }
     }

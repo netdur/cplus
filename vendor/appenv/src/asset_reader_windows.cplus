@@ -54,3 +54,51 @@ export extern fn _appenv_read_asset_v1(name: *u8, count: usize, into: *vec::Vec[
     if code == (0 as u32) { { *into = bytes }; }
     return code;
 }
+
+fn _win_child(child: str) -> text::Text {
+    let p: *u8 = #str_ptr(child);
+    let n: usize = #str_len(child);
+    var out: text::Text = text::with_capacity(n);
+    var i: usize = 0;
+    while i < n {
+        let b: u8 = { *(p + i) };
+        if b == (47 as u8) {
+            let _a = out.append("\\");
+        } else {
+            let _a = out.append({ #str_from_raw_parts(p + i, 1 as usize) });
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+export extern fn _appenv_asset_path_v1(name: *u8, count: usize, into: *text::Text) -> u32 {
+    if into.is_null() { return 3 as u32; }
+    let root: text::Text = match appenv::resource_dir() {
+        result::Result::Ok(value) => value,
+        result::Result::Err(e) => { return 1 as u32; }
+    };
+    let child: text::Text = _win_child({ #str_from_raw_parts(name, count) });
+    let filename: text::Text = "${root}\\${child}";
+    let cp: text::CString = match filename.c_str() {
+        option::Option::Some(value) => value,
+        option::Option::None => { return 4 as u32; }
+    };
+    let size: i32 = { MultiByteToWideChar(65001 as u32, 8 as u32, cp.as_ptr(), 0 - 1, 0 as *u8, 0) };
+    if size <= 0 { return 3 as u32; }
+    let wide: *u8 = { malloc((size as usize) * (2 as usize)) };
+    if wide.is_null() { return 4 as u32; }
+    if { MultiByteToWideChar(65001 as u32, 8 as u32, cp.as_ptr(), 0 - 1, wide, size) } != size {
+        free(wide); return 3 as u32;
+    }
+    let file: *u8 = { CreateFileW(wide, 0x80000000 as u32, 7 as u32, 0 as *u8, 3 as u32, 128 as u32, 0 as *u8) };
+    let error: u32 = { GetLastError() };
+    free(wide);
+    if file == (((0 as isize) - (1 as isize)) as *u8) {
+        if error == (2 as u32) || error == (3 as u32) { return 2 as u32; }
+        return 3 as u32;
+    }
+    let _closed = { CloseHandle(file) };
+    { *into = filename };
+    return 0 as u32;
+}

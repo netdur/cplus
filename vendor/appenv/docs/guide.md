@@ -121,18 +121,31 @@ private app files; shared user documents require a picker and content URI.
 
 ## Packaged assets
 
-Use `read_asset` for bytes and `read_asset_text` for UTF-8 text. Put resources in
-Apple's main bundle resource directory, Android's APK `assets/` directory, or
-beside a desktop executable. The same relative name, such as
-`defaults/settings.json`, works on each platform. Packaging is the application's
-responsibility; adding this dependency does not automatically copy assets.
-Names are case-sensitive on Android; use exact casing for portability.
+Use `read_asset` for bytes, `read_asset_text` for UTF-8 text, and `asset_path`
+when a consumer (such as a GGUF or ONNX runtime) requires a real filesystem path
+to `mmap` or open directly.
 
-Both readers own their output and close native handles before returning. Compressed
-APK entries work through `AAsset_read`; no asset path is fabricated and no copy
-into writable storage is required. The whole asset is held in memory, so use a
-separate streaming solution for large media. Empty assets succeed, binary bytes
-are unchanged, and the text reader rejects malformed UTF-8. Error cases are in
+The end-to-end workflow for bundled assets is:
+
+1. **Create `assets/` in the project root** (e.g. `assets/defaults/settings.json` or `assets/models/model.gguf`).
+2. **Package the app for the target platform:**
+   - **macOS (`.app`):** `cpc package` automatically copies `./assets/*` into `<Name>.app/Contents/Resources/` before signing.
+   - **iOS (`.app`):** Copy `./assets/*` into the `.app` bundle root (or add `assets` as a folder reference in Xcode).
+   - **Android (`.apk`):** Pass `-A assets` to `aapt2 link` when assembling the APK.
+   - **Linux / Windows / desktop CLI:** Place the files beside the executable.
+3. **Resolve or read by relative name** (`"defaults/settings.json"`, `"models/model.gguf"`). Names are case-sensitive on Android; use exact casing for portability.
+4. **Pass the returned value or path to the consumer.**
+
+`read_asset` and `read_asset_text` own their output and close native handles
+before returning. Compressed APK entries work through `AAsset_read`; no asset
+path is fabricated and no copy into writable storage is required. Because
+`read_asset` holds the whole asset in memory, use `asset_path` for large models
+and media: on Apple and desktop `asset_path` returns the in-bundle file path
+directly without copying, and on Android it streams the APK asset once in 64 KiB
+chunks into `no_backup_dir()/assets/<name>` (atomic write-then-rename) and
+reuses the file on disk while its size matches the APK entry and its mtime is
+at least as new as the installed APK. Empty assets succeed, binary bytes are
+unchanged, and the text reader rejects malformed UTF-8. Error cases are in
 [ref.md](ref.md#error).
 
 ### Gotcha: relative asset names aren't arbitrary filesystem paths

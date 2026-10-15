@@ -6,6 +6,7 @@ import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "stdlib/status" as status;
+import "stdlib/fs" as fs;
 import "stdlib/fs_sys" as fsys;
 extern fn open(path: *u8, flags: i32) -> i32;
 extern fn close(fd: i32) -> i32;
@@ -47,4 +48,28 @@ export extern fn _appenv_read_asset_v1(name: *u8, count: usize, into: *vec::Vec[
     let _closed = { close(fd) };
     if code == (0 as u32) { { *into = bytes }; }
     return code;
+}
+
+export extern fn _appenv_asset_path_v1(name: *u8, count: usize, into: *text::Text) -> u32 {
+    if into.is_null() { return 3 as u32; }
+    let root: text::Text = match appenv::resource_dir() {
+        result::Result::Ok(value) => value,
+        result::Result::Err(e) => { return 1 as u32; }
+    };
+    let child: str = { #str_from_raw_parts(name, count) };
+    let filename: text::Text = "${root}/${child}";
+    let cp: text::CString = match filename.c_str() {
+        option::Option::Some(value) => value,
+        option::Option::None => { return 4 as u32; }
+    };
+    let fd: i32 = { open(cp.as_ptr(), fsys::read_flags()) };
+    if fd < 0 {
+        let error: i32 = fsys::file_errno();
+        if error == 2 || error == 20 { return 2 as u32; }
+        return 3 as u32;
+    }
+    let _closed = { close(fd) };
+    if fs::is_dir(filename.view()) { return 3 as u32; }
+    { *into = filename };
+    return 0 as u32;
 }

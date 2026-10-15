@@ -97,6 +97,27 @@ fn _assets() {
         }
         attempt = attempt +% (1 as u32);
     }
+    io::eprintln("asset: asset_path");
+    let nested_path: text::Text = _path(appenv::asset_path("nested/café 🧭.txt"));
+    _read(nested_path.view(), "café 🧭");
+    let empty_path: text::Text = _path(appenv::asset_path("empty.txt"));
+    _read(empty_path.view(), "");
+    let bin_path: text::Text = _path(appenv::asset_path("binary.txt"));
+    match fs::size(bin_path.view()) {
+        result::Result::Ok(sz) => { assert sz == (20000 as i64); }
+        result::Result::Err(e) => { assert false; }
+    }
+    // Second call must return the same path (and on Android reuse the cached file).
+    let bin_path_again: text::Text = _path(appenv::asset_path("binary.txt"));
+    assert bin_path_again.view() == bin_path.view();
+    match appenv::asset_path("missing.txt") {
+        result::Result::Err(e) => { assert e == appenv::Error::NotFound; }
+        result::Result::Ok(v) => { assert false; }
+    }
+    match appenv::asset_path("../Info.plist") {
+        result::Result::Err(e) => { assert e == appenv::Error::InvalidInput; }
+        result::Result::Ok(v) => { assert false; }
+    }
 }
 
 fn run() -> i32 {

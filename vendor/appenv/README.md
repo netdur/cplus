@@ -22,10 +22,11 @@ fn show_data_dir() {
 }
 ```
 
-Provides app directories, packaged asset readers and ID/name/version/build.
-Paths return `Result[Text, Error]`; optional metadata returns `Option[Text]`.
-On desktop, supply `namespace: "com.example.app"` for storage when no native
-app ID is available. Getters leave CWD unchanged and don't create custom folders.
+Provides app directories, packaged asset readers (`read_asset`, `read_asset_text`,
+`asset_path`) and ID/name/version/build. Paths return `Result[Text, Error]`;
+optional metadata returns `Option[Text]`. On desktop, supply
+`namespace: "com.example.app"` for storage when no native app ID is available.
+Getters leave CWD unchanged and don't create custom folders.
 
 [Tutorial](docs/tutorial.md) · [Guide](docs/guide.md) · [Reference](docs/ref.md)
 

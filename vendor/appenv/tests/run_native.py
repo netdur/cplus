@@ -64,6 +64,7 @@ def check_private_api(probe):
         ('appenv/appenv_backend', '_read_path(0 as u32)'),
         ('appenv/appenv_backend', '_CURRENT'),
         ('appenv/asset_reader', '_appenv_read_asset_v1'),
+        ('appenv/asset_reader', '_appenv_asset_path_v1'),
     ]
     try:
         for module, expression in cases:

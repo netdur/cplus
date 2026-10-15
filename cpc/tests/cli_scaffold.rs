@@ -1054,3 +1054,30 @@ fn strip_qualifiers(params: &str) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn package_copies_assets_into_bundle_resources() {
+    let dir = tempfile::tempdir().unwrap();
+    bare_app(dir.path(), "com.example.bare");
+    std::fs::create_dir_all(dir.path().join("assets/models")).unwrap();
+    std::fs::write(dir.path().join("assets/models/tiny.gguf"), b"GGUF\x03\x00\x00\x00").unwrap();
+    std::fs::write(dir.path().join("assets/config.json"), b"{\"ok\":true}").unwrap();
+
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .arg("package")
+        .output()
+        .expect("run cpc package");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+
+    let res = dir.path().join("target/debug/Bare.app/Contents/Resources");
+    assert_eq!(
+        std::fs::read(res.join("models/tiny.gguf")).unwrap(),
+        b"GGUF\x03\x00\x00\x00"
+    );
+    assert_eq!(
+        std::fs::read_to_string(res.join("config.json")).unwrap(),
+        "{\"ok\":true}"
+    );
+}

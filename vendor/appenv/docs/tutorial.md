@@ -76,8 +76,29 @@ fn show_defaults() {
 }
 ```
 
-Use `read_asset` for images or other binary data. Both readers return owned
-values and preserve empty files.
+Use `read_asset` for images or other small binary data. Both readers return
+owned values and preserve empty files.
+
+When a library (such as a GGUF or ONNX model loader) requires a real filesystem
+path on disk rather than an in-memory buffer:
+
+1. Put the file in your project's `assets/` directory (e.g. `assets/models/model.gguf`).
+2. Package the app (`cpc package` on macOS copies `assets/*` into `Contents/Resources/`; on iOS copy into the `.app` bundle; on Android pass `-A assets` to `aapt2 link`; on desktop place beside the executable).
+3. Resolve the path at runtime with `appenv::asset_path("models/model.gguf")` (returns the direct bundle path on Apple/desktop; streams once to `no_backup_dir()` on Android and reuses it on future launches).
+4. Pass `path.view()` to the library.
+
+```cplus
+import "appenv/appenv" as appenv;
+import "stdlib/result" as result;
+import "stdlib/io" as io;
+
+fn resolve_model() {
+    match appenv::asset_path("models/model.gguf") {
+        result::Result::Ok(path) => { io::println(path.view()); }
+        result::Result::Err(e) => { io::eprintln("Could not resolve packaged model"); }
+    }
+}
+```
 
 To show an installed version, match `appenv::version()` as
 `option::Option[text::Text]`. `None` means the platform has no value for this
@@ -85,6 +106,6 @@ process. For OS, architecture, simulator status and OS version, use the existing
 `stdlib/platform` API.
 
 On Android every call works from the first line of `run()` and from any thread.
-`read_asset` works with APK assets even though `resource_dir()` is unavailable;
-`app_path()` is the APK filename. See [guide.md](guide.md) for platform behavior and
-[ref.md](ref.md) for every signature.
+`read_asset` and `asset_path` work with APK assets even though `resource_dir()`
+is unavailable; `app_path()` is the APK filename. See [guide.md](guide.md) for
+platform behavior and [ref.md](ref.md) for every signature.
