@@ -14,6 +14,7 @@ use std::process::{Command, ExitCode};
 use std::sync::OnceLock;
 use tempfile::NamedTempFile;
 
+mod assets;
 mod mcp;
 
 const HELLO_LL: &str = include_str!("hello.ll");
@@ -146,6 +147,9 @@ debug / introspection (single-file):
                                     compile and write them); never builds the app. What a cross
                                     target's consumer (Xcode, Gradle, ESP-IDF) must add beside the
                                     app's own archive.
+  cpc build --print-asset-dir       stage ./assets/* for the target (flat: a name is relative to
+                                    assets/) and print the directory. What an outside builder
+                                    copies into an .app, or passes to `aapt2 link -A`.
 
 other:
   --diagnostics=MODE                diagnostics output: human (default) | short | json
@@ -312,6 +316,29 @@ and the writes of a dependency build.
 
   cpc build --target ios-arm64-simulator
   cpc build --target ios-arm64-simulator --print-link-args
+"
+        }
+        Some(Subcommand::PrintAssetDir) => {
+            "\
+cpc build --print-asset-dir [--target NAME] [--release]
+
+Stage the project's ./assets/* for the target and print the directory,
+on one line. Reads ./Cplus.toml. Builds nothing.
+
+The files are copied FLAT: `assets/defaults/settings.json` is the asset
+`defaults/settings.json`, which is the name `appenv::read_asset` and
+facet's `ui::image` look up. The directory is
+`target/assets/<target>/<mode>/` (`host` for a native build); it always
+exists and holds exactly the project's assets, so copy its contents
+without testing for it first:
+
+  cp -R \"$(cpc build --target ios-arm64-simulator --print-asset-dir)/.\" App.app/
+  aapt2 link ... -A \"$(cpc build --target android-arm64 --print-asset-dir)\"
+
+`cpc build` stages the same directory, and on a self-linked platform
+also places the files beside the binary, where a bare binary's
+`appenv::resource_dir()` points. `cpc package` copies it into
+Contents/Resources/.
 "
         }
         Some(Subcommand::Graph) => {
@@ -663,6 +690,10 @@ fn main() -> ExitCode {
             }
             Some("--print-link-args") => {
                 subcommand = Some(Subcommand::PrintLinkArgs);
+                i += 1;
+            }
+            Some("--print-asset-dir") => {
+                subcommand = Some(Subcommand::PrintAssetDir);
                 i += 1;
             }
             Some("--timings") => {
@@ -1109,6 +1140,7 @@ fn main() -> ExitCode {
         (Some(Subcommand::PrintLinkArgs), _) => {
             print_link_args(diag_mode, build_mode, &sanitizers)
         }
+        (Some(Subcommand::PrintAssetDir), _) => print_asset_dir(diag_mode, build_mode),
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
         (Some(Subcommand::Test), _) => run_test(
             test_input,
@@ -1183,6 +1215,11 @@ enum Subcommand {
     /// nowhere, so every consumer re-derived it. iris did, with `find -L` over
     /// two roots, which is a resolution this tool owns.
     PrintLinkArgs,
+    /// `cpc build --print-asset-dir` — stage `<root>/assets/*` for the active
+    /// target and print the directory, so an outside builder copies the
+    /// project's assets from where cpc put them instead of re-deriving the
+    /// rule. See `assets.rs`.
+    PrintAssetDir,
     Fmt,
     Test,
     Lsp,
@@ -2145,6 +2182,40 @@ fn dep_source_dirs(m: &manifest::Manifest) -> Vec<(String, PathBuf)> {
 /// this — checking should not spend a clang invocation on a dependency, and
 /// resolution falls back to `src/` per module when a header is absent.
 ///
+/// Where `./assets/*` is staged for the active target and mode — see
+/// `assets::staging_dir`.
+fn asset_staging_dir(m: &manifest::Manifest, build_mode: BuildMode) -> PathBuf {
+    let mode = match build_mode {
+        BuildMode::Debug => "debug",
+        BuildMode::Release => "release",
+    };
+    assets::staging_dir(&m.root, target::active_target_name(), mode)
+}
+
+/// `cpc build --print-asset-dir` — stage `./assets/*` for the active target
+/// and print the staging directory. See `assets.rs` for the rule and
+/// bugs/closed/project-assets-reach-only-a-packaged-macos-app.md for why an
+/// outside builder asks rather than copying `assets/` itself.
+fn print_asset_dir(diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
+    let m = match manifest::load(&PathBuf::from("Cplus.toml")) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_diag(&e.to_diagnostic(), diag_mode, "");
+            return ExitCode::FAILURE;
+        }
+    };
+    match assets::stage(&m.root, &asset_staging_dir(&m, build_mode)) {
+        Ok(dir) => {
+            println!("{}", dir.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("cpc: staging assets/: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `cpc build --print-link-args` — the link line the DEPENDENCIES contribute,
 /// one argument per line, on stdout. Builds nothing else.
 ///
@@ -3127,7 +3198,9 @@ fn run_package(
         eprintln!("cpc package: could not copy the binary: {e}");
         return ExitCode::FAILURE;
     }
-    let assets_src = m.root.join("assets");
+    // The directory `build_project` staged — the one rule for what an asset's
+    // name is — rather than a second reading of `assets/` here.
+    let assets_src = asset_staging_dir(&m, build_mode);
     if assets_src.is_dir() {
         if let Err(e) = copy_dir_contents(&assets_src, &resources) {
             eprintln!(
@@ -3497,6 +3570,15 @@ fn build_project(
         let code =
             build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false, sanitizers);
         timings::report_project(&m.package.name);
+        if code != ExitCode::SUCCESS {
+            return code;
+        }
+        // The container (an .app, an APK) is assembled downstream; the assets
+        // it needs are staged for it here.
+        if let Err(e) = assets::stage(&m.root, &asset_staging_dir(&m, build_mode)) {
+            eprintln!("cpc: staging assets/: {e}");
+            return ExitCode::FAILURE;
+        }
         return code;
     }
     if !entry.is_file() {
@@ -3600,6 +3682,9 @@ fn build_project(
     });
     let ir = timings::phase("prune", || prune_ir(ir));
 
+    // Assets go beside the binary only where cpc chose the binary's place:
+    // `-o /usr/local/bin/tool` must not scatter a project's files there.
+    let out_is_default = out.is_none();
     let out_path = out.unwrap_or_else(|| {
         let sub = match build_mode {
             BuildMode::Debug => "debug",
@@ -3723,6 +3808,25 @@ fn build_project(
     timings::report_project(&m.package.name);
     drop(tmp_handle); // explicit cleanup on the secure temp path
     if status == ExitCode::SUCCESS {
+        // A bare binary's `appenv::resource_dir()` is its own directory, so
+        // that is where its assets have to be for `./target/debug/app` to read
+        // one. Staged first, so `cpc package` and `--print-asset-dir` see the
+        // same files.
+        let staged = match assets::stage(&m.root, &asset_staging_dir(&m, build_mode)) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("cpc: staging assets/: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        if out_is_default {
+            if let Some(dir) = out_path.parent() {
+                if let Err(e) = assets::mirror_beside(&staged, dir) {
+                    eprintln!("cpc: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
         // One line on success. The only signal used to be the exit code,
         // which is easy to lose — piping through `tail` reports tail's
         // status, and that produced a confidently wrong "the build is

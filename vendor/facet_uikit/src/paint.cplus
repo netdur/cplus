@@ -31,6 +31,7 @@
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/fs" as fs;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
@@ -1079,3 +1080,20 @@ extern fn CGPathCreateWithRoundedRect(r: rt::Rect, cw: f64, ch: f64, t: *u8) -> 
 extern fn CATransform3DTranslate(m: quartz::Transform3D, tx: f64, ty: f64, tz: f64) -> quartz::Transform3D;
 extern fn CATransform3DRotate(m: quartz::Transform3D, angle: f64, x: f64, y: f64, z: f64) -> quartz::Transform3D;
 extern fn CATransform3DScale(m: quartz::Transform3D, sx: f64, sy: f64, sz: f64) -> quartz::Transform3D;
+
+// A RELATIVE FILE NAME IS AN ASSET NAME FIRST: `hat.png` is the project's
+// `assets/hat.png`, which the build copies flat into the bundle root — the main
+// bundle's `resourcePath`, and what `appenv::resource_dir()` answers. A name
+// below the top (`icons/cap.png`) is found here even where `imageNamed:` would
+// not; an absolute path, or a name not in the bundle, comes back as given.
+fn asset_file(src: str) -> text::Text {
+    if src.has_prefix("/") { return src.to_text(); }
+    let main: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSBundle\0")), rt::sel(#str_ptr("mainBundle\0")));
+    if main.is_null() { return src.to_text(); }
+    let res: *u8 = rt::msg_id(main, rt::sel(#str_ptr("resourcePath\0")));
+    if res.is_null() { return src.to_text(); }
+    let dir: text::Text = bridge::to_text(res);
+    let full: text::Text = "${dir}/${src}";
+    if fs::exists(full.view()) { return full; }
+    return src.to_text();
+}

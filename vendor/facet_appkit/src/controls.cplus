@@ -505,7 +505,7 @@ fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
                     match ak::Image::image_named(src) {
                         option::Option[ak::Image]::Some(named) => { iv.set_image(named); }
                         option::Option[ak::Image]::None => {
-                            iv.set_image(ak::Image::new_with_contents_of_file(src));
+                            iv.set_image(paint::image_file(src));
                         }
                     }
                 }
@@ -1896,7 +1896,7 @@ fn resolve_image(src: str) -> option::Option[ak::Image] {
         option::Option[ak::Image]::Some(named) => { return option::some(named); }
         option::Option[ak::Image]::None => { }
     }
-    return option::some(ak::Image::new_with_contents_of_file(src));
+    return option::some(paint::image_file(src));
 }
 
 // The filled name if there is one, else the plain name — so `fill: 1.0` on a

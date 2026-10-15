@@ -243,6 +243,7 @@ link. Two commands make that handoff workable:
 ```bash
 cpc build --target ios-arm64            # target/ios-arm64/debug/lib<name>.a + <name>.h
 cpc build --print-link-args             # what the DEPENDENCIES add to the link line
+cpc build --print-asset-dir             # where the project's assets/ were staged
 ```
 
 `--print-link-args` prints one argument per line. It never builds the app,
@@ -254,6 +255,30 @@ and libs travel with it.
 
 Cross-target artifacts land under `target/<target-name>/<mode>/`, so a host
 build and an iOS build coexist without a clean.
+
+### Assets
+
+Files in the project's `assets/` are the app's assets, and an asset's name
+is its path inside `assets/`: `assets/defaults/settings.json` is
+`defaults/settings.json`. That is the name `appenv::read_asset` and facet's
+`ui::image` take. Every build copies them, flat, into
+`target/assets/<target>/<mode>/` (`host` for a native build). From there:
+
+- a self-linked build also places them beside the binary, which is the
+  resource directory of a binary outside a bundle, so
+  `./target/debug/<name>` reads them from any working directory;
+- `cpc package` copies them into `Contents/Resources/`;
+- for an external-builder target, `--print-asset-dir` prints the staging
+  directory. Copy its contents into the `.app` root, or pass it to
+  `aapt2 link -A`. It always exists, empty when there are no assets.
+
+```bash
+cp -R "$(cpc build --target ios-arm64-simulator --print-asset-dir)/." App.app/
+aapt2 link ... -A "$(cpc build --target android-arm64 --print-asset-dir)"
+```
+
+A build with `-o` does not place assets beside the binary it writes;
+copy the staging directory there yourself if the binary needs them.
 
 ## 6. Where the toolchain comes from
 

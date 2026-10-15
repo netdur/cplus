@@ -278,6 +278,7 @@ cpc --emit-asm FILE          # native assembly
 cpc --emit-obj FILE -o OUT.o # relocatable object
 cpc --emit-ll-project        # merged IR for the whole project
 cpc build --print-link-args  # what the dependencies add to the link line
+cpc build --print-asset-dir  # where ./assets/* is staged for the target
 cpc --realtime-report[=json] # whole-project real-time contract digest
 ```
 

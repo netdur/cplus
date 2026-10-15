@@ -34,6 +34,7 @@ import "facet/web" as web;
 import "facet/hybrid_web" as hybrid_web;
 import "gtk4/gtk4" as gtk;
 import "gobject/runtime" as g;
+import "./paint" as paint;
 
 // `g_module_open` / `g_module_symbol` — gmodule's binding carries neither (the
 // GIR presents GModule as a boxed type whose methods it skips), so they are
@@ -395,7 +396,9 @@ fn looks_like_url(s: str) -> bool {
 fn load_hybrid(v: *u8, n: *core::Node) {
     let h: *props::HybridWebProps = hybrid_props(n);
     if h == (0 as *props::HybridWebProps) { return; }
-    let root: str = { (*h).hybrid_root.view() };
+    // A relative root is an asset folder first — paint::asset_file.
+    let resolved: text::Text = paint::asset_file({ (*h).hybrid_root.view() });
+    let root: str = resolved.view();
     let file: str = { (*h).default_file.view() };
     if file == "" { return; }
     var url: text::Text = text::from_str("file://");

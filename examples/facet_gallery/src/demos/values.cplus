@@ -19,7 +19,7 @@ impl Values {
 
     fn thumb(ref this,sender: *u8) {
         this.image_thumb=!this.image_thumb;
-        if let option::Option::Some(v)=slider::find("val:slider") {let updated=v.set_thumb_image(if this.image_thumb {"assets/slider-thumb.png"} else {""});}
+        if let option::Option::Some(v)=slider::find("val:slider") {let updated=v.set_thumb_image(if this.image_thumb {"slider-thumb.png"} else {""});}
         if let option::Option::Some(v)=label::find("val:thumb-status") {let updated=v.set_text(if this.image_thumb {"Image thumb"} else {"Native thumb"});}
     }
     fn colors(ref this, sender: *u8) {

@@ -1099,5 +1099,6 @@ fn resolve_drawn_image(src: str) -> option::Option[ui::Image] {
         option::Option[ui::Image]::Some(named) => { return option::some(named); }
         option::Option[ui::Image]::None => { }
     }
-    return ui::Image::image_with_contents_of_file(src);
+    let path: text::Text = paint::asset_file(src);
+    return ui::Image::image_with_contents_of_file(path.view());
 }

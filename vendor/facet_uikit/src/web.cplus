@@ -33,6 +33,7 @@ import "objc/synthesis" as synth;
 import "uikit/uikit" as ui;
 import "webkit/webkit" as wk;
 import "./input" as input;
+import "./paint" as paint;
 
 fn create_web(n: *core::Node) -> *u8 {
     let cfg: *u8 = { rt::alloc_init(#str_ptr("WKWebViewConfiguration\0")) };
@@ -409,7 +410,8 @@ fn start_task_imp(self_obj: *u8, cmd: *u8, wv: *u8, task: *u8) {
 
     let rel: text::Text = task_path(task);
     if escapes_root(rel.view()) { fail_task(task); return; }
-    var full: text::Text = text::from_str({ (*p).hybrid_root.view() });
+    // A relative root is an asset folder first — paint::asset_file.
+    var full: text::Text = paint::asset_file({ (*p).hybrid_root.view() });
     let _a: status::Status = full.append(rel.view());
     match fs::open_read(full.view()) {
         result::Result[fs::File, result::IoError]::Ok(f) => {
@@ -532,8 +534,11 @@ fn apply_hybrid_web(v: *u8, n: *core::Node, dirty: u64) {
 }
 
 // The bundle folder, and the page in it.
-fn load_local(v: *u8, root: str, file: str) {
-    if root == "" && file == "" { return; }
+fn load_local(v: *u8, given_root: str, file: str) {
+    if given_root == "" && file == "" { return; }
+    // A relative root is an asset folder first — paint::asset_file.
+    let resolved: text::Text = if given_root == "" { text::new() } else { paint::asset_file(given_root) };
+    let root: str = resolved.view();
     var path: text::Text = text::from_str(root);
     if root != "" && file != "" { path = path.appending("/"); }
     path = path.appending(file);

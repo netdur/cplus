@@ -137,8 +137,9 @@ Web → **Open local demo** loads the bundled HTML, CSS and JavaScript. Use
 **Send to page** and the page's **Send to native** button to try both directions;
 the counters show resource requests and lifecycle callbacks. Run
 `run.ps1 -Verify -VerifyMode hybrid -Release -SkipBuild` for real pointer checks
-and `out/verified-hybrid.png`. The runner sets the working directory so the
-shared gallery's `assets/hybrid` directory resolves correctly.
+and `out/verified-hybrid.png`. `build.ps1` copies the shared gallery's `assets/`
+into the runtime folder, beside the executable, which is where the asset names
+`hybrid` and `hat.png` resolve.
 
 The Swipe page now exposes native action buttons by dragging left. Change the
 threshold or toggle enabled state to test live behavior. Run

@@ -990,8 +990,9 @@ fn icon_pixbuf(name: str) -> *u8 {
     return out;
 }
 
-fn from_file(path: str) -> *u8 {
-    return match pixbuf::Pixbuf::new_from_file(path) {
+fn from_file(given: str) -> *u8 {
+    let path: text::Text = paint::asset_file(given);
+    return match pixbuf::Pixbuf::new_from_file(path.view()) {
         option::Option[pixbuf::Pixbuf]::Some(pb) => pb.raw(),
         option::Option[pixbuf::Pixbuf]::None => 0 as *u8,
     };

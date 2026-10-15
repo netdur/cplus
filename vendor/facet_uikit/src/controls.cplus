@@ -1210,8 +1210,15 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
 
 fn image_named(name: str) -> option::Option[ui::Image] {
     let cls: *u8 = rt::get_class(#str_ptr("UIImage\0"));
-    let img: *u8 = { rt::msg_id_id(cls, rt::sel(#str_ptr("imageNamed:\0")),
+    var img: *u8 = { rt::msg_id_id(cls, rt::sel(#str_ptr("imageNamed:\0")),
                                    bridge::nsstring(name)) };
+    // Then the file, a name below the bundle's top included — see
+    // paint::asset_file.
+    if img == (0 as *u8) {
+        let path: text::Text = paint::asset_file(name);
+        img = { rt::msg_id_id(cls, rt::sel(#str_ptr("imageWithContentsOfFile:\0")),
+                              bridge::nsstring(path.view())) };
+    }
     if img == (0 as *u8) { return option::Option[ui::Image]::None; }
     return option::some(ui::Image::from_raw(img));
 }

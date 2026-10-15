@@ -8,6 +8,7 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
+import "stdlib/fs" as fs;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
@@ -1356,7 +1357,36 @@ fn resolve_image(src: str) -> ak::Image {
         option::Option[ak::Image]::Some(named) => { return named; }
         option::Option[ak::Image]::None => { }
     }
-    return ak::Image::new_with_contents_of_file(src);
+    return image_file(src);
+}
+
+// A RELATIVE FILE NAME IS AN ASSET NAME FIRST: `hat.png` is the project's
+// `assets/hat.png`, found where `cpc` staged it — `Contents/Resources/` in a
+// `.app`, beside the executable for a bare binary. Both are the main bundle's
+// `resourcePath`, which is what `appenv::resource_dir()` answers too, so a
+// picture and a `read_asset` agree on what a name means.
+//
+// `imageNamed:` already looks there, but only for a name at the top: measured,
+// `imageNamed:@"icons/cap.png"` is nil with the file in place. And the file
+// step used to read a relative name against the WORKING DIRECTORY, so an app
+// drew its pictures when launched from its project folder and nothing anywhere
+// else. An absolute path, or a relative one not in the bundle, is read as
+// given, which keeps a path to the user's own file working.
+fn image_file(src: str) -> ak::Image {
+    let path: text::Text = asset_file(src);
+    return ak::Image::new_with_contents_of_file(path.view());
+}
+
+fn asset_file(src: str) -> text::Text {
+    if src.has_prefix("/") { return src.to_text(); }
+    let main: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSBundle\0")), rt::sel(#str_ptr("mainBundle\0")));
+    if main.is_null() { return src.to_text(); }
+    let res: *u8 = rt::msg_id(main, rt::sel(#str_ptr("resourcePath\0")));
+    if res.is_null() { return src.to_text(); }
+    let dir: text::Text = bridge::to_text(res);
+    let full: text::Text = "${dir}/${src}";
+    if fs::exists(full.view()) { return full; }
+    return src.to_text();
 }
 
 // CATransform3D is a bare by-value C struct in the binding, with the matrix

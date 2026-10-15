@@ -13686,6 +13686,37 @@ fn a_background_image_is_the_layers_contents_not_a_subview() {
 }
 
 #[test]
+fn a_relative_image_name_is_an_asset_name_even_below_the_top() {
+    // `cpc build` puts assets/* flat in the main bundle's resourcePath — beside
+    // a bare binary, Contents/Resources in a .app — and appenv reads a name
+    // like `icons/gear.tiff` from there. `imageNamed:` finds only a name at the
+    // TOP (measured: nil for a nested one with the file in place), and the file
+    // step used to read the name against the working directory, so a picture
+    // in a folder drew nothing unless the app was launched from its project.
+    let main: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSBundle\0")), rt::sel(#str_ptr("mainBundle\0")));
+    let res: text::Text = bridge::to_text(rt::msg_id(main, rt::sel(#str_ptr("resourcePath\0"))));
+    let dir: text::Text = "${res}/facet_asset_probe";
+    let _d = fs::create_dir_all(dir.view());
+    let file: text::Text = "${dir}/gear.tiff";
+    match ak::Image::image_with_system_symbol_name("gear", "") {
+        option::Option[ak::Image]::Some(g) => {
+            let tiff: *u8 = rt::msg_id(g.raw(), rt::sel(#str_ptr("TIFFRepresentation\0")));
+            assert tiff.is_not_null();
+            assert rt::msg_i8_id_i8(tiff, rt::sel(#str_ptr("writeToFile:atomically:\0")),
+                                    bridge::nsstring(file.view()), 1 as i8) != (0 as i8);
+        }
+        option::Option[ak::Image]::None => { assert false; }
+    }
+    let img: ak::Image = paint::image_file("facet_asset_probe/gear.tiff");
+    assert img.raw().is_not_null();
+    assert paint::asset_file("facet_asset_probe/gear.tiff") == file;
+    // A name that is not in the bundle, and an absolute path, are used as given.
+    assert paint::asset_file("facet_no_such_asset.png") == "facet_no_such_asset.png";
+    assert paint::asset_file("/abs/x.png") == "/abs/x.png";
+    let _r = fs::remove_file(file.view());
+}
+
+#[test]
 fn a_background_image_can_be_taken_away_again() {
     backend::install();
     var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 0.0f64), key: "bg2");

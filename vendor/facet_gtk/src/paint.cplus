@@ -29,6 +29,8 @@
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/fs" as fs;
+import "stdlib/bundle" as bundle;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
@@ -1086,4 +1088,18 @@ fn apply_semantics(v: *u8, n: *core::Node) {
                                            #addr_of(val) as *u8) };
     { g_value_unset(#addr_of(val) as *u8) };
     return;
+}
+
+// A RELATIVE FILE NAME IS AN ASSET NAME FIRST: `hat.png` is the project's
+// `assets/hat.png`, which `cpc build` places beside the executable — the
+// directory `appenv::resource_dir()` answers on Linux. Read against the working
+// directory instead, an app drew its pictures only when launched from its
+// project folder. An absolute path, or a name not found there, is used as given.
+fn asset_file(src: str) -> text::Text {
+    if src.has_prefix("/") { return src.to_text(); }
+    let dir: text::Text = bundle::dir();
+    if dir.is_empty() { return src.to_text(); }
+    let full: text::Text = "${dir}/${src}";
+    if fs::exists(full.view()) { return full; }
+    return src.to_text();
 }

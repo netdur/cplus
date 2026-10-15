@@ -59,9 +59,9 @@ For a desktop tool without an installed app ID, use
 for `cache_dir`. On mobile, omit it to use the native app root; a supplied
 namespace adds a child inside that root.
 
-Read a packaged UTF-8 resource by its relative name. Place this example file in
-the Apple resource bundle, Android APK `assets/defaults/`, or a desktop
-`defaults/` directory beside the executable.
+Read a packaged UTF-8 resource by its relative name. Put the example file at
+`assets/defaults/settings.json` in the project; the build puts it where each
+platform looks, and its name is `defaults/settings.json` on all of them.
 
 ```cplus
 import "appenv/appenv" as appenv;
@@ -83,7 +83,7 @@ When a library (such as a GGUF or ONNX model loader) requires a real filesystem
 path on disk rather than an in-memory buffer:
 
 1. Put the file in your project's `assets/` directory (e.g. `assets/models/model.gguf`).
-2. Package the app (`cpc package` on macOS copies `assets/*` into `Contents/Resources/`; on iOS copy into the `.app` bundle; on Android pass `-A assets` to `aapt2 link`; on desktop place beside the executable).
+2. Build it. `cpc build` places `assets/*` beside a desktop binary and `cpc package` copies them into `Contents/Resources/`. For iOS and Android, copy the directory `cpc build --target <target> --print-asset-dir` prints into the `.app`, or pass it to `aapt2 link -A` (Iris's Run does both). [guide.md](guide.md#packaged-assets) has the commands.
 3. Resolve the path at runtime with `appenv::asset_path("models/model.gguf")` (returns the direct bundle path on Apple/desktop; streams once to `no_backup_dir()` on Android and reuses it on future launches).
 4. Pass `path.view()` to the library.
 

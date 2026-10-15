@@ -15,9 +15,13 @@ impl Images {
     fn new() -> Images { return Images { n: 0 }; }
 }
 
-// The tree's own sample image. One place, because four hosts show it and a
-// path repeated four times is a path that gets fixed three times.
-fn hat() -> str { return "../../assets/hat.png"; }
+// The gallery's sample image, by its ASSET NAME: `assets/hat.png` in this
+// project, which `cpc build` places beside the binary and a package puts in the
+// bundle's resources. A name, not a path, so it draws from any working
+// directory — the `../../assets/hat.png` this used to be drew only when the
+// gallery was started from its own folder. One place, because four hosts show
+// it and a name repeated four times is a name that gets fixed three times.
+fn hat() -> str { return "hat.png"; }
 
 impl Images: component::Component {
     fn build(ref this) -> core::Node {
@@ -73,7 +77,7 @@ impl Images: component::Component {
             "Image",
             "Raster or symbol image host. Layout owns size; fit owns how the content maps into it.",
             core::column(body).gap(12.0),
-            howto: "ui::image(\"assets/hat.png\", key: \"img\", fit: ImageFit::AspectFit)\n    .width(96.0).height(72.0)",
+            howto: "ui::image(\"hat.png\", key: \"img\", fit: ImageFit::AspectFit)\n    .width(96.0).height(72.0)",
         );
     }
 }

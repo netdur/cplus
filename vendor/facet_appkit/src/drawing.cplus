@@ -935,5 +935,5 @@ fn resolve_drawn_image(src: str) -> option::Option[ak::Image] {
         option::Option[ak::Image]::Some(named) => { return option::some(named); }
         option::Option[ak::Image]::None => { }
     }
-    return option::some(ak::Image::new_with_contents_of_file(src));
+    return option::some(paint::image_file(src));
 }

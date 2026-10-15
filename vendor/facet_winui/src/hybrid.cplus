@@ -12,6 +12,7 @@ import "./record" as record;
 import "./native" as native;
 import "./scheduler" as scheduler;
 import "./hybrid_files" as files;
+import "./imaging" as imaging;
 import "./browser" as browser;
 struct Event {kind: u32,args: rt::Object,deferral: rt::Object,body: text::Text,source: text::Text}
 struct State {opaque host: *record::View,users: u32,disposed: bool,stage: u32,applied: bool,loaded: bool,awaiting_navigation: bool,navigation: u64,pending: u64,timer: u64,engine: rt::Object,environment: rt::Object,script: rt::Object,root: text::Text,origin: text::Text,events: vec::Vec[Event],message: ui::EventRegistrationToken,resource: ui::EventRegistrationToken}
@@ -31,7 +32,7 @@ fn flush(s: *State) {
     let engine=native::must::[ui::ICoreWebView2](ui::ICoreWebView2::query((*s).engine));
     if ((*s).pending&(hybrid::P_DEFAULT_FILE|hybrid::P_HYBRID_ROOT))!=0 {
         (*s).pending=(*s).pending&~(hybrid::P_DEFAULT_FILE|hybrid::P_HYBRID_ROOT);(*s).loaded=false;(*s).awaiting_navigation=true;
-        (*s).root=files::full_path((*p).hybrid_root.view());let id=NEXT;NEXT=NEXT+1;(*s).origin="https://facet-${id}.invalid/";
+        let given_root=imaging::asset_file((*p).hybrid_root.view());(*s).root=files::full_path(given_root.view());let id=NEXT;NEXT=NEXT+1;(*s).origin="https://facet-${id}.invalid/";
         if (*s).root.count()>0 && files::relative((*p).default_file.view()) {native::check(engine.navigate("${(*s).origin}${(*p).default_file}"));}
         else {native::check(engine.navigate("about:blank"));}
     }

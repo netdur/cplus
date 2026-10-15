@@ -604,7 +604,9 @@ fn start_task_imp(self_obj: *u8, cmd: *u8, wv: *u8, task: *u8) {
 
     let rel: text::Text = task_path(task);
     if escapes_root(rel.view()) { fail_task(task); return; }
-    var full: text::Text = text::from_str({ (*p).hybrid_root.view() });
+    // A relative root is an asset folder first, the same as an image name —
+    // `hybrid_root: "web"` is the project's `assets/web/` (paint::asset_file).
+    var full: text::Text = paint::asset_file({ (*p).hybrid_root.view() });
     let _a: status::Status = full.append(rel.view());
     match fs::open_read(full.view()) {
         result::Result[fs::File, result::IoError]::Ok(f) => {

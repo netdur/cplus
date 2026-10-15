@@ -28,7 +28,7 @@ impl WebDemo {
     fn resource(ref this,sender: *u8) {this.resources=this.resources+1;this.status();}
     fn local(ref this,sender: *u8) {
         this.n=0;this.received=0;this.resources=0;this.initializing=0;this.initialized=0;this.status();
-        let old=mount::replace("web:view",ui::hybrid_web(key:"web:view",hybrid_root:"assets/hybrid",default_file:"index.html",on_web_view_initializing:this.starting,on_web_view_initialized:this.ready,on_raw_message_received:this.message_received,on_web_resource_requested:this.resource).height(320.0f64).grow(1.0f64));
+        let old=mount::replace("web:view",ui::hybrid_web(key:"web:view",hybrid_root:"hybrid",default_file:"index.html",on_web_view_initializing:this.starting,on_web_view_initialized:this.ready,on_raw_message_received:this.message_received,on_web_resource_requested:this.resource).height(320.0f64).grow(1.0f64));
     }
     fn send(ref this,sender: *u8) {if let option::Option::Some(c)=hybrid::find("web:view") {this.n=this.n+1;let changed=c.send_message("Hello from Facet #${this.n}");}}
 }

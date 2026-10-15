@@ -1118,7 +1118,11 @@ fn set_image_source(img: gtk::Image, source: str) {
     // has to run before the heuristic. No real path collides with one.
     let mapped: str = freedesktop_name_for(source);
     if mapped != "" { img.set_from_icon_name(mapped); return; }
-    if paint::looks_like_path(source) { img.set_from_file(source); return; }
+    if paint::looks_like_path(source) {
+        let path: text::Text = paint::asset_file(source);
+        img.set_from_file(path.view());
+        return;
+    }
     img.set_from_icon_name(source);
     return;
 }
@@ -1678,7 +1682,8 @@ fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::ImageProps) { return; }
     let pic: gtk::Picture = gtk::Picture::from_raw(v);
     if (dirty & image::P_SOURCE) != (0 as u64) {
-        pic.set_filename({ (*p).source.view() });
+        let path: text::Text = paint::asset_file({ (*p).source.view() });
+        pic.set_filename(path.view());
         // An animated source is decoded a SECOND time, as an animation, and
         // the still frame above is what shows until something plays it. The
         // double decode is the price of GtkPicture taking a paintable and

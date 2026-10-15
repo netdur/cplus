@@ -128,12 +128,21 @@ to `mmap` or open directly.
 The end-to-end workflow for bundled assets is:
 
 1. **Create `assets/` in the project root** (e.g. `assets/defaults/settings.json` or `assets/models/model.gguf`).
-2. **Package the app for the target platform:**
-   - **macOS (`.app`):** `cpc package` automatically copies `./assets/*` into `<Name>.app/Contents/Resources/` before signing.
-   - **iOS (`.app`):** Copy `./assets/*` into the `.app` bundle root (or add `assets` as a folder reference in Xcode).
-   - **Android (`.apk`):** Pass `-A assets` to `aapt2 link` when assembling the APK.
-   - **Linux / Windows / desktop CLI:** Place the files beside the executable.
+   An asset's name is its path inside `assets/`, without the `assets/` prefix.
+2. **Build.** `cpc build` stages the files, flat, in
+   `target/assets/<target>/<mode>/`. Where they go from there:
+   - **macOS / Linux / Windows binary:** `cpc build` also places them beside
+     the executable, which is `resource_dir()` for a binary outside a bundle.
+     `./target/debug/<name>` reads them from any working directory. (Not with
+     `-o`: a binary written elsewhere gets no files beside it.)
+   - **macOS (`.app`):** `cpc package` copies them into `<Name>.app/Contents/Resources/` before signing.
+   - **iOS (`.app`):** copy the staged directory's contents into the `.app`
+     root: `cp -R "$(cpc build --target ios-arm64 --print-asset-dir)/." <App>.app/`.
+     Iris's iOS Run does this.
+   - **Android (`.apk`):** pass the staged directory to `aapt2 link`:
+     `-A "$(cpc build --target android-arm64 --print-asset-dir)"`. Iris's Android Run does this.
 3. **Resolve or read by relative name** (`"defaults/settings.json"`, `"models/model.gguf"`). Names are case-sensitive on Android; use exact casing for portability.
+   The same name works in all of the layouts above. `"assets/defaults/settings.json"` works in none of them.
 4. **Pass the returned value or path to the consumer.**
 
 `read_asset` and `read_asset_text` own their output and close native handles

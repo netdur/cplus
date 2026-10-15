@@ -30,6 +30,7 @@
 // has needed.
 
 import "stdlib/option" as option;
+import "stdlib/text" as text;
 import "facet/vocabulary" as vocab;
 import "./paint" as paint;
 import "gtk4/gtk4" as gtk;
@@ -182,7 +183,8 @@ fn load_animation(v: *u8, source: str) {
     if v == (0 as *u8) { return; }
     forget_animation(v);
     if source == "" { return; }
-    let a: pixbuf::PixbufAnimation = match pixbuf::PixbufAnimation::new_from_file(source) {
+    let path: text::Text = paint::asset_file(source);
+    let a: pixbuf::PixbufAnimation = match pixbuf::PixbufAnimation::new_from_file(path.view()) {
         option::Option[pixbuf::PixbufAnimation]::Some(x) => x,
         option::Option[pixbuf::PixbufAnimation]::None => { return; }
     };

@@ -615,6 +615,7 @@ cpc --emit-obj FILE -o OUT.o
 cpc --emit-header FILE              # C header for export items
 cpc --emit-ll-project               # merged IR for the project
 cpc build --print-link-args         # what the DEPENDENCIES add to the link line
+cpc build --print-asset-dir         # stage ./assets/* for the target; print the directory
 cpc --realtime-report[=json]        # contract digest; non-zero on any violation
 ```
 

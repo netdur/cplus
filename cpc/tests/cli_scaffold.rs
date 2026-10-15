@@ -1081,3 +1081,81 @@ fn package_copies_assets_into_bundle_resources() {
         "{\"ok\":true}"
     );
 }
+
+#[test]
+fn build_places_assets_beside_the_binary_flat_and_drops_removed_ones() {
+    // A bare binary's `appenv::resource_dir()` is its own directory, so that is
+    // where `cpc build` must put `assets/*` for `./target/debug/app` to read
+    // one — by the name relative to `assets/`, the same as in a package.
+    let dir = tempfile::tempdir().unwrap();
+    bare_app(dir.path(), "com.example.bare");
+    std::fs::create_dir_all(dir.path().join("assets/defaults")).unwrap();
+    std::fs::write(dir.path().join("assets/probe.txt"), "flat-root").unwrap();
+    std::fs::write(dir.path().join("assets/defaults/probe.txt"), "nested").unwrap();
+
+    let build = || {
+        let out = Command::new(cpc()).current_dir(dir.path()).arg("build").output().expect("run cpc build");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    };
+    build();
+    let bin_dir = dir.path().join("target/debug");
+    assert_eq!(std::fs::read_to_string(bin_dir.join("probe.txt")).unwrap(), "flat-root");
+    assert_eq!(std::fs::read_to_string(bin_dir.join("defaults/probe.txt")).unwrap(), "nested");
+    // The staging directory is NOT inside the binary's directory: an
+    // `assets/probe.txt` reachable there would answer a name no package does.
+    assert!(!bin_dir.join("assets").exists());
+    let staged = dir.path().join("target/assets/host/debug");
+    assert_eq!(std::fs::read_to_string(staged.join("defaults/probe.txt")).unwrap(), "nested");
+
+    std::fs::remove_dir_all(dir.path().join("assets/defaults")).unwrap();
+    build();
+    assert!(!bin_dir.join("defaults").exists(), "a removed asset outlived its source");
+    assert!(!staged.join("defaults").exists());
+    assert!(bin_dir.join("bare").is_file());
+}
+
+#[test]
+fn print_asset_dir_stages_for_the_named_target_without_building() {
+    let dir = tempfile::tempdir().unwrap();
+    bare_app(dir.path(), "com.example.bare");
+    std::fs::create_dir_all(dir.path().join("assets/icons")).unwrap();
+    std::fs::write(dir.path().join("assets/icons/cap.png"), b"\x89PNG").unwrap();
+
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["build", "--target", "ios-arm64-simulator", "--print-asset-dir"])
+        .output()
+        .expect("run cpc build --print-asset-dir");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let printed = std::path::PathBuf::from(printed);
+    assert!(printed.ends_with("target/assets/ios-arm64-simulator/debug"), "{}", printed.display());
+    assert_eq!(std::fs::read(printed.join("icons/cap.png")).unwrap(), b"\x89PNG");
+    // Nothing was compiled: `fn main` on an archive target would have failed.
+    assert!(!dir.path().join("target/ios-arm64-simulator").exists());
+
+    // No assets: still a directory, empty, so a consumer can copy `$dir/.`.
+    std::fs::remove_dir_all(dir.path().join("assets")).unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["build", "--target", "android-arm64", "--release", "--print-asset-dir"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let printed = std::path::PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
+    assert!(printed.ends_with("target/assets/android-arm64/release"));
+    assert_eq!(std::fs::read_dir(&printed).unwrap().count(), 0);
+}
+
+#[test]
+fn an_asset_that_would_replace_the_binary_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    bare_app(dir.path(), "com.example.bare");
+    std::fs::create_dir_all(dir.path().join("assets")).unwrap();
+    std::fs::write(dir.path().join("assets/bare"), "a picture").unwrap();
+    let out = Command::new(cpc()).current_dir(dir.path()).arg("build").output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("the asset `bare` would replace"), "{err}");
+    assert_ne!(std::fs::read(dir.path().join("target/debug/bare")).unwrap(), b"a picture");
+}
