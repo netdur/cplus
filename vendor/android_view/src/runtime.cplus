@@ -15,6 +15,7 @@
 //     the JNI interop is not redesigned in this slice.
 
 import "jni/jni" as jni;
+import "jni/mutf8" as mutf8;
 
 type Context = jni::jobject;
 type Activity = jni::jobject;
@@ -139,46 +140,55 @@ impl Env {
         { (*(*this._env)).DeleteLocalRef(this._env, obj); };
     }
 
-    // `utf8` must be NUL-terminated modified UTF-8, matching JNI's
-    // NewStringUTF contract. String-literal call sites should include `\0`.
+    // `utf8` is NUL-terminated UTF-8 — real UTF-8, emoji included: it is
+    // converted to the modified UTF-8 JNI takes (jni/mutf8), so a four-byte
+    // character is a surrogate pair rather than input CheckJNI aborts over.
+    // String-literal call sites should include `\0`.
     fn new_string_utf(this, utf8: *u8) -> jni::jstring {
-        return { (*(*this._env)).NewStringUTF(this._env, utf8) };
+        return mutf8::new_string_cstr(this._env, utf8);
     }
 
-    // Copy a Java String into a caller's buffer as NUL-terminated UTF-8.
+    // The byte length `string_utf_into` needs room for, NUL excluded — so a
+    // caller can size the buffer to the string rather than refuse a long one.
+    // Of the UTF-8 it writes, not of JNI's modified UTF-8: the two differ for
+    // an emoji.
+    fn string_utf_length(this, s: jni::jstring) -> usize {
+        if s == { 0 as jni::jstring } { return 0 as usize; }
+        let n: usize = { (*(*this._env)).GetStringUTFLength(this._env, s) } as usize;
+        let chars: *u8 = { (*(*this._env)).GetStringUTFChars(this._env, s, 0 as *jni::jboolean) };
+        if chars == (0 as *u8) { return 0 as usize; }
+        let len: usize = mutf8::modified_to_utf8(chars, n, 0 as *u8);
+        { (*(*this._env)).ReleaseStringUTFChars(this._env, s, chars) };
+        return len;
+    }
+
+    // Copy a Java String into a caller's buffer as NUL-terminated UTF-8 — real
+    // UTF-8: JNI hands over MODIFIED UTF-8, where an emoji is a surrogate pair
+    // of three-byte halves, and that is converted here (jni/mutf8). Read raw,
+    // an emoji made text that was not valid UTF-8.
     //
     // `GetStringUTFChars` hands back a pointer the JVM owns and may have
     // allocated, so it MUST be released — which is why this takes a buffer and
     // copies rather than returning the pointer and trusting a caller to.
     //
-    // The length is asked for FIRST and a string that does not fit is refused
-    // outright, the same posture as `paint::cstr`: half a string is a wrong
-    // answer that looks like a right one, and a cut in the middle of a
-    // codepoint is not even valid UTF-8. `GetStringUTFLength` counts BYTES of
-    // modified UTF-8, which is exactly what lands in the buffer.
-    // The byte length `string_utf_into` needs room for, NUL excluded — so a
-    // caller can size the buffer to the string rather than refuse a long one.
-    fn string_utf_length(this, s: jni::jstring) -> usize {
-        if s == { 0 as jni::jstring } { return 0 as usize; }
-        return { (*(*this._env)).GetStringUTFLength(this._env, s) } as usize;
-    }
-
+    // A string that does not fit is refused outright, the same posture as
+    // `paint::cstr`: half a string is a wrong answer that looks like a right
+    // one, and a cut in the middle of a codepoint is not even valid UTF-8.
+    // `string_utf_length` is the room it needs.
     fn string_utf_into(this, s: jni::jstring, buf: *u8, cap: usize) -> bool {
         { (*buf) = 0 as u8 };
         if s == { 0 as jni::jstring } { return true; }
         let n: usize = { (*(*this._env)).GetStringUTFLength(this._env, s) } as usize;
-        if (n +% (1 as usize)) > cap { return false; }
         let chars: *u8 = { (*(*this._env)).GetStringUTFChars(this._env, s, 0 as *jni::jboolean) };
         if chars == (0 as *u8) { return false; }
-        var i: usize = 0 as usize;
-        while i < n {
-            let d: *u8 = { ({ #addr(buf) } +% i) as *u8 };
-            let p: *u8 = { ({ #addr(chars) } +% i) as *u8 };
-            { (*d) = (*p) };
-            i = i +% (1 as usize);
+        let len: usize = mutf8::modified_to_utf8(chars, n, 0 as *u8);
+        if (len +% (1 as usize)) > cap {
+            { (*(*this._env)).ReleaseStringUTFChars(this._env, s, chars) };
+            return false;
         }
+        let _w: usize = mutf8::modified_to_utf8(chars, n, buf);
         { (*(*this._env)).ReleaseStringUTFChars(this._env, s, chars) };
-        let term: *u8 = { ({ #addr(buf) } +% n) as *u8 };
+        let term: *u8 = { ({ #addr(buf) } +% len) as *u8 };
         { (*term) = 0 as u8 };
         return true;
     }

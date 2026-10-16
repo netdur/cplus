@@ -55,6 +55,7 @@ import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "stdlib/status" as status;
 import "jni/jni" as jni;
+import "jni/mutf8" as mutf8;
 import "./http" as http;
 
 // ==========================================================================
@@ -192,51 +193,22 @@ fn delete_local(e: *jni::JNIEnv, o: jni::jobject) {
     { (*(*e)).DeleteLocalRef(e, o) };
 }
 
-// A C+ `str` as a Java String. The caller deletes the local ref.
+// A C+ `str` as a Java String. The caller deletes the local ref. Through
+// jni/mutf8: JNI takes MODIFIED UTF-8, so an emoji in a header value or a body
+// is a surrogate pair rather than input CheckJNI aborts over.
 fn new_jstring(e: *jni::JNIEnv, s: str) -> jni::jstring {
-    var buf: [u8; 4096] = #zero::[[u8; 4096]]();
-    let base: *u8 = { #addr_of(buf[0]) };
-    if !cstr(s, base, 4096 as usize) { return 0 as jni::jstring; }
-    return { (*(*e)).NewStringUTF(e, base) };
+    return mutf8::new_string(e, s);
 }
 
-// And back. Answers "" for a null String, which is what every optional Java
-// String slot here means.
+// And back, as real UTF-8 (jni/mutf8). Answers "" for a null String, which is
+// what every optional Java String slot here means.
 fn jstring_to_text(e: *jni::JNIEnv, s: jni::jstring) -> text::Text {
-    if s == (0 as jni::jstring) { return text::new(); }
-    let p: *u8 = { (*(*e)).GetStringUTFChars(e, s, 0 as *jni::jboolean) };
+    var n: usize = 0;
+    let p: *u8 = mutf8::read_string(e, s, #addr_of(n));
     if p.is_null() { return text::new(); }
-    let n: usize = cstr_len(p);
     let out: text::Text = text::from_str({ #str_from_raw_parts(p, n) });
-    { (*(*e)).ReleaseStringUTFChars(e, s, p) };
+    mutf8::free_bytes(p);
     return out;
-}
-
-// NUL-terminate `s` into `buf`. False when it does not fit, which is a refusal
-// rather than a truncation: a truncated URL is a request to somewhere else.
-fn cstr(s: str, buf: *u8, cap: usize) -> bool {
-    let n: usize = #str_len(s);
-    if n +% (1 as usize) > cap { return false; }
-    let src: *u8 = #str_ptr(s);
-    var i: usize = 0 as usize;
-    while i < n {
-        let d: *u8 = { ({ #addr(buf) } +% i) as *u8 };
-        { (*d) = { *(src + i) } };
-        i = i +% (1 as usize);
-    }
-    let term: *u8 = { ({ #addr(buf) } +% n) as *u8 };
-    { (*term) = 0 as u8 };
-    return true;
-}
-
-fn cstr_len(p: *u8) -> usize {
-    var i: usize = 0 as usize;
-    var going: bool = true;
-    while going {
-        let c: *u8 = { ({ #addr(p) } +% i) as *u8 };
-        if { (*c) } == (0 as u8) { going = false; } else { i = i +% (1 as usize); }
-    }
-    return i;
 }
 
 // ==========================================================================

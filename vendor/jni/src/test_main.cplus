@@ -1,0 +1,4 @@
+// The test root: every module of the package, so `cpc test` sees each one's
+// tests. Not part of the library.
+import "./jni" as jni;
+import "./mutf8" as mutf8;

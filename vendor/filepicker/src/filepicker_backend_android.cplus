@@ -24,6 +24,7 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/status" as status;
 import "jni/jni" as jni;
+import "jni/mutf8" as mutf8;
 import "android_view/runtime" as rt;
 import "facet/app_events" as ev;
 import "./filepicker" as fp;
@@ -240,14 +241,14 @@ fn _resolver_env() -> option::Option[rt::Env] {
     return option::Option[rt::Env]::Some(env);
 }
 
-// A Java String as owned UTF-8, released before returning.
+// A Java String as owned UTF-8 — real UTF-8, converted from JNI's modified
+// UTF-8 by jni/mutf8, so a file name with an emoji in it survives.
 fn _text_of(env: rt::Env, s: jni::jobject) -> text::Text {
-    if s == (0 as jni::jobject) { return text::new(); }
-    let n: usize = { (*(*env.raw())).GetStringUTFLength(env.raw(), s as jni::jstring) } as usize;
-    let chars: *u8 = { (*(*env.raw())).GetStringUTFChars(env.raw(), s as jni::jstring, 0 as *jni::jboolean) };
+    var n: usize = 0;
+    let chars: *u8 = mutf8::read_string(env.raw(), s as jni::jstring, #addr_of(n));
     if chars.is_null() { return text::new(); }
     let out: text::Text = { #str_from_raw_parts(chars, n) }.to_text();
-    { (*(*env.raw())).ReleaseStringUTFChars(env.raw(), s as jni::jstring, chars) };
+    mutf8::free_bytes(chars);
     return out;
 }
 
