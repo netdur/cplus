@@ -13,6 +13,7 @@ import "facet/list" as list;
 import "facet/collection" as collection;
 import "facet/carousel" as carousel;
 import "facet/hybrid_web" as hybrid_web;
+import "facet/hybrid_page" as hybrid_page;
 import "facet/label" as label;
 import "facet/services" as services;
 import "flex_layout/flex_layout" as flex;
@@ -124,19 +125,12 @@ fn web_ready(v: *u8, ctx: *u8) {
 }
 
 fn from_page(body: *u8, ctx: *u8) {
-    let n: usize = cstr_len(body);
     match label::find("g:said") {
         option::Option[label::Label]::Some(l) => {
-            let _t: label::Label = l.set_text("page said: ${#str_from_raw_parts(body, n)}");
+            let _t: label::Label = l.set_text("page said: ${hybrid_page::message(body)}");
         }
         option::Option::None => { }
     }
-}
-
-fn cstr_len(p: *u8) -> usize {
-    var i: usize = 0;
-    while { *{ p + i } } != 0 { i = i +% 1; }
-    return i;
 }
 
 fn to_page(v: *u8, ctx: *u8) {
@@ -344,7 +338,7 @@ impl ListDemo: component::Component {
                              text_color: vocab::Color::ink(0.55)));
             hy.add(ui::label("0 resource(s) requested", key: "g:res", font_size: 13.0,
                              text_color: vocab::Color::ink(0.55)));
-            hy.add(shell::caption("A local page from the APK's own assets — three files, so the relative `<link>` and `<script>` have to resolve — and a channel in both directions: the page calls `window.facet.postMessage`, the app calls `send_message` and the page's `window.facet.receive` runs."));
+            hy.add(shell::caption("A local page from the APK's own assets — three files, so the relative `<link>` and `<script>` have to resolve — and a channel in both directions: the page calls `window.facet.postMessage`, the app calls `send_message` and the page hears a `HybridWebViewMessageReceived` event."));
             hy.add(shell::caption("The request count stays at zero on purpose. `on_web_resource_requested` is wired and fires for the network — verified against one — but Android does not route `file://` through that callback, so a page served entirely from assets reports none of itself."));
             body.add(shell::card("HYBRID WEB", hy));
         }

@@ -1332,18 +1332,6 @@ fn a_source_is_a_url_or_it_is_markup() {
 }
 
 #[test]
-fn a_message_crosses_as_a_json_string_whatever_is_in_it() {
-    // `send_message` delivers by EVALUATING a call, so the payload is a JSON
-    // literal in source — and a message containing a quote would otherwise end
-    // the call and leave the rest as syntax.
-    assert web::json_string("hello").view() == "\"hello\"";
-    assert web::json_string("say \"hi\"").view() == "\"say \\\"hi\\\"\"";
-    assert web::json_string("a\\b").view() == "\"a\\\\b\"";
-    assert web::json_string("one\ntwo").view() == "\"one\\ntwo\"";
-    return;
-}
-
-#[test]
 fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
     // NEGATIVE: `webkit_web_view_get_uri` answers NULL for a view that has
     // loaded nothing, and the URL is written back into the props on every

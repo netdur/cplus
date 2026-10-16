@@ -404,22 +404,17 @@ rows has closed: what is left is PROPS on controls that already work.
   and everything it references fails, which reads as a page that renders
   unstyled and does nothing.
 
-  The channel is `window.facet.postMessage` up and `window.facet.receive` down,
-  the names facet_uikit's page sees. Up is an `addJavascriptInterface` object,
-  but injected under a PRIVATE name: an injected object is a Java object and a
-  page cannot add properties to one, so binding it as `window.facet` makes the
-  page's own `window.facet.receive = ...` fail silently and kills the down
-  channel for the sake of the up one. The name a page uses is defined over a
-  plain object by a script run on every finished load — every load, because a
-  new document starts with nothing.
+  The page API is facet's (`facet/hybrid_page`), the same on every backend:
+  `window.facet.postMessage(body)` up, a `HybridWebViewMessageReceived` event
+  down. Up is the `addJavascriptInterface` object, injected AS `facet`, so it
+  exists from the start of every document. It was once a private name wrapped
+  at load finish, which left a page's first script without it.
 
-  `on_raw_message_received` and `on_web_resource_requested` hand the BODY and
-  the URL over as the sender: facet's handler shape is `(sender, ctx)` and its
-  props carry no field for either, so there is nowhere else to put them.
-  facet_uikit hands over an NSString in the same slot; this backend hands over a
-  NUL-terminated UTF-8 pointer, valid for the length of the call. The two are
-  different pointers because the CONTRACT has no place for the value — that is
-  a facet gap, not a backend choice.
+  `on_raw_message_received` hands the BODY over as the sender, a `*text::Text`
+  read with `hybrid_page::message(sender)` — the same on every backend.
+  `on_web_resource_requested` hands the URL over as a NUL-terminated UTF-8
+  pointer; the contract has no field for it, which is a facet gap, not a
+  backend choice.
 
   `on_web_resource_requested` reports and does not intercept. It also never
   fires for the page's own files: Android does not route `file://` through

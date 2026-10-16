@@ -14,6 +14,7 @@ import "flex_layout/flex_layout" as flex;
 import "android_view/widgets" as w;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/hybrid_page" as hybrid_page;
 import "facet/gestures" as gestures;
 import "facet/mount" as mount;
 import "facet/label" as label;
@@ -3973,12 +3974,9 @@ fn fire_web_edge(token: i64, edge: i32, back: bool, forward: bool) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
     // A HYBRID VIEW IS A WEB VIEW WITH ANOTHER RECORD, and the navigation edges
-    // are the plain kind's. What a hybrid does extra on a finished load is put
-    // its channel back: a new document wipes whatever the last one had.
-    if core::kind_of(n) == props::K_HYBRID_WEB {
-        if edge == (1 as i32) { install_channel(core::view_of(n)); }
-        return;
-    }
+    // are the plain kind's. Its channel needs nothing per load: the injected
+    // `facet` object is there from the start of every document.
+    if core::kind_of(n) == props::K_HYBRID_WEB { return; }
     let p: *props::WebProps = web_props(n);
     if p == (0 as *props::WebProps) { return; }
     let v: *u8 = core::view_of(n);
@@ -4866,14 +4864,13 @@ fn create_hybrid_web(n: *core::Node) -> *u8 {
     // here and not in an apply — facet_uikit reads them the same way.
     let a: fn(*u8, *u8) = { (*p).on_web_view_initializing };
     if a != props::no_handler { a(v, { (*p).on_web_view_initializing_ctx }); }
-    // The page's channel up. Named `facet` on both backends, so a page written
-    // for one posts on the other unchanged.
-    // INJECTED UNDER A PRIVATE NAME, and that is not tidiness. An
-    // `addJavascriptInterface` object is a Java object, and a page cannot add
-    // properties to one — so injecting it as `window.facet` makes the page's own
-    // `window.facet.receive = ...` fail silently, and the DOWN channel is dead
-    // for the sake of the up one. The name a page uses is built in JavaScript
-    // instead, by `install_channel`, over a plain object.
+    // The page's channel up: `window.facet.postMessage(body)`, facet's one page
+    // API (facet/hybrid_page). Injected AS `facet` — an `addJavascriptInterface`
+    // object exists from the start of every document, so a page can post from
+    // its first script. (It used to be a private `__facet_host` wrapped by a
+    // script run at load FINISH, because the page then assigned its own
+    // `window.facet.receive` and a Java object takes no new properties; the
+    // down channel is an event now, so nothing is assigned onto it.)
     let bridge: jni::jobject = dex::new_bridge(env, { #addr(n) as i64 }, { v as jni::jobject });
     if bridge != (0 as jni::jobject) {
         // The NAME is a C string here: a `_str`-shaped binding takes `*u8` and
@@ -4883,7 +4880,7 @@ fn create_hybrid_web(n: *core::Node) -> *u8 {
         // calls in this file had it wrong; the binding's signature is the
         // authority, not the shape of the Java method it wraps.
         var wv: w::WebView = w::WebView::from_global(env, env.new_global_ref(v));
-        wv.add_javascript_interface(bridge, #str_ptr("__facet_host\0"));
+        wv.add_javascript_interface(bridge, #str_ptr("facet\0"));
         let _k: *u8 = wv.into_raw();
         env.delete_local_ref(bridge);
     }
@@ -4902,28 +4899,6 @@ fn create_hybrid_web(n: *core::Node) -> *u8 {
     let b: fn(*u8, *u8) = { (*p).on_web_view_initialized };
     if b != props::no_handler { b(v, { (*p).on_web_view_initialized_ctx }); }
     return v;
-}
-
-// THE PAGE'S SIDE OF THE CHANNEL, defined in JavaScript over a plain object so
-// the page can hang its own `receive` on the same name. Re-run on every finished
-// load, because a new document starts with nothing.
-//
-// `postMessage` up and `receive` down are the names facet_uikit's page sees, so
-// a page written against one backend runs on the other.
-fn install_channel(v: *u8) {
-    if v == (0 as *u8) { return; }
-    if !e::have_env() { return; }
-    let env: rt::Env = e::env();
-    // A C STRING, NOT A jstring. The binding takes `*u8` and makes the Java
-    // string itself — handing it one already made runs `NewStringUTF` over a
-    // Java object POINTER, which CheckJNI reports as invalid modified UTF-8
-    // with the pointer's own bytes quoted back at you.
-    var wv: w::WebView = w::WebView::from_global(env, env.new_global_ref(v));
-    wv.evaluate_javascript(#str_ptr(
-        "window.facet = window.facet || {}; window.facet.postMessage = function (m) { __facet_host.postMessage(String(m)); };\0"),
-        0 as jni::jobject);
-    let _k: *u8 = wv.into_raw();
-    return;
 }
 
 fn apply_hybrid_web(v: *u8, n: *core::Node, dirty: u64) {
@@ -4951,26 +4926,21 @@ fn apply_hybrid_web(v: *u8, n: *core::Node, dirty: u64) {
         wv.load_url_str(base);
         let _k: *u8 = wv.into_raw();
     }
-    // THE APPLICATION CALLING INTO THE PAGE. The message is arbitrary text
-    // spliced into source, so it is quoted first — an unescaped quote in a
-    // message is an injection into the page's own script.
+    // THE APPLICATION CALLING INTO THE PAGE: the event facet/hybrid_page
+    // defines, with the body quoted there. Built as Text, so a long message is
+    // not cut at a fixed buffer.
     if (dirty & hybrid_web::P_SEND_MESSAGE) != (0 as u64) {
-        var mbuf: [u8; 1024] = #zero::[[u8; 1024]]();
-        let mbase: *u8 = { #addr_of(mbuf[0]) };
-        let _m: bool = paint::cstr({ (*p).outgoing_message.view() }, mbase, 1024 as usize);
-        let m_len: usize = paint::cstr_len(mbase);
-        if m_len > (0 as usize) {
-            var js: [u8; 2048] = #zero::[[u8; 2048]]();
-            let jbase: *u8 = { #addr_of(js[0]) };
-            let _j: bool = paint::cstr(
-                "window.facet && window.facet.receive && window.facet.receive(",
-                jbase, 2048 as usize);
-            var quoted: text::Text = js_quoted({ #str_from_raw_parts(mbase, m_len) });
-            append_cstr(jbase, 2048 as usize, quoted.view());
-            append_cstr(jbase, 2048 as usize, ")");
-            var wv: w::WebView = w::WebView::from_global(env, env.new_global_ref(v));
-            wv.evaluate_javascript(jbase, 0 as jni::jobject);
-            let _k: *u8 = wv.into_raw();
+        let m: str = { (*p).outgoing_message.view() };
+        if m != "" {
+            let js: text::Text = hybrid_page::delivery_script(m);
+            match js.c_str() {
+                option::Option[text::CString]::Some(cs) => {
+                    var wv: w::WebView = w::WebView::from_global(env, env.new_global_ref(v));
+                    wv.evaluate_javascript(cs.as_ptr(), 0 as jni::jobject);
+                    let _k: *u8 = wv.into_raw();
+                }
+                option::Option[text::CString]::None => { }
+            }
         }
     }
     return;
@@ -4984,41 +4954,11 @@ fn append_cstr(base: *u8, cap: usize, s: str) {
     return;
 }
 
-// A JSON string literal. Quote, backslash and the control range are the only
-// things that can end a literal early or leave it unparseable; everything else
-// is passed through, including UTF-8, which JSON takes as-is.
-fn js_quoted(s: str) -> text::Text {
-    var out: text::Text = text::from_str("\"");
-    var i: usize = 0 as usize;
-    while i < s.count() {
-        let b: u8 = match s.byte_at(i) {
-            option::Option[u8]::Some(x) => x,
-            option::Option[u8]::None => 0 as u8,
-        };
-        if b == (34 as u8) { if !out.append("\\\"").is_ok() { return text::new(); } }
-        else if b == (92 as u8) { if !out.append("\\\\").is_ok() { return text::new(); } }
-        else if b == (10 as u8) { if !out.append("\\n").is_ok() { return text::new(); } }
-        else if b == (13 as u8) { if !out.append("\\r").is_ok() { return text::new(); } }
-        else if b == (9 as u8) { if !out.append("\\t").is_ok() { return text::new(); } }
-        else if b < (32 as u8) { }
-        else {
-            match s.slice(i, i +% (1 as usize)) {
-                option::Option[str]::Some(one) => { if !out.append(one).is_ok() { return text::new(); } }
-                option::Option[str]::None => { }
-            }
-        }
-        i = i +% (1 as usize);
-    }
-    if !out.append("\"").is_ok() { return text::new(); }
-    return out;
-}
-
 // THE PAGE POSTED. facet's handler shape is (sender, ctx) and its props carry
 // no field for an incoming message, so the BODY is what arrives as the sender —
-// a NUL-terminated UTF-8 pointer, valid for the length of the call. facet_uikit
-// hands over an NSString in the same slot for the same reason. See MANIFEST §2:
-// the contract has no place to put this, and until it does the two backends
-// deliver it as two different pointers.
+// a `*text::Text`, valid for the length of the call, read with
+// `hybrid_page::message(sender)`: the same on every backend. Sized to the
+// string: a fixed 2 KiB buffer here used to DROP any longer message silently.
 fn fire_raw_message(token: i64, body: jni::jstring) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
@@ -5026,12 +4966,22 @@ fn fire_raw_message(token: i64, body: jni::jstring) {
     if p == (0 as *props::HybridWebProps) { return; }
     let h: fn(*u8, *u8) = { (*p).on_raw_message_received };
     if h == props::no_handler { return; }
-    var buf: [u8; 2048] = #zero::[[u8; 2048]]();
-    let base: *u8 = { #addr_of(buf[0]) };
-    if !e::env().string_utf_into(body, base, 2048 as usize) { return; }
-    h(base, { (*p).on_raw_message_received_ctx });
+    let env: rt::Env = e::env();
+    let len: usize = env.string_utf_length(body);
+    let buf: *u8 = { message_malloc(len +% (1 as usize)) };
+    if buf == (0 as *u8) { return; }
+    if env.string_utf_into(body, buf, len +% (1 as usize)) {
+        var text_body: text::Text = { #str_from_raw_parts(buf, len) }.to_text();
+        h(#addr_of(text_body) as *u8, { (*p).on_raw_message_received_ctx });
+    }
+    { message_free(buf) };
     return;
 }
+
+#[link_name = "malloc"]
+extern fn message_malloc(size: usize) -> *u8;
+#[link_name = "free"]
+extern fn message_free(p: *u8);
 
 // THE PAGE ASKED FOR SOMETHING. A report, not an interception — the URL arrives
 // in the sender slot for the same reason a message does.

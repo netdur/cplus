@@ -23,10 +23,14 @@ fn state(r: *record::View) -> *State {return (*r).extra as *State;}
 fn props_of(s: *State) -> *props::HybridWebProps {return (*core::node_data((*(*s).host).node)).props as *props::HybridWebProps;}
 // Sender values are borrowed for the callback only. Copy message text if needed
 // later. Resource senders are native event args, retained with Object::retain.
-fn message(sender: *u8) -> str {return (*(sender as *text::Text)).view();}
+
 fn release_state(s: *State) {(*s).users=(*s).users-1;if (*s).users==0 {let owner: box::Box[State]=box::from_raw::[State](s as *u8);}}
 fn kick(s: *State) {if (*s).timer==0 && !(*s).disposed {(*s).timer=scheduler::after(0.01f64,dispatch,s as *u8);}}
-fn bridge() -> str {return "window.facet=window.facet||{};window.facet.postMessage=function(body){window.chrome.webview.postMessage(String(body));};window.chrome.webview.addEventListener('message',function(e){if(typeof window.facet.onmessage==='function')window.facet.onmessage(e.data);});";}
+// facet's one page API (facet/hybrid_page): `window.facet.postMessage` up, a
+// `HybridWebViewMessageReceived` event down. WebView2 carries the body as data
+// (PostWebMessageAsString), so no script is built from it here — the event
+// name below is hybrid_page::MESSAGE_EVENT.
+fn bridge() -> str {return "window.facet=window.facet||{};window.facet.postMessage=function(body){window.chrome.webview.postMessage(String(body));};window.chrome.webview.addEventListener('message',function(e){window.dispatchEvent(new CustomEvent('HybridWebViewMessageReceived',{detail:{message:String(e.data)}}));});";}
 fn flush(s: *State) {
     if (*s).stage!=3 || (*s).disposed {return;}let p: *props::HybridWebProps=props_of(s);
     let engine=native::must::[ui::ICoreWebView2](ui::ICoreWebView2::query((*s).engine));

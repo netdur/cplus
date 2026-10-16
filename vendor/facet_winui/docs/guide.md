@@ -365,12 +365,14 @@ separators, or NUL bytes are rejected. The directory is not a filesystem sandbox
 against junctions or symlinks deliberately placed inside it.
 
 The page sends strings through `window.facet.postMessage(body)` and receives
-them through `window.facet.onmessage = body => { ... }`. The native
+them as a `HybridWebViewMessageReceived` event on `window`, with the text in
+`e.detail.message`. That page API is facet's (`facet/hybrid_page`) and the same on
+every backend. The native
 `send_message` command uses WebView2's string-message API, preserving quotes,
 newlines, Unicode and empty strings. A pending send waits for document loading;
 multiple unsynchronized sends share Facet's one outgoing-message property, so
 the latest value wins. In `on_raw_message_received`, read the borrowed text with
-`facet_winui/hybrid::message(sender)` and copy it if it must outlive the callback.
+`facet/hybrid_page::message(sender)` and copy it if it must outlive the callback.
 Direct JavaScript object messages are exposed as JSON text.
 
 `on_web_view_initializing` runs before the explicit engine initialization request;

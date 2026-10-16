@@ -5,6 +5,7 @@ import "stdlib/text" as text;
 import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/hybrid_web" as hybrid;
+import "facet/hybrid_page" as hybrid_page;
 import "facet/mount" as mount;
 import "facet/services" as services;
 import "facet_winui/facet_winui" as host;
@@ -31,7 +32,7 @@ impl Probe {
         if env::has_var("CPLUS_HYBRID_REMOVE_RESOURCE") {this.remove();}
     }
     fn received(ref this,sender: *u8) {
-        let body=bridge::message(sender);check::log("HYBRID: ${body}");
+        let body=hybrid_page::message(sender);check::log("HYBRID: ${body}");
         if env::has_var("CPLUS_HYBRID_REMOVE_MESSAGE") {this.remove();return;}
         if body.has_prefix("ready:") {
             assert body==(if this.stage==0 || this.stage==4 {"ready:A:index"} else if this.stage==1 {"ready:A:alternate"} else {"ready:B:alternate"});this.ready=true;

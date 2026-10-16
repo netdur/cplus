@@ -1,0 +1,136 @@
+// hybrid_page — the PAGE's side of `hybrid_web`, one definition for every
+// backend.
+//
+//   page -> app   window.facet.postMessage(body); the handler reads it with
+//                 hybrid_page::message(sender)
+//   app -> page   window.addEventListener("HybridWebViewMessageReceived",
+//                                         e => e.detail.message)
+//
+// The contract (docs/contract.md) maps the two verbs onto MAUI's HybridWebView
+// — `on_raw_message_received` is RawMessageReceived, `send_message` is
+// SendRawMessage — and the page sees what MAUI's page sees: the message as a
+// DOM event on `window`, named HybridWebViewMessageReceived, carrying it in
+// `detail.message`. An event rather than a hook the page assigns, so any number
+// of listeners hear it and one registered before the page's own script ran
+// still does.
+//
+// WHY THIS MODULE EXISTS: each backend used to name the page's side itself,
+// and they disagreed three ways — `window.facet.onmessage` (AppKit, WinUI),
+// `window.facet.receive` (UIKit, Android), a `message` event (GTK) — and up,
+// WebKit pages had only `window.webkit.messageHandlers.facet`. A page written
+// for one backend heard nothing on the next, silently
+// (bugs/closed/hybrid-web-delivers-to-the-page-under-three-different-names.md).
+// A backend now asks this module for the scripts, so the names live here once.
+
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+
+// THE APP'S SIDE of the up channel. `on_raw_message_received` hands the body
+// over as its SENDER — the handler shape is `(sender, ctx)` and the contract
+// has no field for it — and every backend hands over the same thing: a
+// `*text::Text`, valid for the length of the call. This reads it; copy it
+// (`.to_text()`) to keep it. It used to be an NSString on Apple, a C string on
+// Android and GTK and a Text on WinUI, so no handler could read it portably.
+fn message(sender: *u8) -> str {
+    if sender.is_null() { return ""; }
+    return { (*(sender as *text::Text)).view() };
+}
+
+// The DOM event a message from the app arrives as.
+const MESSAGE_EVENT: str = "HybridWebViewMessageReceived";
+
+// The script that hands `body` to the page: one event on `window`. Safe to run
+// before the page has listened — an event nobody hears is dropped, it does
+// not throw.
+fn delivery_script(body: str) -> text::Text {
+    let lit: text::Text = js_string(body);
+    return "window.dispatchEvent(new CustomEvent(\"${MESSAGE_EVENT}\",{detail:{message:${lit}}}));";
+}
+
+// For a backend whose native channel is WebKit's script-message handler named
+// `facet` (AppKit, UIKit, GTK): installed at document start, so the page finds
+// `window.facet.postMessage` before its own first script runs.
+fn webkit_bridge_script() -> str {
+    return "window.facet=window.facet||{};window.facet.postMessage=function(body){window.webkit.messageHandlers.facet.postMessage(String(body));};";
+}
+
+// `s` as a JavaScript string literal, quotes included. Escapes what can end
+// the literal or the line it sits on: `"`, `\`, every control byte, and
+// U+2028 / U+2029, which JavaScript reads as line terminators.
+fn js_string(s: str) -> text::Text {
+    var out: text::Text = text::from_str("\"");
+    var start: usize = 0;
+    var i: usize = 0;
+    let n: usize = s.count();
+    while i < n {
+        let b: u8 = match s.byte_at(i) { option::Option::Some(x) => x, option::Option::None => 0 as u8 };
+        var esc: str = "";
+        var width: usize = 1;
+        if b == (34 as u8) { esc = "\\\""; }
+        else if b == (92 as u8) { esc = "\\\\"; }
+        else if b == (10 as u8) { esc = "\\n"; }
+        else if b == (13 as u8) { esc = "\\r"; }
+        else if b == (9 as u8) { esc = "\\t"; }
+        else if b < (32 as u8) { esc = "\\u0000"; }
+        else if b == (226 as u8) && i + 2 < n {
+            // E2 80 A8 / E2 80 A9: U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR.
+            let b1: u8 = match s.byte_at(i + 1) { option::Option::Some(x) => x, option::Option::None => 0 as u8 };
+            let b2: u8 = match s.byte_at(i + 2) { option::Option::Some(x) => x, option::Option::None => 0 as u8 };
+            if b1 == (128 as u8) && b2 == (168 as u8) { esc = "\\u2028"; width = 3; }
+            if b1 == (128 as u8) && b2 == (169 as u8) { esc = "\\u2029"; width = 3; }
+        }
+        if esc != "" {
+            if let option::Option::Some(run) = s.slice(start, i) { let _r: status::Status = out.append(run); }
+            if esc == "\\u0000" {
+                let _u: status::Status = out.append(control_escape(b).view());
+            } else {
+                let _e: status::Status = out.append(esc);
+            }
+            start = i + width;
+        }
+        i = i + width;
+    }
+    if let option::Option::Some(run) = s.slice(start, n) { let _t: status::Status = out.append(run); }
+    let _q: status::Status = out.append("\"");
+    return out;
+}
+
+fn control_escape(b: u8) -> text::Text {
+    let digits: str = "0123456789abcdef";
+    let hi: str = match digits.slice((b / (16 as u8)) as usize, (b / (16 as u8)) as usize + 1) { option::Option::Some(d) => d, option::Option::None => "0" };
+    let lo: str = match digits.slice((b % (16 as u8)) as usize, (b % (16 as u8)) as usize + 1) { option::Option::Some(d) => d, option::Option::None => "0" };
+    return "\\u00${hi}${lo}";
+}
+
+#[test]
+fn a_message_reaches_the_page_as_mauis_event() {
+    let js: text::Text = delivery_script("hi");
+    assert js == "window.dispatchEvent(new CustomEvent(\"HybridWebViewMessageReceived\",{detail:{message:\"hi\"}}));";
+}
+
+#[test]
+fn a_message_cannot_break_out_of_its_literal() {
+    assert js_string("a\"b") == "\"a\\\"b\"";
+    assert js_string("back\\slash") == "\"back\\\\slash\"";
+    assert js_string("two\nlines\r") == "\"two\\nlines\\r\"";
+    assert js_string("\x01") == "\"\\u0001\"";
+    // The two separators, written literally: U+2028 then U+2029.
+    assert js_string("x y ") == "\"x\\u2028y\\u2029\"";
+    // Other multi-byte text passes through untouched.
+    assert js_string("café → ✓") == "\"café → ✓\"";
+    assert js_string("") == "\"\"";
+}
+
+#[test]
+fn a_webkit_page_gets_the_same_up_channel_as_every_other() {
+    assert webkit_bridge_script().contains("window.facet.postMessage=function(body)");
+    assert webkit_bridge_script().contains("window.webkit.messageHandlers.facet.postMessage");
+}
+
+#[test]
+fn the_body_is_read_the_same_way_on_every_backend() {
+    var body: text::Text = text::from_str("from the page");
+    assert message(#addr_of(body) as *u8) == "from the page";
+    assert message(0 as *u8) == "";
+}

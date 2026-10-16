@@ -1124,17 +1124,16 @@ could not cancel even if this were wired to
 `decidePolicyForNavigationAction:`. Reporting the START of a navigation is the
 honest thing the signature supports.
 
-**The hybrid channel is named here**, because facet declares a raw message in
-each direction and nothing about how it is carried:
+**The hybrid channel's page API is facet's** (`facet/hybrid_page`), the same
+on every backend:
 
 | direction | how |
 |---|---|
-| page → facet | `window.webkit.messageHandlers.facet.postMessage(body)` |
-| facet → page | `window.facet.onmessage(body)`, if the page defined it |
+| page → facet | `window.facet.postMessage(body)` — a document-start user script over WebKit's handler named `facet` |
+| facet → page | a `HybridWebViewMessageReceived` event on `window`, the text in `e.detail.message` |
 
-One word, `facet`, both ways. The outgoing body is escaped before it is
-spliced into script — a quote or a newline in a message would otherwise end
-the literal and run whatever followed.
+The handler reads the body with `hybrid_page::message(sender)`. The outgoing
+body is escaped by `hybrid_page::js_string` before it is spliced into script.
 
 **`on_web_resource_requested` is not honoured.** It needs a
 `WKURLSchemeHandler` and a custom scheme, which is a second loading path

@@ -24,6 +24,7 @@ import "./context_menu" as context_menu;
 import "./context_menu_item" as context_menu_item;
 import "./date_picker" as date_picker;
 import "./hybrid_web" as hybrid_web;
+import "./hybrid_page" as hybrid_page;
 import "./icon_button" as icon_button;
 import "./image" as image;
 import "./label" as label;

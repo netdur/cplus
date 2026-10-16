@@ -1,14 +1,11 @@
-window.facet = window.facet || {};
-function send(body) {
-  if (window.facet.postMessage) window.facet.postMessage(body);
-  else if (window.webkit?.messageHandlers?.facet) window.webkit.messageHandlers.facet.postMessage(body);
-}
+// facet's one page API, the same on every backend: `window.facet.postMessage`
+// up, and a `HybridWebViewMessageReceived` event down (`e.detail.message`).
 let sent = 0;
 document.querySelector('#send').addEventListener('click', () => {
-  send(`Message from the local page #${++sent}`);
+  window.facet.postMessage(`Message from the local page #${++sent}`);
   document.querySelector('#sent').textContent = `${sent} message(s) sent`;
 });
-window.facet.onmessage = body => {
-  document.querySelector('#message').textContent = body;
-  send(`Received: ${body}`);
-};
+window.addEventListener('HybridWebViewMessageReceived', e => {
+  document.querySelector('#message').textContent = e.detail.message;
+  window.facet.postMessage(`Received: ${e.detail.message}`);
+});

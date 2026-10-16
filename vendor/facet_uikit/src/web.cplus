@@ -34,6 +34,7 @@ import "uikit/uikit" as ui;
 import "webkit/webkit" as wk;
 import "./input" as input;
 import "./paint" as paint;
+import "facet/hybrid_page" as hybrid_page;
 
 fn create_web(n: *core::Node) -> *u8 {
     let cfg: *u8 = { rt::alloc_init(#str_ptr("WKWebViewConfiguration\0")) };
@@ -261,11 +262,16 @@ fn imp_did_receive_message(self_obj: *u8, cmd: *u8, controller: *u8, message: *u
     if body == (0 as *u8) { return; }
     let as_string: *u8 = { rt::msg_id(body, rt::sel(#str_ptr("description\0"))) };
     let h: fn(*u8, *u8) = { (*p).on_raw_message_received };
-    if h != props::no_handler { h(as_string, { (*p).on_raw_message_received_ctx }); }
+    // The body as a `*text::Text`, read with hybrid_page::message(sender) — the
+    // same on every backend.
+    var text_body: text::Text = bridge::to_text(as_string);
+    if h != props::no_handler { h(#addr_of(text_body) as *u8, { (*p).on_raw_message_received_ctx }); }
     return;
 }
 
-// The channel a page posts on: `window.webkit.messageHandlers.facet.postMessage(x)`.
+// The channel a page posts on: `window.facet.postMessage(x)`, facet's one page
+// API (facet/hybrid_page) — a document-start user script over WebKit's
+// script-message handler named `facet`.
 // Installed on the configuration's content controller, which has to happen
 // while the view is being built — a WKWebView's configuration is copied at
 // init and cannot be reached afterwards.
@@ -278,6 +284,9 @@ fn install_message_channel(cfg: *u8) {
     { rt::msg_void_id_id(controller,
                          rt::sel(#str_ptr("addScriptMessageHandler:name:\0")),
                          d, bridge::nsstring("facet")) };
+    let up: wk::UserScript = wk::UserScript::new(hybrid_page::webkit_bridge_script(),
+                                                 wk::UserScriptInjectionTime::AtDocumentStart, true);
+    wk::UserContentController::from_raw(controller).add_user_script(up);
     return;
 }
 
@@ -519,13 +528,12 @@ fn apply_hybrid_web(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & (hybrid_web::P_HYBRID_ROOT | hybrid_web::P_DEFAULT_FILE)) != (0 as u64) {
         load_local(v, { (*p).hybrid_root.view() }, { (*p).default_file.view() });
     }
-    // The app calling INTO the page. A message is arbitrary text spliced into
-    // source, so it is JSON-quoted first — an unescaped quote is an injection.
+    // The app calling INTO the page: the event facet/hybrid_page defines, the
+    // body quoted there — an unescaped quote would be an injection.
     if (dirty & hybrid_web::P_SEND_MESSAGE) != (0 as u64) {
         let m: str = { (*p).outgoing_message.view() };
         if m != "" {
-            var js: text::Text = text::from_str("window.facet && window.facet.receive && window.facet.receive(");
-            js = js.appending(json_quoted(m).view()).appending(")");
+            let js: text::Text = hybrid_page::delivery_script(m);
             { rt::msg_void_id_id(v, rt::sel(#str_ptr("evaluateJavaScript:completionHandler:\0")),
                                  bridge::nsstring(js.view()), 0 as *u8) };
         }
@@ -555,43 +563,6 @@ fn load_local(v: *u8, given_root: str, file: str) {
     { rt::msg_void_id_id(v, rt::sel(#str_ptr("loadFileURL:allowingReadAccessToURL:\0")),
                          url, dir) };
     return;
-}
-
-// A JSON string literal. A message is arbitrary text and it is being spliced
-// into source, so quoting is not cosmetic — an unescaped quote is an injection.
-// The single byte at `i`, as a `str`. `Text::append` takes a string and there
-// is no byte-wise append; a one-byte slice of the source is the same bytes.
-fn one_byte(s: str, i: usize) -> str {
-    return match { s.slice(i, i +% (1 as usize)) } {
-        option::Option[str]::Some(b) => b,
-        option::Option[str]::None => "",
-    };
-}
-
-fn json_quoted(s: str) -> text::Text {
-    var out: text::Text = text::from_str("\"");
-    var i: usize = 0 as usize;
-    let n: usize = { s.count() };
-    while i < n {
-        match { s.byte_at(i) } {
-            option::Option[u8]::Some(b) => {
-                if b == (34 as u8) { out = out.appending("\\\""); }
-                else if b == (92 as u8) { out = out.appending("\\\\"); }
-                else if b == (10 as u8) { out = out.appending("\\n"); }
-                else if b == (13 as u8) { out = out.appending("\\r"); }
-                else if b == (9 as u8) { out = out.appending("\\t"); }
-                else {
-                    // Not an escape: the byte passes through. `Text` appends
-                    // strings, so the byte is handed over as the one-byte
-                    // slice it already is inside `s`.
-                    out = out.appending(one_byte(s, i));
-                }
-            }
-            option::Option[u8]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return out.appending("\"");
 }
 
 #[link_name = "objc_msgSend"]

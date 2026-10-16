@@ -156,6 +156,13 @@ impl Env {
     // answer that looks like a right one, and a cut in the middle of a
     // codepoint is not even valid UTF-8. `GetStringUTFLength` counts BYTES of
     // modified UTF-8, which is exactly what lands in the buffer.
+    // The byte length `string_utf_into` needs room for, NUL excluded — so a
+    // caller can size the buffer to the string rather than refuse a long one.
+    fn string_utf_length(this, s: jni::jstring) -> usize {
+        if s == { 0 as jni::jstring } { return 0 as usize; }
+        return { (*(*this._env)).GetStringUTFLength(this._env, s) } as usize;
+    }
+
     fn string_utf_into(this, s: jni::jstring, buf: *u8, cap: usize) -> bool {
         { (*buf) = 0 as u8 };
         if s == { 0 as jni::jstring } { return true; }

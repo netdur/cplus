@@ -559,16 +559,15 @@ shape and was the same mistake.
   facet's, not GTK's — the URL is sitting in the signal, unread, and the day
   the contract grows a field it is one line away.
 - **`on_raw_message_received` is a NAMED channel, and the name is `facet`.** A
-  page reaches the host with
-  `window.webkit.messageHandlers.facet.postMessage(x)`. WebKit's channel is
+  page reaches the host with `window.facet.postMessage(x)` — facet's one page
+  API (`facet/hybrid_page`), a document-start user script over
+  `window.webkit.messageHandlers.facet`. WebKit's channel is
   registered per name on the view's user-content manager, so the name is part
   of the contract between an application and its page rather than an internal
   detail — generating it would leave a page author with nothing to write down.
-  **The payload arrives AS THE SENDER**, which is facet's convention for this
-  verb (`facet_appkit` does the same with `WKScriptMessage.body`) and again a
-  contract with no field of its own to read a message out of. The string is
-  transfer-full and freed after the handler returns: a handler that keeps it
-  copies it.
+  **The payload arrives AS THE SENDER**, a `*text::Text` read with
+  `hybrid_page::message(sender)` — the same on every backend. The engine's
+  transfer-full string is copied into it and freed before the handler runs.
 - **The message channel needs a SECOND library.** `jsc_value_to_string` is
   JavaScriptCore's, not WebKit's, so reading a message means opening
   `libjavascriptcoregtk` beside the engine — the generation that opened decides

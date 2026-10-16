@@ -83,6 +83,7 @@ import "facet/nav_model" as nav_model;
 import "./clipboard" as clipboard;
 import "./recycler" as recycler;import "facet/web" as web_ui;
 import "facet/hybrid_web" as hybrid_ui;
+import "facet/hybrid_page" as hybrid_page;
 import "./drawing" as drawing;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
@@ -3619,17 +3620,6 @@ fn a_hybrid_view_carries_the_message_channel_both_ways() {
         }
         option::Option[hybrid_ui::HybridWeb]::None => { assert false; }
     }
-}
-
-#[test]
-fn a_message_body_is_escaped_before_it_becomes_a_script() {
-    // The body is spliced into JavaScript, so a quote or a newline in it would
-    // otherwise end the literal and run whatever followed.
-    assert webmod::json_string("plain").view() == "\"plain\"";
-    assert webmod::json_string("say \"hi\"").view() == "\"say \\\"hi\\\"\"";
-    assert webmod::json_string("a\nb").view() == "\"a\\nb\"";
-    assert webmod::json_string("c:\\path").view() == "\"c:\\\\path\"";
-    assert webmod::json_string("").view() == "\"\"";
 }
 
 // ---- the window tier: item 5 -------------------------------------------------
@@ -12207,6 +12197,62 @@ fn a_hybrid_view_serves_its_root_over_facets_own_scheme() {
     if url.is_not_null() {
         assert bridge::to_text({ rt::msg_id(url, rt::sel(#str_ptr("scheme\0"))) }) == "facet";
     }
+}
+
+// ---- the hybrid page API ------------------------------------------------------
+// One page API on every backend (facet/hybrid_page): `window.facet.postMessage`
+// up, a `HybridWebViewMessageReceived` event down. Run for real — a page that
+// says "ready" through the up channel, then echoes what the app sends it.
+
+static PAGE_SAID: i64 = 0 as i64;
+static PAGE_LAST: text::Text = #zero::[text::Text]();
+fn on_page_message(sender: *u8, ctx: *u8) {
+    PAGE_SAID = PAGE_SAID + (1 as i64);
+    PAGE_LAST = hybrid_page::message(sender).to_text();
+}
+
+// Spin the main run loop until the page has said `count` things, or 15s.
+fn wait_for_page(count: i64) -> bool {
+    var i: i32 = 0;
+    while i < 300 && PAGE_SAID < count {
+        let until: *u8 = { rt::msg_id_f64(rt::get_class(#str_ptr("NSDate\0")),
+                                          rt::sel(#str_ptr("dateWithTimeIntervalSinceNow:\0")), 0.05f64) };
+        let rl: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSRunLoop\0")), rt::sel(#str_ptr("currentRunLoop\0"))) };
+        { rt::msg_void_id(rl, rt::sel(#str_ptr("runUntilDate:\0")), until) };
+        i = i + 1;
+    }
+    return PAGE_SAID >= count;
+}
+
+#[test]
+fn a_hybrid_page_and_the_app_talk_through_facets_one_page_api() {
+    backend::install();
+    PAGE_SAID = 0 as i64;
+    let root: text::Text = scratch_root();
+    let _mk: status::Status = write_file(root.view(), "index.html",
+        "<script>window.addEventListener('HybridWebViewMessageReceived', function (e) { window.facet.postMessage('echo:' + e.detail.message); }); window.facet.postMessage('ready');</script>");
+    let h: fn(*u8, *u8) = on_page_message;
+    var n: core::Node = hybrid_ui::hybrid_web(key: "talk", hybrid_root: root.view(),
+                                              default_file: "index.html",
+                                              on_raw_message_received: h);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    core::set_view(p, v, views::view_release);
+    // Up: `window.facet.postMessage` exists before the page's first script.
+    assert wait_for_page(1 as i64);
+    assert PAGE_LAST == "ready";
+    // Down: the event, and a quote in the body survives the trip.
+    match hybrid_ui::find("talk", within: p) {
+        option::Option[hybrid_ui::HybridWeb]::Some(x) => {
+            core::clear_dirty(p);
+            let _s: hybrid_ui::HybridWeb = x.send_message("hi \"there\"");
+            views::apply(0 as *u8, p);
+        }
+        option::Option[hybrid_ui::HybridWeb]::None => { assert false; }
+    }
+    assert wait_for_page(2 as i64);
+    assert PAGE_LAST == "echo:hi \"there\"";
 }
 
 #[link_name = "objc_msgSend"]

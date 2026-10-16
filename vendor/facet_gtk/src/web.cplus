@@ -35,6 +35,7 @@ import "facet/hybrid_web" as hybrid_web;
 import "gtk4/gtk4" as gtk;
 import "gobject/runtime" as g;
 import "./paint" as paint;
+import "facet/hybrid_page" as hybrid_page;
 
 // `g_module_open` / `g_module_symbol` — gmodule's binding carries neither (the
 // GIR presents GModule as a boxed type whose methods it skips), so they are
@@ -83,6 +84,11 @@ struct WebKit {
     // pages, and `on_raw_message_received` is the only verb that goes dark.
     content_manager: fn(*u8) -> *u8,
     register_handler: fn(*u8, *u8, *u8) -> i32,
+    // `window.facet.postMessage` as a document-start user script — optional
+    // like the rest of the channel.
+    user_script_new: fn(*u8, i32, i32, *u8, *u8) -> *u8,
+    add_script: fn(*u8, *u8),
+    user_script_unref: fn(*u8),
     js_result_get_value: fn(*u8) -> *u8,
     jsc_to_string: fn(*u8) -> *u8,
 }
@@ -240,6 +246,12 @@ fn resolve(handle: *u8) -> bool {
     API.register_handler = sym_optional(handle,
         #str_ptr("webkit_user_content_manager_register_script_message_handler\0"))
         as fn(*u8, *u8, *u8) -> i32;
+    API.user_script_new = sym_optional(handle, #str_ptr("webkit_user_script_new\0"))
+        as fn(*u8, i32, i32, *u8, *u8) -> *u8;
+    API.add_script = sym_optional(handle,
+        #str_ptr("webkit_user_content_manager_add_script\0")) as fn(*u8, *u8);
+    API.user_script_unref = sym_optional(handle, #str_ptr("webkit_user_script_unref\0"))
+        as fn(*u8);
     API.js_result_get_value = sym_optional(handle,
         #str_ptr("webkit_javascript_result_get_js_value\0")) as fn(*u8) -> *u8;
     let jsc: *u8 = { g_module_open(jsc_library_name(), 1 as u32) };
@@ -413,41 +425,17 @@ fn load_hybrid(v: *u8, n: *core::Node) {
 }
 
 // `send_message` is the host talking TO the page, and WebKitGTK's own channel
-// runs the other way — so the message is delivered by evaluating a call to the
-// hook the page registered. That is what the AppKit backend's
-// `postMessage` bridge does underneath too; here it is visible.
+// runs the other way — so the message is delivered by evaluating the script
+// facet/hybrid_page defines: one `HybridWebViewMessageReceived` event, the same
+// on every backend, the body quoted there.
 fn send_message(v: *u8, n: *core::Node) {
     let h: *props::HybridWebProps = hybrid_props(n);
     if h == (0 as *props::HybridWebProps) { return; }
     let msg: str = { (*h).outgoing_message.view() };
     if msg == "" { return; }
-    // JSON.parse of a quoted string, so the payload crosses whatever it
-    // contains — a message with a quote in it would otherwise end the call.
-    let script: text::Text = "window.dispatchEvent(new MessageEvent('message',{data:${json_string(msg)}}))";
+    let script: text::Text = hybrid_page::delivery_script(msg);
     eval(v, script.view());
     return;
-}
-
-// A JSON string literal: the two characters that would end it, escaped. Not a
-// general encoder — a message is text, and the alternative is a JSON writer
-// this file has no other use for.
-fn json_string(s: str) -> text::Text {
-    var out: text::Text = text::from_str("\"");
-    let base: *u8 = { #str_ptr(s) };
-    var i: usize = 0 as usize;
-    let n: usize = { #str_len(s) };
-    while i < n {
-        let b: u8 = { *(((base as usize) +% i) as *u8) };
-        if b == (34 as u8) { out = out.appending("\\\""); }
-        else if b == (92 as u8) { out = out.appending("\\\\"); }
-        else if b == (10 as u8) { out = out.appending("\\n"); }
-        else {
-            let one: str = { #str_from_raw_parts(((base as usize) +% i) as *u8, 1 as usize) };
-            out = out.appending(one);
-        }
-        i = i +% (1 as usize);
-    }
-    return out.appending("\"");
 }
 
 fn eval(v: *u8, script: str) {
@@ -578,9 +566,9 @@ fn resource_load_started(view: *u8, resource: *u8, request: *u8, user: *u8) {
 
 // ---- the page-to-host message channel ----------------------------------------
 //
-// `HybridWebView.RawMessageReceived`. A page calls
-// `window.webkit.messageHandlers.facet.postMessage(...)` and this is where it
-// lands.
+// `HybridWebView.RawMessageReceived`. A page calls `window.facet.postMessage(...)`
+// (facet/hybrid_page, installed by `arm_messages` over WebKit's
+// `window.webkit.messageHandlers.facet`) and this is where it lands.
 //
 // THE PAYLOAD ARRIVES AS THE SENDER, which is facet's own convention for this
 // verb and not an invention here — `facet_appkit/web.cplus` does the same thing
@@ -615,12 +603,12 @@ fn script_message_received(manager: *u8, value: *u8, user: *u8) {
     if !to_str.is_not_null() { return; }
     let raw: *u8 = to_str(jsval);
     if raw == (0 as *u8) { return; }
-    // `jsc_value_to_string` is TRANSFER-FULL. The handler is called while the
-    // string is still alive and it is freed after — a handler that wants to
-    // keep it copies it, which is what every sender reading in this package
-    // already requires.
-    h(raw, { (*p).on_raw_message_received_ctx });
+    // `jsc_value_to_string` is TRANSFER-FULL, so it is copied and freed here.
+    // The body as a `*text::Text`, read with hybrid_page::message(sender) — the
+    // same on every backend. Copied out of the transfer-full string first.
+    var text_body: text::Text = { #str_from_raw_parts(raw, c_strlen(raw)) }.to_text();
     { g::free(raw) };
+    h(#addr_of(text_body) as *u8, { (*p).on_raw_message_received_ctx });
     return;
 }
 
@@ -642,6 +630,23 @@ fn arm_messages(v: *u8, n: *core::Node) {
     let _s: u64 = { sigc_message(mgr, #str_ptr("script-message-received::facet\0"),
                                  script_message_received, n as *u8,
                                  0 as *u8, 0 as i32) };
+    // The page's name for the channel, before its own first script: top frame
+    // (WEBKIT_USER_CONTENT_INJECT_TOP_FRAME = 1), at document start (0).
+    let make: fn(*u8, i32, i32, *u8, *u8) -> *u8 = API.user_script_new;
+    let add: fn(*u8, *u8) = API.add_script;
+    let unref: fn(*u8) = API.user_script_unref;
+    if make.is_not_null() && add.is_not_null() {
+        match text::from_str(hybrid_page::webkit_bridge_script()).c_str() {
+            option::Option[text::CString]::Some(cs) => {
+                let script: *u8 = make(cs.as_ptr(), 1 as i32, 0 as i32, 0 as *u8, 0 as *u8);
+                if script != (0 as *u8) {
+                    add(mgr, script);
+                    if unref.is_not_null() { unref(script); }
+                }
+            }
+            option::Option[text::CString]::None => { }
+        }
+    }
     return;
 }
 

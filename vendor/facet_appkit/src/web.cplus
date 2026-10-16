@@ -17,14 +17,15 @@
 //
 // ---- the hybrid channel ------------------------------------------------------
 //
-// facet declares a raw message in each direction and nothing about how they are
-// carried, so this package names the carrier:
+// What the PAGE sees is facet's, not this package's — `facet/hybrid_page`, the
+// same on every backend:
 //
-//   page -> facet   window.webkit.messageHandlers.facet.postMessage(body)
-//   facet -> page   window.facet.onmessage(body), if the page defined it
+//   page -> facet   window.facet.postMessage(body)
+//   facet -> page   a `HybridWebViewMessageReceived` event on window,
+//                   the text in `e.detail.message` (MAUI's page API)
 //
-// `facet` is the handler name, and it is the same word both ways so a page
-// author only has to learn one.
+// Underneath, the up channel is WebKit's script-message handler named `facet`;
+// `window.facet.postMessage` is a document-start user script over it.
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
@@ -43,6 +44,7 @@ import "objc/bridge" as bridge;
 import "appkit/appkit" as ak;
 import "webkit/webkit" as wk;
 import "./paint" as paint;
+import "facet/hybrid_page" as hybrid_page;
 
 // ---- associated keys ---------------------------------------------------------
 // facet_appkit owns 29000 and up, in one block per file:
@@ -139,9 +141,9 @@ fn did_terminate_imp(self_obj: *u8, cmd: *u8, view: *u8) {
 
 // -[WKScriptMessageHandler userContentController:didReceiveScriptMessage:]
 //
-// The message body reaches the handler as the SENDER, stringified. facet's
-// handler shape is `(sender, ctx)` and carries no payload slot, so the body is
-// what `sender` is — the one reading that lets a page send anything at all.
+// The message body reaches the handler as the SENDER, a `*text::Text` read with
+// `hybrid_page::message(sender)`. facet's handler shape is `(sender, ctx)` and
+// carries no payload slot, so the body is what `sender` is.
 fn did_receive_message_imp(self_obj: *u8, cmd: *u8, controller: *u8, message: *u8) {
     let n: *core::Node = node_of(self_obj);
     if n.is_null() { return; }
@@ -150,8 +152,11 @@ fn did_receive_message_imp(self_obj: *u8, cmd: *u8, controller: *u8, message: *u
     let m: wk::ScriptMessage = wk::ScriptMessage::from_raw(message);
     let body: *u8 = m.body();
     let as_string: *u8 = { rt::msg_id(body, rt::sel(#str_ptr("description\0"))) };
+    // The body as a `*text::Text`, read with hybrid_page::message(sender) — the
+    // same on every backend.
+    var text_body: text::Text = bridge::to_text(as_string);
     fire(n, { (*p).on_raw_message_received }, { (*p).on_raw_message_received_ctx },
-         as_string);
+         #addr_of(text_body) as *u8);
 }
 
 fn delegate_class() -> *u8 {
@@ -230,6 +235,10 @@ fn create_hybrid_web(n: *core::Node) -> *u8 {
         { rt::msg_void_id_id(controller,
                              rt::sel(#str_ptr("addScriptMessageHandler:name:\0")),
                              d, bridge::nsstring("facet")) };
+        // The page's name for it, before the page's own first script runs.
+        let up: wk::UserScript = wk::UserScript::new(hybrid_page::webkit_bridge_script(),
+                                                     wk::UserScriptInjectionTime::AtDocumentStart, true);
+        wk::UserContentController::from_raw(controller).add_user_script(up);
     }
     // The handler is retained by the configuration the view keeps, but the
     // ASSOCIATION back to the node is ours to hold: pin it on the view, which
@@ -414,44 +423,12 @@ fn apply_hybrid_web(v: *u8, n: *core::Node, dirty: u64) {
     }
 }
 
-// facet to the page. Guarded on the page's side existing, so a message sent
-// before the page defined its handler is dropped rather than throwing inside
-// the page — which would surface as a console error the application never
-// wrote.
+// facet to the page: the event `facet/hybrid_page` defines. A message sent
+// before the page listens is an event nobody hears, not a script error.
 fn send_to_page(v: *u8, body: str) {
     if body == "" { return; }
-    var js: text::Text = text::from_str("if (window.facet && window.facet.onmessage) { window.facet.onmessage(");
-    let _a: status::Status = js.append(json_string(body).view());
-    let _b: status::Status = js.append("; }");
+    let js: text::Text = hybrid_page::delivery_script(body);
     eval_js(v, js.view());
-}
-
-// The body as a JavaScript string literal. Only the three characters that can
-// break out of one are escaped — a quote, a backslash and a newline — because
-// this is a literal in a script we build, not a JSON document.
-fn json_string(s: str) -> text::Text {
-    let src: text::Text = text::from_str(s);
-    var out: text::Text = text::from_str("\"");
-    var start: usize = 0 as usize;
-    var i: usize = 0 as usize;
-    let n: usize = s.count();
-    while i < n {
-        let b: u8 = byte_of(s, i);
-        var esc: str = "";
-        if b == (34 as u8) { esc = "\\\""; }
-        else if b == (92 as u8) { esc = "\\\\"; }
-        else if b == (10 as u8) { esc = "\\n"; }
-        else if b == (13 as u8) { esc = "\\r"; }
-        if esc != "" {
-            append_range(#addr_of(out), #addr_of(src), start, i);
-            let _a: status::Status = out.append(esc);
-            start = i +% (1 as usize);
-        }
-        i = i +% (1 as usize);
-    }
-    append_range(#addr_of(out), #addr_of(src), start, n);
-    let _b: status::Status = out.append("\"");
-    return out;
 }
 
 // The bytes of `src` in [from, to), appended to `out`. Whole ranges rather

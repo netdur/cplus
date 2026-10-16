@@ -326,6 +326,34 @@ defaults to `Bar::Native`, so a window that says nothing gets the plain title
 bar it always got. Nothing about the default path changed when roles arrived,
 and nothing appears in a window that the tree did not ask for.
 
+### A hybrid page and the app
+
+`hybrid_web` shows a local page (`hybrid_root` is an asset folder, `default_file`
+the page in it) and carries text both ways. The page's side is the same on
+every backend (`facet/hybrid_page`):
+
+```js
+window.facet.postMessage("hello");                        // page -> app
+window.addEventListener("HybridWebViewMessageReceived",   // app -> page
+    e => console.log(e.detail.message));
+```
+
+```cplus
+import "facet/hybrid_page" as hybrid_page;
+
+fn from_page(sender: *u8, ctx: *u8) {
+    let body: str = hybrid_page::message(sender);   // valid for this call
+    // ...
+}
+// ui::hybrid_web(hybrid_root: "web", default_file: "index.html",
+//                on_raw_message_received: from_page)
+// hybrid_web::find("key") ... .send_message("hi")
+```
+
+The event is MAUI's HybridWebView page event. `window.facet.postMessage`
+exists before the page's first script runs. A message sent before the page
+listens is dropped, not queued.
+
 ## Cursors — reaching a built control
 
 Each control module offers the same two entry points:
