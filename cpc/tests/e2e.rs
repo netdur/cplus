@@ -16840,15 +16840,17 @@ fn lib_target_produces_dylib_or_so() {
         .status()
         .expect("invoke cpc");
     assert!(st.success(), "cpc build failed: {st}");
-    let ext = if cfg!(target_os = "macos") {
-        "dylib"
+    let dyn_name = if cfg!(target_os = "macos") {
+        "libmathlib.dylib"
+    } else if cfg!(target_os = "windows") {
+        "mathlib.dll"
     } else {
-        "so"
+        "libmathlib.so"
     };
-    let dyn_path = dir.join(format!("target/debug/libmathlib.{ext}"));
+    let dyn_path = dir.join("target/debug").join(dyn_name);
     assert!(
         dyn_path.is_file(),
-        "expected libmathlib.{ext} at {}",
+        "expected {dyn_name} at {}",
         dyn_path.display()
     );
 }
@@ -16875,12 +16877,14 @@ fn lib_target_both_produces_a_and_dylib() {
         .expect("invoke cpc");
     assert!(st.success());
     assert!(dir.join("target/debug/libmathlib.a").is_file());
-    let ext = if cfg!(target_os = "macos") {
-        "dylib"
+    let dyn_name = if cfg!(target_os = "macos") {
+        "libmathlib.dylib"
+    } else if cfg!(target_os = "windows") {
+        "mathlib.dll"
     } else {
-        "so"
+        "libmathlib.so"
     };
-    assert!(dir.join(format!("target/debug/libmathlib.{ext}")).is_file());
+    assert!(dir.join("target/debug").join(dyn_name).is_file());
 }
 
 #[test]
