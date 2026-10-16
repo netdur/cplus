@@ -6,7 +6,7 @@ borrow checker without a garbage collector, speaks the C ABI in both
 directions, and keeps high-level capabilities in ordinary vendored packages
 instead of growing the core language.
 
-Version **0.0.29** supports macOS, Windows, Linux, iOS, Android, ESP32, and
+Version **0.0.30** supports macOS, Windows, Linux, iOS, Android, ESP32, and
 WebAssembly. Facet supplies native AppKit, UIKit, Android, GTK, and WinUI 3 UI
 backends.
 
@@ -336,7 +336,7 @@ checked with simulator, device, and probe applications where applicable.
 - [Dense language skill for LLMs and agents](docs/lang/skill.md)
 - [Facet tutorial](vendor/facet/docs/tutorial.md)
 - [Facet application and navigation guide](vendor/facet/docs/navigation.md)
-- [v0.0.29 changelog](changeslog.md#v0029--2026-09-24)
+- [v0.0.30 changelog](changeslog.md#v0030--2026-10-16)
 
 Every release should be read with its matching documentation and packages.
 C+ is pre-1.0 and moves quickly; pin the toolchain version for real projects.

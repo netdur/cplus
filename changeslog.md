@@ -3,6 +3,167 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.30 — 2026-10-16
+
+This release brings WinUI 3 as the default Windows UI and agent backend, the
+`appenv` package and a single cross-platform asset staging rule in `cpc`, one
+`hybrid_web` page messaging contract across all five UI backends, Liquid Glass
+and Material 3 UI parity, compiler soundness and borrow-checker hardening, and
+security audit remediations across `cplus-pm`, `agent_mcp`, and CI.
+
+### Upgrade notes
+
+- `facet_runtime::app_data_dir()` and `facet_runtime::cache_dir()` are removed;
+  use [`appenv::app_data_dir()`](vendor/appenv/README.md) and
+  `appenv::cache_dir()`, which answer from the first line of `main` on every
+  platform without waiting for a window.
+- On Windows, `facet_runtime` and `facet_agent` now select `facet_winui` and
+  `agent_winui` by default. `facet_win32` is deprecated and remains available as
+  an explicit opt-out.
+- `scroll` now takes a `@view` block (`scroll { ... }`); attaching a `@view`
+  block to a leaf control reports **E1010**.
+- `hybrid_web` uses one page API on every backend: JavaScript sends messages up
+  with `window.facet.postMessage(str)` (available from document start), native
+  delivers down by firing `HybridWebViewMessageReceived` on `window` with
+  `e.detail.message`, and the C+ `on_message` callback reads the payload through
+  `hybrid_page::message(sender)`. The old per-backend `window.facet.onmessage` /
+  `window.facet.receive` hooks are gone.
+- Discarding a call's `Status` return value as a bare statement now warns with
+  **W0009** (`let _ = call();` silences it deliberately).
+- Value-producing functions across `stdlib`, `cpc-bindgen` collection bridges,
+  and vendored packages now return either the complete result or an empty value
+  on allocation or read failure, never a truncated prefix.
+
+### Language and compiler
+
+- **Borrow checker and soundness hardening.**
+  - A method returning a view derived from a parameter ties that parameter's
+    loan for the lifetime of the view, including calls through function values
+    and interface methods on generic receivers (`fn use_it[T: Picker](p: T)`).
+  - `take` of a view type (`str`, `T[]`, or a view-carrying struct/enum) is
+    checked as a borrow rather than a consuming move, and `thread::spawn_with`
+    detaches its argument's borrow ties properly.
+  - Type aliases (`type S = str;`, `type Guard = Scope;`) are resolved before
+    borrow, move, and NLL drop analysis, so aliased views, non-`Copy` types, and
+    `Drop` guards obey the same rules as their underlying types.
+  - Deferred initialization (`let x: T; x = expr;`) runs partial-move (`E0509`,
+    `E0337`) and wrapper move consumption checks on the right-hand side.
+  - Same-block LIFO drop ordering checks `E0514` against active borrows before
+    releasing each local's own loans; cross-statement writes and `ref` borrows
+    check overlapping sub-place loans (`d.field`, `d[i]`); nested variant
+    patterns on borrowed scrutinees enforce `E0337`; and `Send`/`Sync` cycle
+    detection tags struct and enum IDs in separate namespaces.
+- **Diagnostics and attributes.**
+  - **W0009** warns when a `Status` return value is discarded as an expression
+    statement.
+  - **W0007** catches `(1 << n) as u64` where a shift happens at default `i32`
+    width before widening.
+  - **E0310** diagnoses cycles in `type` aliases cleanly instead of recursing.
+  - **E0510** counts a helper as a release function only when its body actually
+    releases.
+  - `#target_feature("avx2,fma")` and the CLI flags `--target-cpu` /
+    `--target-feature` control target code generation per function or per build.
+- **Codegen.**
+  - `gen_drop_in_place` uses `field_addr` on planned structs (`#[align(N)]`,
+    `#[packed]`), fixing invalid GEP emission when an owning field sits at a
+    non-zero offset.
+  - Static arrays of empty strings emit a valid constant initializer, and enums
+    carrying inner enums size their payload slot from the inner layout.
+  - An interface default method body resolves imports from its declaring module.
+
+### Toolchain, assets, and package manager
+
+- **One project asset rule (`cpc build`, `cpc package`, `--print-asset-dir`).**
+  Every app build stages `<root>/assets/*` flat into
+  `target/assets/<target>/<mode>/` incrementally and mirrors staged assets
+  beside a self-linked binary (tracked by `.cplus-assets` and refusing any asset
+  that would overwrite the binary). `cpc build --print-asset-dir` stages and
+  prints the directory for external builders (Xcode, Gradle/`aapt2`, Iris), and
+  `cpc package` bundles from the same staged tree.
+- **One `[package] app_id` across platforms.** `cpc init` writes `app_id` into
+  `Cplus.toml` and every generated platform file, and `cpc build` validates it
+  (**E0415** on an invalid identifier, **W0008** when a platform file drifts).
+  A refused `cpc init` leaves no directory behind.
+- **Windows DLL and link support.** A `[library]` `cdylib` on Windows links
+  against the standard Windows system libraries, writes `<name>.dll` and
+  `<name>.lib`, exports the C ABI symbols declared in its generated header, and
+  omits `-rpath` on PE links. `[link] libs` expands `${VAR}` environment
+  references like `search-paths` and `extra-objects`.
+- **Doctests.** `cpc test` runs ```` ```cplus ```` documentation fences, skips
+  other language fences, and fails on unclosed fences.
+- **Security hardening (`cplus-pm`, `cpc`, `agent_mcp`, CI).**
+  - `cplus-pm` keys cache slots and tag records injectively (audit F01), refuses
+    to write or remove unstamped directories or follow `vendor/` symlinks
+    outside the project (audit F02), and verifies that fetched package
+    directories resolve inside the repository checkout.
+  - `agent_mcp` places local descriptors in a verified `0700` per-user directory
+    `/tmp/cplus-<uid>/` (audit F04), rejects cross-origin, foreign-`Host`, and
+    non-JSON requests on the loopback HTTP transport (audit F03), and buffers
+    partial non-blocking socket reads per client without stalling the UI loop.
+  - GitHub Actions workflows run test jobs with read-only tokens, isolate
+    release publishing into build-free jobs with provenance attestation, and pin
+    all actions by commit SHA (audit F05).
+
+### Facet, WinUI 3, and the agent stack
+
+- **WinUI 3 (`facet_winui`, `agent_winui`, `winui`).**
+  - Generated WinMD bindings and a complete native WinUI 3 backend: multi-window
+    host, custom and blended window chrome, `App::menu` `MenuBar`, modal alerts
+    and file/folder/save pickers, `TabView`, tables, lists, collections,
+    `WebView2` and `hybrid_web`, drag-and-drop on any node, gesture and keyboard
+    bands, focus commands, light/dark theme tracking, per-window density
+    observers, `run_on_main` from background threads, and `adopt_native` for
+    hosting inside an existing WinUI window.
+  - `agent_winui` and `facet_agent_winui` expose every live window over the MCP
+    and in-app agent surfaces.
+- **Cross-platform UI and mobile polish.**
+  - **One `hybrid_web` page bridge (`facet/hybrid_page`):** unified
+    `window.facet.postMessage` up, `HybridWebViewMessageReceived` custom event
+    down, and `hybrid_page::message(sender)` across AppKit, UIKit, Android, GTK,
+    and WinUI.
+  - **iOS 26 Liquid Glass (`facet_uikit`):** native `UITabBar` with floating and
+    sidebar glass placement, scroll panes running under glass bars, native
+    whole-window push navigation, action sheets for `choose`, and `blur_effect`.
+  - **Android Material 3 & Material You (`facet_android`):** dynamic system
+    palette tokens, Material 3 top and bottom tab bars with indicator pills,
+    Material bottom sheets, Material dialogs (`alert`, `choose`, `prompt`),
+    per-corner radii, and `content://` URI reading/writing in `FacetFiles`.
+  - **Symbols and icons:** bundled Material Symbols font compiled into the
+    binary (`facet/icon_font`), `button(symbol:)` and `icon_button(symbol:)`,
+    and tab bar icons across backends.
+  - **Text roles:** `named_size` resolves to each platform's native typography
+    ramp.
+  - **File drops and save panel:** `allow_file_drop`, `dropped_files`, and
+    `drag_over` on any node, plus `choose_save_path`.
+  - **Agent & Inspector:** every control property is readable and writable
+    through generated inspector descriptors (`window_width` / `window_height`
+    included); agents can press individual tabs, pick popup items and date/time
+    pickers, read and answer iOS/Android alerts, and are refused when targeting
+    controls on hidden screens or behind an active sheet.
+
+### Standard library and packages
+
+- **`appenv`:** cross-platform `app_data_dir`, `cache_dir`, `no_backup_dir`,
+  `exclude_from_backup`, `resource_dir`, `asset_path`, `read_asset`,
+  `read_asset_text`, and `app_id`, usable from the first line of `main` on
+  macOS, Linux, Windows, iOS, and Android.
+- **`stdlib`:** added `stdlib/template` (`Template` unjoined string literals),
+  `stdlib/path` (`join`, `parent`, `file_name`, `stem`, `extension`), and
+  `process::current_id()`. `File::read_to_end` and `File::lines` never return a
+  short read as whole.
+- **`flex_layout`:** added `.basis` / `.basis_percent`, ladder-range band rules
+  (`hide_up_to`, `hide_from`, `show_up_to`, `show_from`, `add_rule_up_to`,
+  `add_rule_from`), `bands::default_set()`, `BandSet::first_match`, and HIG
+  layout presets (`.readable_width()`, `.sidebar_width()`, `screen` filling its
+  viewport).
+- **`jni`:** `mutf8` converts JNI's modified UTF-8 at every Java string boundary
+  in `jni`, `android_view`, `http`, and `filepicker`, so astral-plane characters
+  (such as emoji) and embedded NULs round-trip as valid UTF-8 without tripping
+  CheckJNI.
+- **`filepicker` and `share`:** `FileRef` reads and writes both filesystem paths
+  and Android `content://` URIs; `share::file` works on Android; `camera` adds
+  `preview(fit:)`.
+
 ## v0.0.29 — 2026-09-24
 
 A compiler release: a bit-reinterpret intrinsic, four ownership and

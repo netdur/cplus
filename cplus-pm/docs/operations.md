@@ -46,7 +46,7 @@ a context, bare `*` deps cannot resolve and global install has no tier.
   cache/<repo>/<tag>/source      disposable git clones — safe to delete
   tags/<repo>/<tag>              first-seen commit per release tag (D8)
   m2/<group>/<artifact>/<ver>/   the local Maven repo (D18) — NOT tiered
-  v0.0.29/vendor/<name>/         the store tier: one package set per line
+  v0.0.30/vendor/<name>/         the store tier: one package set per line
 ```
 
 `<repo>` and `<tag>` are escaped, not just tidied: `[A-Za-z0-9.-]` stays as
@@ -59,7 +59,7 @@ in the old form aren't read: the cache re-clones once, and each tag is
 recorded again at its next fetch. A cached clone is reused only if its
 `origin` is the URL being asked for.
 
-The tier is derived from the toolchain version: exact pre-1.0 (`v0.0.29`),
+The tier is derived from the toolchain version: exact pre-1.0 (`v0.0.30`),
 `major.minor` post-1.0 (`v1.2`). A different toolchain version is a
 different universe the running binary never looks at (D13).
 
@@ -114,7 +114,7 @@ comparison happens exactly where a fetch already happened.
 Each installed package carries `.cplus-vendor`, two lines:
 
 ```
-github.com/netdur/cplus@0.0.29 vendor/stdlib     ← the pin
+github.com/netdur/cplus@0.0.30 vendor/stdlib     ← the pin
 0b7d0716…                                        ← the commit the tag resolved to
 ```
 
