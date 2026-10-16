@@ -1111,7 +1111,7 @@ fn build_places_assets_beside_the_binary_flat_and_drops_removed_ones() {
     build();
     assert!(!bin_dir.join("defaults").exists(), "a removed asset outlived its source");
     assert!(!staged.join("defaults").exists());
-    assert!(bin_dir.join("bare").is_file());
+    assert!(bin_dir.join(format!("bare{}", std::env::consts::EXE_SUFFIX)).is_file());
 }
 
 #[test]
@@ -1151,11 +1151,12 @@ fn print_asset_dir_stages_for_the_named_target_without_building() {
 fn an_asset_that_would_replace_the_binary_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     bare_app(dir.path(), "com.example.bare");
+    let bin = format!("bare{}", std::env::consts::EXE_SUFFIX);
     std::fs::create_dir_all(dir.path().join("assets")).unwrap();
-    std::fs::write(dir.path().join("assets/bare"), "a picture").unwrap();
+    std::fs::write(dir.path().join("assets").join(&bin), "a picture").unwrap();
     let out = Command::new(cpc()).current_dir(dir.path()).arg("build").output().unwrap();
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("the asset `bare` would replace"), "{err}");
-    assert_ne!(std::fs::read(dir.path().join("target/debug/bare")).unwrap(), b"a picture");
+    assert!(err.contains(&format!("the asset `{bin}` would replace")), "{err}");
+    assert_ne!(std::fs::read(dir.path().join("target/debug").join(&bin)).unwrap(), b"a picture");
 }

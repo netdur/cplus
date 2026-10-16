@@ -1324,6 +1324,16 @@ mod tests {
 
     // ---- audit F02: a project checkout is untrusted input --------------------
 
+    #[cfg(unix)]
+    fn symlink_dir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(src, dst)
+    }
+
+    #[cfg(windows)]
+    fn symlink_dir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(src, dst)
+    }
+
     /// A workspace holding the user's own directory next to a cloned project
     /// whose committed `vendor` is a symlink to `..`.
     fn hostile_project(dir_name: &str) -> (TempDir, PathBuf, PathBuf) {
@@ -1335,7 +1345,7 @@ mod tests {
             &app.join("Cplus.toml"),
             "[package]\nname = \"app\"\nversion = \"0.0.1\"\n\n[dependencies]\nappkit = \"https://github.com/netdur/cplus/tree/main/vendor/appkit@0.0.26\"\n",
         );
-        std::os::unix::fs::symlink("..", app.join("vendor")).unwrap();
+        symlink_dir("..", app.join("vendor")).unwrap();
         (ws, app, mine)
     }
 
@@ -1380,6 +1390,7 @@ mod tests {
         assert!(!ours.exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_copy_that_fails_half_way_leaves_a_claim_the_next_install_owns() {
         use std::os::unix::fs::PermissionsExt;
@@ -1406,7 +1417,7 @@ mod tests {
         write(&mine.join("taxes/2025.txt"), "irreplaceable\n");
         let project = ws.path().join("app");
         fs::create_dir_all(project.join("vendor")).unwrap();
-        std::os::unix::fs::symlink(&mine, project.join("vendor/documents")).unwrap();
+        symlink_dir(&mine, project.join("vendor/documents")).unwrap();
         let err = remove(&project, "documents").unwrap_err();
         assert!(matches!(err, VendorError::NotOurs { .. }), "got {err}");
         assert!(mine.join("taxes/2025.txt").is_file());
@@ -1529,6 +1540,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&io).unwrap(), "// v27\n");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_symlinked_package_dir_leaving_the_checkout_is_refused() {
         // A malicious dependency repository can commit a symlink at the package
