@@ -840,8 +840,8 @@ fn target_path_escapes(root: &Path, joined: &Path) -> bool {
     if !out.starts_with(root) {
         return true;
     }
-    if let Ok(canon) = out.canonicalize() {
-        if !canon.starts_with(root) {
+    if let (Ok(canon), Ok(canon_root)) = (out.canonicalize(), root.canonicalize()) {
+        if !canon.starts_with(&canon_root) {
             return true;
         }
     }
