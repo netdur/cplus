@@ -93,6 +93,33 @@ const BAND_MEDIUM: str = "medium";
 const BAND_EXPANDED: str = "expanded";
 const BAND_LARGE: str = "large";
 const BAND_XLARGE: str = "xlarge";
+const BAND_COUNT: usize = 6;
+
+// The blessed band name at ladder position `index` (0 = tiny .. 5 = xlarge),
+// or `""` out of range.
+fn band_at(index: usize) -> str {
+    if index == 0 { return BAND_TINY; }
+    if index == 1 { return BAND_COMPACT; }
+    if index == 2 { return BAND_MEDIUM; }
+    if index == 3 { return BAND_EXPANDED; }
+    if index == 4 { return BAND_LARGE; }
+    if index == 5 { return BAND_XLARGE; }
+    return "";
+}
+
+// The 0-based ladder position of a blessed width band, or `None` if `name` is
+// not one of the six ordered width bands. Powers range rules (`hide_up_to`,
+// `hide_from`, `show_up_to`, `show_from`).
+fn band_rank(name: str) -> option::Option[usize] {
+    var i: usize = 0;
+    while i < BAND_COUNT {
+        if name == band_at(i) {
+            return option::Option[usize]::Some(i);
+        }
+        i = i +% 1;
+    }
+    return option::Option[usize]::None;
+}
 
 // A host's band vocabulary. Order of definition does not matter: `matches`
 // asks a named band whether it contains the box, it does not classify.
@@ -229,7 +256,45 @@ impl BandSet {
         if b.is_null() { return false; }
         return { (*b).contains(width, height) };
     }
+
+    // The name of the first registered band that contains `width` x `height`,
+    // or `""` when none matches (e.g. an empty set or an unconstrained NaN
+    // axis). Since `defaults()` tiles the width axis in ascending order, this
+    // classifies a box into its blessed width band in one call.
+    fn first_match(this, width: f64, height: f64) -> str {
+        let n: usize = this._bands.count();
+        var i: usize = 0;
+        while i < n {
+            match this._bands.at_ptr(i) {
+                option::Option[*Band]::Some(p) => {
+                    if { (*p).contains(width, height) } {
+                        return { (*p).name.view() };
+                    }
+                }
+                option::Option::None => { }
+            }
+            i = i +% 1;
+        }
+        return "";
+    }
 }
+
+static DEFAULT_BANDS: BandSet = #zero::[BandSet]();
+static DEFAULT_BANDS_READY: bool = false;
+
+// A shared, read-ready `BandSet::defaults()` pointer for callers that want the
+// six blessed bands without managing a local `BandSet` binding:
+//
+//     root.calculate_layout(width: w, height: h, bands: bands::default_set());
+//
+fn default_set() -> *BandSet {
+    if !DEFAULT_BANDS_READY {
+        DEFAULT_BANDS_READY = true;
+        DEFAULT_BANDS = BandSet::defaults();
+    }
+    return #addr_of(DEFAULT_BANDS);
+}
+
 
 // ==========================================================================
 // Tests
@@ -390,3 +455,48 @@ fn an_empty_set_matches_nothing_at_all() {
     assert !s.matches(BAND_COMPACT, 420.0, 900.0);
     assert !s.is_registered(BAND_COMPACT);
 }
+
+#[test]
+fn ladder_rank_and_lookup_roundtrip_the_six_blessed_bands() {
+    var i: usize = 0;
+    while i < BAND_COUNT {
+        let name: str = band_at(i);
+        assert #str_len(name) > 0;
+        match band_rank(name) {
+            option::Option[usize]::Some(r) => { assert r == i; }
+            option::Option[usize]::None => { assert false; }
+        }
+        i = i +% 1;
+    }
+    assert band_at(99) == "";
+    match band_rank("watch") {
+        option::Option[usize]::Some(_r) => { assert false; }
+        option::Option[usize]::None => { }
+    }
+    match band_rank("") {
+        option::Option[usize]::Some(_r) => { assert false; }
+        option::Option[usize]::None => { }
+    }
+}
+
+#[test]
+fn first_match_classifies_boxes_across_the_ladder() {
+    let s: BandSet = BandSet::defaults();
+    assert s.first_match(120.0, 400.0) == BAND_TINY;
+    assert s.first_match(420.0, 400.0) == BAND_COMPACT;
+    assert s.first_match(700.0, 400.0) == BAND_MEDIUM;
+    assert s.first_match(1024.0, 400.0) == BAND_EXPANDED;
+    assert s.first_match(1440.0, 400.0) == BAND_LARGE;
+    assert s.first_match(2560.0, 400.0) == BAND_XLARGE;
+    assert s.first_match(unset(), 400.0) == "";
+}
+
+#[test]
+fn default_set_hands_back_a_ready_shared_pointer() {
+    let p1: *BandSet = default_set();
+    let p2: *BandSet = default_set();
+    assert p1.is_not_null();
+    assert p1 == p2;
+    assert { (*p1).matches(BAND_COMPACT, 400.0, 800.0) };
+}
+

@@ -35,12 +35,9 @@ no size observer, no callback, no re-evaluation by hand:
 ```cplus
 import "flex_layout/bands" as bands;
 
-var set: bands::BandSet = bands::BandSet::defaults();
-set.set("watch", max_width: 120.0f64, max_height: 120.0f64);   // or add your own
+var sidebar: flex::Node = flex::Node::new().hide_up_to("compact");
 
-var sidebar: flex::Node = flex::Node::new().hide("compact");
-
-root.calculate_layout(width: w, height: h, bands: #addr_of(set));
+root.calculate_layout(width: w, height: h, bands: bands::default_set());
 ```
 
 A **band** is a named box constraint (`min_width` / `max_width` /

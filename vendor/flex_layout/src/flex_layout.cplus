@@ -613,6 +613,43 @@ impl Node {
         return this._rules.append(Rule { band: text::from_str(band), hide: hide });
     }
 
+    // Add a visibility rule across the blessed width ladder from `tiny` up
+    // through `band` inclusive (`0..=rank`). Solves the `hide("compact")`
+    // footgun where shrinking below 300pt into `tiny` would otherwise un-hide
+    // the node. Rejects names not in the six-band ladder with `InvalidInput`.
+    fn add_rule_up_to(ref this, band: str, hide: bool) -> status::Status {
+        return match bands::band_rank(band) {
+            option::Option[usize]::Some(rank) => {
+                var i: usize = 0;
+                while i <= rank {
+                    let s: status::Status = this.add_rule(bands::band_at(i), hide: hide);
+                    if s != status::Status::Ok { return s; }
+                    i = i +% 1;
+                }
+                status::Status::Ok
+            }
+            option::Option[usize]::None => status::Status::InvalidInput,
+        };
+    }
+
+    // Add a visibility rule across the blessed width ladder from `band` up
+    // through `xlarge` inclusive (`rank..BAND_COUNT`). Useful for mobile-only
+    // chrome (e.g. a bottom bar or drawer button that hides from `medium` up).
+    fn add_rule_from(ref this, band: str, hide: bool) -> status::Status {
+        return match bands::band_rank(band) {
+            option::Option[usize]::Some(rank) => {
+                var i: usize = rank;
+                while i < bands::BAND_COUNT {
+                    let s: status::Status = this.add_rule(bands::band_at(i), hide: hide);
+                    if s != status::Status::Ok { return s; }
+                    i = i +% 1;
+                }
+                status::Status::Ok
+            }
+            option::Option[usize]::None => status::Status::InvalidInput,
+        };
+    }
+
     fn clear_rules(ref this) { this._rules.remove_all(); return; }
     fn rule_count(this) -> usize { return this._rules.count(); }
 
@@ -2669,15 +2706,24 @@ impl Node {
     // The size an item starts from BEFORE grow and shrink share out the rest.
     // Left at auto it is the item's content, so `.grow(1.0)` on four tabs with
     // labels of different lengths hands each the same EXTRA and they stay
-    // ragged. `.grow(1.0).shrink(1.0).basis(0.0)` is the equal-share idiom: all
-    // of the space is shared, so equal factors give equal sizes, whatever the
-    // count — which `width_percent(25.0)` cannot say.
+    // ragged. `.flex(1.0)` (or `.grow(1.0).shrink(1.0).basis(0.0)`) is the
+    // equal-share idiom: all of the space is shared, so equal factors give
+    // equal sizes, whatever the count — which `width_percent(25.0)` cannot say.
     fn basis(take this, v: f64) -> Node { var n: Node = this; n.style.flex_basis = StyleLength::points(v); return n; }
     fn basis_percent(take this, v: f64) -> Node { var n: Node = this; n.style.flex_basis = StyleLength::percent(v); return n; }
+    // Equal-share shorthand (`grow: v, shrink: 1.0, basis: 0.0`).
+    fn flex(take this, v: f64) -> Node { var n: Node = this; n.set_flex(v); return n; }
+    // Fill leftover main-axis space equally (`flex(1.0)`).
+    fn fill(take this) -> Node { var n: Node = this; n.set_flex(1.0); return n; }
     fn width(take this, v: f64) -> Node { var n: Node = this; n.style.width = StyleLength::points(v); return n; }
     fn height(take this, v: f64) -> Node { var n: Node = this; n.style.height = StyleLength::points(v); return n; }
     fn width_percent(take this, v: f64) -> Node { var n: Node = this; n.style.width = StyleLength::percent(v); return n; }
     fn height_percent(take this, v: f64) -> Node { var n: Node = this; n.style.height = StyleLength::percent(v); return n; }
+    fn min_width(take this, v: f64) -> Node { var n: Node = this; n.style.min_width = StyleLength::points(v); return n; }
+    fn min_height(take this, v: f64) -> Node { var n: Node = this; n.style.min_height = StyleLength::points(v); return n; }
+    fn max_width(take this, v: f64) -> Node { var n: Node = this; n.style.max_width = StyleLength::points(v); return n; }
+    fn max_height(take this, v: f64) -> Node { var n: Node = this; n.style.max_height = StyleLength::points(v); return n; }
+    fn ratio(take this, v: f64) -> Node { var n: Node = this; n.style.aspect_ratio = v; return n; }
     fn padding(take this, v: f64) -> Node { var n: Node = this; n.set_padding(Edge::All, StyleLength::points(v)); return n; }
     fn margin(take this, v: f64) -> Node { var n: Node = this; n.set_margin(Edge::All, StyleLength::points(v)); return n; }
     // Per-edge, in the CHAIN. `padding(v)` covers all four and is the common
@@ -2686,50 +2732,73 @@ impl Node {
     // described in two places and the second one is easy to miss.
     fn padding_edge(take this, e: Edge, v: f64) -> Node { var n: Node = this; n.set_padding(e, StyleLength::points(v)); return n; }
     fn margin_edge(take this, e: Edge, v: f64) -> Node { var n: Node = this; n.set_margin(e, StyleLength::points(v)); return n; }
+    fn absolute(take this) -> Node { var n: Node = this; n.style.position_type = PositionType::Absolute; return n; }
+    fn position_edge(take this, e: Edge, v: f64) -> Node { var n: Node = this; n.set_position(e, StyleLength::points(v)); return n; }
     fn gap(take this, v: f64) -> Node { var n: Node = this; n.set_gap(Gutter::All, StyleLength::points(v)); return n; }
 
     // Conditional visibility, fluent — the build-time spelling of `add_rule`,
     // so a rule sits on the node it governs instead of in a callback:
     //
-    //     b.add(pane("Detail").hide("compact"));
+    //     b.add(pane("Detail").hide_up_to("compact"));
     //
     // The band is measured against the nearest CONTAINED ancestor, never this
     // node itself; `bands` must be passed to `calculate_layout` for either to
-    // do anything. Chain them for more than one band.
+    // do anything. Chain them for more than one band, or use `hide_up_to` /
+    // `hide_from` to span the ordered width ladder (`tiny` .. `xlarge`).
     fn hide(take this, band: str) -> Node { var n: Node = this; let _ = n.add_rule(band, hide: true); return n; }
     fn show(take this, band: str) -> Node { var n: Node = this; let _ = n.add_rule(band, hide: false); return n; }
+    fn hide_up_to(take this, band: str) -> Node { var n: Node = this; let _ = n.add_rule_up_to(band, hide: true); return n; }
+    fn show_up_to(take this, band: str) -> Node { var n: Node = this; let _ = n.add_rule_up_to(band, hide: false); return n; }
+    fn hide_from(take this, band: str) -> Node { var n: Node = this; let _ = n.add_rule_from(band, hide: true); return n; }
+    fn show_from(take this, band: str) -> Node { var n: Node = this; let _ = n.add_rule_from(band, hide: false); return n; }
     fn justify(take this, v: Justify) -> Node { var n: Node = this; n.style.justify_content = v; return n; }
     fn align(take this, v: Align) -> Node { var n: Node = this; n.style.align_items = v; return n; }
+    fn align_self(take this, v: Align) -> Node { var n: Node = this; n.style.align_self = v; return n; }
+    fn align_content(take this, v: Align) -> Node { var n: Node = this; n.style.align_content = v; return n; }
+    fn center(take this) -> Node {
+        var n: Node = this;
+        n.style.justify_content = Justify::Center;
+        n.style.align_items = Align::Center;
+        return n;
+    }
     fn wrap(take this, v: Wrap) -> Node { var n: Node = this; n.style.flex_wrap = v; return n; }
 }
 
 // ==========================================================================
-// HIG defaults — Apple Human Interface Guidelines spacing + sizing (8pt grid)
+// Design-system & HIG defaults — 4pt/8pt spatial grid + ergonomic bounds
 // ==========================================================================
-// Apple's layout system is an 8-point grid: related items sit 8pt apart, content
-// gets 16pt padding, windows keep ~20pt edge margins (macOS), and any tappable
-// control needs a >=44x44pt hit area (iOS/touch). The engine's own defaults stay
-// unchanged; these constants + preset containers/modifiers are the opt-in
-// layer that makes an @flex layout HIG-correct by default.
-//   https://developer.apple.com/design/human-interface-guidelines/layout
+// Built on an 8-point spatial grid with 4pt half-steps: related items sit 8pt
+// apart, compact groups/list rows use 12pt, cards use 16pt padding, windows
+// keep 20pt edge margins, tappable controls enforce a >=44x44pt hit area, and
+// reading/form columns cap at 680pt (~65ch) so prose never stretches across
+// wide viewports. The engine's core Style::new defaults stay conservative;
+// these constants + preset containers/modifiers are the opt-in ergonomic layer.
 
-const HIG_SPACE_XS: f64 = 4.0;    // half-step: tight groupings, inner chrome
-const HIG_SPACE_S:  f64 = 8.0;    // base grid unit: spacing between related items
-const HIG_SPACE_M:  f64 = 16.0;   // content / card padding; compact screen margin
-const HIG_SPACE_L:  f64 = 20.0;   // regular window / screen edge margin (macOS)
-const HIG_SPACE_XL: f64 = 32.0;   // separation between distinct content groups
-const HIG_TAP_MIN:  f64 = 44.0;   // minimum tap target (iOS/touch); visionOS is 60
+const HIG_SPACE_2XS: f64 = 2.0;   // micro step: title + subtitle pair
+const HIG_SPACE_XS:  f64 = 4.0;   // half-step: tight groupings, inner chrome
+const HIG_SPACE_S:   f64 = 8.0;   // base grid unit: spacing between related items
+const HIG_SPACE_SM:  f64 = 12.0;  // 1.5x grid unit: compact card padding, form/list gap
+const HIG_SPACE_M:   f64 = 16.0;  // content / card padding; compact screen margin
+const HIG_SPACE_L:   f64 = 20.0;  // regular window / screen edge margin (macOS / tablet)
+const HIG_SPACE_XL:  f64 = 32.0;  // separation between distinct content groups
+const HIG_SPACE_2XL: f64 = 48.0;  // major section / hero separation
+const HIG_TAP_MIN:   f64 = 44.0;  // minimum tap target (iOS/touch); visionOS is 60
+const HIG_READABLE_WIDTH: f64 = 680.0; // comfortable max width for prose & forms (~65ch)
+const HIG_SIDEBAR_MIN:    f64 = 200.0; // standard sidebar minimum width
+const HIG_SIDEBAR_MAX:    f64 = 320.0; // standard sidebar maximum width
 
 // ---- preset containers (standard 8pt inter-item spacing) ----
 // A vertical stack of related items, 8pt apart.
 fn vstack(take b: Builder) -> Node { var n: Node = column(b); n.set_gap(Gutter::Row, StyleLength::points(HIG_SPACE_S)); return n; }
 // A horizontal stack of related items, 8pt apart.
 fn hstack(take b: Builder) -> Node { var n: Node = row(b); n.set_gap(Gutter::Column, StyleLength::points(HIG_SPACE_S)); return n; }
-// A window/screen root: a vertical stack with standard 20pt edge margins.
+// A window/screen root: a vertical stack with standard 20pt edge margins and
+// `flex_grow: 1` so `@flex { screen { ... } }` fills its enclosing viewport.
 fn screen(take b: Builder) -> Node {
     var n: Node = column(b);
     n.set_padding(Edge::All, StyleLength::points(HIG_SPACE_L));
     n.set_gap(Gutter::Row, StyleLength::points(HIG_SPACE_S));
+    n.set_flex_grow(1.0);
     return n;
 }
 // A card: grouped content with 16pt padding and 8pt inter-item spacing.
@@ -2785,6 +2854,21 @@ impl Node {
         var n: Node = this;
         n.set_min_width(StyleLength::points(HIG_TAP_MIN));
         n.set_min_height(StyleLength::points(HIG_TAP_MIN));
+        return n;
+    }
+    // Cap width at `HIG_READABLE_WIDTH` (680pt) so prose and forms stay legible
+    // inside wide containers without preventing shrinkage on narrow screens.
+    fn readable_width(take this) -> Node {
+        var n: Node = this;
+        n.set_max_width(StyleLength::points(HIG_READABLE_WIDTH));
+        return n;
+    }
+    // Constrain a sidebar to a preferred width clamped to [200pt, 320pt].
+    fn sidebar_width(take this, preferred: f64 = 240.0) -> Node {
+        var n: Node = this;
+        n.set_width(StyleLength::points(preferred));
+        n.set_min_width(StyleLength::points(HIG_SIDEBAR_MIN));
+        n.set_max_width(StyleLength::points(HIG_SIDEBAR_MAX));
         return n;
     }
     // Standard 16pt content padding.
@@ -5538,3 +5622,86 @@ fn test_two_passes_converge_on_a_deep_chain() {
         option::Option::None => { assert false; }
     }
 }
+
+#[test]
+fn test_hide_up_to_covers_tiny_and_compact_without_reappearing() {
+    // `.hide("compact")` alone un-hides below 300pt because `tiny` and
+    // `compact` are disjoint half-open bands. `.hide_up_to("compact")` covers
+    // the ladder from `tiny` through `compact` inclusive.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.add_child(leaf(200.0, 40.0).hide_up_to("compact"));
+    root.add_child(box().fill().height(40.0));
+
+    // Tiny (200pt): hidden
+    root.calculate_layout(width: 200.0, height: 100.0, bands: bands::default_set());
+    assert approx(must(root.child_frame(0)).width, 0.0);
+    assert approx(must(root.child_frame(1)).width, 200.0);
+
+    // Compact (450pt): still hidden
+    root.calculate_layout(width: 450.0, height: 100.0, bands: bands::default_set());
+    assert approx(must(root.child_frame(0)).width, 0.0);
+    assert approx(must(root.child_frame(1)).width, 450.0);
+
+    // Medium (700pt): shown
+    root.calculate_layout(width: 700.0, height: 100.0, bands: bands::default_set());
+    assert approx(must(root.child_frame(0)).width, 200.0);
+    assert approx(must(root.child_frame(1)).width, 500.0);
+}
+
+#[test]
+fn test_hide_from_hides_across_upper_ladder_bands() {
+    // Mobile-only chrome (e.g. a bottom tab bar) that hides from `medium` up.
+    var root: Node = Node::new();
+    root.add_child(leaf(100.0, 48.0).hide_from("medium"));
+
+    // Compact (400pt): visible
+    root.calculate_layout(width: 400.0, height: 200.0, bands: bands::default_set());
+    assert approx(must(root.child_frame(0)).height, 48.0);
+
+    // Medium (700pt) and Expanded (1024pt): hidden
+    root.calculate_layout(width: 700.0, height: 200.0, bands: bands::default_set());
+    assert approx(must(root.child_frame(0)).height, 0.0);
+    root.calculate_layout(width: 1024.0, height: 200.0, bands: bands::default_set());
+    assert approx(must(root.child_frame(0)).height, 0.0);
+
+    // Non-ladder name is rejected by add_rule_up_to / add_rule_from.
+    var n: Node = Node::new();
+    assert n.add_rule_up_to("custom", hide: true) == status::Status::InvalidInput;
+    assert n.add_rule_from("custom", hide: true) == status::Status::InvalidInput;
+}
+
+#[test]
+fn test_fluent_modifiers_and_hig_presets() {
+    // `screen` inside a Builder root grows to fill the viewport height,
+    // `.readable_width()` caps at 680pt, `.sidebar_width()` clamps to [200, 320],
+    // `.center()` centers children on both axes, and `.flex(1.0)` shares space.
+    var inner: Builder = Builder::new();
+    inner.add(box().height(40.0).readable_width());
+    var outer: Builder = Builder::new();
+    outer.add(screen(inner));
+    var root: Node = outer.finish();
+    root.calculate_layout(width: 1000.0, height: 600.0);
+
+    // Outer screen filled all 600pt height, and its child is capped at 680pt wide.
+    let scr: Frame = must(root.child_frame(0));
+    assert approx(scr.width, 1000.0);
+    assert approx(scr.height, 600.0);
+    let readable: Frame = grandchild(root, 0, 0);
+    assert approx(readable.width, HIG_READABLE_WIDTH);
+
+    // Center modifier centers a 40x20 box inside a 200x100 container.
+    var cb: Builder = Builder::new();
+    cb.add(box().width(40.0).height(20.0));
+    var centered: Node = column(cb).center();
+    centered.calculate_layout(width: 200.0, height: 100.0);
+    let cf: Frame = must(centered.child_frame(0));
+    assert approx(cf.left, 80.0);
+    assert approx(cf.top, 40.0);
+
+    // Sidebar width clamps preferred width into [200, 320].
+    var sb: Node = box().sidebar_width(preferred: 150.0).height(100.0);
+    sb.calculate_layout();
+    assert approx(sb.frame().width, HIG_SIDEBAR_MIN);
+}
+

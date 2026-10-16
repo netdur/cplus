@@ -229,8 +229,8 @@ fn width_or(o: option::Option[f64], fallback: f64) -> f64 {
 
 fn standard_config() -> ResponsiveConfig {
     var c: ResponsiveConfig = ResponsiveConfig::new("desktop");
-    c.add_breakpoint("tablet", 900.0); // deliberately registered out of order
-    c.add_breakpoint("mobile", 300.0);
+    let _ = c.add_breakpoint("tablet", 900.0); // deliberately registered out of order
+    let _ = c.add_breakpoint("mobile", 300.0);
     return c;
 }
 

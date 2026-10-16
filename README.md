@@ -7,7 +7,7 @@ directions, and keeps high-level capabilities in ordinary vendored packages
 instead of growing the core language.
 
 Version **0.0.29** supports macOS, Windows, Linux, iOS, Android, ESP32, and
-WebAssembly. Facet supplies native AppKit, UIKit, Android, GTK, and Win32 UI
+WebAssembly. Facet supplies native AppKit, UIKit, Android, GTK, and WinUI 3 UI
 backends.
 
 **Website:** <https://cplus-lang.dev> ·
@@ -53,7 +53,7 @@ sections, and `#platform()`:
 |---|---|---|---|
 | macOS | native host | executable | AppKit |
 | Linux | native host | executable | GTK 4 |
-| Windows | native host | executable | Win32 |
+| Windows | native host | executable | WinUI 3 |
 | iOS | `ios-arm64`, `ios-arm64-simulator` through Xcode | static library + C header for the platform shell | UIKit |
 | Android | `android-arm64` through the Android NDK | static library + C header for the platform shell | Android |
 | ESP32 | `esp32-xtensa`, `esp32c3-riscv32` through esp-clang / ESP-IDF | static library + C header for firmware integration | — |
@@ -252,8 +252,9 @@ state, and events. The running application's behavior—not only a successful
 build—then becomes evidence for the next iteration.
 
 The stack is split into ordinary packages: `agent_core`, platform backends
-(`agent_appkit`, `agent_uikit`, `agent_android`, `agent_gtk`, `agent_win32`),
-`agent_mcp`, `agent_inapp`, and the optional `facet_agent` integration.
+(`agent_appkit`, `agent_uikit`, `agent_android`, `agent_gtk`, `agent_winui`,
+`agent_win32`), `agent_mcp`, `agent_inapp`, and the optional `facet_agent`
+integration.
 
 ## Facet and native application capabilities
 
@@ -335,7 +336,7 @@ checked with simulator, device, and probe applications where applicable.
 - [Dense language skill for LLMs and agents](docs/lang/skill.md)
 - [Facet tutorial](vendor/facet/docs/tutorial.md)
 - [Facet application and navigation guide](vendor/facet/docs/navigation.md)
-- [v0.0.28 changelog](changeslog.md#v0028--2026-09-18)
+- [v0.0.29 changelog](changeslog.md#v0029--2026-09-24)
 
 Every release should be read with its matching documentation and packages.
 C+ is pre-1.0 and moves quickly; pin the toolchain version for real projects.

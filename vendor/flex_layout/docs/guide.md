@@ -241,13 +241,20 @@ on its own leading-dot line is a use-after-move.
 |---|---|
 | `.width` / `.height` | points |
 | `.width_percent` / `.height_percent` | percent of parent |
+| `.min_width` / `.min_height` / `.max_width` / `.max_height` | point bounds |
+| `.ratio` | aspect ratio (`width / height`) |
 | `.grow` / `.shrink` | flex factors |
 | `.basis` / `.basis_percent` | the size grow and shrink start from (default: the content) |
+| `.flex` / `.fill` | equal-share shorthand (`grow: v, shrink: 1, basis: 0`; `.fill()` is `.flex(1.0)`) |
 | `.padding` / `.margin` | uniform points |
+| `.padding_edge` / `.margin_edge` / `.position_edge` | per-edge points (`Edge::Horizontal`, `Edge::Top`, …) |
+| `.absolute` | `PositionType::Absolute` |
 | `.gap` | container gap |
-| `.justify` / `.align` / `.wrap` | main/cross/wrap |
+| `.justify` / `.align` / `.align_self` / `.align_content` / `.wrap` | main / cross / self / lines / wrap |
+| `.center` | `Justify::Center` + `Align::Center` |
+| `.hide` / `.show` / `.hide_up_to` / `.show_up_to` / `.hide_from` / `.show_from` | band visibility rules |
 
-**Equal shares: `.grow(1.0).shrink(1.0).basis(0.0)`.** Grow alone shares out
+**Equal shares: `.flex(1.0)` / `.fill()` (or `.grow(1.0).shrink(1.0).basis(0.0)`).** Grow alone shares out
 only the space LEFT OVER after each item's content, so four tabs with labels of
 different lengths stay different widths. Basis 0 makes all of the space the
 leftover, so equal factors give equal sizes at any count — which
@@ -256,27 +263,30 @@ leftover, so equal factors give equal sizes at any count — which
 Flow control: `if` and `for` may add children; no `while` / `break` / `return`
 inside the block.
 
-### HIG presets (opt-in)
+### HIG & design-system presets (opt-in)
 
-Engine `Style::new` defaults stay conservative. HIG is a layer on top (8pt
-grid):
+Engine `Style::new` defaults stay conservative. The preset layer sits on top
+(4pt/8pt spatial grid + ergonomic bounds):
 
 | Container / modifier | Rule |
 |---|---|
 | `vstack` / `hstack` | 8pt between items |
-| `screen` | 20pt edge margins + 8pt spacing |
+| `screen` | 20pt edge margins + 8pt spacing + `flex_grow: 1` (fills viewport) |
 | `card` | 16pt padding + 8pt spacing |
 | `.tappable()` | min 44×44 tap target |
+| `.readable_width()` | max 680pt width (~65ch comfortable reading/form measure) |
+| `.sidebar_width(preferred:)` | width (default 240pt) clamped to `[200pt, 320pt]` |
 | `.card_padding` / `.screen_margins` / `.std_gap` | 16 / 20 / 8 |
 
-Constants: `HIG_SPACE_XS/S/M/L/XL` = 4/8/16/20/32, `HIG_TAP_MIN` = 44.
+Constants: `HIG_SPACE_2XS/XS/S/SM/M/L/XL/2XL` = 2/4/8/12/16/20/32/48,
+`HIG_TAP_MIN` = 44, `HIG_READABLE_WIDTH` = 680, `HIG_SIDEBAR_MIN/MAX` = 200/320.
 
 ```cplus
 @flex {
     screen {
         hstack {
-            box().width(200.0)
-            card { box().grow(1.0) }
+            box().sidebar_width()
+            card { box().fill().readable_width() }
         }
     }
 }
@@ -312,12 +322,10 @@ resize.
 ```cplus
 import "flex_layout/bands" as bands;
 
-var set: bands::BandSet = bands::BandSet::defaults();
+var sidebar: flex::Node = flex::Node::new().hide_up_to("compact");
+// or, after the fact: sidebar.add_rule_up_to("compact", hide: true);
 
-var sidebar: flex::Node = flex::Node::new().hide("compact");
-// or, after the fact: sidebar.add_rule("compact", hide: true);
-
-root.calculate_layout(width: w, height: h, bands: #addr_of(set));
+root.calculate_layout(width: w, height: h, bands: bands::default_set());
 ```
 
 ### What a band is
@@ -326,6 +334,7 @@ A named box constraint. Each edge is optional and an omitted one is
 **unbounded**, not zero:
 
 ```cplus
+var set: bands::BandSet = bands::BandSet::defaults();
 set.set("watch", max_width: 120.0f64, max_height: 120.0f64);
 set.set("wide", min_width: 1400.0f64);
 ```
@@ -347,10 +356,10 @@ split at 300 so a watch face is not lumped in with a 599pt phone:
 | `xlarge` | ≥ 1600 |
 
 They are width-only on purpose: a one-axis ladder tiles, so every box lands in
-exactly one. Adding a height bound to a default would open a gap — a 200×800
-box would be too tall for a height-bounded `tiny` and too narrow for
-`compact`, and match nothing. Height belongs in bands you define yourself,
-which is what `watch` above is.
+exactly one (`set.first_match(w, h)` returns the matching band name). Adding a
+height bound to a default would open a gap — a 200×800 box would be too tall
+for a height-bounded `tiny` and too narrow for `compact`, and match nothing.
+Height belongs in bands you define yourself, which is what `watch` above is.
 
 Names are `str`, so **the compiler cannot catch a typo**: `hide("compat")`
 simply never fires. `is_registered` is there for a startup check.
@@ -398,7 +407,11 @@ A whole extra layout is paid only on the frame a band actually flips.
 
 ### Rules
 
-`add_rule(band, hide:)` and the fluent `hide(band)` / `show(band)`. **The last
+`add_rule(band, hide:)` and the fluent `hide(band)` / `show(band)` target one
+band; `add_rule_up_to` / `add_rule_from` and the fluent `hide_up_to(band)` /
+`show_up_to(band)` / `hide_from(band)` / `show_from(band)` span the six-band
+width ladder (`tiny` through `band`, or `band` through `xlarge`) so hiding a
+sidebar on `compact` also keeps it hidden in `tiny` (< 300pt). **The last
 matching rule wins**, so a broad hide followed by a narrow show reads the way
 it is written. When no rule matches, the node returns to its parked display —
 `Grid` if it has grid tracks, otherwise `Flex` — so a hide is never permanent.

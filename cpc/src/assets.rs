@@ -208,7 +208,6 @@ mod tests {
     #[test]
     fn staging_is_flat_and_exact() {
         let root = tempfile::tempdir().unwrap();
-        let out = root.path().join("target/debug");
         let st = staging_dir(root.path(), "host", "debug");
         write(&root.path().join("assets/probe.txt"), "flat-root");
         write(&root.path().join("assets/defaults/probe.txt"), "nested");
@@ -229,7 +228,6 @@ mod tests {
     #[test]
     fn a_changed_file_of_the_same_size_is_recopied() {
         let root = tempfile::tempdir().unwrap();
-        let out = root.path().join("target/debug");
         let st = staging_dir(root.path(), "host", "debug");
         let src = root.path().join("assets/a.txt");
         write(&src, "one");
@@ -246,7 +244,6 @@ mod tests {
     #[test]
     fn no_assets_still_leaves_an_empty_staging_directory() {
         let root = tempfile::tempdir().unwrap();
-        let out = root.path().join("target/debug");
         let st = staging_dir(root.path(), "host", "debug");
         write(&st.join("stale.txt"), "from an earlier build");
         let dir = stage(root.path(), &st).unwrap();

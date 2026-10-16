@@ -85,7 +85,10 @@ visibility — bands".
 |---|---|
 | `hide` | `(take this, band: str) -> Node` — fluent; hide while `band` matches |
 | `show` | `(take this, band: str) -> Node` — fluent; show while `band` matches |
+| `hide_up_to` / `show_up_to` | `(take this, band: str) -> Node` — fluent; hide/show across the width ladder from `tiny` through `band` |
+| `hide_from` / `show_from` | `(take this, band: str) -> Node` — fluent; hide/show across the width ladder from `band` through `xlarge` |
 | `add_rule` | `(ref this, band: str, hide: bool) -> Status` — mutating form; empty name is `InvalidInput`. Re-using a band replaces its entry |
+| `add_rule_up_to` / `add_rule_from` | `(ref this, band: str, hide: bool) -> Status` — mutating ladder-range forms; non-ladder name is `InvalidInput` |
 | `clear_rules` | `(ref this)` |
 | `rule_count` | `(this) -> usize` |
 | `rule_band` | `(this, at: usize) -> str` — `""` past the end |
@@ -101,11 +104,14 @@ grid tracks, else `Flex`.
 |---|---|
 | `BandSet::new` | `-> BandSet` — empty; nothing matches |
 | `BandSet::defaults` | `-> BandSet` — `tiny` `compact` `medium` `expanded` `large` `xlarge` |
+| `bands::default_set` | `() -> *BandSet` — shared ready pointer to the default six-band set |
 | `set` | `(ref this, name: str, min_width: f64 = unset(), max_width: f64 = unset(), min_height: f64 = unset(), max_height: f64 = unset()) -> Status` |
 | `remove` | `(ref this, name: str) -> bool` |
 | `count` | `(this) -> usize` |
 | `is_registered` | `(this, name: str) -> bool` |
 | `matches` | `(this, name: str, width: f64, height: f64) -> bool` |
+| `first_match` | `(this, width: f64, height: f64) -> str` — first matching band name, or `""` |
+| `bands::band_at` / `bands::band_rank` | `(index: usize) -> str` / `(name: str) -> Option[usize]` — ordered ladder helpers (`BAND_COUNT = 6`) |
 | `bands::unset` | `() -> f64` — the NaN "edge not set" sentinel |
 
 Bounds are half-open (`min <= v < max`). An unset edge is **unbounded**, not
@@ -241,10 +247,10 @@ Line naming matches CSS `[sidebar] 200px`:
 | Builder | `Builder::new` / `add(take)` / `finish` |
 | Containers | `row` / `column` / `box` / `zstack` |
 | Flexible space | `spacer()` — an empty box that absorbs leftover main-axis space |
-| Fluent | `width`, `height`, `width_percent`, `height_percent`, `grow`, `shrink`, `basis`, `basis_percent`, `padding`, `margin`, `gap`, `justify`, `align`, `wrap` |
+| Fluent | `width`, `height`, `width_percent`, `height_percent`, `min_width`, `min_height`, `max_width`, `max_height`, `ratio`, `grow`, `shrink`, `basis`, `basis_percent`, `flex`, `fill`, `padding`, `padding_edge`, `margin`, `margin_edge`, `position_edge`, `absolute`, `gap`, `justify`, `align`, `align_self`, `align_content`, `center`, `wrap`, `hide`, `show`, `hide_up_to`, `show_up_to`, `hide_from`, `show_from` |
 | HIG containers | `vstack` / `hstack` / `screen` / `card` |
-| HIG modifiers | `.tappable()` / `.card_padding()` / `.screen_margins()` / `.std_gap()` |
-| HIG constants | `HIG_SPACE_XS/S/M/L/XL` (4/8/16/20/32), `HIG_TAP_MIN` (44) |
+| HIG modifiers | `.tappable()` / `.readable_width()` / `.sidebar_width(preferred:)` / `.card_padding()` / `.screen_margins()` / `.std_gap()` |
+| HIG constants | `HIG_SPACE_2XS/XS/S/SM/M/L/XL/2XL` (2/4/8/12/16/20/32/48), `HIG_TAP_MIN` (44), `HIG_READABLE_WIDTH` (680), `HIG_SIDEBAR_MIN/MAX` (200/320) |
 
 `zstack` takes its children out of flow, so they share the container's origin
 and the container sizes from its own style rather than from their sum. Place a
