@@ -245,6 +245,72 @@ pub(crate) fn builtin_impl_ty(name: &str) -> Option<Ty> {
 
 /// The builtin impl target a receiver type denotes, if any. The inverse of
 /// `builtin_impl_ty`, used to route a method call on a builtin receiver.
+/// The type a literal-only expression would take from `t`: `t` itself when
+/// it is of the literal's kind (an integer type for `512`, a float type for
+/// `0.4`), else `None`. Handing a literal a type of the other kind would only
+/// repeat, at the literal, the mismatch its position reports anyway.
+fn literal_expectation(e: &Expr, t: Option<&Ty>) -> Option<Ty> {
+    let t = t?;
+    // The leftmost literal decides the kind; a `-` on the way to it rules
+    // out an unsigned type (`-1` is never a `u32`).
+    let (mut cur, mut negated) = (e, false);
+    let leftmost_is_float = loop {
+        match &cur.kind {
+            ExprKind::Unary { operand, .. } => {
+                negated = true;
+                cur = operand;
+            }
+            ExprKind::Binary { lhs, .. } => cur = lhs,
+            ExprKind::FloatLit(..) => break true,
+            _ => break false,
+        }
+    };
+    let fits = if leftmost_is_float {
+        t.is_float()
+    } else {
+        t.is_int() && !(negated && !t.is_signed_int())
+    };
+    fits.then(|| t.clone())
+}
+
+/// How `check_block_as_expr_with` treats a block's tail expression.
+enum TailCheck {
+    /// Check it now, against this expected type.
+    Now(Option<Ty>),
+    /// Leave it to the caller (a literal-only `if` tail; see `check_if`).
+    Deferred,
+}
+
+/// An expression made only of unsuffixed numeric literals: `512`, `-0.4`,
+/// `1.0 / 255.0`, `(2 + 3) * 4`. It has no type of its own, so it takes the
+/// one its position asks for. It names no binding and moves nothing, so
+/// checking it later than its neighbours changes nothing but its type.
+fn is_unsuffixed_literal_expr(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Unary { op: UnaryOp::Neg, operand } => is_unsuffixed_literal_expr(operand),
+        ExprKind::Binary { op, lhs, rhs } => {
+            matches!(
+                op,
+                BinOp::Add
+                    | BinOp::Sub
+                    | BinOp::Mul
+                    | BinOp::Div
+                    | BinOp::Mod
+                    | BinOp::AddWrap
+                    | BinOp::SubWrap
+                    | BinOp::MulWrap
+                    | BinOp::BitAnd
+                    | BinOp::BitOr
+                    | BinOp::BitXor
+                    | BinOp::Shl
+                    | BinOp::Shr
+            ) && is_unsuffixed_literal_expr(lhs)
+                && is_unsuffixed_literal_expr(rhs)
+        }
+        _ => is_unsuffixed_num_lit(e),
+    }
+}
+
 pub(crate) fn builtin_name_of_ty(t: &Ty) -> Option<&'static str> {
     match t {
         Ty::Str => Some("str"),
@@ -892,13 +958,14 @@ pub struct MonoInfo {
     /// span (the old `Text::as_str` extraction, now implicit); the
     /// view-escape check (E0513) consults it for returned aggregate leaves.
     pub text_to_str_coercions: std::collections::HashSet<ByteSpan>,
-    /// Unsuffixed float literals that sema typed narrower than the `f64`
-    /// default (`take_f32(0.4)`, `let v: f32 = 0.4;`), keyed by the literal's
-    /// span. Codegen renders the literal from the suffix alone, so without
-    /// this an inferred-`f32` literal emits its f64 bits into a `float`
-    /// operand, which LLVM rejects for any value that is not f32-exact
-    /// (bugs/closed/an-unsuffixed-float-literal-inferred-as-f32-keeps-its-f64-bits.md).
-    pub float_lit_widths: HashMap<ByteSpan, Ty>,
+    /// Unsuffixed numeric literals that sema typed other than their default
+    /// (`i32`, `f64`) — `take_f32(0.4)`, `let a: u64 = 1 << 40;` — keyed by
+    /// the literal's span. Codegen reads a literal's width from its suffix,
+    /// so without this an inferred-`f32` literal emitted its f64 bits into a
+    /// `float` operand
+    /// (bugs/closed/an-unsuffixed-float-literal-inferred-as-f32-keeps-its-f64-bits.md)
+    /// and `1 << 40` computed at `i32` while sema called it a `u64`.
+    pub lit_widths: HashMap<ByteSpan, Ty>,
     /// v0.0.14 graph value-depth: `(origin_file, expr_span, rendered_type)` for
     /// every type-checked expression. Empty unless the graph/LSP entry point
     /// requested it; backs inferred `type-at`.
@@ -1236,7 +1303,7 @@ fn check_with_files_inner(
         shader_blobs_table: HashMap::new(),
         msg_send_shapes: std::collections::BTreeSet::new(),
         text_to_str_coercion_table: std::collections::HashSet::new(),
-        float_lit_width_table: HashMap::new(),
+        lit_width_table: HashMap::new(),
     };
     cx.record_value_types = record_types;
     cx.register_builtins();
@@ -1584,7 +1651,7 @@ fn check_with_files_inner(
         selectors: std::mem::take(&mut cx.selectors_table),
         shader_blobs: std::mem::take(&mut cx.shader_blobs_table),
         text_to_str_coercions: std::mem::take(&mut cx.text_to_str_coercion_table),
-        float_lit_widths: std::mem::take(&mut cx.float_lit_width_table),
+        lit_widths: std::mem::take(&mut cx.lit_width_table),
         value_types: std::mem::take(&mut cx.value_types),
     };
     (sink.into_vec(), mono)
@@ -1999,8 +2066,8 @@ struct SemaCx<'a> {
     /// v0.0.24 #11: spans of `Text`→`str` coercion sites (see
     /// [`MonoInfo::text_to_str_coercions`]).
     text_to_str_coercion_table: std::collections::HashSet<ByteSpan>,
-    /// See [`MonoInfo::float_lit_widths`].
-    float_lit_width_table: HashMap<ByteSpan, Ty>,
+    /// See [`MonoInfo::lit_widths`].
+    lit_width_table: HashMap<ByteSpan, Ty>,
 }
 
 /// issue-13(b), issue-15(b): what a type table has to answer for the rules
@@ -9663,38 +9730,56 @@ impl SemaCx<'_> {
             }
         }
         if let Some(exp) = expected {
-            if exp != Ty::Error && actual != Ty::Error && exp != actual {
-                // Name both sides the way the user spells them. The
-                // categorizing `Ty::name()` this used to call answers
-                // "struct" for every struct, so the most common mismatch in
-                // the language printed "expected `struct`, found `struct`"
-                // and the reader had to go read both declarations to learn
-                // it was `Vec[Text]` vs `Vec[str]`. `ty_display_named`
-                // already renders generic instantiations as source
-                // (`Vec[Text]`), keeps the distinct-alias leaf name the
-                // v0.0.27 note asks for, and falls through to the same
-                // `ty_display` for everything else.
-                let mut msg = format!(
-                    "type mismatch: expected `{}`, found `{}`",
-                    self.ty_display_named(&exp),
-                    self.ty_display_named(&actual)
-                );
-                if matches!(exp, Ty::Distinct { .. }) || matches!(actual, Ty::Distinct { .. }) {
-                    msg.push_str(" — distinct types convert only via an explicit `as` cast");
-                }
-                if matches!(exp, Ty::Struct(id) if self.designated_template_struct == Some(id))
-                    && (matches!(actual, Ty::Str)
-                        || matches!(actual, Ty::Struct(id) if self.designated_string_struct == Some(id)))
-                {
-                    msg.push_str(
-                        " — a `Template` is built only from a string literal written at the call; \
-                         a value has already lost its parts",
-                    );
-                }
-                self.err("E0302", msg, e.span);
-            }
+            self.report_type_mismatch(&exp, &actual, e.span);
         }
         actual
+    }
+
+    /// `check_expr` for an `else if`: `hint` reaches the nested `if`'s
+    /// literal-only branches and nothing else — no coercion and no mismatch
+    /// report, which the outer `if` makes once for the whole chain.
+    fn check_expr_hinted(&mut self, e: &Expr, hint: Option<Ty>) -> Ty {
+        let actual = self.check_expr_kind(e, hint);
+        if self.record_value_types && !matches!(actual, Ty::Error | Ty::Unit) {
+            let rendered = self.render_ty(&actual);
+            self.value_types.push((self.current_file.clone(), e.span, rendered));
+        }
+        actual
+    }
+
+    /// E0302 when an expression's type is not the one its position expects.
+    fn report_type_mismatch(&mut self, exp: &Ty, actual: &Ty, span: ByteSpan) {
+        if *exp == Ty::Error || *actual == Ty::Error || exp == actual {
+            return;
+        }
+        // Name both sides the way the user spells them. The
+        // categorizing `Ty::name()` this used to call answers
+        // "struct" for every struct, so the most common mismatch in
+        // the language printed "expected `struct`, found `struct`"
+        // and the reader had to go read both declarations to learn
+        // it was `Vec[Text]` vs `Vec[str]`. `ty_display_named`
+        // already renders generic instantiations as source
+        // (`Vec[Text]`), keeps the distinct-alias leaf name the
+        // v0.0.27 note asks for, and falls through to the same
+        // `ty_display` for everything else.
+        let mut msg = format!(
+            "type mismatch: expected `{}`, found `{}`",
+            self.ty_display_named(exp),
+            self.ty_display_named(actual)
+        );
+        if matches!(exp, Ty::Distinct { .. }) || matches!(actual, Ty::Distinct { .. }) {
+            msg.push_str(" — distinct types convert only via an explicit `as` cast");
+        }
+        if matches!(exp, Ty::Struct(id) if self.designated_template_struct == Some(*id))
+            && (matches!(actual, Ty::Str)
+                || matches!(actual, Ty::Struct(id) if self.designated_string_struct == Some(*id)))
+        {
+            msg.push_str(
+                " — a `Template` is built only from a string literal written at the call; \
+                 a value has already lost its parts",
+            );
+        }
+        self.err("E0302", msg, span);
     }
 
     fn check_expr_kind(&mut self, e: &Expr, expected: Option<Ty>) -> Ty {
@@ -9711,10 +9796,10 @@ impl SemaCx<'_> {
                 let ty = self.check_float_lit(*suf, expected);
                 // Last check wins: an expression re-checked under a different
                 // expectation must not leave a stale narrowing behind.
-                if matches!(suf, NumSuffix::None) && matches!(ty, Ty::F32 | Ty::F16) {
-                    self.float_lit_width_table.insert(e.span, ty.clone());
+                if matches!(suf, NumSuffix::None) && ty != Ty::F64 {
+                    self.lit_width_table.insert(e.span, ty.clone());
                 } else {
-                    self.float_lit_width_table.remove(&e.span);
+                    self.lit_width_table.remove(&e.span);
                 }
                 ty
             }
@@ -9800,7 +9885,7 @@ impl SemaCx<'_> {
                 cond,
                 then,
                 else_branch,
-            } => self.check_if(cond, then, else_branch.as_deref()),
+            } => self.check_if(cond, then, else_branch.as_deref(), expected),
             ExprKind::Call {
                 callee,
                 args,
@@ -9808,7 +9893,7 @@ impl SemaCx<'_> {
                 arg_labels,
             } => self.check_call(callee, args, type_args, arg_labels, e.span, expected),
             ExprKind::FnRef { callee, type_args } => self.check_fn_ref(callee, type_args, e.span),
-            ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, e.span),
+            ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, e.span, expected),
             ExprKind::Unary { op, operand } => self.check_unary(*op, operand, expected, e.span),
             ExprKind::Assign { op, target, value } => self.check_assign(*op, target, value, e.span),
             ExprKind::Range { .. } => {
@@ -11984,6 +12069,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Any arm whose pattern was rejected drops the exhaustiveness report
         // below — the arms it would judge are the ones that did not type.
         let mut pattern_poisoned = false;
+        // Literal-only arm bodies met before any typed arm, when there is no
+        // context type: checked after the loop against the arms' type, the
+        // way `check_if` defers a literal then-tail.
+        let mut deferred_lit_arms: Vec<&MatchArm> = Vec::new();
 
         for arm in arms {
             self.restore_moved(&moved_pre);
@@ -12008,12 +12097,23 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // ..; } }` shape (and made `guard let` work only by luck). Pass no
             // expected type to a diverging arm.
             let arm_diverges = crate::lower::expr_diverges(&arm.body);
-            let arm_ty = self.check_expr(
-                &arm.body,
-                if arm_diverges { None } else { expected.clone() },
-            );
+            let lit_arm = !arm_diverges && expected.is_none() && is_unsuffixed_literal_expr(&arm.body);
+            let defer = lit_arm && result_ty.is_none();
+            if defer {
+                deferred_lit_arms.push(arm);
+            }
+            let arm_ty = if defer {
+                Ty::Unit
+            } else if lit_arm {
+                self.check_expr(&arm.body, literal_expectation(&arm.body, result_ty.as_ref()))
+            } else {
+                self.check_expr(
+                    &arm.body,
+                    if arm_diverges { None } else { expected.clone() },
+                )
+            };
             // First arm sets the result type; later (non-diverging) arms agree.
-            if !arm_diverges {
+            if !arm_diverges && !defer {
                 match &result_ty {
                     None => result_ty = Some(arm_ty),
                     Some(rt) if *rt == Ty::Error => {}
@@ -12171,6 +12271,24 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.restore_moved(&moved_pre);
         for snap in &nondiverging_arm_moves {
             self.union_moved(snap);
+        }
+        for arm in deferred_lit_arms {
+            let arm_ty = self.check_expr(&arm.body, literal_expectation(&arm.body, result_ty.as_ref()));
+            match &result_ty {
+                None => result_ty = Some(arm_ty),
+                Some(rt) if *rt != Ty::Error && arm_ty != Ty::Error && *rt != arm_ty => {
+                    self.err(
+                        "E0302",
+                        format!(
+                            "match arms produce different types: expected `{}`, found `{}`",
+                            rt.name(),
+                            arm_ty.name()
+                        ),
+                        arm.span,
+                    );
+                }
+                _ => {}
+            }
         }
 
         result_ty.unwrap_or(Ty::Unit)
@@ -13009,6 +13127,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 unreachable!("float suffix on int literal")
             }
         };
+        // See `MonoInfo::lit_widths`; last check wins, as for floats.
+        if matches!(suffix, NumSuffix::None) && t != Ty::I32 {
+            self.lit_width_table.insert(span, t.clone());
+        } else {
+            self.lit_width_table.remove(&span);
+        }
         // v0.0.24 hardening (E0314): a literal must fit the integer type it
         // resolves to. The lexer accepts any magnitude up to `u64::MAX`, and
         // the stored value is the unsigned magnitude (a leading `-` is a
@@ -13204,6 +13328,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     }
 
     fn check_block_as_expr(&mut self, b: &Block) -> Ty {
+        self.check_block_as_expr_with(b, TailCheck::Now(None))
+    }
+
+    /// `check_block_as_expr`, with a say over the tail: checked against an
+    /// expected type, or — for an `if` branch whose tail is literal-only —
+    /// left for the caller to check once the other branch has a type (it is
+    /// then answered as `Ty::Unit` here and must not be read).
+    fn check_block_as_expr_with(&mut self, b: &Block, tail: TailCheck) -> Ty {
         // Block-as-expression: if no tail, value is Unit. The surrounding
         // expected-type check will catch genuine mismatches with E0302.
         // E0306 fires only at the function-body level, where "value required"
@@ -13212,16 +13344,34 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         for s in &b.stmts {
             self.check_stmt(s);
         }
-        let ty = match &b.tail {
-            Some(t) => self.check_expr(t, None),
-            None => Ty::Unit,
+        let ty = match (&b.tail, tail) {
+            (Some(t), TailCheck::Now(expected)) => self.check_expr(t, expected),
+            (Some(_), TailCheck::Deferred) | (None, _) => Ty::Unit,
         };
         self.scopes.pop();
         ty
     }
 
-    fn check_if(&mut self, cond: &Expr, then: &Block, else_branch: Option<&Expr>) -> Ty {
+    fn check_if(
+        &mut self,
+        cond: &Expr,
+        then: &Block,
+        else_branch: Option<&Expr>,
+        expected: Option<Ty>,
+    ) -> Ty {
         let _ = self.check_cond(cond);
+        // A branch value made only of unsuffixed literals takes its type from
+        // the context, or failing that from the other branch: `if x < 512 {
+        // 512 } else { x }` is a `u32` when `x` is
+        // (bugs/closed/an-if-expression-does-not-unify-a-literal-branch-with-a-typed-branch.md).
+        // Only such a branch is given an expectation — a typed branch is
+        // checked as before, so no coercion appears that was not there. A
+        // literal THEN-tail with no context waits for the else branch's type;
+        // it names no binding, so checking it last leaves the flow merge
+        // below exactly as it was.
+        let lit_tail = |b: &Block| b.tail.as_deref().is_some_and(is_unsuffixed_literal_expr);
+        let else_is_lit = matches!(else_branch.map(|e| &e.kind), Some(ExprKind::Block(b)) if lit_tail(b));
+        let defer_then = expected.is_none() && else_branch.is_some() && lit_tail(then) && !else_is_lit;
         // Definite-assignment flow merge: snapshot the assigned-state of
         // every visible binding before running the then-branch. After the
         // then-branch, capture the resulting state and restore the
@@ -13231,7 +13381,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // already assigned before the if).
         let pre_if = self.snapshot_assigned();
         let moved_pre = self.snapshot_moved();
-        let then_ty = self.check_block_as_expr(then);
+        let then_ty = self.check_block_as_expr_with(
+            then,
+            if defer_then {
+                TailCheck::Deferred
+            } else if lit_tail(then) {
+                TailCheck::Now(then.tail.as_deref().and_then(|t| literal_expectation(t, expected.as_ref())))
+            } else {
+                TailCheck::Now(None)
+            },
+        );
         let after_then = self.snapshot_assigned();
         let moved_after_then = self.snapshot_moved();
         // `crate::lower`'s is the one divergence predicate — the same one this
@@ -13244,13 +13403,30 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let then_diverges = crate::lower::block_diverges(then);
         self.restore_assigned(&pre_if);
         self.restore_moved(&moved_pre);
+        // What a literal-only else value takes: the context, else the then
+        // branch's type. A nested `if` applies the same rule to its own
+        // branches, so it can be handed the expectation whole.
+        let else_expect = expected
+            .clone()
+            .or_else(|| (!defer_then && then_ty.is_numeric()).then(|| then_ty.clone()));
         let else_ty = match else_branch {
             Some(e) => match &e.kind {
+                ExprKind::Block(b) if lit_tail(b) => {
+                    let t = b.tail.as_deref().and_then(|t| literal_expectation(t, else_expect.as_ref()));
+                    self.check_block_as_expr_with(b, TailCheck::Now(t))
+                }
                 ExprKind::Block(b) => self.check_block_as_expr(b),
-                ExprKind::If { .. } => self.check_expr(e, None),
+                ExprKind::If { .. } => self.check_expr_hinted(e, else_expect),
                 _ => Ty::Error,
             },
             None => Ty::Unit,
+        };
+        let then_ty = match (defer_then, then.tail.as_deref()) {
+            (true, Some(t)) => {
+                let from_else = literal_expectation(t, Some(&else_ty));
+                self.check_expr(t, from_else)
+            }
+            _ => then_ty,
         };
         let after_else = self.snapshot_assigned();
         let moved_after_else = self.snapshot_moved();
@@ -18639,16 +18815,64 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
-    fn check_binary(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr, span: ByteSpan) -> Ty {
+    /// The left operand of an operator whose operands share one type
+    /// (arithmetic, `%`, bitwise, wrapping, and a shift's value side). An
+    /// operand made only of unsuffixed literals takes the type its context
+    /// asks for (`let a: u32 = 7 * 3;`) and, when there is none and
+    /// `seed_from_rhs`, the type of a typed right operand (`1.0 / k`). In
+    /// that last case the right operand is checked first and its type is
+    /// returned, so the arm does not check it again
+    /// (bugs/closed/a-literal-only-arithmetic-expression-ignores-the-expected-type.md).
+    fn check_shared_type_lhs(
+        &mut self,
+        lhs: &Expr,
+        rhs: &Expr,
+        expected: &Option<Ty>,
+        seed_from_rhs: bool,
+    ) -> (Ty, Option<Ty>) {
+        if !is_unsuffixed_literal_expr(lhs) {
+            return (self.check_expr(lhs, None), None);
+        }
+        if let Some(t) = literal_expectation(lhs, expected.as_ref()) {
+            return (self.check_expr(lhs, Some(t)), None);
+        }
+        if !seed_from_rhs || is_unsuffixed_literal_expr(rhs) {
+            return (self.check_expr(lhs, None), None);
+        }
+        let rhs_ty = self.check_expr(rhs, None);
+        let lhs_ty = self.check_expr(lhs, literal_expectation(lhs, Some(&rhs_ty)));
+        (lhs_ty, Some(rhs_ty))
+    }
+
+    /// The right operand, unless `check_shared_type_lhs` already checked it;
+    /// then only the comparison against `expected` is left to make.
+    fn check_rhs_once(&mut self, rhs: &Expr, pre: &Option<Ty>, expected: Option<Ty>) -> Ty {
+        let Some(t) = pre else {
+            return self.check_expr(rhs, expected);
+        };
+        if let Some(exp) = expected {
+            self.report_type_mismatch(&exp, t, rhs.span);
+        }
+        t.clone()
+    }
+
+    fn check_binary(
+        &mut self,
+        op: BinOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        span: ByteSpan,
+        expected: Option<Ty>,
+    ) -> Ty {
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
-                let lhs_ty = self.check_expr(lhs, None);
+                let (lhs_ty, rhs_pre) = self.check_shared_type_lhs(lhs, rhs, &expected, true);
                 // Slice 10.FFI.2: pointer arithmetic. `p + n` and
                 // `p - n` produce another pointer of the same pointee;
                 // `n` must be `usize`. Multiplication and division on
                 // pointers stay rejected.
                 if matches!(lhs_ty, Ty::RawPtr(_)) && matches!(op, BinOp::Add | BinOp::Sub) {
-                    let _ = self.check_expr(rhs, Some(Ty::Usize));
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, Some(Ty::Usize));
                     return lhs_ty;
                 }
                 if !lhs_ty.is_numeric() && lhs_ty != Ty::Error {
@@ -18664,10 +18888,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         ),
                         lhs.span,
                     );
-                    let _ = self.check_expr(rhs, None);
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                     return Ty::Error;
                 }
-                let _ = self.check_expr(rhs, Some(lhs_ty.clone()));
+                let _ = self.check_rhs_once(rhs, &rhs_pre, Some(lhs_ty.clone()));
                 // W0007's sibling: a constant expression that overflows the
                 // type it is computed in. `(1000000 * 1000000) as i64`
                 // multiplies at `i32`, so debug traps on the overflow and
@@ -18676,6 +18900,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // declared width and is correct in both modes, so this is
                 // purely the expression form, and it is foldable here
                 // regardless of the build's overflow-check setting.
+                // A width the context chose (`let a: u8 = 200 + 100;`) was
+                // declared, not defaulted: overflowing it is E0921, as it is
+                // in a `const`. Only the `i32` default stays a warning.
+                let width_from_context = is_unsuffixed_literal_expr(lhs)
+                    && literal_expectation(lhs, expected.as_ref()).is_some();
                 if let (Some(a), Some(b)) = (Self::int_lit_value(lhs), Self::int_lit_value(rhs)) {
                     if let Some(width) = int_bit_width(&lhs_ty, self) {
                         let folded: Option<i128> = match op {
@@ -18691,7 +18920,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                             } else {
                                 (0, (1i128 << width) - 1)
                             };
-                            if v < lo || v > hi {
+                            if (v < lo || v > hi) && width_from_context {
+                                self.err(
+                                    "E0921",
+                                    format!(
+                                        "constant arithmetic overflows `{}`: this expression is {v}; \
+                                         use `+%` / `-%` / `*%` to wrap",
+                                        lhs_ty.name()
+                                    ),
+                                    span,
+                                );
+                            } else if v < lo || v > hi {
                                 self.warn(
                                     "W0007",
                                     format!(
@@ -18711,12 +18950,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 lhs_ty
             }
             BinOp::Mod => {
-                let lhs_ty = self.check_expr(lhs, None);
+                let (lhs_ty, rhs_pre) = self.check_shared_type_lhs(lhs, rhs, &expected, true);
                 // Float `%` lowers to `frem` — IEEE remainder, the same
                 // operation C's `fmod` names. It used to be rejected (E0316)
                 // only because codegen had no arm for it.
                 if lhs_ty.is_float() {
-                    let _ = self.check_expr(rhs, Some(lhs_ty.clone()));
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, Some(lhs_ty.clone()));
                     return lhs_ty;
                 }
                 if !lhs_ty.is_int() && lhs_ty != Ty::Error {
@@ -18733,14 +18972,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         ),
                         lhs.span,
                     );
-                    let _ = self.check_expr(rhs, None);
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                     return Ty::Error;
                 }
-                let _ = self.check_expr(rhs, Some(lhs_ty.clone()));
+                let _ = self.check_rhs_once(rhs, &rhs_pre, Some(lhs_ty.clone()));
                 lhs_ty
             }
             BinOp::Eq | BinOp::Ne => {
-                let lt = self.check_expr(lhs, None);
+                // A literal-only left side takes the right side's type
+                // (`512 == x`), as `x == 512` always did. A comparison's own
+                // context is `bool`, so it passes none.
+                let (lt, rhs_pre) = self.check_shared_type_lhs(lhs, rhs, &None, true);
                 // v0.0.24 #11: comparing a `Text` to a `str` (`name == "x"`)
                 // coerces the `Text` to its `str` view, then compares
                 // str-against-str (byte content). Matching a built string
@@ -18748,7 +18990,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // The mirror form (`"x" == name`) already coerces via the
                 // `check_expr(rhs, Some(lt))` below when `lt` is `str`.
                 if matches!(&lt, Ty::Struct(id) if self.designated_string_struct == Some(*id)) {
-                    let rt = self.check_expr(rhs, None);
+                    let rt = self.check_rhs_once(rhs, &rhs_pre, None);
                     if rt == Ty::Str {
                         self.text_to_str_coercion_table.insert(lhs.span);
                     } else if matches!(&rt, Ty::Struct(rid) if self.designated_string_struct == Some(*rid))
@@ -18784,7 +19026,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                                 .to_string(),
                         lhs.span,
                     );
-                    let _ = self.check_expr(rhs, None);
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                     return Ty::Bool;
                 }
                 // `==` on an enum with payload variants compares nothing
@@ -18814,7 +19056,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         ),
                         lhs.span,
                     );
-                    let _ = self.check_expr(rhs, None);
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                     return Ty::Bool;
                 }
                 // A unit value carries no bits, so there is nothing for `icmp`
@@ -18832,7 +19074,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         ),
                         lhs.span,
                     );
-                    let _ = self.check_expr(rhs, None);
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                     return Ty::Bool;
                 }
                 if let Ty::Enum(id) = &lt {
@@ -18847,15 +19089,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                             ),
                             lhs.span,
                         );
-                        let _ = self.check_expr(rhs, None);
+                        let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                         return Ty::Bool;
                     }
                 }
-                let _ = self.check_expr(rhs, Some(lt));
+                let _ = self.check_rhs_once(rhs, &rhs_pre, Some(lt));
                 Ty::Bool
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                let lhs_ty = self.check_expr(lhs, None);
+                let (lhs_ty, rhs_pre) = self.check_shared_type_lhs(lhs, rhs, &None, true);
                 // v0.0.5: generic-parameter operands hit a separate path —
                 // C+ doesn't have operator overloading (SKILL.md §2.6), so
                 // `<` on a `T: Ord` cannot desugar to `T::cmp` the way it
@@ -18876,7 +19118,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         ),
                         lhs.span,
                     );
-                    let _ = self.check_expr(rhs, None);
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                     return Ty::Bool;
                 }
                 if !lhs_ty.is_numeric() && lhs_ty != Ty::Error {
@@ -18888,10 +19130,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         ),
                         lhs.span,
                     );
-                    let _ = self.check_expr(rhs, None);
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                     return Ty::Bool;
                 }
-                let _ = self.check_expr(rhs, Some(lhs_ty));
+                let _ = self.check_rhs_once(rhs, &rhs_pre, Some(lhs_ty));
                 Ty::Bool
             }
             BinOp::And | BinOp::Or => {
@@ -18900,7 +19142,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 Ty::Bool
             }
             BinOp::AddWrap | BinOp::SubWrap | BinOp::MulWrap => {
-                let lhs_ty = self.check_expr(lhs, None);
+                let (lhs_ty, rhs_pre) = self.check_shared_type_lhs(lhs, rhs, &expected, true);
                 if !lhs_ty.is_int() && lhs_ty != Ty::Error {
                     self.err(
                         "E0302",
@@ -18911,10 +19153,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         ),
                         lhs.span,
                     );
-                    let _ = self.check_expr(rhs, None);
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                     return Ty::Error;
                 }
-                let _ = self.check_expr(rhs, Some(lhs_ty.clone()));
+                let _ = self.check_rhs_once(rhs, &rhs_pre, Some(lhs_ty.clone()));
                 lhs_ty
             }
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
@@ -18922,9 +19164,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // (signed + unsigned, every width). Floats, bool, ptrs are
                 // rejected — there's no surface-language meaning for
                 // bit-twiddling those. `bool & bool` uses `&&` instead.
-                let lhs_ty = self.check_expr(lhs, None);
+                let (lhs_ty, rhs_pre) = self.check_shared_type_lhs(lhs, rhs, &expected, true);
                 if lhs_ty == Ty::Error {
-                    let _ = self.check_expr(rhs, None);
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                     return Ty::Error;
                 }
                 if !lhs_ty.is_int() {
@@ -18937,12 +19179,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         ),
                         lhs.span,
                     );
-                    let _ = self.check_expr(rhs, None);
+                    let _ = self.check_rhs_once(rhs, &rhs_pre, None);
                     return Ty::Error;
                 }
                 // RHS must be the same integer type as LHS. Coerce
                 // unsuffixed integer literals to match.
-                let _ = self.check_expr(rhs, Some(lhs_ty.clone()));
+                let _ = self.check_rhs_once(rhs, &rhs_pre, Some(lhs_ty.clone()));
                 lhs_ty
             }
             BinOp::Shl | BinOp::Shr => {
@@ -18951,7 +19193,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // the LHS width (C lets `i64 << u8`; same here). Signed
                 // LHS uses arithmetic shift right; unsigned uses logical.
                 // Codegen picks `ashr` vs `lshr` from the LHS signedness.
-                let lhs_ty = self.check_expr(lhs, None);
+                let (lhs_ty, _) = self.check_shared_type_lhs(lhs, rhs, &expected, false);
                 if lhs_ty == Ty::Error {
                     let _ = self.check_expr(rhs, None);
                     return Ty::Error;
@@ -29556,6 +29798,72 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         let d = ds.iter().find(|d| d.code.0 == "E0324").expect("E0324 expected");
         assert_eq!(d.message, "no method `foo` on type `f32`");
         assert!(d.notes.iter().any(|n| n.contains("stdlib/math")), "{:?}", d.notes);
+    }
+
+    /// bugs/closed/a-literal-only-arithmetic-expression-ignores-the-expected-type.md
+    /// and bugs/closed/an-if-expression-does-not-unify-a-literal-branch-with-a-typed-branch.md:
+    /// an expression of unsuffixed literals takes the type its position asks
+    /// for — a binding, an argument, a typed operand, the other branch or arm.
+    #[test]
+    fn literal_only_expressions_take_the_type_of_their_position() {
+        let pre = "enum E { A, B }\n\
+                   fn take_f32(x: f32) -> f32 { return x; }\n\
+                   fn pick(v: u32) -> u32 { return v; }\n";
+        for body in [
+            "let a: f32 = 1.0 / 255.0; let _ = a;",
+            "let a: u32 = 7 * 3; let _ = a;",
+            "let a: u64 = 4 * 1024; let _ = a;",
+            "let a: u64 = 1 << 40; let _ = a;",
+            "let a: i64 = -(3 * 4); let _ = a;",
+            "let a: u32 = (2 + 3) * 4 % 5 & 7; let _ = a;",
+            "let _ = take_f32(1.0 / 255.0);",
+            "let k: f32 = 2.0; let s = 1.0 / k; let _ = s;",
+            "let k: u32 = 5; let a = 2 * k; let _ = a;",
+            "let x: u32 = 9; let e = if x < 512 { 512 } else { x }; let _ = e;",
+            "let x: u32 = 9; let e = if x < 512 { x } else { 512 }; let _ = e;",
+            "let x: u32 = 9; let _ = pick(if x < 512 { 512 } else { x });",
+            "let x: f32 = 1.0; let e = if x < 0.0 { 0.0 } else { x }; let _ = e;",
+            "let x: u32 = 9; let e = if x < 1 { 1 } else if x > 9 { 9 } else { x }; let _ = e;",
+            "let x: u32 = 9; let e: u64 = if x < 1 { 1 } else { 2 }; let _ = e;",
+            "let k: u32 = 3; let v = match E::A { E::A => 512, E::B => k }; let _ = v;",
+            "let k: u32 = 3; let v = match E::A { E::A => k, E::B => 512 }; let _ = v;",
+            "let x: u32 = 9; let _ = 512 < x;",
+            "let x: u64 = 9; let _ = 4294967296 == x;",
+            "let x: f32 = 1.0; let _ = 0.4 >= x;",
+        ] {
+            assert_clean(&format!("{pre}fn main() -> i32 {{ {body} return 0; }}"));
+        }
+    }
+
+    /// The other side: a literal still cannot become a type of the other kind,
+    /// an unsigned negation, or a value its width cannot hold — and each such
+    /// program reports ONE error, not one at the literal and one at its
+    /// position.
+    #[test]
+    fn literal_only_expressions_still_reject_what_does_not_fit() {
+        let pre = "enum E { A, B }\n";
+        for (body, code) in [
+            ("let x: f64 = 2.0; let s: f32 = x / 2.0; let _ = s;", "E0302"),
+            ("let x: f64 = 1 + 2; let _ = x;", "E0302"),
+            ("let a: u8 = 200 + 100; let _ = a;", "E0921"),
+            ("let c = true; let v = if c { 1 } else { 2.0 }; let _ = v;", "E0302"),
+            ("let x: u32 = 1; let c = true; let v = if c { -1 } else { x }; let _ = v;", "E0302"),
+            ("let x: u8 = 1; let c = true; let v = if c { 300 } else { x }; let _ = v;", "E0314"),
+            ("let y: f64 = 1.0; let c = true; let v = if c { 1 } else { y }; let _ = v;", "E0302"),
+            ("let k: u32 = 3; let s = 1.5 * k; let _ = s;", "E0302"),
+            ("let k: u32 = 3; let a: u64 = 2 * k; let _ = a;", "E0302"),
+            ("let k: u32 = 3; let v = match E::A { E::A => 1.5, E::B => k }; let _ = v;", "E0302"),
+            ("let c = true; let v: f32 = if c { 1 } else { 2 }; let _ = v;", "E0302"),
+            ("let k: u32 = 3; let _ = 1.5 < k;", "E0302"),
+            ("let t = \"x\"; let _ = 1 == t;", "E0302"),
+        ] {
+            let codes = errors(&format!("{pre}fn main() -> i32 {{ {body} return 0; }}"));
+            assert_eq!(codes, vec![code], "{body}");
+        }
+        // An `as` operand is not a position with a type: `(1 << 40) as u64`
+        // still computes at i32, and W0007 still says so.
+        let ds = check_src("fn main() -> i32 { let a: u64 = (1 << 40) as u64; let _ = a; return 0; }");
+        assert!(ds.iter().any(|d| d.code.0 == "W0007"), "{ds:#?}");
     }
 
     #[test]

@@ -837,7 +837,9 @@ does not explain itself.
 
 **An operation on unsuffixed integer literals is computed in `i32`, before
 `as`.** `(1 << 40) as u64` is 256, not 2^40, and `(1 << n) as u64` with a
-variable `n` is wrong the same way. A single literal is not the problem —
+variable `n` is wrong the same way. A TYPED POSITION is not a cast: `let m: u64
+= 1 << 40;`, an argument, a typed operand (`1.0 / k`) or the other `if`/`match`
+branch gives the whole literal expression its type, and overflowing it is E0921. A single literal is not the problem —
 `4294967295 as u64` is `u32::MAX` — the operation is. Widen the LEFT operand
 before operating, or use a `const`, which folds at its declared width:
 

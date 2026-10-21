@@ -471,6 +471,16 @@ context, defaulting to `i32` when unconstrained; an unsuffixed float
 defaults to `f64`. A suffix fixes the type exactly. Mixed-width
 arithmetic without a cast is an error.
 
+The same holds for an expression made only of unsuffixed literals
+(`1.0 / 255.0`, `4 * 1024`, `-(3 * 4)`). Its context is a typed binding,
+argument or return, the other operand of a binary operator
+(`1.0 / k`), or the other branch of an `if` or arm of a `match`
+(`if x < 512 { 512 } else { x }`). A literal takes a type of its own kind
+only: an integer type for an integer literal, a float type for a float
+literal. A result that does not fit the width it took is **E0921**, as in
+a `const`. The operand of `as` has no context, so `(1 << 40) as u64` is
+computed in `i32`.
+
 **`as` casts** convert between numeric types, between integers and raw
 pointers, and between raw pointer types. Casts that the language forbids
 (e.g. integer ↔ function pointer) are errors (**E0315** and neighbors).

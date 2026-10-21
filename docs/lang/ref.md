@@ -104,6 +104,9 @@ Unsuffixed integer literals evaluate as `i32` before any `as` — a wide mask
 is built by widening the left operand first (`1u64 << 40`) or in a `const`
 (which folds at the declared width and rejects overflow, E0921). Casting
 after the shift is too late: `(1 << 40) as u64` is 256, and warns (W0007).
+A typed position is different: `let m: u64 = 1 << 40;`, an argument, a typed
+operand (`1.0 / k`) or the other `if`/`match` branch gives a literal-only
+expression its type, and overflowing that type is E0921.
 
 ## Bindings
 

@@ -26176,6 +26176,42 @@ fn an_unsuffixed_float_literal_inferred_f32_builds_with_f32_bits() {
     assert_eq!(out.status.code(), Some(0), "exit names the failing position: {out:?}");
 }
 
+/// bugs/closed/a-literal-only-arithmetic-expression-ignores-the-expected-type.md
+/// and bugs/closed/an-if-expression-does-not-unify-a-literal-branch-with-a-typed-branch.md:
+/// a literal-only expression takes the type of its position, AND computes at
+/// it. Values past 32 bits prove the width: an i32 computation of any of these
+/// is a different number (or, before codegen read the width, invalid IR).
+#[test]
+fn literal_only_expressions_compute_at_the_type_of_their_position() {
+    let out = compile_and_run_src(
+        "litpos",
+        "enum E { A, B }\n\
+         fn take_u64(x: u64) -> u64 { return x; }\n\
+         fn main() -> i32 {\n\
+             let a: u64 = 1 << 40;\n\
+             if a != 1099511627776u64 { return 1; }\n\
+             let b: u64 = 4 * 1024 * 1024 * 1024;\n\
+             if b != 4294967296u64 { return 2; }\n\
+             let c: i64 = -(3000000 * 1000);\n\
+             if c != -3000000000i64 { return 3; }\n\
+             let k: u32 = 5;\n\
+             if 2 * k != 10u32 { return 4; }\n\
+             let s: f32 = 1.0 / 255.0;\n\
+             if #bitcast::[u32](s) != #bitcast::[u32](1.0f32 / 255.0f32) { return 5; }\n\
+             let x: f32 = 4.0;\n\
+             if 1.0 / x != 0.25f32 { return 6; }\n\
+             let big: u64 = 5000000000;\n\
+             let e = if big > 10u64 { 4294967296 } else { big };\n\
+             if e != 4294967296u64 { return 7; }\n\
+             let m = match E::A { E::A => 6000000000, E::B => big };\n\
+             if m != 6000000000u64 { return 8; }\n\
+             if take_u64(1 << 33) != 8589934592u64 { return 9; }\n\
+             return 0;\n\
+         }",
+    );
+    assert_eq!(out.status.code(), Some(0), "exit names the failing line: {out:?}");
+}
+
 /// The other side of rejected-IR reporting
 /// (bugs/closed/invalid-ir-reaches-the-user-as-a-raw-clang-error-on-a-deleted-file.md):
 /// a LINK failure is the user's to fix, so it must not be called a cpc bug,

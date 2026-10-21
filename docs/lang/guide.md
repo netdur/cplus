@@ -166,6 +166,7 @@ explanations live in the linked topic file.
 
 - **An operation on unsuffixed integer literals is computed in `i32`
   before `as`.** `(1 << 40) as u64` is not the mask you meant — it is 256.
+  A typed position fixes it: `let m: u64 = 1 << 40;` computes at `u64`.
   A lone literal is fine (`4294967295 as u64` is `u32::MAX`); the
   operation is the trap. Widen the LEFT operand before the shift
   (`1u64 << 40`), or build the mask in a `const`, which folds at the

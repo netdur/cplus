@@ -139,10 +139,10 @@ struct ModuleMetadata {
     /// extracts the `Text`'s `{ptr,len}` prefix and packages a `str`
     /// fat-pointer instead of yielding the owned aggregate.
     text_to_str_coercions: RefCell<HashSet<crate::lexer::Span>>,
-    /// Unsuffixed float literals sema typed `f32`/`f16` (sema's
-    /// [`crate::sema::MonoInfo::float_lit_widths`]). The literal's own
+    /// Unsuffixed literals sema typed other than `i32`/`f64` (sema's
+    /// [`crate::sema::MonoInfo::lit_widths`]). The literal's own
     /// suffix says nothing, so `gen_expr` reads the width from here.
-    float_lit_widths: RefCell<HashMap<crate::lexer::Span, Ty>>,
+    lit_widths: RefCell<HashMap<crate::lexer::Span, Ty>>,
     /// v0.0.24 #11: while `gen_text_to_str` materializes a coerced compound
     /// expression (block / call result), it re-lowers that exact expression to
     /// get the owned `Text` to address — `gen_place`'s value fallback calls
@@ -1111,7 +1111,7 @@ pub fn generate_with_mono(
         &mono.shader_blobs,
         &mono.text_to_str_coercions,
         &mono.distinct_aliases,
-        &mono.float_lit_widths,
+        &mono.lit_widths,
     )
 }
 
@@ -1256,7 +1256,7 @@ pub fn generate_test_binary(
         &mono.shader_blobs,
         &mono.text_to_str_coercions,
         &mono.distinct_aliases,
-        &mono.float_lit_widths,
+        &mono.lit_widths,
     )
 }
 
@@ -1280,7 +1280,7 @@ fn generate_inner(
     shader_blobs_map: &HashMap<crate::lexer::Span, Vec<u8>>,
     text_to_str_coercions: &HashSet<crate::lexer::Span>,
     distinct_aliases: &std::collections::BTreeMap<String, crate::ast::Type>,
-    float_lit_widths: &HashMap<crate::lexer::Span, Ty>,
+    lit_widths: &HashMap<crate::lexer::Span, Ty>,
 ) -> String {
     let types = collect_types(program, distinct_aliases);
     let sigs = collect_sigs(program, &types);
@@ -1297,7 +1297,7 @@ fn generate_inner(
     // v0.0.24 #11: stash the Text→str coercion sites so gen_expr can extract
     // the `{ptr,len}` prefix at each. No global emission — just the span set.
     *md.text_to_str_coercions.borrow_mut() = text_to_str_coercions.clone();
-    *md.float_lit_widths.borrow_mut() = float_lit_widths.clone();
+    *md.lit_widths.borrow_mut() = lit_widths.clone();
     // v0.0.8 bench-gap fix C: compute the fastcc-eligible set once. A
     // user-defined function or method gets `fastcc` iff it has internal
     // linkage (non-`export`, non-`main`, non-extern, non-drop) AND its
@@ -13116,11 +13116,11 @@ impl<'a> FnState<'a> {
                     NumSuffix::U64 => Ty::U64,
                     NumSuffix::Isize => Ty::Isize,
                     NumSuffix::Usize => Ty::Usize,
-                    // Unsuffixed integer literal: default to i32. Sema-driven
-                    // declared types still flow correctly because `let x: u64
-                    // = 42` emits `store i64 42` (LLVM accepts width-agnostic
-                    // numeric literals in the textual operand position).
-                    NumSuffix::None | NumSuffix::F16 | NumSuffix::F32 | NumSuffix::F64 => Ty::I32,
+                    // Unsuffixed integer literal: the width sema inferred
+                    // (`let a: u64 = 1 << 40;` computes at u64), `i32` by
+                    // default. The text is width-agnostic either way.
+                    NumSuffix::None => self.md.lit_widths.borrow().get(&e.span).cloned().unwrap_or(Ty::I32),
+                    NumSuffix::F16 | NumSuffix::F32 | NumSuffix::F64 => Ty::I32,
                 };
                 Some((v.to_string(), ty))
             }
@@ -13240,7 +13240,7 @@ impl<'a> FnState<'a> {
                 // An unsuffixed literal takes the width sema inferred for it;
                 // the suffix alone would say `f64`.
                 let inferred = match suf {
-                    NumSuffix::None => self.md.float_lit_widths.borrow().get(&e.span).cloned(),
+                    NumSuffix::None => self.md.lit_widths.borrow().get(&e.span).cloned(),
                     _ => None,
                 };
                 let suf = match inferred {
@@ -15285,7 +15285,8 @@ impl<'a> FnState<'a> {
         // pins the type, so the regular SSA path below is correct.
         if let UnaryOp::Neg = op {
             if let ExprKind::IntLit(v, crate::lexer::NumSuffix::None) = &operand.kind {
-                return (format!("-{v}"), Ty::I32);
+                let ty = self.md.lit_widths.borrow().get(&operand.span).cloned().unwrap_or(Ty::I32);
+                return (format!("-{v}"), ty);
             }
             if let ExprKind::FloatLit(v, crate::lexer::NumSuffix::None) = &operand.kind {
                 // Emit the negated value as an LLVM hex-float constant.
@@ -15298,7 +15299,7 @@ impl<'a> FnState<'a> {
                 // (`take_f32(-0.4)` is an f32), `f64` when it inferred none.
                 let ty = self
                     .md
-                    .float_lit_widths
+                    .lit_widths
                     .borrow()
                     .get(&operand.span)
                     .cloned()
@@ -29171,6 +29172,20 @@ fn main() -> i32 {\n\
             ir.contains("fptrunc double 0x3FD999999999999A to half"),
             "an inferred-f16 literal must lower through half:\n{ir}"
         );
+    }
+
+    /// A literal-only expression sema typed from its position computes at that
+    /// width: `let a: u64 = 1 << 40;` must shift an i64, not an i32 whose
+    /// result `store i64` then rejects (an unsuffixed int literal used to be
+    /// `i32` in codegen whatever sema said).
+    #[test]
+    fn literal_only_expression_computes_at_its_inferred_width() {
+        let ir = gen_src_mono("fn main() -> i32 { let a: u64 = 1 << 40; let _ = a; return 0; }");
+        assert!(ir.contains("shl i64 1,"), "expected an i64 shift:\n{ir}");
+        let ir = gen_src_mono("fn main() -> i32 { let k: u64 = 5; let a = 2 * k; let _ = a; return 0; }");
+        assert!(ir.contains("mul i64 2,"), "the literal takes `k`'s u64:\n{ir}");
+        let ir = gen_src_mono("fn main() -> i32 { let a: i64 = -(3000000 * 1000); let _ = a; return 0; }");
+        assert!(ir.contains("(i64 3000000, i64 1000)"), "expected an i64 multiply:\n{ir}");
     }
 
     #[test]
