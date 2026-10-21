@@ -892,6 +892,13 @@ pub struct MonoInfo {
     /// span (the old `Text::as_str` extraction, now implicit); the
     /// view-escape check (E0513) consults it for returned aggregate leaves.
     pub text_to_str_coercions: std::collections::HashSet<ByteSpan>,
+    /// Unsuffixed float literals that sema typed narrower than the `f64`
+    /// default (`take_f32(0.4)`, `let v: f32 = 0.4;`), keyed by the literal's
+    /// span. Codegen renders the literal from the suffix alone, so without
+    /// this an inferred-`f32` literal emits its f64 bits into a `float`
+    /// operand, which LLVM rejects for any value that is not f32-exact
+    /// (bugs/closed/an-unsuffixed-float-literal-inferred-as-f32-keeps-its-f64-bits.md).
+    pub float_lit_widths: HashMap<ByteSpan, Ty>,
     /// v0.0.14 graph value-depth: `(origin_file, expr_span, rendered_type)` for
     /// every type-checked expression. Empty unless the graph/LSP entry point
     /// requested it; backs inferred `type-at`.
@@ -1229,6 +1236,7 @@ fn check_with_files_inner(
         shader_blobs_table: HashMap::new(),
         msg_send_shapes: std::collections::BTreeSet::new(),
         text_to_str_coercion_table: std::collections::HashSet::new(),
+        float_lit_width_table: HashMap::new(),
     };
     cx.record_value_types = record_types;
     cx.register_builtins();
@@ -1576,6 +1584,7 @@ fn check_with_files_inner(
         selectors: std::mem::take(&mut cx.selectors_table),
         shader_blobs: std::mem::take(&mut cx.shader_blobs_table),
         text_to_str_coercions: std::mem::take(&mut cx.text_to_str_coercion_table),
+        float_lit_widths: std::mem::take(&mut cx.float_lit_width_table),
         value_types: std::mem::take(&mut cx.value_types),
     };
     (sink.into_vec(), mono)
@@ -1990,6 +1999,8 @@ struct SemaCx<'a> {
     /// v0.0.24 #11: spans of `Text`→`str` coercion sites (see
     /// [`MonoInfo::text_to_str_coercions`]).
     text_to_str_coercion_table: std::collections::HashSet<ByteSpan>,
+    /// See [`MonoInfo::float_lit_widths`].
+    float_lit_width_table: HashMap<ByteSpan, Ty>,
 }
 
 /// issue-13(b), issue-15(b): what a type table has to answer for the rules
@@ -9696,7 +9707,17 @@ impl SemaCx<'_> {
                 panic!("sema saw an un-lowered builder block; driver must call crate::lower before sema::check");
             }
             ExprKind::IntLit(v, suf) => self.check_int_lit(*v, *suf, expected, e.span, false, true),
-            ExprKind::FloatLit(_, suf) => self.check_float_lit(*suf, expected),
+            ExprKind::FloatLit(_, suf) => {
+                let ty = self.check_float_lit(*suf, expected);
+                // Last check wins: an expression re-checked under a different
+                // expectation must not leave a stale narrowing behind.
+                if matches!(suf, NumSuffix::None) && matches!(ty, Ty::F32 | Ty::F16) {
+                    self.float_lit_width_table.insert(e.span, ty.clone());
+                } else {
+                    self.float_lit_width_table.remove(&e.span);
+                }
+                ty
+            }
             ExprKind::BoolLit(_) => Ty::Bool,
             ExprKind::StrLit(_) => Ty::Str,
             ExprKind::CStrLit(_) => Ty::RawPtr(Box::new(Ty::U8)),

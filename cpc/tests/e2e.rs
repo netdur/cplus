@@ -26152,6 +26152,30 @@ fn nested_variant_patterns_bind_and_fall_through_without_leaking() {
     );
 }
 
+/// bugs/closed/an-unsuffixed-float-literal-inferred-as-f32-keeps-its-f64-bits.md:
+/// an unsuffixed literal sema typed `f32` reached clang as the f64 bits of
+/// 0.4, which LLVM rejects for a `float` operand, so `take(0.4)` failed the
+/// build. Each position must build and hold exactly the bits `0.4f32` has.
+#[test]
+fn an_unsuffixed_float_literal_inferred_f32_builds_with_f32_bits() {
+    let out = compile_and_run_src(
+        "f32inferlit",
+        "fn take(x: f32) -> f32 { return x; }\n\
+         fn scale(v: f32) -> f32 { return v * 0.4; }\n\
+         fn main() -> i32 {\n\
+             let want: u32 = #bitcast::[u32](0.4f32);\n\
+             let neg: u32 = #bitcast::[u32](-0.4f32);\n\
+             let v: f32 = 0.4;\n\
+             if #bitcast::[u32](take(0.4)) != want { return 1; }\n\
+             if #bitcast::[u32](v) != want { return 2; }\n\
+             if #bitcast::[u32](scale(1.0)) != want { return 3; }\n\
+             if #bitcast::[u32](take(-0.4)) != neg { return 4; }\n\
+             return 0;\n\
+         }",
+    );
+    assert_eq!(out.status.code(), Some(0), "exit names the failing position: {out:?}");
+}
+
 fn compile_and_run_src(name: &str, src: &str) -> std::process::Output {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();

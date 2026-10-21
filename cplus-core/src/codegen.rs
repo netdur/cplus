@@ -139,6 +139,10 @@ struct ModuleMetadata {
     /// extracts the `Text`'s `{ptr,len}` prefix and packages a `str`
     /// fat-pointer instead of yielding the owned aggregate.
     text_to_str_coercions: RefCell<HashSet<crate::lexer::Span>>,
+    /// Unsuffixed float literals sema typed `f32`/`f16` (sema's
+    /// [`crate::sema::MonoInfo::float_lit_widths`]). The literal's own
+    /// suffix says nothing, so `gen_expr` reads the width from here.
+    float_lit_widths: RefCell<HashMap<crate::lexer::Span, Ty>>,
     /// v0.0.24 #11: while `gen_text_to_str` materializes a coerced compound
     /// expression (block / call result), it re-lowers that exact expression to
     /// get the owned `Text` to address — `gen_place`'s value fallback calls
@@ -1075,6 +1079,7 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -1106,6 +1111,7 @@ pub fn generate_with_mono(
         &mono.shader_blobs,
         &mono.text_to_str_coercions,
         &mono.distinct_aliases,
+        &mono.float_lit_widths,
     )
 }
 
@@ -1127,6 +1133,7 @@ pub fn generate_lib(program: &Program, mode: BuildMode) -> String {
         None,
         &[],
         true,
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &Default::default(),
@@ -1162,6 +1169,7 @@ pub fn generate_with_debug(
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -1184,6 +1192,7 @@ pub fn generate_with_options(
         source_file,
         sanitizers,
         false,
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &Default::default(),
@@ -1247,6 +1256,7 @@ pub fn generate_test_binary(
         &mono.shader_blobs,
         &mono.text_to_str_coercions,
         &mono.distinct_aliases,
+        &mono.float_lit_widths,
     )
 }
 
@@ -1270,6 +1280,7 @@ fn generate_inner(
     shader_blobs_map: &HashMap<crate::lexer::Span, Vec<u8>>,
     text_to_str_coercions: &HashSet<crate::lexer::Span>,
     distinct_aliases: &std::collections::BTreeMap<String, crate::ast::Type>,
+    float_lit_widths: &HashMap<crate::lexer::Span, Ty>,
 ) -> String {
     let types = collect_types(program, distinct_aliases);
     let sigs = collect_sigs(program, &types);
@@ -1286,6 +1297,7 @@ fn generate_inner(
     // v0.0.24 #11: stash the Text→str coercion sites so gen_expr can extract
     // the `{ptr,len}` prefix at each. No global emission — just the span set.
     *md.text_to_str_coercions.borrow_mut() = text_to_str_coercions.clone();
+    *md.float_lit_widths.borrow_mut() = float_lit_widths.clone();
     // v0.0.8 bench-gap fix C: compute the fastcc-eligible set once. A
     // user-defined function or method gets `fastcc` iff it has internal
     // linkage (non-`export`, non-`main`, non-extern, non-drop) AND its
@@ -13225,6 +13237,17 @@ impl<'a> FnState<'a> {
             ExprKind::InterpStr { parts } => Some(self.gen_interp_str(parts)),
             ExprKind::FloatLit(v, suf) => {
                 use crate::lexer::NumSuffix;
+                // An unsuffixed literal takes the width sema inferred for it;
+                // the suffix alone would say `f64`.
+                let inferred = match suf {
+                    NumSuffix::None => self.md.float_lit_widths.borrow().get(&e.span).cloned(),
+                    _ => None,
+                };
+                let suf = match inferred {
+                    Some(Ty::F32) => &NumSuffix::F32,
+                    Some(Ty::F16) => &NumSuffix::F16,
+                    _ => suf,
+                };
                 if matches!(suf, NumSuffix::F16) {
                     // f16 literal: round the f64 value straight to `half` via a
                     // single `fptrunc` — no double-rounding, no hand-computed
@@ -15271,8 +15294,17 @@ impl<'a> FnState<'a> {
                 // with "integer constant must have integer type". The positive
                 // `FloatLit` path emits hex for exactly this reason; mirror it
                 // here (via `render_static_float`).
-                if let Some(s) = render_static_float(-*v, crate::lexer::NumSuffix::None, &Ty::F64) {
-                    return (s, Ty::F64);
+                // The width is the one sema inferred for the literal
+                // (`take_f32(-0.4)` is an f32), `f64` when it inferred none.
+                let ty = self
+                    .md
+                    .float_lit_widths
+                    .borrow()
+                    .get(&operand.span)
+                    .cloned()
+                    .unwrap_or(Ty::F64);
+                if let Some(s) = render_static_float(-*v, crate::lexer::NumSuffix::None, &ty) {
+                    return (s, ty);
                 }
             }
         }
@@ -22266,6 +22298,7 @@ mod tests {
             &Default::default(),
             &Default::default(),
             &Default::default(),
+            &Default::default(),
         )
     }
 
@@ -25099,6 +25132,7 @@ fn main() -> i32 {\n\
             None,
             &[],
             false,
+            &Default::default(),
             &Default::default(),
             &Default::default(),
             &Default::default(),
@@ -29096,6 +29130,46 @@ fn main() -> i32 {\n\
         assert!(
             !ir.contains("float 0.1,"),
             "decimal-form f32 literal should be gone:\n{ir}"
+        );
+    }
+
+    /// bugs/closed/an-unsuffixed-float-literal-inferred-as-f32-keeps-its-f64-bits.md:
+    /// an unsuffixed literal that sema typed `f32` emitted the f64 bits of
+    /// 0.4 (`0x3FD999999999999A`) into a `float` operand, which clang rejects.
+    /// Each position must emit the f32-narrowed bits, as `0.4f32` does.
+    #[test]
+    fn unsuffixed_float_literal_inferred_f32_emits_f32_bits() {
+        let cases = [
+            ("argument", "fn take(x: f32) -> f32 { return x; }
+                          fn main() -> i32 { let _ = take(0.4); return 0; }"),
+            ("typed let", "fn main() -> i32 { let v: f32 = 0.4; let _ = v; return 0; }"),
+            ("binary operand", "fn scale(v: f32) -> f32 { return v * 0.4; }
+                                fn main() -> i32 { let _ = scale(1.0); return 0; }"),
+            ("negated argument", "fn take(x: f32) -> f32 { return x; }
+                                  fn main() -> i32 { let _ = take(-0.4); return 0; }"),
+        ];
+        for (label, src) in cases {
+            let ir = gen_src_mono(src);
+            let want = if label.starts_with("negated") { "0xBFD99999A0000000" } else { "0x3FD99999A0000000" };
+            assert!(ir.contains(want), "{label}: expected `{want}`:\n{ir}");
+            assert!(
+                !ir.contains("3FD999999999999A") && !ir.contains("BFD999999999999A"),
+                "{label}: the f64 bits of 0.4 must not reach a float operand:\n{ir}"
+            );
+        }
+    }
+
+    /// The other half of the fix above: a literal sema left at the `f64`
+    /// default keeps its full f64 bits, and an inferred `f16` lowers through
+    /// `half` like `0.4f16` does.
+    #[test]
+    fn unsuffixed_float_literal_keeps_f64_and_narrows_to_f16() {
+        let ir = gen_src_mono("fn main() -> i32 { let v: f64 = 0.4; let _ = v; return 0; }");
+        assert!(ir.contains("double 0x3FD999999999999A"), "f64 literal must keep its bits:\n{ir}");
+        let ir = gen_src_mono("fn main() -> i32 { let h: f16 = 0.4; let _ = h; return 0; }");
+        assert!(
+            ir.contains("fptrunc double 0x3FD999999999999A to half"),
+            "an inferred-f16 literal must lower through half:\n{ir}"
         );
     }
 
