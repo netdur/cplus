@@ -6855,6 +6855,47 @@ const WINDOWS_SYSTEM_LIBS: &[&str] = &[
     "ws2_32", "shell32", "bcrypt", "ntdll", "winhttp", "advapi32", "comdlg32", "user32",
 ];
 
+/// `run_clang` compiles cpc's IR and links in one clang call, so a failure is
+/// either a link error (a missing library, an undefined `extern`: the user's
+/// to fix) or IR that LLVM rejects, which is always a cpc defect. Tell them
+/// apart by compiling the IR alone at `-O0`; it costs a compile only on a
+/// build that has already failed. Rejected IR is kept beside the output: the
+/// temp file clang's message names is deleted when the build returns.
+fn report_rejected_ir(input_ll: &Path, out: &Path) {
+    if let Some(kept) = keep_rejected_ir(input_ll, out) {
+        let kept_note = match kept {
+            Ok(p) => format!("The IR is kept at {}; the line numbers above refer to it.", p.display()),
+            Err(e) => format!("Keeping the IR failed: {e}."),
+        };
+        eprintln!(
+            "cpc: internal compiler error: clang rejected the LLVM IR that cpc generated. \
+             This is a bug in cpc, not in your code. {kept_note}"
+        );
+    }
+}
+
+/// `None` when clang accepts `input_ll` on its own; otherwise the IR copied to
+/// `<out>.rejected.ll` (or why that copy failed).
+fn keep_rejected_ir(input_ll: &Path, out: &Path) -> Option<Result<PathBuf, std::io::Error>> {
+    let probe = tempfile::Builder::new().prefix("cpc-irprobe-").suffix(".o").tempfile().ok()?;
+    let ir_ok = Command::new(clang_program())
+        .arg("-O0")
+        .arg("-Wno-override-module")
+        .arg("-c")
+        .arg(input_ll)
+        .arg("-o")
+        .arg(probe.path())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(true);
+    if ir_ok {
+        return None;
+    }
+    let kept = out.with_extension("rejected.ll");
+    Some(fs::copy(input_ll, &kept).map(|_| kept))
+}
+
 fn run_clang(
     input_ll: &Path,
     out: &Path,
@@ -7086,6 +7127,7 @@ fn run_clang(
             Ok(s) if s.success() => ExitCode::SUCCESS,
             Ok(s) => {
                 eprintln!("cpc: clang exited with {s}");
+                report_rejected_ir(input_ll, out);
                 ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8)
             }
             Err(e) => {
@@ -7100,6 +7142,7 @@ fn run_clang(
             eprint!("{stderr}");
             if !o.status.success() {
                 eprintln!("cpc: clang exited with {}", o.status);
+                report_rejected_ir(input_ll, out);
                 return ExitCode::from(o.status.code().unwrap_or(1).clamp(1, 255) as u8);
             }
             if stderr.contains("ignoring invalid debug info") {
@@ -9326,5 +9369,34 @@ mod link_arg_tests {
             search_path_args("/opt/dir,with,comma", "macos"),
             vec!["-L/opt/dir,with,comma", "-Xlinker", "-rpath", "-Xlinker", "/opt/dir,with,comma"]
         );
+    }
+}
+
+#[cfg(test)]
+mod rejected_ir_tests {
+    use super::keep_rejected_ir;
+
+    /// bugs/closed/invalid-ir-reaches-the-user-as-a-raw-clang-error-on-a-deleted-file.md:
+    /// IR clang refuses is a cpc defect, and is kept beside the output; IR
+    /// clang accepts (the link failed instead) is not reported at all.
+    #[test]
+    fn rejected_ir_is_kept_and_accepted_ir_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("app");
+        let bad = dir.path().join("bad.ll");
+        // The f32 shape that reached users: an f64 constant in a float operand.
+        std::fs::write(
+            &bad,
+            "define float @f() {\n  ret float 0x3FD999999999999A\n}\n",
+        )
+        .unwrap();
+        let kept = keep_rejected_ir(&bad, &out).expect("rejected IR").expect("copied");
+        assert_eq!(kept, dir.path().join("app.rejected.ll"));
+        assert_eq!(std::fs::read(&kept).unwrap(), std::fs::read(&bad).unwrap());
+
+        let good = dir.path().join("good.ll");
+        std::fs::write(&good, "define float @f() {\n  ret float 0x3FD99999A0000000\n}\n").unwrap();
+        assert!(keep_rejected_ir(&good, &out.with_file_name("app2")).is_none());
+        assert!(!dir.path().join("app2.rejected.ll").exists());
     }
 }

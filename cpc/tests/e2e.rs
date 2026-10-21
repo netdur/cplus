@@ -26176,6 +26176,29 @@ fn an_unsuffixed_float_literal_inferred_f32_builds_with_f32_bits() {
     assert_eq!(out.status.code(), Some(0), "exit names the failing position: {out:?}");
 }
 
+/// The other side of rejected-IR reporting
+/// (bugs/closed/invalid-ir-reaches-the-user-as-a-raw-clang-error-on-a-deleted-file.md):
+/// a LINK failure is the user's to fix, so it must not be called a cpc bug,
+/// and no `.rejected.ll` is left behind.
+#[test]
+fn a_link_failure_is_not_reported_as_an_internal_compiler_error() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("linkfail.cplus");
+    std::fs::write(
+        &src,
+        "extern fn cplus_no_such_symbol_anywhere() -> i32;\n\
+         fn main() -> i32 { return cplus_no_such_symbol_anywhere(); }",
+    )
+    .unwrap();
+    let bin = dir.join("linkfail");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "an undefined extern must fail the link");
+    assert!(!stderr.contains("internal compiler error"), "a link error is not a cpc bug:\n{stderr}");
+    assert!(!dir.join("linkfail.rejected.ll").exists());
+}
+
 fn compile_and_run_src(name: &str, src: &str) -> std::process::Output {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
