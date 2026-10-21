@@ -208,6 +208,12 @@ aggregates containing such a field, arrays of those, and the active payload of a
 tagged enum. Raw `*T` fields are **not** auto-dropped — they stay the author's
 responsibility, freed in `drop` or declared `opaque` (E0510, §6 of SPEC).
 
+Assigning to a place drops the value it held: `x = v`, `s.f = v`, `a[i] = v`,
+and a field reached through a raw pointer, `(*p).f = v`. A whole-pointee store,
+`*p = v` or `p[i] = v` on a raw pointer, does not drop — its target may be
+uninitialized memory — and `free` runs no `drop`. What lives behind a raw
+pointer is the author's to initialize and tear down.
+
 A type with a `Drop` impl, or any owning field, is never `Copy`. Moving an
 owning field out of such a value is rejected (E0509), since the auto-drop would
 then free it a second time — `clone` it, or `match` the whole value to consume

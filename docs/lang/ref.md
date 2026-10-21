@@ -458,7 +458,7 @@ All spelled `#name(...)`:
 | `#asm("tmpl", name = in/out/inout(reg\|"x0") expr, clobber("r"))` | `()` | inline asm tiers 1–2; tier 3 is `#[naked]` |
 | `#selector("name")` / `#msg_send(recv, "sel", …) -> R` | `*u8` / `R` | the ObjC tier |
 | `#compile_shader("f.metal", "msl")` | `*[u8; N]` | platform shader compiler at build time |
-| `#str_ptr(s)` `#str_len(s)` `#str_from_raw_parts(p, n)` | `*u8` / `usize` / `str` | the `str` ↔ C bridge |
+| `#str_ptr(s)` `#str_len(s)` `#str_from_raw_parts(p, n)` | `*u8` / `usize` / `str` | the `str` ↔ C bridge. `#str_ptr` is not NUL-terminated in general — a sub-view (`prefix`, `slice`, `split`, `trim`) or a view of a `Text` runs on into the bytes after it. Pass the length with it, or `text.c_str()` for a C string |
 | `#slice_ptr(s)` `#slice_len(s)` `#slice_from_raw_parts(p, n)` | `*T` / `usize` / `T[]` | the slice ↔ C bridge |
 | `#bswap16` `#bswap32` `#bswap64` · `#htons` `#htonl` `#ntohs` `#ntohl` | same width in | byte-order tier |
 

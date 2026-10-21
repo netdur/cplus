@@ -39,6 +39,9 @@ directly to a narrower type (E0315).
    rejected in `export` signatures (E0410). Cross as `*u8` + `usize` and
    rebuild the view on the other side (`#str_from_raw_parts`), or hand C a
    NUL-terminated `c"..."` literal / `#str_ptr` of a NUL-terminated string.
+   A view is NUL-terminated only if it ends at a NUL: `"hello world".prefix(5)`
+   handed to `%s` prints all eleven bytes. For a C string from any view, use
+   `text::from_str(v).c_str()` and pass `cs.as_ptr()`.
 3. **Only `export` is callable from outside.** Everything else has
    module-mangled names and an internal calling convention — an lldb
    `call`, a C declaration, or a test harness reaching an internal symbol

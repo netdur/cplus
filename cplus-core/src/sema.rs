@@ -18411,9 +18411,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             PartialMoveKind::RawDeref => (
                 "E0337",
                 "cannot move a non-Copy value out of a raw-pointer dereference (`*p`); \
-                 `unsafe` permits the read, not the ownership transfer — the pointee's \
+                 a raw read copies the bytes but cannot transfer ownership — the pointee's \
                  owner would drop the value a second time (double-free). Match the owned \
-                 value directly, or use `Box[T]` for heap ownership."
+                 value directly, or hand the pointee to a `Box[T]` \
+                 (`box::from_raw::[T](p as *u8)`), which drops it and frees the memory."
                     .to_string(),
             ),
             PartialMoveKind::BorrowedBinding(name) => (

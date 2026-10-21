@@ -143,6 +143,9 @@ The rules that follow from auto-drop:
 - **`take this` does not disarm exit-drop.** A consuming method returns the
   payload and lets scope exit free the shell; calling `free` yourself
   double-frees.
+- **Assignment drops the value it overwrites.** `x = v`, `s.f = v` and
+  `a[i] = v` run the old value's teardown before the store. Stores
+  through a raw pointer follow their own rule (§7).
 
 ## 7. Raw pointers: accountability, not ceremony
 
@@ -156,6 +159,22 @@ a view into a sibling's allocation.
 
 Rule of thumb: the moment you type `*T` into a struct, decide who frees it,
 and write that decision down as `drop` or `opaque` in the same edit.
+
+Memory reached through a pointer is yours to manage, and three rules
+decide what drops there:
+
+- **`*p = v` and `p[i] = v` store without dropping.** The target may be
+  fresh from `malloc`, so there is nothing valid to drop; this is how
+  `box::new` and `Vec` fill their buffers. Storing over a live value this
+  way leaks it.
+- **`(*p).f = v` drops the old field first**, exactly like `h.f = v`. A
+  field means the struct around it already exists. So fill fresh memory
+  whole — `*p = Holder { … }` — not field by field: the first field store
+  into `malloc`'d bytes would run `drop` on garbage.
+- **`free(p)` runs no `drop`.** Owned contents leak unless torn down
+  first. `let _b = box::from_raw::[T](p as *u8);` hands the pointee and
+  its memory to a `Box`, which drops both at scope exit. Moving the value
+  out with `*p` is E0337.
 
 ## 8. When the borrow checker says no
 

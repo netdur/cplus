@@ -326,6 +326,12 @@ only when another owner really does free it — an FFI handle the runtime owns, 
 borrowed view, a pointer a sibling owns. It is the same trust model as
 `#[keeps(...)]`.
 
+**Behind a raw pointer, the memory is yours.** `*p = v` and `p[i] = v` store
+WITHOUT dropping (the target may be fresh `malloc` memory — Box and Vec rely on
+it); `(*p).f = v` DOES drop the old field, like `h.f = v`. So fill fresh memory
+whole (`*p = T { … }`), never field by field. `free(p)` runs no `drop`; to tear
+down a pointee, `let _b = box::from_raw::[T](p as *u8);`.
+
 ### 3.7 What the conflicts mean, in the order you will meet them
 
 | Code | You wrote | Fix, best first |
@@ -1483,7 +1489,7 @@ no module to import. This is the whole set worth writing:
 | `#env("NAME")` | `str` | resolved at sema; E0876 if unset |
 | `#platform()` · `#arch()` · `#target()` | `str` | the active TARGET, value-level only (§13) |
 | `#target_feature("avx2")` | `bool` | ISA extension on for this build (`--target-cpu=x86-64-v3`/`native`, `--target-feature=+avx2,+fma`); value-level, dead arm optimized out; another arch's name is `false` |
-| `#str_ptr(s)` · `#str_len(s)` · `#str_from_raw_parts(p, n)` | — | the FFI tier for `str`, not the way to do string work |
+| `#str_ptr(s)` · `#str_len(s)` · `#str_from_raw_parts(p, n)` | — | the FFI tier for `str`, not the way to do string work. `#str_ptr` is NOT NUL-terminated unless the view happens to end at one; for `%s` or any C-string API use `text.c_str()` |
 | `#println(x)` | — | no-import debug print |
 | `#asm("…")` | — | only inside a `#[naked]` fn (E0909) |
 
