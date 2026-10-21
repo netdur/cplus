@@ -445,6 +445,7 @@ pub fn load_project_full(
     // every file id derived below is qualified with it.
     loader.load_package_name();
     let own_package = loader.package_name.clone();
+    let vendor_dirs = loader.vendor_dirs.clone();
     loader.overlays = overlays;
     let entry_file_id = match loader.load_recursive(entry_path, None, None) {
         Ok(id) => id,
@@ -472,6 +473,7 @@ pub fn load_project_full(
         &entry_file_id,
         is_lib,
         manifest_root,
+        &vendor_dirs,
         &loader_deps_snapshot,
         own_package.as_deref(),
         project_mode,
@@ -997,6 +999,9 @@ struct Loader {
     /// in this set resolve under `vendor/<name>/src/`; others fail with
     /// E0852/E0853 depending on shape.
     deps: BTreeSet<String>,
+    /// `[package] vendor` search directories (`Manifest::vendor_dirs`),
+    /// read with the package name. Empty without a manifest.
+    vendor_dirs: Vec<PathBuf>,
     /// Phase 2 Slice 2B: `true` when a `Cplus.toml` exists and the
     /// caller has threaded its (possibly empty) `[dependencies]` list.
     /// Drives strict vendor-mode classification — bare imports become
@@ -1036,6 +1041,7 @@ impl Loader {
             by_canonical: BTreeMap::new(),
             edges: BTreeMap::new(),
             deps,
+            vendor_dirs: Vec::new(),
             project_mode: false,
             overlays: BTreeMap::new(),
             package_name: None,
@@ -1057,9 +1063,12 @@ impl Loader {
     /// A malformed or absent manifest leaves the name unset, exactly as the
     /// scanner's early returns did — the resolver is not the place that
     /// reports manifest errors.
+    ///
+    /// The `[package] vendor` search directories come from the same read.
     fn load_package_name(&mut self) {
         let path = self.manifest_root.join("Cplus.toml");
         if let Ok(m) = crate::manifest::load(&path) {
+            self.vendor_dirs = m.vendor_dirs;
             if !m.package.name.is_empty() {
                 self.package_name = Some(m.package.name);
             }
@@ -1133,6 +1142,7 @@ impl Loader {
         let file_id = derive_file_id_qualified(
             &canonical,
             &self.manifest_root,
+            &self.vendor_dirs,
             self.package_name.as_deref(),
         );
         let file_idx = crate::lexer::intern_file(&file_id);
@@ -1188,6 +1198,7 @@ impl Loader {
             importing_canonical,
             span,
             &self.manifest_root,
+            &self.vendor_dirs,
             &self.deps,
             self.package_name.as_deref(),
             self.project_mode,
@@ -1219,6 +1230,7 @@ fn classify_import_path(
     importing_canonical: &Path,
     span: Span,
     manifest_root: &Path,
+    vendor_dirs: &[PathBuf],
     deps: &BTreeSet<String>,
     own_package: Option<&str>,
     project_mode: bool,
@@ -1389,70 +1401,55 @@ fn classify_import_path(
         p.push(seg);
     }
     p.set_extension("cplus");
-    // Vendor-package self-test fallback: when run from inside a vendor
-    // package (e.g. `cpc test` in vendor/uuid/), the package's own
-    // manifest_root has no vendor/ subdir, but sibling vendor packages
-    // live at `<manifest_root>/../<dep>/`. Try that layout if the
-    // primary path doesn't resolve. This keeps `cpc test` working in
-    // package directories without requiring per-package vendor symlinks.
+    // Not under the project's own `vendor/`: try, in order,
+    //   1. each `[package] vendor` search directory, as written;
+    //   2. the sibling `<manifest_root>/../<dep>/` — the layout a package
+    //      sees when `cpc test` runs inside `vendor/uuid/`, where the other
+    //      packages are its siblings and there is no `vendor/` of its own;
+    //   3. the per-user store (D16), last: `cpc pm install`ed globally at
+    //      `~/.cplus/<tier>/vendor/<name>`. The project's own directories
+    //      always win, which is what makes local edits and dev mode possible.
     if !p.is_file() {
-        if let Some(parent) = manifest_root.parent() {
-            // The sibling package must route through headers exactly like
-            // the primary vendor/ path: this is how a monorepo package's
-            // own build (and its PREBUILD slice) reaches stdlib, and a
-            // slice that resolves a prebuilt sibling from `src/` swallows
-            // its `export extern` definitions — every such slice then
-            // defines stdlib's reactor `_v1` symbols and the consumer link
-            // dies on the duplicates (iris, 2026-08-16).
-            let sib_root = parent.join(first);
-            if package_resolves_through_headers(&sib_root) {
-                let mut hdr = sib_root.join("lib").join("include");
-                for seg in &rest {
-                    hdr.push(seg);
-                }
-                hdr.set_extension("cplus");
-                if hdr.is_file() {
-                    return Ok(platform_override(hdr));
-                }
-            }
-            let mut alt = sib_root.clone();
-            alt.push("src");
-            for seg in &rest {
-                alt.push(seg);
-            }
-            alt.set_extension("cplus");
-            if alt.is_file() {
-                return Ok(platform_override(alt));
-            }
-        }
-        // Per-user store fallback (D16): a package `cpc pm install`ed
-        // globally lives at `~/.cplus/<tier>/vendor/<name>` and resolves
-        // last — the project's own vendor/ and the monorepo sibling always
-        // win, which is what makes local edits and dev mode possible. The
-        // store path contains a `vendor` component, so file ids anchor to
-        // the package boundary exactly as project-vendored ones do.
-        if let Some(store_pkg) = store_package_dir(first) {
-            if package_resolves_through_headers(&store_pkg) {
-                let mut hdr = store_pkg.join("lib").join("include");
-                for seg in &rest {
-                    hdr.push(seg);
-                }
-                hdr.set_extension("cplus");
-                if hdr.is_file() {
-                    return Ok(platform_override(hdr));
-                }
-            }
-            let mut sp = store_pkg.join("src");
-            for seg in &rest {
-                sp.push(seg);
-            }
-            sp.set_extension("cplus");
-            if sp.is_file() {
-                return Ok(platform_override(sp));
+        let fallbacks = vendor_dirs
+            .iter()
+            .map(|d| d.join(first))
+            .chain(manifest_root.parent().map(|parent| parent.join(first)))
+            .chain(store_package_dir(first));
+        for pkg_root in fallbacks {
+            if let Some(found) = module_in_package(&pkg_root, &rest) {
+                return Ok(platform_override(found));
             }
         }
     }
     Ok(platform_override(p))
+}
+
+/// Module `rest` of the package at `pkg_root`: its generated header when the
+/// package resolves through headers and has one for it, else `src/<rest>`.
+///
+/// Every place outside `<root>/vendor/` finds a module this one way. The
+/// header must win exactly as on the primary path: this is how a monorepo
+/// package's own build (and its PREBUILD slice) reaches stdlib, and a slice
+/// that resolves a prebuilt sibling from `src/` swallows its `export extern`
+/// definitions — every such slice then defines stdlib's reactor `_v1`
+/// symbols and the consumer link dies on the duplicates (iris, 2026-08-16).
+fn module_in_package(pkg_root: &Path, rest: &[&str]) -> Option<PathBuf> {
+    if package_resolves_through_headers(pkg_root) {
+        let mut hdr = pkg_root.join("lib").join("include");
+        for seg in rest {
+            hdr.push(seg);
+        }
+        hdr.set_extension("cplus");
+        if hdr.is_file() {
+            return Some(hdr);
+        }
+    }
+    let mut src = pkg_root.join("src");
+    for seg in rest {
+        src.push(seg);
+    }
+    src.set_extension("cplus");
+    src.is_file().then_some(src)
 }
 
 /// The per-user store tier for THIS toolchain: `~/.cplus/<tier>/vendor`.
@@ -1724,9 +1721,10 @@ fn package_resolves_through_headers(pkg_root: &Path) -> bool {
 fn derive_file_id_qualified(
     canonical: &Path,
     manifest_root: &Path,
+    vendor_dirs: &[PathBuf],
     package_name: Option<&str>,
 ) -> String {
-    let base = derive_file_id(canonical, manifest_root);
+    let base = derive_file_id_in(canonical, manifest_root, vendor_dirs);
     let Some(pkg) = package_name else {
         return base;
     };
@@ -1737,7 +1735,8 @@ fn derive_file_id_qualified(
     // real subdirectory is still not this project's code.
     let canonical_root =
         std::fs::canonicalize(manifest_root).unwrap_or_else(|_| manifest_root.to_path_buf());
-    let own = matches!(canonical.strip_prefix(&canonical_root), Ok(r) if !path_is_under_vendor(r));
+    let own = matches!(canonical.strip_prefix(&canonical_root), Ok(r) if !path_is_under_vendor(r))
+        && !in_search_dir(canonical, vendor_dirs);
     if !own {
         return base;
     }
@@ -1762,7 +1761,16 @@ fn sanitize_id(s: &str) -> String {
         .collect()
 }
 
+#[cfg(test)]
 fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
+    derive_file_id_in(canonical, manifest_root, &[])
+}
+
+/// `derive_file_id`, knowing the project's `[package] vendor` search
+/// directories: a package found through one is a dependency even when the
+/// directory sits inside the project and is not called `vendor`
+/// (`vendor = ["third_party"]`).
+fn derive_file_id_in(canonical: &Path, manifest_root: &Path, vendor_dirs: &[PathBuf]) -> String {
     // A generated header stands in for its source module and must share its id.
     let rewritten = header_path_as_source(canonical);
     let canonical: &Path = rewritten.as_deref().unwrap_or(canonical);
@@ -1771,7 +1779,7 @@ fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
     let rel: &Path = match canonical.strip_prefix(&canonical_root) {
         // Inside the project, and not under `vendor/`: the path relative to
         // the root is already machine-independent.
-        Ok(r) if !path_is_under_vendor(r) => r,
+        Ok(r) if !path_is_under_vendor(r) && !in_search_dir(canonical, vendor_dirs) => r,
         // A dependency. Anchor on the package boundary instead of the path we
         // happen to have reached it by — including when `vendor/` is a real
         // directory inside this project rather than a symlink out of it. Get
@@ -1866,6 +1874,12 @@ fn header_path_as_source(p: &Path) -> Option<PathBuf> {
 /// live under a directory called `vendor` is not mistaken for its own dep.
 fn path_is_under_vendor(rel: &Path) -> bool {
     rel.components().any(|c| comp_name(&c) == Some("vendor"))
+}
+
+/// Is `canonical` inside one of the `[package] vendor` search directories?
+/// Those hold dependencies by declaration, whatever they are called.
+fn in_search_dir(canonical: &Path, vendor_dirs: &[PathBuf]) -> bool {
+    vendor_dirs.iter().any(|d| canonical.starts_with(d))
 }
 
 fn package_relative(canonical: &Path) -> Option<&Path> {
@@ -2012,6 +2026,7 @@ fn merge(
     entry_file_id: &str,
     is_lib_entry: bool,
     manifest_root: &Path,
+    vendor_dirs: &[PathBuf],
     deps: &BTreeSet<String>,
     own_package: Option<&str>,
     project_mode: bool,
@@ -2175,6 +2190,7 @@ fn merge(
                 &unit.canonical_path,
                 imp.span,
                 manifest_root,
+                vendor_dirs,
                 deps,
                 own_package,
                 project_mode,
@@ -3844,6 +3860,82 @@ mod tests {
         assert_eq!(id, "stdlib.src.vec");
         assert!(!id.contains("Users"), "host path leaked: {id}");
         assert!(!id.contains('_'), "sanitiser fired unexpectedly: {id}");
+    }
+
+    /// `[package] vendor` search directories: a package written once at
+    /// `<dir>/<name>/` and found from `app/` with no `vendor/` of its own.
+    /// Returns (app root, entry file).
+    fn search_path_fixture(root: &Path, vendor_line: &str) -> (PathBuf, PathBuf) {
+        let app = root.join("app");
+        fs::create_dir_all(app.join("src")).unwrap();
+        fs::write(
+            app.join("Cplus.toml"),
+            format!("[package]\nname = \"app\"\n{vendor_line}\n[dependencies]\nmathy = \"*\"\n"),
+        )
+        .unwrap();
+        let main = app.join("src/main.cplus");
+        fs::write(&main, "import \"mathy/ops\" as ops;\nfn main() -> i32 { return ops::add(1, 2); }\n").unwrap();
+        (app, main)
+    }
+
+    fn write_mathy(dir: &Path) {
+        fs::create_dir_all(dir.join("mathy/src")).unwrap();
+        fs::write(dir.join("mathy/Cplus.toml"), "[package]\nname = \"mathy\"\n").unwrap();
+        fs::write(dir.join("mathy/src/ops.cplus"), "fn add(a: i32, b: i32) -> i32 { return a + b; }\n").unwrap();
+    }
+
+    /// The canonical path the loaded `mathy/ops` module came from, and its id.
+    fn mathy_origin(app: &Path, main: &Path) -> (PathBuf, String) {
+        let deps = ["mathy".to_string()];
+        let p = load_project_full(main, app, false, Some(&deps), BTreeMap::new())
+            .unwrap_or_else(|f| panic!("load failed: {:?}", f.error));
+        let (id, (path, _)) = p
+            .files
+            .iter()
+            .find(|(_, (path, _))| path.ends_with("mathy/src/ops.cplus"))
+            .expect("mathy/ops loaded");
+        (path.clone(), id.clone())
+    }
+
+    #[test]
+    fn a_search_directory_finds_a_package_outside_vendor() {
+        let root = fs::canonicalize(tmpdir()).unwrap();
+        write_mathy(&root.join("pkgs"));
+        let (app, main) = search_path_fixture(&root, "vendor = [\"../pkgs\"]");
+        let (path, id) = mathy_origin(&app, &main);
+        assert!(path.starts_with(root.join("pkgs")), "{path:?}");
+        assert_eq!(id, "mathy.src.ops");
+    }
+
+    #[test]
+    fn search_order_is_vendor_then_each_directory_as_written() {
+        let root = fs::canonicalize(tmpdir()).unwrap();
+        write_mathy(&root.join("first"));
+        write_mathy(&root.join("second"));
+        let (app, main) = search_path_fixture(&root, "vendor = [\"../first\", \"../second\"]");
+        assert!(mathy_origin(&app, &main).0.starts_with(root.join("first")));
+
+        // Written the other way round, the other copy wins.
+        let (app, main) = search_path_fixture(&root, "vendor = [\"../second\", \"../first\"]");
+        assert!(mathy_origin(&app, &main).0.starts_with(root.join("second")));
+
+        // The project's own vendor/ beats every search directory.
+        write_mathy(&app.join("vendor"));
+        assert!(mathy_origin(&app, &main).0.starts_with(app.join("vendor")));
+    }
+
+    #[test]
+    fn a_search_directory_inside_the_project_holds_dependencies() {
+        // Not called `vendor`, and inside the root: still a dependency, so its
+        // module id is the package's own (`mathy.src.ops`), never this
+        // project's (`app.third_party.mathy.src.ops`) — or a prebuilt archive
+        // of mathy could not link.
+        let root = fs::canonicalize(tmpdir()).unwrap();
+        let (app, main) = search_path_fixture(&root, "vendor = [\"third_party\"]");
+        write_mathy(&app.join("third_party"));
+        let (path, id) = mathy_origin(&app, &main);
+        assert!(path.starts_with(app.join("third_party")), "{path:?}");
+        assert_eq!(id, "mathy.src.ops");
     }
 
     #[test]

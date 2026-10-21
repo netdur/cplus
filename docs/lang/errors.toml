@@ -1817,6 +1817,24 @@ app_id = "com.example.my_app"
 '''
 
 [[code]]
+id = "E0416"
+title = "`[package] vendor` entry is not a directory"
+category = "Targets and packages"
+severity = "error"
+repro = "scenario"
+lang = "toml"
+verified = true
+emit_site = "cplus-core/src/manifest.rs:parse"
+test = "cpc/tests/e2e.rs:package_vendor_errors_name_the_directories"
+cause = "`[package] vendor` lists directories to find packages in, and one of them does not exist. Entries are relative to the manifest's directory (or absolute). A search path that skipped a missing entry would turn into a \"package not found\" far from its cause, so the manifest is refused where the entry is written."
+fix = "Correct the path, relative to the directory holding `Cplus.toml`, or remove the entry."
+example = '''
+[package]
+name   = "app"
+vendor = ["../nowhere"]
+'''
+
+[[code]]
 id = "E0500"
 title = "Cannot infer a type parameter"
 category = "Generics and bounds"

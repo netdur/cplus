@@ -31,10 +31,11 @@ edition = "2026"
 stdlib = "*"
 ```
 
-Dependencies resolve from the project's `vendor/<name>/` first, then the
-per-user store (`~/.cplus`) that `cpc pm install` fills. Working inside
-this repository, a symlink does the same job:
-`ln -s "$CPLUS"/vendor vendor`.
+Dependencies resolve from the project's `vendor/<name>/` first, then any
+directories `[package] vendor = [...]` lists, then the per-user store
+(`~/.cplus`) that `cpc pm install` fills. Working inside this repository,
+`vendor = ["$CPLUS/vendor"]` with the path written out, or a symlink
+(`ln -s "$CPLUS"/vendor vendor`), does the same job.
 
 ## 2. Hello
 

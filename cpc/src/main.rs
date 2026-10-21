@@ -1875,13 +1875,25 @@ fn collect_dep_link_args(
                     dep.name,
                     vendor_manifest.display()
                 ),
-                vec![
-                    format!(
+                {
+                    let mut notes = vec![format!(
                         "declared in `[dependencies]` of {}",
                         m.root.join("Cplus.toml").display()
-                    ),
-                    "run `cpc pm install` to fetch dependencies into the store".to_string(),
-                ],
+                    )];
+                    if !m.vendor_dirs.is_empty() {
+                        let searched: Vec<String> = m
+                            .package_search_dirs(&dep.name)
+                            .iter()
+                            .map(|d| format!("`{}`", d.display()))
+                            .collect();
+                        notes.push(format!(
+                            "searched {}, then the sibling directory and the store",
+                            searched.join(", ")
+                        ));
+                    }
+                    notes.push("run `cpc pm install` to fetch dependencies into the store".to_string());
+                    notes
+                },
             );
             emit_diag(&d, diag_mode, "");
             return Err(ExitCode::FAILURE);
@@ -2139,15 +2151,20 @@ fn order_archives_dependents_first(
 
 /// Where a dependency's package directory lives, or `None` if it isn't there.
 ///
-/// Normally `<root>/vendor/<name>/`. The fallback covers the vendor-package
+/// Normally `<root>/vendor/<name>/`, then each `[package] vendor` search
+/// directory in order. The sibling fallback covers the vendor-package
 /// self-test case: run from inside a vendor package, sibling packages live at
 /// `<root>/../<name>/` rather than under a `vendor/` of their own. Mirrors
-/// `resolver.rs`'s fallback in `resolve_vendor_path` — the two must agree, or
+/// the resolver's order in `classify_import_path` — the two must agree, or
 /// the link line and the import resolution point at different copies.
 fn vendor_dir_for(m: &manifest::Manifest, dep_name: &str) -> Option<PathBuf> {
-    let primary = m.root.join("vendor").join(dep_name);
-    if primary.join("Cplus.toml").is_file() {
-        return Some(primary);
+    // `<root>/vendor/<name>`, then each `[package] vendor` search directory.
+    if let Some(dir) = m
+        .package_search_dirs(dep_name)
+        .into_iter()
+        .find(|d| d.join("Cplus.toml").is_file())
+    {
+        return Some(dir);
     }
     if let Some(parent) = m.root.parent() {
         let alt = parent.join(dep_name);
@@ -4402,11 +4419,18 @@ fn apply_realtime_profile(
 
     let canon_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let vendor_dir = canon_root.join("vendor");
+    // A `[package] vendor` search directory holds dependencies too, even one
+    // inside the project.
+    let search_dirs = manifest::load(&root.join("Cplus.toml"))
+        .map(|m| m.vendor_dirs)
+        .unwrap_or_default();
     let local: std::collections::HashSet<String> = files
         .iter()
         .filter(|(_, (p, _))| {
             let cp = fs::canonicalize(p).unwrap_or_else(|_| p.clone());
-            cp.starts_with(&canon_root) && !cp.starts_with(&vendor_dir)
+            cp.starts_with(&canon_root)
+                && !cp.starts_with(&vendor_dir)
+                && !search_dirs.iter().any(|d| cp.starts_with(d))
         })
         .map(|(id, _)| id.clone())
         .collect();

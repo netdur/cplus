@@ -89,6 +89,12 @@ pub struct Manifest {
     /// Directory containing the manifest file. All `entry` paths are resolved
     /// relative to this directory.
     pub root: PathBuf,
+    /// `[package] vendor = ["../../build/vendor", ...]` — more directories to
+    /// find packages in, each holding packages as `<dir>/<name>/`. Absolute
+    /// and canonical, in the order written. A package is looked for in
+    /// `<root>/vendor/` first, then in each of these, then the sibling and
+    /// store fallbacks; see [`Manifest::package_search_dirs`].
+    pub vendor_dirs: Vec<PathBuf>,
     /// Optional `[build]` table — how this package is consumed. See `BuildSpec`.
     pub build: BuildSpec,
     /// v0.0.12 realtime Phase 8: optional `[profile.realtime]` table. When
@@ -358,6 +364,19 @@ pub struct Package {
     pub app_id: Option<String>,
 }
 
+impl Manifest {
+    /// Every directory a dependency named `name` may live under, in search
+    /// order: `<root>/vendor/<name>`, then `<dir>/<name>` for each
+    /// `[package] vendor` entry. The sibling and per-user store fallbacks
+    /// come after these and are the resolver's to add.
+    pub fn package_search_dirs(&self, name: &str) -> Vec<PathBuf> {
+        std::iter::once(self.root.join("vendor"))
+            .chain(self.vendor_dirs.iter().cloned())
+            .map(|d| d.join(name))
+            .collect()
+    }
+}
+
 impl Package {
     /// The declared `app_id`, or the one `cpc init` mints from the package
     /// name when none is declared.
@@ -584,6 +603,14 @@ pub enum ManifestError {
         found: String,
         reason: String,
     },
+    /// (E0416): a `[package] vendor` entry names no directory. A search
+    /// path that silently searched less would turn into "package not found"
+    /// far from its cause, so it is refused where it is written.
+    VendorDirMissing {
+        path: PathBuf,
+        entry: String,
+        resolved: PathBuf,
+    },
     /// (E0869): one dependency name declared in more than one place with
     /// incompatible meaning — in `[dependencies]` (all platforms) AND a
     /// `[<platform>.dependencies]` section, or in two platform sections
@@ -644,6 +671,16 @@ impl fmt::Display for ManifestError {
                 f,
                 "manifest {}: invalid `[package] app_id` `{found}`: {reason}",
                 path.display()
+            ),
+            ManifestError::VendorDirMissing {
+                path,
+                entry,
+                resolved,
+            } => write!(
+                f,
+                "manifest {}: `[package] vendor` entry `{entry}` is not a directory ({})",
+                path.display(),
+                resolved.display()
             ),
             ManifestError::UnsupportedEdition { path, found } => {
                 write!(
@@ -718,6 +755,7 @@ impl ManifestError {
             | ManifestError::ConflictingDependency { path, .. }
             | ManifestError::InvalidMavenCoordinate { path, .. }
             | ManifestError::InvalidAppId { path, .. }
+            | ManifestError::VendorDirMissing { path, .. }
             | ManifestError::TargetPathEscapes { path, .. } => path.clone(),
         };
         let primary = SourceSpan {
@@ -797,6 +835,14 @@ impl ManifestError {
             ManifestError::InvalidAppId { found, reason, .. } => (
                 "E0415",
                 format!("invalid `[package] app_id` `{found}`: {reason}"),
+            ),
+            ManifestError::VendorDirMissing { entry, resolved, .. } => (
+                "E0416",
+                format!(
+                    "`[package] vendor` entry `{entry}` is not a directory — it resolves to `{}`; \
+                     entries are relative to the manifest",
+                    resolved.display()
+                ),
             ),
             ManifestError::TargetPathEscapes {
                 target, requested, ..
@@ -1056,6 +1102,9 @@ struct RawPackage {
     /// The app's identity on every platform (`Package::app_id`).
     #[serde(default)]
     app_id: Option<String>,
+    /// Package search directories (`Manifest::vendor_dirs`).
+    #[serde(default)]
+    vendor: Vec<String>,
 }
 
 /// Load and validate a `Cplus.toml` file. The returned `Manifest`'s
@@ -1107,6 +1156,20 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         Some(p) => std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()),
         None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
     };
+    let mut vendor_dirs = Vec::with_capacity(raw.package.vendor.len());
+    for entry in &raw.package.vendor {
+        let dir = root.join(entry);
+        match std::fs::canonicalize(&dir) {
+            Ok(d) if d.is_dir() => vendor_dirs.push(d),
+            _ => {
+                return Err(ManifestError::VendorDirMissing {
+                    path: manifest_path.to_path_buf(),
+                    entry: entry.clone(),
+                    resolved: dir,
+                })
+            }
+        }
+    }
 
     // The removed Cargo-shaped sections get a targeted migration error, not
     // a serde "unknown field". Checked before anything else so a legacy
@@ -1513,6 +1576,7 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         dependencies,
         maven,
         root,
+        vendor_dirs,
         build,
         realtime_profile,
         windows_subsystem,
@@ -1738,6 +1802,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn package_vendor_lists_search_directories_in_order() {
+        let dir = fs_canon(fresh_dir("vendor_dirs"));
+        std::fs::create_dir_all(dir.join("app")).unwrap();
+        std::fs::create_dir_all(dir.join("shared")).unwrap();
+        std::fs::create_dir_all(dir.join("app/third_party")).unwrap();
+        let path = dir.join("app/Cplus.toml");
+        std::fs::write(
+            &path,
+            "[package]\nname = \"app\"\nvendor = [\"../shared\", \"third_party\"]\n",
+        )
+        .unwrap();
+        let m = load(&path).unwrap();
+        assert_eq!(m.vendor_dirs, vec![dir.join("shared"), dir.join("app/third_party")]);
+        assert_eq!(
+            m.package_search_dirs("mathy"),
+            vec![
+                dir.join("app/vendor/mathy"),
+                dir.join("shared/mathy"),
+                dir.join("app/third_party/mathy"),
+            ]
+        );
+        // No key: only the project's own vendor/.
+        std::fs::write(&path, "[package]\nname = \"app\"\n").unwrap();
+        assert!(load(&path).unwrap().vendor_dirs.is_empty());
+    }
+
+    #[test]
+    fn a_missing_package_vendor_directory_is_e0416() {
+        let dir = fresh_dir("vendor_missing");
+        let path = dir.join("Cplus.toml");
+        std::fs::write(&path, "[package]\nname = \"app\"\nvendor = [\"../nowhere\"]\n").unwrap();
+        let e = load(&path).unwrap_err();
+        assert!(matches!(e, ManifestError::VendorDirMissing { .. }), "got {e}");
+        let d = e.to_diagnostic();
+        assert_eq!(d.code.0, "E0416");
+        assert!(d.message.contains("../nowhere"), "{}", d.message);
+    }
+
+    fn fs_canon(p: PathBuf) -> PathBuf {
+        std::fs::canonicalize(&p).unwrap_or(p)
     }
 
     fn assert_entry_relpath(m: &Manifest, expected_rel: &str) {

@@ -40,7 +40,7 @@ version = "0.0.1"
 edition = "2026"
 app_id  = "com.example.myapp"   # optional: the identity it ships under, every platform
 
-[dependencies]        # the portable tier — resolved at vendor/<name>/
+[dependencies]        # the portable tier — resolved at vendor/<name>/ (see below)
 stdlib = "*"
 facet  = "*"
 
@@ -54,9 +54,33 @@ dependency's own manifest. A backend's transitive closure is therefore named
 here too. Clear and noisy beats magic: the manifest is the complete bill of
 materials.
 
-Dependencies are directories the resolver finds project-first:
-`<project>/vendor/<name>` wins, then the per-user store
-(`~/.cplus/<tier>/vendor/<name>`) that `cpc pm install` fills. A bare
+Dependencies are directories the resolver finds project-first, in this
+order:
+
+1. `<project>/vendor/<name>`;
+2. `<dir>/<name>` for each directory `[package] vendor` lists, as written;
+3. `<project>/../<name>`, a sibling — the layout a package sees when its
+   own tests run inside another project's `vendor/`;
+4. the per-user store (`~/.cplus/<tier>/vendor/<name>`) that
+   `cpc pm install` fills.
+
+`[package] vendor` names directories that hold packages, relative to the
+manifest (an absolute path also works). It is how a monorepo shares one
+package tree without a `vendor/` symlink in every project:
+
+```toml
+[package]
+name   = "slab-examples"
+vendor = ["../../build/vendor", "../../../C+/vendor"]
+```
+
+Each entry must be an existing directory (**E0416**). A package found
+through one is a dependency, wherever the directory sits — its warnings are
+hidden like any dependency's, and its symbols keep the package's own names.
+When a dependency is found nowhere, **E0854** lists every directory that was
+searched.
+
+A bare
 `stdlib = "*"` is the toolchain's own package at the toolchain's version;
 third-party packages use the pinned tree-URL form
 (`https://…/tree/main/<pkg>@1.2.3`), and `cpc pm add` writes a package

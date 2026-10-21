@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **200 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **153** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **201 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **153** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -2498,6 +2498,20 @@ app_id = "com.example.my_app"
 **Fix.** Use reverse-DNS with letters and digits only: `com.example.myapp`, not `com.example.my_app` or `com.example.9lives`.
 
 <sub>repro: scenario · cplus-core/src/manifest.rs:validate_app_id · test cpc/tests/cli_scaffold.rs:build_rejects_a_malformed_app_id_e0415</sub>
+
+### E0416 · `[package] vendor` entry is not a directory
+
+`[package] vendor` lists directories to find packages in, and one of them does not exist. Entries are relative to the manifest's directory (or absolute). A search path that skipped a missing entry would turn into a "package not found" far from its cause, so the manifest is refused where the entry is written.
+
+```toml
+[package]
+name   = "app"
+vendor = ["../nowhere"]
+```
+
+**Fix.** Correct the path, relative to the directory holding `Cplus.toml`, or remove the entry.
+
+<sub>repro: scenario · cplus-core/src/manifest.rs:parse · test cpc/tests/e2e.rs:package_vendor_errors_name_the_directories</sub>
 
 ### E0852 · Import names an undeclared dependency (or no manifest is reachable)
 

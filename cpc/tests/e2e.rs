@@ -26212,6 +26212,85 @@ fn literal_only_expressions_compute_at_the_type_of_their_position() {
     assert_eq!(out.status.code(), Some(0), "exit names the failing line: {out:?}");
 }
 
+/// `[package] vendor`: packages found in listed directories, with no
+/// `vendor/` in the project. stdlib comes through an ABSOLUTE entry (the
+/// repo's vendor tree, prebuilt archive and all), a local package through a
+/// RELATIVE one — both must resolve for imports AND for the link line.
+#[test]
+fn package_vendor_search_directories_build_and_link() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let root = tempdir();
+    let repo_vendor = std::fs::canonicalize(format!("{}/../vendor", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    std::fs::create_dir_all(root.join("pkgs/mathy/src")).unwrap();
+    std::fs::write(root.join("pkgs/mathy/Cplus.toml"), "[package]\nname = \"mathy\"\n").unwrap();
+    std::fs::write(
+        root.join("pkgs/mathy/src/ops.cplus"),
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    )
+    .unwrap();
+    let app = root.join("app");
+    std::fs::create_dir_all(app.join("src")).unwrap();
+    std::fs::write(
+        app.join("Cplus.toml"),
+        format!(
+            "[package]\nname = \"searchapp\"\nvendor = [\"{}\", \"../pkgs\"]\n\n\
+             [dependencies]\nstdlib = \"*\"\nmathy = \"*\"\n",
+            repo_vendor.display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"mathy/ops\" as ops;\n\
+         fn main() -> i32 { io::println(\"sum=${ops::add(2, 3)}\"); return 0; }\n",
+    )
+    .unwrap();
+    assert!(!app.join("vendor").exists());
+    let out = Command::new(cpc).arg("build").current_dir(&app).output().expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "search-path project must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(app.join("target/debug/searchapp")).output().expect("run searchapp");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "sum=5\n");
+}
+
+/// A `[package] vendor` entry that names no directory is E0416 where it is
+/// written; a dependency found nowhere is E0854, and its notes name every
+/// directory that was searched.
+#[test]
+fn package_vendor_errors_name_the_directories() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let root = tempdir();
+    std::fs::create_dir_all(root.join("app/src")).unwrap();
+    std::fs::create_dir_all(root.join("pkgs")).unwrap();
+    std::fs::write(root.join("app/src/main.cplus"), "fn main() -> i32 { return 0; }\n").unwrap();
+
+    std::fs::write(
+        root.join("app/Cplus.toml"),
+        "[package]\nname = \"app\"\nvendor = [\"../nowhere\"]\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(root.join("app")).output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(err.contains("E0416") && err.contains("../nowhere"), "{err}");
+
+    std::fs::write(
+        root.join("app/Cplus.toml"),
+        "[package]\nname = \"app\"\nvendor = [\"../pkgs\"]\n\n[dependencies]\nghost = \"*\"\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(root.join("app")).output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(err.contains("E0854") && err.contains("pkgs/ghost"), "{err}");
+}
+
 /// The other side of rejected-IR reporting
 /// (bugs/closed/invalid-ir-reaches-the-user-as-a-raw-clang-error-on-a-deleted-file.md):
 /// a LINK failure is the user's to fix, so it must not be called a cpc bug,
