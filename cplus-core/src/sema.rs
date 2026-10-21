@@ -15778,9 +15778,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             let mut notes: Vec<String> = Vec::new();
             if bt != "str" {
-                // Only the types `stdlib/math` declares a method set for; for
-                // any other builtin the import would not help.
-                if !self.builtin_impl_origin.contains_key(bt) && matches!(bt, "f32" | "f64") {
+                // Only the types `stdlib/math` declares a method set for — every
+                // numeric width but `f16`; for `bool` or `f16` the import would
+                // not help.
+                if !self.builtin_impl_origin.contains_key(bt) && !matches!(bt, "bool" | "f16") {
                     notes.push(format!(
                         "the `{bt}` method set is declared by stdlib — add \
                          `import \"stdlib/math\" as _;` (any file in the build suffices)"
@@ -29779,7 +29780,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     /// suggested `stdlib/math`, which declares no method set for that type.
     #[test]
     fn builtin_method_miss_names_the_receiver_type() {
-        for (ty, init) in [("u32", "981"), ("i64", "981"), ("bool", "true"), ("str", "\"x\"")] {
+        for (ty, init) in [("bool", "true"), ("f16", "1.0"), ("str", "\"x\"")] {
             let ds = check_src(&format!(
                 "fn main() -> i32 {{ let v: {ty} = {init}; let _ = v.foo(); return 0; }}"
             ));
@@ -29793,11 +29794,16 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                 );
             }
         }
-        // f32 is declared by stdlib/math: its miss still points there.
-        let ds = check_src("fn main() -> i32 { let v: f32 = 1.0; let _ = v.foo(); return 0; }");
-        let d = ds.iter().find(|d| d.code.0 == "E0324").expect("E0324 expected");
-        assert_eq!(d.message, "no method `foo` on type `f32`");
-        assert!(d.notes.iter().any(|n| n.contains("stdlib/math")), "{:?}", d.notes);
+        // stdlib/math declares the integer and f32/f64 method sets: a miss
+        // on one of those, with no math in the build, points there.
+        for (ty, init) in [("f32", "1.0"), ("u32", "981"), ("i64", "981")] {
+            let ds = check_src(&format!(
+                "fn main() -> i32 {{ let v: {ty} = {init}; let _ = v.foo(); return 0; }}"
+            ));
+            let d = ds.iter().find(|d| d.code.0 == "E0324").expect("E0324 expected");
+            assert_eq!(d.message, format!("no method `foo` on type `{ty}`"));
+            assert!(d.notes.iter().any(|n| n.contains("stdlib/math")), "{ty}: {:?}", d.notes);
+        }
     }
 
     /// bugs/closed/a-literal-only-arithmetic-expression-ignores-the-expected-type.md

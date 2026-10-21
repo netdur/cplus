@@ -1,8 +1,9 @@
 // stdlib/math.cplus — the method set of the builtin float widths `f32` and
-// `f64`, plus the constants that go with them.
+// `f64`, plus the constants that go with them, and `min`/`max`/`clamp` for
+// every integer width.
 //
-// `f32` and `f64` are compiler builtins with no declaring file of their own,
-// so the compiler admits exactly ONE `impl f32` / `impl f64` block
+// The numeric types are compiler builtins with no declaring file of their
+// own, so the compiler admits exactly ONE `impl` block per builtin
 // program-wide — these ones. A second block anywhere is E0385, and the
 // shapes a builtin method may take are checked as E0386 (plain `this`
 // receiver only, no generics, no `gen`/`async`, no associated fns). This is
@@ -222,6 +223,124 @@ impl f64 {
     fn is_nan(this) -> bool { return this != this; }
 }
 
+// ---- the integer widths -----------------------------------------------------
+//
+// `min`, `max` and `clamp` for every integer width, so a bound on a size, an
+// index or a count reads `n.clamp(512, 2048)` as it does for a float. Like the
+// float blocks above, each is the ONE `impl` its builtin may have
+// program-wide. `clamp` answers `hi` when `lo > hi`, as `f32::clamp` does
+// (bugs/closed/integers-have-no-min-max-or-clamp.md).
+
+impl i8 {
+    fn min(this, b: i8) -> i8 { if b < this { return b; } return this; }
+    fn max(this, b: i8) -> i8 { if b > this { return b; } return this; }
+    fn clamp(this, lo: i8, hi: i8) -> i8 {
+        var v = this;
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        return v;
+    }
+}
+
+impl i16 {
+    fn min(this, b: i16) -> i16 { if b < this { return b; } return this; }
+    fn max(this, b: i16) -> i16 { if b > this { return b; } return this; }
+    fn clamp(this, lo: i16, hi: i16) -> i16 {
+        var v = this;
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        return v;
+    }
+}
+
+impl i32 {
+    fn min(this, b: i32) -> i32 { if b < this { return b; } return this; }
+    fn max(this, b: i32) -> i32 { if b > this { return b; } return this; }
+    fn clamp(this, lo: i32, hi: i32) -> i32 {
+        var v = this;
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        return v;
+    }
+}
+
+impl i64 {
+    fn min(this, b: i64) -> i64 { if b < this { return b; } return this; }
+    fn max(this, b: i64) -> i64 { if b > this { return b; } return this; }
+    fn clamp(this, lo: i64, hi: i64) -> i64 {
+        var v = this;
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        return v;
+    }
+}
+
+impl isize {
+    fn min(this, b: isize) -> isize { if b < this { return b; } return this; }
+    fn max(this, b: isize) -> isize { if b > this { return b; } return this; }
+    fn clamp(this, lo: isize, hi: isize) -> isize {
+        var v = this;
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        return v;
+    }
+}
+
+impl u8 {
+    fn min(this, b: u8) -> u8 { if b < this { return b; } return this; }
+    fn max(this, b: u8) -> u8 { if b > this { return b; } return this; }
+    fn clamp(this, lo: u8, hi: u8) -> u8 {
+        var v = this;
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        return v;
+    }
+}
+
+impl u16 {
+    fn min(this, b: u16) -> u16 { if b < this { return b; } return this; }
+    fn max(this, b: u16) -> u16 { if b > this { return b; } return this; }
+    fn clamp(this, lo: u16, hi: u16) -> u16 {
+        var v = this;
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        return v;
+    }
+}
+
+impl u32 {
+    fn min(this, b: u32) -> u32 { if b < this { return b; } return this; }
+    fn max(this, b: u32) -> u32 { if b > this { return b; } return this; }
+    fn clamp(this, lo: u32, hi: u32) -> u32 {
+        var v = this;
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        return v;
+    }
+}
+
+impl u64 {
+    fn min(this, b: u64) -> u64 { if b < this { return b; } return this; }
+    fn max(this, b: u64) -> u64 { if b > this { return b; } return this; }
+    fn clamp(this, lo: u64, hi: u64) -> u64 {
+        var v = this;
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        return v;
+    }
+}
+
+impl usize {
+    fn min(this, b: usize) -> usize { if b < this { return b; } return this; }
+    fn max(this, b: usize) -> usize { if b > this { return b; } return this; }
+    fn clamp(this, lo: usize, hi: usize) -> usize {
+        var v = this;
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        return v;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -328,4 +447,21 @@ fn f32_abs_clears_only_the_sign_bit() {
     assert(nan.abs().is_nan());
     assert(#bitcast::[u32](nan.abs()) == 0x7FC00001u32);
     assert(#bitcast::[u32]((0.0f32 - 1.5f32).abs()) == #bitcast::[u32](1.5f32));
+}
+
+#[test]
+fn integer_min_max_clamp() {
+    let edge: u32 = 981;
+    assert(edge.clamp(512, 2048) == 981);
+    assert((100u32).clamp(512, 2048) == 512);
+    assert((4000u32).clamp(512, 2048) == 2048);
+    assert((3i64).min(-7) == -7);
+    assert((3i64).max(-7) == 3);
+    assert((-5i8).clamp(-3, 3) == -3);
+    assert((200u8).max(255) == 255);
+    let n: usize = 10;
+    assert(n.min(4) == 4);
+    // `lo > hi` answers `hi`, as f32::clamp does.
+    assert((5i32).clamp(9, 1) == 1);
+    assert((5.0f32).clamp(9.0, 1.0) == 1.0);
 }
