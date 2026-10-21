@@ -15602,7 +15602,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             let mut notes: Vec<String> = Vec::new();
             if bt != "str" {
-                if !self.builtin_impl_origin.contains_key(bt) {
+                // Only the types `stdlib/math` declares a method set for; for
+                // any other builtin the import would not help.
+                if !self.builtin_impl_origin.contains_key(bt) && matches!(bt, "f32" | "f64") {
                     notes.push(format!(
                         "the `{bt}` method set is declared by stdlib — add \
                          `import \"stdlib/math\" as _;` (any file in the build suffices)"
@@ -15630,7 +15632,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             self.err_note(
                 "E0324",
-                format!("no method `{}` on type `str`", name.name),
+                format!("no method `{}` on type `{bt}`", name.name),
                 name.span,
                 notes,
             );
@@ -29527,6 +29529,33 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         // … and non-str builtins keep the plain E0324 they had before.
         let codes = errors("fn main() -> i32 { let x = 3; return x.abs(); }");
         assert!(codes.contains(&"E0324"));
+    }
+
+    /// bugs/closed/a-missing-method-on-any-builtin-type-is-reported-as-a-str-method.md:
+    /// the builtin-method miss hard-coded `str` into its message, so
+    /// `v.foo()` on a `u32` said "no method `foo` on type `str`". It also
+    /// suggested `stdlib/math`, which declares no method set for that type.
+    #[test]
+    fn builtin_method_miss_names_the_receiver_type() {
+        for (ty, init) in [("u32", "981"), ("i64", "981"), ("bool", "true"), ("str", "\"x\"")] {
+            let ds = check_src(&format!(
+                "fn main() -> i32 {{ let v: {ty} = {init}; let _ = v.foo(); return 0; }}"
+            ));
+            let d = ds.iter().find(|d| d.code.0 == "E0324").expect("E0324 expected");
+            assert_eq!(d.message, format!("no method `foo` on type `{ty}`"));
+            if ty != "str" {
+                assert!(
+                    !d.notes.iter().any(|n| n.contains("stdlib/math")),
+                    "{ty}: math declares no `{ty}` methods, so the import note misleads: {:?}",
+                    d.notes
+                );
+            }
+        }
+        // f32 is declared by stdlib/math: its miss still points there.
+        let ds = check_src("fn main() -> i32 { let v: f32 = 1.0; let _ = v.foo(); return 0; }");
+        let d = ds.iter().find(|d| d.code.0 == "E0324").expect("E0324 expected");
+        assert_eq!(d.message, "no method `foo` on type `f32`");
+        assert!(d.notes.iter().any(|n| n.contains("stdlib/math")), "{:?}", d.notes);
     }
 
     #[test]
