@@ -256,6 +256,11 @@ and libs travel with it.
 Cross-target artifacts land under `target/<target-name>/<mode>/`, so a host
 build and an iOS build coexist without a clean.
 
+An archive handed to someone else's build is also where `[library] sealed =
+true` ([packages.md](packages.md) §4) earns its keep: the external builder
+gets one object with only the `export` items global, and
+`<name>.sealed.txt` beside it lists the imports that build still resolves.
+
 ### Assets
 
 Files in the project's `assets/` are the app's assets, and an asset's name

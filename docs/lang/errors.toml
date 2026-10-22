@@ -2779,6 +2779,25 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0896"
+title = "A sealed package was named as a dependency"
+category = "Targets and packages"
+severity = "error"
+repro = "scenario"
+lang = "toml"
+verified = true
+emit_site = "cpc/src/main.rs:collect_dep_link_args"
+test = "cpc/tests/e2e.rs:a_sealed_package_cannot_be_a_cplus_dependency_e0896"
+cause = "`[dependencies]` names a package whose manifest says `[library] sealed = true`. A sealed archive keeps only its `export` items global; the mangled names a C+ import links against are local to it, so importing its modules can only end in undefined symbols at the consumer's link."
+fix = "Consume it as the C product it is: declare the functions you call with `extern fn` (its generated header lists them) and hand the archive to the link through `[link]` — or drop `sealed` while the package is developed beside its consumer."
+example = '''
+# vendor/sdk/Cplus.toml says `[library] sealed = true`
+[dependencies]
+sdk = "*"
+# -> [E0896] package `sdk` is sealed — it is consumed through its C header, not imported
+'''
+
+[[code]]
 id = "E0900"
 title = "Borrow-shaped parameter in an `async fn`"
 category = "Real-time contracts"

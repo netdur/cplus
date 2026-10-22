@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **201 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **153** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **202 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **153** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -2762,6 +2762,21 @@ name = "app"
 **Fix.** Write the coordinate as `"group:artifact" = "exact.version"` under `[android.maven]`. `cpc pm add . --maven group:artifact:version` writes it for you and downloads the closure.
 
 <sub>repro: scenario · cplus-core/src/manifest.rs:1097 · test cpc/tests/platform_deps.rs:malformed_maven_coordinates_fail_with_e0877</sub>
+
+### E0896 · A sealed package was named as a dependency
+
+`[dependencies]` names a package whose manifest says `[library] sealed = true`. A sealed archive keeps only its `export` items global; the mangled names a C+ import links against are local to it, so importing its modules can only end in undefined symbols at the consumer's link.
+
+```toml
+# vendor/sdk/Cplus.toml says `[library] sealed = true`
+[dependencies]
+sdk = "*"
+# -> [E0896] package `sdk` is sealed — it is consumed through its C header, not imported
+```
+
+**Fix.** Consume it as the C product it is: declare the functions you call with `extern fn` (its generated header lists them) and hand the archive to the link through `[link]` — or drop `sealed` while the package is developed beside its consumer.
+
+<sub>repro: scenario · cpc/src/main.rs:collect_dep_link_args · test cpc/tests/e2e.rs:a_sealed_package_cannot_be_a_cplus_dependency_e0896</sub>
 
 ### E0914 · Relative import escapes the project directory
 

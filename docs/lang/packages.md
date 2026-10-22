@@ -151,6 +151,26 @@ Two special cases earn keys:
   "both"`, and an optional `entry` whose top-level names become the bare C
   symbols (that entry's import tree *is* the library). This is for shipping
   to C consumers; a C+-consumed library never needs it.
+- **`[library] sealed = true`** — a *closed* C-ABI product. The archive
+  keeps global exactly the package's `export` items. Every other definition
+  the exports reach — the package's own name-public functions, the stdlib
+  slice, every dependency archive and bundled native archive — is resolved
+  into one relocatable object and made local there, and the build fails if
+  `nm` finds any other defined global in the result. What that closes: a
+  consumer object that defines a name-public function's mangled symbol no
+  longer replaces it (an archive member is pulled only for a symbol still
+  undefined, so a strong definition would be substituted as silently as a
+  weak one — only localizing the references closes it), and a declaration
+  of that symbol no longer links. What it leaves: the symbols the closure
+  cannot define — libc, the platform frameworks — stay imports that the
+  consumer's link resolves, listed in `target/<…>/<name>.sealed.txt`. A
+  consumer who owns the process can define those, or patch the bytes, and
+  no link-time measure changes that; a sealed verifier is still the
+  consumer's process verifying the consumer. A sealed package is consumed
+  through its header (`extern fn` + `[link]`), never imported (E0896). It
+  needs a relocatable link, so a sealed static archive exists for Mach-O
+  and ELF targets; on Windows the DLL already exports only its C ABI, and
+  `kind = "cdylib"` is the sealed form.
 - **`[build]`** — prebuild is the **default** (2026-08-16): a library
   package is compiled once into `lib/<triple>/<name>.a` + `lib/include/`
   headers on the first consumer build, and later builds link instead of

@@ -42,11 +42,22 @@ directly to a narrower type (E0315).
    A view is NUL-terminated only if it ends at a NUL: `"hello world".prefix(5)`
    handed to `%s` prints all eleven bytes. For a C string from any view, use
    `text::from_str(v).c_str()` and pass `cs.as_ptr()`.
-3. **Only `export` is callable from outside.** Everything else has
-   module-mangled names and an internal calling convention — an lldb
-   `call`, a C declaration, or a test harness reaching an internal symbol
-   passes garbage *silently*. Need to drive an internal path from outside?
-   Write the two-line `export` wrapper. That is what it is for.
+3. **`export` is the foreign interface; nothing else is one.** An `export`
+   function has a bare name, the C calling convention and a line in the
+   generated header. Every other function has a module-mangled name, and
+   what that name is worth at link time depends on the build. In an
+   executable it is `internal` with a private calling convention: an lldb
+   `call`, a C declaration or a test harness reaching it passes garbage
+   *silently*. In a library archive every name-public function keeps
+   external linkage and the C convention, because a consumer package links
+   it by that name — so a C declaration of the mangled name links and runs.
+   Neither is a stable interface, and neither is a boundary: a leading `_`,
+   a mangled name and the absence of `export` hide nothing from a consumer
+   who controls the link. Need to drive an internal path from outside?
+   Write the two-line `export` wrapper. Need the implementation unreachable
+   and unreplaceable from the consumer's link? That is `[library] sealed =
+   true` ([packages.md](packages.md) §4) — and even that stops at the
+   imports the consumer's link resolves.
 
 ## 3. Layout: making a struct C-true
 

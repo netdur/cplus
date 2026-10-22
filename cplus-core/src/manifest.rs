@@ -283,6 +283,17 @@ pub struct LibTarget {
     /// the consumer's link line (a future polish).
     pub frameworks: Vec<String>,
     pub libs: Vec<String>,
+    /// `[library] sealed = true`: a CLOSED C-ABI product. The archive keeps
+    /// global exactly the package's `export` items. Every other definition
+    /// the exports reach — the package's own name-public functions, the
+    /// stdlib slice, every dependency archive and bundled native archive —
+    /// is resolved into one relocatable object and made local there, and
+    /// the build fails if any other defined global survives. A sealed
+    /// package is consumed through its header (`extern fn` + `[link]`),
+    /// never imported: the mangled names a C+ import links against are
+    /// local to it (E0896). The build driver owns the recipe
+    /// (`seal_pieces` in cpc); this is only the request.
+    pub sealed: bool,
 }
 
 /// The `[build]` table — how a package is consumed by anything that depends on
@@ -1084,6 +1095,11 @@ struct RawLibrary {
     entry: Option<String>,
     #[serde(default)]
     kind: Option<String>,
+    /// `sealed = true`: the archive keeps global exactly the package's
+    /// `export` items; everything else the exports reach is resolved into one
+    /// relocatable object and made local there. See `LibTarget::sealed`.
+    #[serde(default)]
+    sealed: bool,
     #[serde(default)]
     frameworks: Vec<String>,
     #[serde(default)]
@@ -1263,6 +1279,7 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
                 synthesized,
                 frameworks: rl.frameworks.clone(),
                 libs: rl.libs.clone(),
+                sealed: rl.sealed,
             })
         }
     };
@@ -1307,6 +1324,7 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
                 synthesized: true,
                 frameworks: Vec::new(),
                 libs: Vec::new(),
+                sealed: false,
             })
         }
         (other, _) => other,
@@ -2234,6 +2252,30 @@ mod tests {
         "#;
         let m2 = parse_in(&std::env::temp_dir(), text2).unwrap();
         assert_eq!(m2.lib.unwrap().crate_type, CrateType::Staticlib);
+    }
+
+    #[test]
+    fn library_sealed_parses_and_defaults_off() {
+        let text = r#"
+            [package]
+            name = "sdk"
+
+            [library]
+            entry = "src/lib.cplus"
+            sealed = true
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        assert!(m.lib.unwrap().sealed, "`sealed = true` is the request");
+
+        let text2 = r#"
+            [package]
+            name = "sdk"
+
+            [library]
+            entry = "src/lib.cplus"
+        "#;
+        let m2 = parse_in(&std::env::temp_dir(), text2).unwrap();
+        assert!(!m2.lib.unwrap().sealed, "an ordinary library is open by default");
     }
 
     #[test]

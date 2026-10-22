@@ -23750,6 +23750,394 @@ fn a_narrow_return_export_forwarder_builds_and_answers_both_values_from_c() {
     );
 }
 
+/// The defined global symbols `nm` reports for an archive or object: the last
+/// token of every line that is neither empty nor a member header.
+#[cfg(target_os = "macos")]
+fn defined_globals(nm: &str, path: &Path) -> Vec<String> {
+    let out = Command::new(nm)
+        .arg("-g")
+        .arg("--defined-only")
+        .arg(path)
+        .output()
+        .expect("invoke nm");
+    assert!(out.status.success(), "nm failed on {}", path.display());
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.ends_with(':'))
+        .filter_map(|l| l.split_whitespace().last().map(|s| s.to_string()))
+        .collect()
+}
+
+/// `[library] sealed = true`. The archive keeps global exactly the package's
+/// exports; the name-public helper, the bundled C archive's function and
+/// everything else the exports reach are local to one object. Pinned against
+/// the two routes the Slab audit walked: a consumer object defining the
+/// helper's mangled symbol (link-time substitution), and a declaration of
+/// that symbol (a direct call). The UNSEALED control must still be
+/// substitutable, or this test could pass by failing to detect substitution
+/// at all. The import the closure cannot define (`c_seed`) stays with the
+/// consumer's link, and `<name>.sealed.txt` says so: that is the boundary's
+/// limit, written down, not a leak.
+/// bugs/closed/a-static-sdk-consumer-can-replace-a-non-export-verifier.md
+#[test]
+#[cfg(target_os = "macos")]
+fn a_sealed_library_keeps_only_its_exports_global_and_cannot_be_substituted() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let host = host_triple_for_test();
+
+    // A bundled C archive the package reaches: it must end up local too.
+    let lib_dir = dir.join("vendor/tinyc/lib").join(&host);
+    std::fs::create_dir_all(&lib_dir).unwrap();
+    let c_src = dir.join("tinyc_src.c");
+    std::fs::write(&c_src, "int tinyc_double(int n) { return n * 2; }\n").unwrap();
+    let obj = dir.join("tinyc.o");
+    let cc = Command::new("clang")
+        .arg("-c")
+        .arg(&c_src)
+        .arg("-o")
+        .arg(&obj)
+        .status()
+        .expect("invoke clang -c");
+    assert!(cc.success(), "clang -c on tinyc_src.c failed");
+    let ar = Command::new(ar_prog())
+        .arg("rcs")
+        .arg(lib_dir.join("libtinyc.a"))
+        .arg(&obj)
+        .status()
+        .expect("invoke ar");
+    assert!(ar.success(), "ar rcs failed");
+    std::fs::write(
+        dir.join("vendor/tinyc/Cplus.toml"),
+        "[package]\nname = \"tinyc\"\n\n[link]\nbundled = [\"libtinyc.a\"]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor/tinyc/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/tinyc/src/api.cplus"),
+        "extern fn tinyc_double(n: i32) -> i32;\n\
+         fn double(n: i32) -> i32 { return tinyc_double(n); }\n",
+    )
+    .unwrap();
+
+    // The package. `verify` is the name-public helper an SDK would keep to
+    // itself; `c_seed` is the import the consumer's link resolves.
+    let manifest = |sealed: bool| {
+        format!(
+            "[package]\nname = \"seal\"\n\n[dependencies]\ntinyc = \"*\"\n\n\
+             [library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\nsealed = {sealed}\n"
+        )
+    };
+    std::fs::write(dir.join("Cplus.toml"), manifest(true)).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "import \"./helper\" as helper;\n\
+         import \"tinyc/api\" as tinyc;\n\
+         export extern fn seal_check(k: *u8) -> i32 { return helper::verify(k); }\n\
+         export extern fn seal_double(n: i32) -> i32 { return tinyc::double(n); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/helper.cplus"),
+        "extern fn c_seed() -> i32;\n\
+         fn verify(k: *u8) -> i32 { if k[0] == (c_seed() as u8) { return 0; } return 4; }\n",
+    )
+    .unwrap();
+
+    // The consumers. `c_user.c` reads the real verdicts; `fake.c` is the
+    // substitution (the helper's mangled symbol, and the bundled C function);
+    // `direct.c` is the direct call.
+    std::fs::write(
+        dir.join("c_user.c"),
+        "#include <stdint.h>\n\
+         extern int32_t seal_check(const uint8_t*);\n\
+         extern int32_t seal_double(int32_t);\n\
+         int32_t c_seed(void) { return 7; }\n\
+         int main(void) {\n\
+           uint8_t ok = 7, bad = 9;\n\
+           if (seal_check(&ok) != 0) return 1;\n\
+           if (seal_check(&bad) != 4) return 2;\n\
+           if (seal_double(21) != 42) return 3;\n\
+           return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("fake.c"),
+        "#include <stdint.h>\n\
+         int32_t fake_verify(const uint8_t* k) __asm__(\"_seal.src.helper.verify\");\n\
+         int32_t fake_verify(const uint8_t* k) { (void)k; return 0; }\n\
+         int tinyc_double(int n) { (void)n; return 0; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("direct.c"),
+        "#include <stdint.h>\n\
+         int32_t internal_verify(const uint8_t* k) __asm__(\"_seal.src.helper.verify\");\n\
+         int32_t c_seed(void) { return 7; }\n\
+         int main(void) { uint8_t k = 7; return internal_verify(&k); }\n",
+    )
+    .unwrap();
+    let link = |name: &str, sources: &[&str]| -> (bool, Option<i32>) {
+        let bin = dir.join(name);
+        let mut cmd = Command::new("clang");
+        for src in sources {
+            cmd.arg(dir.join(src));
+        }
+        // `output()`, not `status()`: one of these links is MEANT to fail,
+        // and its linker error is a result here, not noise for the log.
+        let out = cmd
+            .arg("-L")
+            .arg(dir.join("target/release"))
+            .arg("-lseal")
+            .arg("-o")
+            .arg(&bin)
+            .output()
+            .expect("clang link");
+        if !out.status.success() {
+            return (false, None);
+        }
+        (true, Command::new(&bin).status().expect("run").code())
+    };
+
+    // ---- sealed ----
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "sealed build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let archive = dir.join("target/release/libseal.a");
+    let mut globals = defined_globals(nm_prog(), &archive);
+    globals.sort();
+    assert_eq!(
+        globals,
+        vec!["_seal_check".to_string(), "_seal_double".to_string()],
+        "a sealed archive keeps global exactly its exports"
+    );
+    let report = std::fs::read_to_string(dir.join("target/release/seal.sealed.txt"))
+        .expect("the sealed build writes <name>.sealed.txt");
+    assert!(report.contains("_seal_check"), "report names the exports:\n{report}");
+    assert!(
+        report.contains("_c_seed"),
+        "report names the import the consumer's link resolves:\n{report}"
+    );
+    assert!(
+        !report.contains("tinyc_double"),
+        "the bundled C function is inside the seal, not an import:\n{report}"
+    );
+    let (linked, code) = link("sealed_fake", &["c_user.c", "fake.c"]);
+    assert!(linked, "a consumer object with the helper's mangled symbol must still link");
+    assert_eq!(
+        code,
+        Some(0),
+        "the sealed verifier and the bundled C function keep their verdicts beside the replacement"
+    );
+    let (linked, _) = link("sealed_direct", &["direct.c"]);
+    assert!(
+        !linked,
+        "a direct call to the sealed helper's mangled name must fail to link"
+    );
+
+    // ---- the unsealed control: the same two routes must WORK, or the
+    // assertions above prove nothing ----
+    std::fs::write(dir.join("Cplus.toml"), manifest(false)).unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "open build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let globals = defined_globals(nm_prog(), &archive);
+    assert!(
+        globals.iter().any(|g| g == "_seal.src.helper.verify"),
+        "premise: an open archive defines the helper globally; got {globals:?}"
+    );
+    let (linked, code) = link("open_fake", &["c_user.c", "fake.c"]);
+    assert!(linked);
+    assert_eq!(
+        code,
+        Some(2),
+        "premise: in an open archive the replacement verifier accepts the bad token"
+    );
+    let (linked, code) = link("open_direct", &["direct.c"]);
+    assert!(linked, "premise: the open helper links by its mangled name");
+    assert_eq!(code, Some(0), "premise: and runs");
+}
+
+/// A sealed library that exports nothing would be an empty archive; the
+/// build says so instead of writing one.
+#[test]
+#[cfg(target_os = "macos")]
+fn a_sealed_library_with_no_exports_is_refused() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"mute\"\n\n[library]\nentry = \"src/lib.cplus\"\nsealed = true\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "fn helper(n: i32) -> i32 { return n; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "a sealed library with no exports must not build");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("exports nothing"),
+        "expected the empty-seal refusal, got:\n{err}"
+    );
+    assert!(
+        !dir.join("target/debug/libmute.a").is_file(),
+        "no archive is written for a refused seal"
+    );
+}
+
+/// A C+ package cannot import a sealed package: the mangled names it would
+/// link against are local to the sealed archive. E0896 says so at the
+/// manifest, before the link can fail with undefined symbols.
+#[test]
+fn a_sealed_package_cannot_be_a_cplus_dependency_e0896() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("vendor/sdk/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/sdk/Cplus.toml"),
+        "[package]\nname = \"sdk\"\n\n[library]\nentry = \"src/lib.cplus\"\nsealed = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/sdk/src/lib.cplus"),
+        "export extern fn sdk_ping() -> i32 { return 1; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nsdk = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"sdk/lib\" as sdk;\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "importing a sealed package must not build");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("E0896"), "expected E0896, got:\n{err}");
+    assert!(
+        err.contains("sealed") && err.contains("C header"),
+        "the diagnostic names the way through:\n{err}"
+    );
+}
+
+/// The ELF recipe (`clang -r`, then `objcopy --keep-global-symbols`) on the
+/// NDK toolchain: the Android archive keeps only its export global, the
+/// helper is local, and the NDK still links a C caller against it.
+#[test]
+fn a_sealed_android_archive_keeps_only_its_exports_global() {
+    let Some(ndk_clang) = ndk_clang_for_test() else {
+        eprintln!("skipping: no Android NDK (r28.2+) found");
+        return;
+    };
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"droidseal\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\nsealed = true\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "import \"./helper\" as helper;\n\
+         export extern fn droidseal_check(k: *u8) -> i32 { return helper::verify(k); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/helper.cplus"),
+        "fn verify(k: *u8) -> i32 { if k[0] == (7 as u8) { return 0; } return 4; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--target")
+        .arg("android-arm64")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "sealed android build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let archive = dir.join("target/android-arm64/debug/libdroidseal.a");
+    let llvm_nm = ndk_clang.with_file_name("llvm-nm");
+    let nm = Command::new(&llvm_nm)
+        .arg(&archive)
+        .output()
+        .expect("invoke llvm-nm");
+    let listing = String::from_utf8_lossy(&nm.stdout);
+    let globals: Vec<&str> = listing
+        .lines()
+        .filter(|l| l.split_whitespace().nth(1).is_some_and(|t| t == "T" || t == "D" || t == "W"))
+        .filter_map(|l| l.split_whitespace().last())
+        .collect();
+    assert_eq!(
+        globals,
+        vec!["droidseal_check"],
+        "a sealed ELF archive keeps global exactly its export; listing:\n{listing}"
+    );
+    assert!(
+        listing.contains(" t droidseal.src.helper.verify"),
+        "the helper is still there, local:\n{listing}"
+    );
+    std::fs::write(
+        dir.join("main.c"),
+        "extern int droidseal_check(const unsigned char*);\n\
+         int main(void) { unsigned char k = 7; return droidseal_check(&k); }\n",
+    )
+    .unwrap();
+    let link = Command::new(&ndk_clang)
+        .arg("-target")
+        .arg("aarch64-linux-android24")
+        .arg(dir.join("main.c"))
+        .arg(&archive)
+        .arg("-o")
+        .arg(dir.join("droidseal_exe"))
+        .output()
+        .expect("invoke NDK clang");
+    assert!(
+        link.status.success(),
+        "NDK link against the sealed archive failed: {}",
+        String::from_utf8_lossy(&link.stderr)
+    );
+}
+
 // ---- v0.0.21 multi-backend slice 3: the uikit package ----
 
 /// A `@ctx { }` modifier chain that mixes a value-returning builder

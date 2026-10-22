@@ -1537,6 +1537,310 @@ fn ar_program_for(t: &TargetSpec, clang_prog: &str) -> String {
     if cfg!(windows) { "llvm-ar" } else { "ar" }.to_string()
 }
 
+/// A binutil beside the target's clang (`llvm-nm`, `llvm-objcopy`) for an
+/// external toolchain, the host's own otherwise. `$CPC_NM` / `$CPC_OBJCOPY`
+/// override, as `$CPC_AR` does for the archiver.
+fn binutil_program_for(t: &TargetSpec, clang_prog: &str, tool: &str) -> String {
+    if let Ok(p) = env::var(format!("CPC_{}", tool.to_uppercase())) {
+        if !p.is_empty() {
+            return p;
+        }
+    }
+    if t.toolchain != target::ToolchainKind::HostClang {
+        let name = if cfg!(windows) {
+            format!("llvm-{tool}.exe")
+        } else {
+            format!("llvm-{tool}")
+        };
+        let sibling = Path::new(clang_prog).with_file_name(name);
+        if sibling.is_file() {
+            return sibling.to_string_lossy().to_string();
+        }
+    }
+    if cfg!(windows) {
+        format!("llvm-{tool}")
+    } else {
+        tool.to_string()
+    }
+}
+
+/// The symbol names `nm` prints for `object` under `flags`: the last token of
+/// every line that is neither empty nor a member header (`file.o:`).
+fn nm_names(nm_prog: &str, flags: &[&str], object: &Path) -> Result<Vec<String>, String> {
+    let out = Command::new(nm_prog)
+        .args(flags)
+        .arg(object)
+        .output()
+        .map_err(|e| format!("failed to invoke {nm_prog}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "{nm_prog} exited with {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.ends_with(':'))
+        .filter_map(|l| l.split_whitespace().last().map(|s| s.to_string()))
+        .collect())
+}
+
+/// `[library] sealed = true`: the symbols the sealed archive keeps global —
+/// every `export` function defined by the sources compiled into this build,
+/// and every `export static`. An `export` item's symbol is its bare name;
+/// Mach-O's leading `_` is the caller's to add.
+fn sealed_export_names(program: &cplus_core::ast::Program) -> Vec<String> {
+    use cplus_core::ast::ItemKind;
+    let mut names: Vec<String> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Function(f) if is_c_export_candidate(f) => Some(f.name.name.clone()),
+            ItemKind::Static(st) if st.is_export => Some(st.name.name.clone()),
+            _ => None,
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// `[library] sealed = true`: resolve the package's pieces and the archives
+/// its exports reach into ONE relocatable object, and make everything in it
+/// local except the exports. Returns the sealed object, which the archive
+/// and the shared link then take instead of the per-module pieces.
+///
+/// Why a linker step and not a linkage change in codegen. A consumer's own
+/// object that defines a name-public function's mangled symbol wins the link
+/// whatever linkage the archive's copy has: an archive member is pulled only
+/// to resolve a symbol still undefined, the consumer's definition came first,
+/// so the member is never opened — a strong definition is substituted exactly
+/// as silently as a `weak_odr` one. Only localizing the definitions AND the
+/// references to them, in one object, closes that route
+/// (bugs/closed/a-static-sdk-consumer-can-replace-a-non-export-verifier.md),
+/// and only the linker can make a bundled C archive's symbols local.
+///
+/// What it does not do. The sealed object still imports what the closure
+/// cannot define — libc, the platform frameworks — and the consumer's link
+/// resolves those, so a consumer that defines `SecKeyVerifySignature` itself
+/// is what the sealed verifier calls
+/// (bugs/closed/a-localized-sdk-still-trusts-consumer-resolved-platform-imports.md).
+/// `<name>.sealed.txt` lists them, so an audit can read exactly what the
+/// consumer's link is trusted with. A consumer who owns the process can also
+/// patch the bytes; no link-time measure changes that.
+///
+/// Recipe, by object format. Mach-O: `clang -r` with `-exported_symbols_list`
+/// (ld64 localizes the rest). ELF: `clang -r`, then `objcopy
+/// --keep-global-symbols`. Both are verified on the artifact with `nm`: the
+/// build fails if any defined global other than an export survives, because
+/// an archive that LOOKS sealed and is not is the worst outcome. COFF:
+/// lld-link has no relocatable link, and a DLL already exports only its C
+/// ABI, so a sealed static archive is refused there and `kind = "cdylib"` is
+/// the answer.
+#[allow(clippy::too_many_arguments)]
+fn seal_pieces(
+    m: &manifest::Manifest,
+    lib: &manifest::LibTarget,
+    program: &cplus_core::ast::Program,
+    objs: &[PathBuf],
+    obj_dir: &Path,
+    target_dir: &Path,
+    dep_link_args: &[String],
+    tgt: &TargetSpec,
+    clang_prog: &str,
+    want_static: bool,
+) -> Result<Option<PathBuf>, ExitCode> {
+    use std::collections::BTreeSet;
+    let prefix = match tgt.object_format {
+        target::ObjectFormat::MachO => "_",
+        target::ObjectFormat::Elf => "",
+        target::ObjectFormat::Coff => {
+            if want_static {
+                eprintln!(
+                    "cpc: `[library] sealed = true` needs a relocatable link to seal a static archive, and lld-link has none"
+                );
+                eprintln!(
+                    "    use `kind = \"cdylib\"`: a DLL exports only its C ABI, which is what sealing means"
+                );
+                return Err(ExitCode::FAILURE);
+            }
+            return Ok(None);
+        }
+        target::ObjectFormat::Wasm => {
+            eprintln!(
+                "cpc: `[library] sealed = true` has no meaning for target `{}`: there is no archive to seal",
+                tgt.name
+            );
+            return Err(ExitCode::FAILURE);
+        }
+    };
+    let exports = sealed_export_names(program);
+    if exports.is_empty() {
+        eprintln!(
+            "cpc: `[library] sealed = true` but `{}` exports nothing — a sealed archive keeps only `export` items global, so this one would be empty",
+            lib.name
+        );
+        eprintln!("    mark the C ABI with `export extern fn`");
+        return Err(ExitCode::FAILURE);
+    }
+    let symbols: Vec<String> = exports.iter().map(|e| format!("{prefix}{e}")).collect();
+    let exports_file = obj_dir.join(format!("{}.exports", lib.name));
+    if let Err(e) = fs::write(&exports_file, format!("{}\n", symbols.join("\n"))) {
+        eprintln!("cpc: writing {}: {e}", exports_file.display());
+        return Err(ExitCode::FAILURE);
+    }
+    // Every piece, archived, so the relocatable link pulls in only the
+    // modules the exports reach — the member-at-a-time selection a
+    // consumer's link would make, done once here.
+    let ar_prog = ar_program_for(tgt, clang_prog);
+    let unsealed = obj_dir.join(format!("{}.unsealed.a", lib.name));
+    let _ = fs::remove_file(&unsealed);
+    match Command::new(&ar_prog).arg("rcs").arg(&unsealed).args(objs).status() {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            eprintln!("cpc: ar exited with {s} archiving the pieces to seal");
+            return Err(ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8));
+        }
+        Err(e) => {
+            eprintln!("cpc: failed to invoke {ar_prog}: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    }
+    let sealed = obj_dir.join(format!("{}.sealed.o", lib.name));
+    let mut cmd = Command::new(clang_prog);
+    cmd.args(clang_target_args(tgt)).arg("-r").arg("-nostdlib");
+    // The exports are the roots: `-u` makes each one undefined up front, so
+    // the archive member defining it is pulled, and what that reaches.
+    for s in &symbols {
+        cmd.arg(format!("-Wl,-u,{s}"));
+    }
+    if tgt.object_format == target::ObjectFormat::MachO {
+        cmd.arg(format!("-Wl,-exported_symbols_list,{}", exports_file.display()));
+    }
+    cmd.arg(&unsealed);
+    // The closure: every archive the dependency walk would hand a consumer's
+    // link — prebuilt slices, bundled native archives — and the package's own
+    // prebuilt objects. Frameworks and system libraries are not archives;
+    // they stay imports, which is the boundary's definition.
+    for arg in dep_link_args {
+        if arg.ends_with(".a") && Path::new(arg).is_file() {
+            cmd.arg(arg);
+        }
+    }
+    if let Some(ls) = m.link.as_ref() {
+        for obj in &ls.extra_objects {
+            if obj.is_file() {
+                cmd.arg(obj);
+            }
+        }
+    }
+    match cmd.arg("-o").arg(&sealed).status() {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            eprintln!("cpc: clang -r exited with {s} sealing lib{}.a", lib.name);
+            return Err(ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8));
+        }
+        Err(e) => {
+            eprintln!("cpc: failed to invoke clang -r: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    }
+    if tgt.object_format == target::ObjectFormat::Elf {
+        let objcopy = binutil_program_for(tgt, clang_prog, "objcopy");
+        match Command::new(&objcopy)
+            .arg(format!("--keep-global-symbols={}", exports_file.display()))
+            .arg(&sealed)
+            .status()
+        {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!("cpc: {objcopy} exited with {s} sealing lib{}.a", lib.name);
+                return Err(ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8));
+            }
+            Err(e) => {
+                eprintln!("cpc: failed to invoke {objcopy}: {e}");
+                return Err(ExitCode::FAILURE);
+            }
+        }
+    }
+    // Verified on the artifact, never inferred from the recipe.
+    let nm = binutil_program_for(tgt, clang_prog, "nm");
+    let defined = match nm_names(&nm, &["-g", "--defined-only"], &sealed) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("cpc: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    };
+    let wanted: BTreeSet<&str> = symbols.iter().map(|s| s.as_str()).collect();
+    let stray: Vec<&String> = defined.iter().filter(|d| !wanted.contains(d.as_str())).collect();
+    if !stray.is_empty() {
+        eprintln!(
+            "cpc: sealing lib{}.a left {} defined global symbol(s) besides its exports:",
+            lib.name,
+            stray.len()
+        );
+        for s in stray.iter().take(20) {
+            eprintln!("    {s}");
+        }
+        if stray.len() > 20 {
+            eprintln!("    ... and {} more", stray.len() - 20);
+        }
+        eprintln!("    the archive is NOT sealed and was not written; this is a cpc defect — report it with the package");
+        return Err(ExitCode::FAILURE);
+    }
+    let missing: Vec<&String> = symbols.iter().filter(|s| !defined.iter().any(|d| d == *s)).collect();
+    if !missing.is_empty() {
+        eprintln!(
+            "cpc: sealing lib{}.a: {} export(s) are not defined in the sealed object:",
+            lib.name,
+            missing.len()
+        );
+        for s in &missing {
+            eprintln!("    {s}");
+        }
+        return Err(ExitCode::FAILURE);
+    }
+    let imports = match nm_names(&nm, &["-u"], &sealed) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("cpc: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    };
+    let report = target_dir.join(format!("{}.sealed.txt", lib.name));
+    let mut text = format!(
+        "# lib{}.a is sealed: these are its only defined global symbols.\n",
+        lib.name
+    );
+    for s in &symbols {
+        text.push_str(s);
+        text.push('\n');
+    }
+    text.push_str(
+        "\n# Imports: undefined in the sealed object, resolved by the consumer's link.\n\
+         # A consumer that defines one of these itself is what the sealed code calls.\n",
+    );
+    for i in &imports {
+        text.push_str(i);
+        text.push('\n');
+    }
+    if let Err(e) = fs::write(&report, text) {
+        eprintln!("cpc: writing {}: {e}", report.display());
+        return Err(ExitCode::FAILURE);
+    }
+    eprintln!(
+        "cpc: sealed lib{}.a: {} export(s), {} import(s) left to the consumer's link — {}",
+        lib.name,
+        symbols.len(),
+        imports.len(),
+        report.display()
+    );
+    Ok(Some(sealed))
+}
+
 /// The newest NDK version directory under the host's default Android SDK
 /// location, or `None` when none is installed. Version directories are
 /// dotted-numeric (`28.2.13676358`); non-numeric entries are ignored.
@@ -1915,6 +2219,28 @@ fn collect_dep_link_args(
                 ),
                 vec![
                     "a vendor package's `[package].name` must match its directory name".to_string(),
+                ],
+            );
+            emit_diag(&d, diag_mode, "");
+            return Err(ExitCode::FAILURE);
+        }
+        // A sealed package is a C product: its archive keeps only `export`
+        // items global, so the mangled names a C+ import would link against
+        // are local to it, and importing its modules can only end in
+        // undefined symbols at the consumer's link. Refuse here, where the
+        // manifest is in hand, with the way through.
+        if vm.lib.as_ref().is_some_and(|l| l.sealed) {
+            let d = manifest_diag(
+                "E0896",
+                &vendor_manifest,
+                format!(
+                    "package `{}` is sealed — it is consumed through its C header, not imported",
+                    dep.name
+                ),
+                vec![
+                    format!("`[library] sealed = true` in {}", vendor_manifest.display()),
+                    "declare the functions you call with `extern fn` (its generated header lists them) and hand the archive to the link through `[link]`".to_string(),
+                    "or drop `sealed` while the package is developed beside its consumer".to_string(),
                 ],
             );
             emit_diag(&d, diag_mode, "");
@@ -2317,6 +2643,11 @@ fn ensure_prebuilt_deps(
             continue; // ditto — `collect_dep_link_args` produces the diagnostic
         };
         if !vm.build.prebuild || vm.build.dev {
+            continue;
+        }
+        // A sealed package is never prebuilt as a slice: it cannot be a C+
+        // dependency at all (E0896, raised by the dep walk that follows).
+        if vm.lib.as_ref().is_some_and(|l| l.sealed) {
             continue;
         }
         // A package that ships author-built binaries already has its answer:
@@ -3553,6 +3884,7 @@ fn build_project(
                 synthesized: true,
                 frameworks: Vec::new(),
                 libs: Vec::new(),
+                sealed: false,
             };
             match write_package_entry(&m.root, &m.package.name) {
                 Ok(p) => lib.path = p,
@@ -3588,6 +3920,7 @@ fn build_project(
             synthesized: false,
             frameworks: Vec::new(),
             libs: Vec::new(),
+            sealed: false,
         };
         let code =
             build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false, sanitizers);
@@ -4199,6 +4532,32 @@ fn build_lib_project(
         lib.crate_type,
         manifest::CrateType::Cdylib | manifest::CrateType::Both
     );
+    // `[library] sealed = true`: the pieces are resolved into ONE object with
+    // only the exports global before anything is archived or linked.
+    // `seal_pieces` says what that closes and what it cannot.
+    let sealed_obj: Option<PathBuf> = if lib.sealed {
+        match seal_pieces(
+            m,
+            lib,
+            &program,
+            &objs,
+            &obj_dir,
+            &target_dir,
+            &dep_link_args,
+            &tgt,
+            &clang_prog,
+            want_static,
+        ) {
+            Ok(p) => p,
+            Err(code) => return code,
+        }
+    } else {
+        None
+    };
+    let archive_inputs: Vec<PathBuf> = match &sealed_obj {
+        Some(p) => vec![p.clone()],
+        None => objs.clone(),
+    };
     if want_static {
         let a_path = target_dir.join(format!("lib{}.a", lib.name));
         // `r` replace + `c` create-if-missing + `s` index. ar quietly
@@ -4213,7 +4572,7 @@ fn build_lib_project(
         let ar_status = Command::new(&ar_prog)
             .arg("rcs")
             .arg(&a_path)
-            .args(&objs)
+            .args(&archive_inputs)
             .status();
         match ar_status {
             Ok(s) if s.success() => {}
@@ -4260,7 +4619,14 @@ fn build_lib_project(
         // dependency was skipped and the .so linked with undefined symbols
         // that only surfaced at load time. ld64 does not care about order,
         // which is why macOS never showed it.
-        cmd.args(&objs);
+        match &sealed_obj {
+            Some(p) => {
+                cmd.arg(p);
+            }
+            None => {
+                cmd.args(&objs);
+            }
+        }
         for fw in &lib.frameworks {
             cmd.arg("-framework").arg(fw);
         }
