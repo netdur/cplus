@@ -7714,15 +7714,15 @@ fn gen_function(
     };
     // C-ABI: a narrow-int C-export return carries zero/sign-extension (clang emits
     // `define zeroext i8 @f()`); not for sret (void) or coerced-struct returns.
-    let ret_ext = if is_c_export && !uses_sret && coerce_ret_ty.is_none() {
+    let ret_ext_attr = if is_c_export && !uses_sret && coerce_ret_ty.is_none() {
         abi_ext_attr(&return_ty)
     } else {
         ""
     };
-    let ret_ext = if ret_ext.is_empty() {
+    let ret_ext = if ret_ext_attr.is_empty() {
         String::new()
     } else {
-        format!("{ret_ext} ")
+        format!("{ret_ext_attr} ")
     };
     // `fn name(...) -> T;` with no body: emit a DECLARATION. Emitting a
     // `define` with the synthesized empty block would produce a function that
@@ -7804,6 +7804,9 @@ fn gen_function(
     }
     // Phase 5 Slice 5.D: coerced returns flow through StmtKind::Return.
     state.coerce_ret = coerce_ret_ty.clone();
+    // The return-extension attribute this definition carries. The musttail
+    // predicate matches it against the call site's — see `enclosing_ret_ext`.
+    state.enclosing_ret_ext = ret_ext_attr;
 
     // Bind params. Pointer-passed params (`ref x: T` non-Copy) bind directly
     // to the SSA argument — no alloca, no initial store — exactly like
@@ -10360,6 +10363,14 @@ struct FnState<'a> {
     /// string under-sized SysV `{ i64, i64 }`-family returns to 8 bytes).
     /// `None` means no coercion is needed (Direct return).
     coerce_ret: Option<(String, u64, u64)>,
+    /// The `zeroext` / `signext` return attribute the enclosing definition
+    /// carries (a C export returning bool/u8/u16/i8/i16; `""` otherwise).
+    /// A call site to an `extern` callee carries the same attribute, a call
+    /// to a C+ callee carries none, and AArch64 refuses a `musttail` whose
+    /// return extension differs from the caller's in EITHER direction — a
+    /// backend fatal, not a verifier diagnostic. The musttail predicate
+    /// compares the two and falls back to a plain call when they differ.
+    enclosing_ret_ext: &'static str,
     /// v0.0.3 Phase 5 Slice 5B: shared registry of per-O trampolines
     /// requested by `__cplus_thread_spawn` call sites within this
     /// function's body. After all function bodies are emitted, the
@@ -10459,6 +10470,7 @@ impl<'a> FnState<'a> {
             enclosing_is_fastcc: false,
             sret_slot: None,
             coerce_ret: None,
+            enclosing_ret_ext: "",
             tramps,
             coro_promise: None,
             field_load_cache: std::collections::HashMap::new(),
@@ -12353,6 +12365,36 @@ impl<'a> FnState<'a> {
                                                     CAbiClass::Indirect
                                                 )
                                         });
+                                        // The return EXTENSION must match as
+                                        // well as the return type. A C export
+                                        // returning bool/u8/u16/i8/i16 is
+                                        // defined `zeroext`/`signext` (clang's
+                                        // ABI for a narrow return); a call to an
+                                        // `extern` callee carries the same
+                                        // attribute at the call site, a call to
+                                        // a C+ callee carries none. AArch64's
+                                        // tail-call check compares the two and
+                                        // refuses a musttail whose extension
+                                        // differs IN EITHER DIRECTION: "failed
+                                        // to perform tail call elimination on a
+                                        // call site marked musttail", a backend
+                                        // fatal in debug and release. Only a
+                                        // library build reaches it — in an
+                                        // executable the callee is `fastcc` and
+                                        // `cc_matches` already refuses. Surfaced
+                                        // by an SDK's `export extern fn
+                                        // verify(..) -> bool { return
+                                        // helper::verify(..); }` —
+                                        // bugs/an-exported-bool-forwarder-emits-an-unlowerable-musttail.md.
+                                        // Mirrors the call-site emission in
+                                        // `gen_named_call` (`ret_ext`).
+                                        let callee_ret_ext = if sig.is_extern {
+                                            abi_ext_attr(&sig.return_type)
+                                        } else {
+                                            ""
+                                        };
+                                        let ret_ext_matches =
+                                            callee_ret_ext == self.enclosing_ret_ext;
                                         if !sig.is_variadic
                                             && sig.return_type == self.return_ty
                                             && callee_params == enclosing
@@ -12363,6 +12405,7 @@ impl<'a> FnState<'a> {
                                             && !callee_ret_coerced
                                             && !enclosing_export_sret
                                             && !passes_frame_ptr
+                                            && ret_ext_matches
                                         {
                                             self.pending_musttail = true;
                                         }
@@ -22365,6 +22408,95 @@ mod tests {
             call.contains("musttail"),
             "a scalar forwarder should still tail-call:\n  {call}"
         );
+    }
+
+    /// A C export returning bool / u8 / u16 / i8 / i16 is defined `zeroext` or
+    /// `signext`, clang's ABI for a narrow return. A call to a C+ callee
+    /// carries no such attribute. AArch64's tail-call check compares the two
+    /// and refuses a `musttail` whose return extension differs — a backend
+    /// fatal, not a verifier diagnostic — so the forwarder must fall back to
+    /// a plain call. Only a library build reaches it: in an executable the
+    /// callee is `fastcc` and the convention check already refuses.
+    /// bugs/an-exported-bool-forwarder-emits-an-unlowerable-musttail.md
+    #[test]
+    fn an_export_wrapper_with_a_narrow_return_does_not_use_musttail() {
+        let ir = gen_src_lib(
+            "fn v_bool(k: *u8) -> bool { return true; }\n\
+             fn v_i8(x: i8) -> i8 { return x; }\n\
+             fn v_u16(x: u16) -> u16 { return x; }\n\
+             export extern fn f_bool(k: *u8) -> bool { return v_bool(k); }\n\
+             export extern fn f_i8(x: i8) -> i8 { return v_i8(x); }\n\
+             export extern fn f_u16(x: u16) -> u16 { return v_u16(x); }\n",
+        );
+        // Premise: the exports really carry the extension attribute, and the
+        // callees really are plain-convention library functions.
+        for def in [
+            "define zeroext i1 @f_bool(",
+            "define signext i8 @f_i8(",
+            "define zeroext i16 @f_u16(",
+            "define weak_odr i1 @v_bool(",
+        ] {
+            assert!(ir.contains(def), "premise: expected `{def}` in:\n{ir}");
+        }
+        for callee in ["@v_bool(", "@v_i8(", "@v_u16("] {
+            let call = ir
+                .lines()
+                .find(|l| l.contains("call") && l.contains(callee))
+                .unwrap_or_else(|| panic!("no call to {callee}:\n{ir}"));
+            assert!(
+                !call.contains("musttail"),
+                "the return extension differs from the caller's; this must be a plain call:\n  {call}"
+            );
+        }
+    }
+
+    /// The other direction. The call site of an `extern` callee carries the
+    /// extension attribute; the name-public library caller's definition does
+    /// not. AArch64 refuses that pair just the same.
+    #[test]
+    fn a_library_fn_tail_calling_an_extern_narrow_return_does_not_use_musttail() {
+        let ir = gen_src_lib(
+            "extern fn c_verify(k: *u8) -> bool;\n\
+             fn forward(k: *u8) -> bool { return c_verify(k); }\n",
+        );
+        assert!(
+            ir.contains("define weak_odr i1 @forward("),
+            "premise: a name-public library fn carries no return extension:\n{ir}"
+        );
+        let call = ir
+            .lines()
+            .find(|l| l.contains("call") && l.contains("@c_verify("))
+            .unwrap_or_else(|| panic!("no call to @c_verify:\n{ir}"));
+        assert!(
+            call.contains("zeroext"),
+            "premise: the extern call site carries zeroext:\n  {call}"
+        );
+        assert!(
+            !call.contains("musttail"),
+            "the caller carries no return extension and the call site does; this must be a plain call:\n  {call}"
+        );
+    }
+
+    /// The guard must not cost TCO where the extensions agree: a wide return
+    /// has none on either side, and two C-ABI functions both carry it.
+    #[test]
+    fn an_export_wrapper_whose_return_extension_matches_still_uses_musttail() {
+        let ir = gen_src_lib(
+            "fn v_wide(k: *u8) -> i32 { return 1; }\n\
+             export extern fn f_wide(k: *u8) -> i32 { return v_wide(k); }\n\
+             extern fn c_verify(k: *u8) -> bool;\n\
+             export extern fn f_c(k: *u8) -> bool { return c_verify(k); }\n",
+        );
+        for callee in ["@v_wide(", "@c_verify("] {
+            let call = ir
+                .lines()
+                .find(|l| l.contains("call") && l.contains(callee))
+                .unwrap_or_else(|| panic!("no call to {callee}:\n{ir}"));
+            assert!(
+                call.contains("musttail"),
+                "matching return extensions must keep the tail call:\n  {call}"
+            );
+        }
     }
 
     // A `str` literal passed DIRECTLY as a by-value `#[lang("string")]` argument

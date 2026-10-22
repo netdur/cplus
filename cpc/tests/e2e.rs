@@ -23656,6 +23656,100 @@ fn extern_wrapper_tail_call_with_coerced_return_compiles_and_runs() {
     assert_eq!(run.code(), Some(0), "wrapper program must run clean");
 }
 
+/// A narrow-return C export forwarding to a C+ helper was marked `musttail`,
+/// which the AArch64 backend cannot lower when the return extension differs
+/// from the caller's: "failed to perform tail call elimination on a call site
+/// marked musttail", a backend fatal in debug and release. An IR assertion
+/// alone would not see it, so this builds the library through clang in both
+/// modes and reads both values of every return from C — the fallback call has
+/// to be ABI-correct, not merely compile. Covers bool, i8, u16 and the
+/// reverse direction (a library fn forwarding to an `extern` C function).
+/// bugs/an-exported-bool-forwarder-emits-an-unlowerable-musttail.md
+#[test]
+#[cfg(target_os = "macos")]
+fn a_narrow_return_export_forwarder_builds_and_answers_both_values_from_c() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"fwd\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "import \"./helper\" as helper;\n\
+         export extern fn fwd_bool(k: *u8) -> bool { return helper::is_one(k); }\n\
+         export extern fn fwd_i8(x: i8) -> i8 { return helper::neg8(x); }\n\
+         export extern fn fwd_u16(x: u16) -> u16 { return helper::bump16(x); }\n\
+         export extern fn fwd_ext(k: *u8) -> bool { return helper::via_c(k); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/helper.cplus"),
+        "extern fn c_is_one(k: *u8) -> bool;\n\
+         fn is_one(k: *u8) -> bool { return k[0] == (1 as u8); }\n\
+         fn neg8(x: i8) -> i8 { return (0 - (x as i32)) as i8; }\n\
+         fn bump16(x: u16) -> u16 { return x + (1 as u16); }\n\
+         fn via_c(k: *u8) -> bool { return c_is_one(k); }\n",
+    )
+    .unwrap();
+    for mode in [&["build"][..], &["build", "--release"][..]] {
+        let out = Command::new(cpc)
+            .args(mode)
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc");
+        assert!(
+            out.status.success(),
+            "cpc {} must build a narrow-return forwarder: {}",
+            mode.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let c_src = dir.join("c_user.c");
+    std::fs::write(
+        &c_src,
+        "#include <stdint.h>\n\
+         #include <stdbool.h>\n\
+         extern bool fwd_bool(const uint8_t*);\n\
+         extern int8_t fwd_i8(int8_t);\n\
+         extern uint16_t fwd_u16(uint16_t);\n\
+         extern bool fwd_ext(const uint8_t*);\n\
+         bool c_is_one(const uint8_t* k) { return k[0] == 1; }\n\
+         int main(void) {\n\
+           uint8_t one = 1, two = 2;\n\
+           if (!fwd_bool(&one)) return 1;\n\
+           if (fwd_bool(&two)) return 2;\n\
+           if (fwd_i8(5) != -5) return 3;\n\
+           if (fwd_i8(-100) != 100) return 4;\n\
+           if (fwd_u16(999) != 1000) return 5;\n\
+           if (fwd_u16(65000) != 65001) return 6;\n\
+           if (!fwd_ext(&one)) return 7;\n\
+           if (fwd_ext(&two)) return 8;\n\
+           return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("c_user");
+    let st = Command::new("clang")
+        .arg(&c_src)
+        .arg("-L")
+        .arg(dir.join("target/release"))
+        .arg("-lfwd")
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("clang link");
+    assert!(st.success(), "C link against the forwarder lib failed");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "a C caller must read both values of every narrow return"
+    );
+}
+
 // ---- v0.0.21 multi-backend slice 3: the uikit package ----
 
 /// A `@ctx { }` modifier chain that mixes a value-returning builder
