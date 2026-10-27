@@ -3,6 +3,100 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## Unreleased
+
+Sealed C-ABI libraries, `for` ranges that count in their bounds' type,
+literal-only expressions that take their position's type, integer `min` /
+`max` / `clamp`, `[package] vendor` search directories, and an internal
+compiler error report for IR that clang rejects.
+
+### Upgrade notes
+
+- A `for` range counter has the type of its bounds. Two unsuffixed literal
+  bounds are still `i32`, so existing loops are unchanged; a loop over a
+  `usize` bound now counts in `usize` and indexes directly, and the
+  `0..(n as i32)` / `a[i as usize]` pair is no longer needed. Two bounds of
+  different types are E0302, as before.
+- A literal-only expression (`7 * 3`, `1.0 / 255.0`, `-(3000000 * 1000)`)
+  takes the type of its position: a typed binding, argument or return, the
+  other operand, or the other `if` / `match` branch. Code that spelled a
+  suffix on every constant keeps working; a literal that overflows the width
+  its position asks for is E0921. An `as` operand still has no context, so
+  `(1 << 40) as u64` is unchanged.
+- A `[library]` with `sealed = true` is consumed through its C header, never
+  imported by a C+ package (E0896).
+
+### Language and compiler
+
+- **`for` loops.** The counter takes the type of its bounds (above). An
+  inclusive range ending at the type's maximum ends: `MAX-1..=MAX` runs
+  twice and `0..=255u8` visits every byte value, where the loop used to wrap
+  past the maximum and never end. `for _ in a..b` discards the counter as
+  `let _` does.
+- **Literal-only expressions** take their position's type (above), and
+  codegen computes them at that width: `let a: u64 = 1 << 40` is 2^40.
+- **An unsuffixed float literal inferred as `f32`** (`take_f32(0.4)`,
+  `let v: f32 = 0.4`) emits f32 bits; it used to fail the build with f64
+  bits in a `float` operand.
+- **Tail calls.** A C export returning bool, u8, u16, i8 or i16 that
+  forwards to a C+ function, and a library function forwarding to an
+  `extern fn` with such a return, failed in clang's backend ("failed to
+  perform tail call elimination on a call site marked musttail") in debug
+  and release. The tail call is a plain call when the two sides' return
+  extension attributes differ.
+- **Diagnostics.** A missing method on a builtin type names that type
+  (`no method foo on type u32`, not `str`), and the `stdlib/math` hint
+  appears for every numeric width `math` declares. The E0312 hint for
+  iterating an array shows `for i in 0..3usize { arr[i] }`. E0337's
+  raw-deref message names `box::from_raw` instead of an `unsafe` C+ does
+  not have.
+
+### Toolchain and packages
+
+- **`[library] sealed = true`.** A closed C-ABI product: the archive keeps
+  global exactly the package's `export` items. Everything the exports reach,
+  the package's name-public functions, the stdlib slice, every dependency
+  archive, bundled native archive and `extra-objects` object, is resolved
+  into one relocatable object and made local there (`clang -r` with an
+  export list on Mach-O, `objcopy --keep-global-symbols` on ELF); `nm`
+  verifies the result and the build fails on any other defined global.
+  `target/<…>/<name>.sealed.txt` lists the exports and the imports the
+  consumer's link still resolves. A sealed `cdylib` exports the same set and
+  is checked the same way. What sealing closes: a consumer object that
+  defines a name-public function's mangled symbol, and a declaration of that
+  symbol. What it leaves: the imports the closure cannot define (libc, the
+  platform frameworks); a consumer who owns the process can define those or
+  patch the bytes, and no link-time measure changes that. On Windows the DLL
+  is the sealed form (`kind = "cdylib"`). Depending on a sealed package from
+  C+ is E0896.
+- **`[package] vendor = [...]`** lists directories to find packages in,
+  relative to the manifest or absolute, searched after `<project>/vendor/`
+  and before the sibling directory and the store. A missing entry is E0416
+  at the manifest; E0854 now lists every directory it searched. The sibling
+  fallback is documented for the first time.
+- **Internal compiler errors.** When clang rejects the IR cpc generated, cpc
+  says so and that it is a cpc bug, not the user's code, and keeps the IR at
+  `<out>.rejected.ll`. A link failure keeps its plain message.
+
+### Standard library
+
+- `stdlib/math` declares `min`, `max` and `clamp` for every integer width;
+  `clamp` answers `hi` when `lo > hi`, as the float ones do.
+
+### Documentation
+
+- ffi.md no longer claims that only `export` is callable from outside. It
+  separates the foreign interface from symbol reachability, states the
+  executable and library cases, and names `[library] sealed = true` with
+  its limit.
+- ownership.md, memory-model.md and skill.md state what drops behind a raw
+  pointer: assignment drops the value it overwrites; `*p = v` and `p[i] = v`
+  do not; `(*p).f = v` drops the old field; `free` runs no drop, and
+  `box::from_raw` is how a pointee is torn down. `#str_ptr` of a sub-view or
+  of a `Text` view is not NUL-terminated; `c_str()` is.
+- spec.md says ranges appear only as the iterator of `for … in` and states
+  the counter rule.
+
 ## v0.0.30 — 2026-10-16
 
 This release brings WinUI 3 as the default Windows UI and agent backend, the

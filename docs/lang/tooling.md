@@ -32,7 +32,11 @@ cpc emits but LLVM rejects passes `check` and fails only in a real build. That
 gap is not hypothetical — `==` on an array type-checked, emitted
 `icmp eq [2 x i32]`, and died in clang with no error code and no span in the
 user's file. When the question is "does this actually compile", build it;
-`check` answers "is the front end happy".
+`check` answers "is the front end happy". A build that fails that way says
+so: when clang rejects the IR cpc generated, cpc reports an internal
+compiler error, states that the fault is cpc's and not the user's code, and
+keeps the IR at `<out>.rejected.ll` for the report. A link failure keeps
+its plain message.
 
 Build flags, all of which apply to `cpc FILE`, `cpc build`, and `cpc test`:
 

@@ -1024,14 +1024,16 @@ Before implementing anything below the level of your actual task, check here.
 `net` (TCP, numeric IPv4) · `env` · `process` (spawn/capture/signal) · `pty` ·
 `thread` · `atomic` · `mutex` · `channel` (typed MPMC) · `box` / `arc` / `rc`
 (+ `Weak` via `downgrade`) · `future` / `executor` / `reactor` / `time` ·
-`iterator` (`gen fn` + `filter`/`prefix`/`map`) · `math` (scalar float
-methods and constants — `x.sqrt()`, `PI_F32`) · `date` (ISO-8601 parse and
+`iterator` (`gen fn` + `filter`/`prefix`/`map`) · `math` (scalar methods
+and constants — `x.sqrt()`, `PI_F32`; `min`/`max`/`clamp` on every numeric
+width, integers included) · `date` (ISO-8601 parse and
 format) · `base64` · `crypto` (sha256/512, hmac, random_bytes, constant-time
 `equals`) · `uuid` · `bundle` (files beside the binary) · `platform` (runtime
 target facts as matchable enums) · `range` · `marker`.
 
-Four of those carry a trap worth stating. **`math` is methods on the float
-widths, not free functions** — `x.sqrt()`, not `math::sqrt(x)`. Every
+Four of those carry a trap worth stating. **`math` is methods on the numeric
+widths, not free functions** — `x.sqrt()`, not `math::sqrt(x)`, and
+`n.clamp(lo, hi)` on an integer the same way. Every
 primitive (`str`, `bool`, each integer and float width) takes ONE `impl`
 block program-wide; the receiver disambiguates, so one `sqrt` serves both
 float widths where principle 6 would otherwise force `sqrt_f32`/`sqrt_f64`.

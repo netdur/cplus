@@ -27,6 +27,7 @@ import "stdlib/str" as _;      // extensions only — no name bound
 | `result` | `Result[T, E]`, `IoError` | `Ok(T)` / `Err(E)`; `IoError` is the blessed I/O error enum |
 | `status` | `Status` | `Ok` `OutOfMemory` `OutOfBounds` `InvalidInput` `Shared` `Cancelled` |
 | `vec` | `Vec[T]` | `new` `with_capacity` `collect` · `append` `insert` `remove` `remove_last` `swap_remove` `truncate` `set` `at` `first` `last` `as_slice` `each_ref` `fold_ref` `iter` |
+| `math` | extends `f32`, `f64` and every integer width | floats: `sqrt` `abs` `floor` `ceil` `round` `trunc` `sin` `cos` `tan` `asin` `acos` `atan` `atan2` `exp` `ln` `log2` `log10` `powf` `hypot` `rem` `copysign` `to_radians` `to_degrees` `is_nan`, and the constants `PI_F32` `PI_F64` `TAU_*` `E_*` `SQRT_2_*` `LN_2_*` `LN_10_*` · every numeric width, integers included: `min` `max` `clamp` (`clamp` answers `hi` when `lo > hi`) |
 | `template` | `Template`, `Arg` | a string literal delivered unjoined to a `Template` parameter: `part_count` `arg_count` `part(at)` `arg(at)`; `Arg` is `Int` `UInt` `Float` `Bool` `Str` (spec §11) |
 
 `str` is the one imported `as _`: it carries the blessed `impl str` block,
@@ -118,8 +119,10 @@ rather than compare strings.
 
 ## 7. The ones that are mostly shims
 
-`range` (`0..n` lowers to `Range[i32]`), `marker`, `stdlib` (the umbrella
-module), `exe_path`, `argv_sys`, `netsys`, `crypto_sys`, `platform_sys`.
+`range` (`range(from, to)` and `range_inclusive`, `i32` generators for an
+`Iterator[i32]`; a `for` header's `a..b` is lowered directly and counts in
+its bounds' type), `marker`, `stdlib` (the umbrella module), `exe_path`,
+`argv_sys`, `netsys`, `crypto_sys`, `platform_sys`.
 The `*_sys` modules are the platform-variant floor other modules stand on —
 they exist so `fs`, `net`, `crypto`, and `platform` can be one portable file
 each. You import them only when you are extending stdlib itself.
