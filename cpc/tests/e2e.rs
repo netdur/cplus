@@ -24225,6 +24225,215 @@ fn a_sealed_android_archive_keeps_only_its_exports_global() {
     );
 }
 
+/// A C object the tests hand a package as `[link] extra-objects`.
+#[cfg(target_os = "macos")]
+fn c_object(dir: &Path, name: &str, source: &str) -> std::path::PathBuf {
+    let c = dir.join(format!("{name}.c"));
+    std::fs::write(&c, source).unwrap();
+    let o = dir.join(format!("{name}.o"));
+    let st = Command::new("clang")
+        .arg("-c")
+        .arg(&c)
+        .arg("-o")
+        .arg(&o)
+        .status()
+        .expect("invoke clang -c");
+    assert!(st.success(), "clang -c {name}.c failed");
+    o
+}
+
+/// Link C sources against a built library and run the result: `(linked,
+/// exit code)`. `output()`, not `status()`: some of these links are MEANT to
+/// fail and their linker error is a result, not noise.
+#[cfg(target_os = "macos")]
+fn link_and_run(dir: &Path, name: &str, sources: &[&str], lib_args: &[&str]) -> (bool, Option<i32>) {
+    let bin = dir.join(name);
+    let mut cmd = Command::new("clang");
+    for src in sources {
+        cmd.arg(dir.join(src));
+    }
+    for a in lib_args {
+        cmd.arg(a);
+    }
+    let out = cmd.arg("-o").arg(&bin).output().expect("clang link");
+    if !out.status.success() {
+        return (false, None);
+    }
+    (true, Command::new(&bin).status().expect("run").code())
+}
+
+/// `kind = "both"` with `sealed = true`: the shared library exports exactly
+/// the exports too. The package's own `extra-objects` object was being
+/// appended to the shared link a second time, beside the sealed object that
+/// already held it localized, and came out GLOBAL — a consumer could call the
+/// private checker through the `.dylib` while the `.a` refused it.
+/// bugs/closed/sealed-shared-link-readds-native-objects.md
+#[test]
+#[cfg(target_os = "macos")]
+fn a_sealed_shared_library_exports_only_the_exports() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    c_object(&dir, "native", "int private_checker(int v) { return v == 7 ? 1 : 0; }\n");
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"shared_seal\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"both\"\nsealed = true\n\n\
+         [link]\nextra-objects = [\"native.o\"]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "extern fn private_checker(value: i32) -> i32;\n\
+         export extern fn shared_seal_check(value: i32) -> i32 { return private_checker(value); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "sealed `both` build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for artifact in ["libshared_seal.a", "libshared_seal.dylib"] {
+        let globals = defined_globals(nm_prog(), &dir.join("target/release").join(artifact));
+        assert_eq!(
+            globals,
+            vec!["_shared_seal_check".to_string()],
+            "{artifact} must define exactly the export"
+        );
+    }
+    let report = std::fs::read_to_string(dir.join("target/release/shared_seal.sealed.txt")).unwrap();
+    assert!(
+        report.contains("libshared_seal.dylib"),
+        "the report names the shared artifact it checked:\n{report}"
+    );
+    std::fs::write(
+        dir.join("user.c"),
+        "extern int shared_seal_check(int);\n\
+         int main(void) { return (shared_seal_check(7) == 1 && shared_seal_check(8) == 0) ? 0 : 1; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("direct.c"),
+        "extern int private_checker(int);\nint main(void) { return private_checker(7); }\n",
+    )
+    .unwrap();
+    let dylib = dir.join("target/release/libshared_seal.dylib");
+    let dylib = dylib.to_str().unwrap();
+    let (linked, code) = link_and_run(&dir, "user", &["user.c"], &[dylib]);
+    assert!(linked, "a public consumer links against the sealed .dylib");
+    assert_eq!(code, Some(0), "and gets the real verdicts");
+    let (linked, _) = link_and_run(&dir, "direct", &["direct.c"], &[dylib]);
+    assert!(!linked, "the private checker must not be callable through the .dylib");
+}
+
+/// A dependency's `[link] extra-objects` object is implementation the seal
+/// must hold: it was filtered out with the `-l` flags, its function became an
+/// import the consumer's link resolved, and a consumer object defining it
+/// changed the verdict. Two dependencies, each with an object, to cover more
+/// than the one the report had.
+/// bugs/closed/sealing-skips-a-dependencys-extra-object.md
+#[test]
+#[cfg(target_os = "macos")]
+fn sealing_includes_a_dependencys_extra_objects() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    for (dep, func, body, api) in [
+        (
+            "native_dep",
+            "private_checker",
+            "int private_checker(int v) { return v == 7 ? 1 : 0; }\n",
+            "extern fn private_checker(value: i32) -> i32;\nfn check(value: i32) -> i32 { return private_checker(value); }\n",
+        ),
+        (
+            "other_dep",
+            "private_twice",
+            "int private_twice(int v) { return v * 2; }\n",
+            "extern fn private_twice(value: i32) -> i32;\nfn twice(value: i32) -> i32 { return private_twice(value); }\n",
+        ),
+    ] {
+        let root = dir.join("vendor").join(dep);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        c_object(&root, func, body);
+        std::fs::write(
+            root.join("Cplus.toml"),
+            format!(
+                "[package]\nname = \"{dep}\"\n\n[build]\nprebuild = false\n\n[link]\nextra-objects = [\"{func}.o\"]\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(root.join("src/api.cplus"), api).unwrap();
+    }
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"object_seal\"\n\n[dependencies]\nnative_dep = \"*\"\nother_dep = \"*\"\n\n\
+         [library]\nentry = \"src/lib.cplus\"\nsealed = true\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "import \"native_dep/api\" as native;\n\
+         import \"other_dep/api\" as other;\n\
+         export extern fn object_seal_check(value: i32) -> i32 { return native::check(value); }\n\
+         export extern fn object_seal_twice(value: i32) -> i32 { return other::twice(value); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "sealed build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = std::fs::read_to_string(dir.join("target/release/object_seal.sealed.txt")).unwrap();
+    assert!(
+        !report.contains("private_checker") && !report.contains("private_twice"),
+        "the dependencies' objects are inside the seal, neither export nor import:\n{report}"
+    );
+    std::fs::write(
+        dir.join("consumer.c"),
+        "extern int object_seal_check(int);\n\
+         extern int object_seal_twice(int);\n\
+         int main(void) {\n\
+           if (object_seal_check(7) != 1) return 1;\n\
+           if (object_seal_check(8) != 0) return 2;\n\
+           if (object_seal_twice(21) != 42) return 3;\n\
+           return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("replacement.c"),
+        "int private_checker(int v) { (void)v; return 1; }\n\
+         int private_twice(int v) { (void)v; return 0; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("direct.c"),
+        "extern int private_checker(int);\nint main(void) { return private_checker(7); }\n",
+    )
+    .unwrap();
+    let lib_dir = dir.join("target/release");
+    let lib_args = ["-L", lib_dir.to_str().unwrap(), "-lobject_seal"];
+    let (linked, code) = link_and_run(&dir, "consumer", &["consumer.c"], &lib_args);
+    assert!(linked, "the sealed archive links with the consumer ALONE — no native object needed");
+    assert_eq!(code, Some(0), "and answers the real verdicts");
+    let (linked, code) = link_and_run(&dir, "substituted", &["consumer.c", "replacement.c"], &lib_args);
+    assert!(linked);
+    assert_eq!(code, Some(0), "a consumer's own definitions change nothing");
+    let (linked, _) = link_and_run(&dir, "direct", &["direct.c"], &lib_args);
+    assert!(!linked, "a direct call to the dependency's private function must fail to link");
+}
+
 // ---- v0.0.21 multi-backend slice 3: the uikit package ----
 
 /// A `@ctx { }` modifier chain that mixes a value-returning builder

@@ -1607,6 +1607,27 @@ fn sealed_export_names(program: &cplus_core::ast::Program) -> Vec<String> {
     names
 }
 
+/// What `seal_pieces` produced: the one object the archive and the shared
+/// link take instead of the per-module pieces, and what the shared link
+/// needs to stay sealed.
+struct Sealed {
+    object: PathBuf,
+    /// One symbol per line, as the linker spells them (`_f` on Mach-O).
+    exports_file: PathBuf,
+    symbols: Vec<String>,
+    /// The `nm` that checked the object; the shared artifact is checked with
+    /// the same one.
+    nm: String,
+}
+
+/// A dependency link argument that is implementation to seal in: an object
+/// or a static archive on disk. A `-framework`, `-l`, `-L`, `-Wl,` flag or a
+/// dynamic library is not — those stay the consumer's link's.
+fn is_sealed_input(arg: &str) -> bool {
+    (arg.ends_with(".a") || arg.ends_with(".o") || arg.ends_with(".obj"))
+        && Path::new(arg).is_file()
+}
+
 /// `[library] sealed = true`: resolve the package's pieces and the archives
 /// its exports reach into ONE relocatable object, and make everything in it
 /// local except the exports. Returns the sealed object, which the archive
@@ -1651,7 +1672,7 @@ fn seal_pieces(
     tgt: &TargetSpec,
     clang_prog: &str,
     want_static: bool,
-) -> Result<Option<PathBuf>, ExitCode> {
+) -> Result<Option<Sealed>, ExitCode> {
     use std::collections::BTreeSet;
     let prefix = match tgt.object_format {
         target::ObjectFormat::MachO => "_",
@@ -1719,22 +1740,32 @@ fn seal_pieces(
     if tgt.object_format == target::ObjectFormat::MachO {
         cmd.arg(format!("-Wl,-exported_symbols_list,{}", exports_file.display()));
     }
-    cmd.arg(&unsealed);
-    // The closure: every archive the dependency walk would hand a consumer's
-    // link — prebuilt slices, bundled native archives — and the package's own
-    // prebuilt objects. Frameworks and system libraries are not archives;
-    // they stay imports, which is the boundary's definition.
-    for arg in dep_link_args {
-        if arg.ends_with(".a") && Path::new(arg).is_file() {
-            cmd.arg(arg);
-        }
-    }
+    // The closure: every object and archive the dependency walk would hand
+    // a consumer's link — a dependency's `extra-objects`, prebuilt slices,
+    // bundled native archives — and the package's own `extra-objects`.
+    // Objects before archives, so a left-to-right linker finds the archive
+    // member an object needs. Frameworks, system libraries and dynamic
+    // libraries are not implementation inputs; they stay imports, which is
+    // the boundary's definition. A dependency's `.o` used to be filtered out
+    // with the `-l`s and came back as an import a consumer could define
+    // (bugs/closed/sealing-skips-a-dependencys-extra-object.md).
+    let (dep_objects, dep_archives): (Vec<&String>, Vec<&String>) = dep_link_args
+        .iter()
+        .filter(|a| is_sealed_input(a))
+        .partition(|a| !a.ends_with(".a"));
     if let Some(ls) = m.link.as_ref() {
         for obj in &ls.extra_objects {
             if obj.is_file() {
                 cmd.arg(obj);
             }
         }
+    }
+    for o in dep_objects {
+        cmd.arg(o);
+    }
+    cmd.arg(&unsealed);
+    for a in dep_archives {
+        cmd.arg(a);
     }
     match cmd.arg("-o").arg(&sealed).status() {
         Ok(s) if s.success() => {}
@@ -1838,7 +1869,83 @@ fn seal_pieces(
         imports.len(),
         report.display()
     );
-    Ok(Some(sealed))
+    Ok(Some(Sealed {
+        object: sealed,
+        exports_file,
+        symbols,
+        nm,
+    }))
+}
+
+/// The sealed shared artifact, checked like the archive: its defined global
+/// (Mach-O) or dynamic (ELF) symbols must be exactly the exports. A DLL is
+/// not checked here — `/EXPORT:` is the whole of what it exports. On a stray
+/// the artifact is removed, because a library that LOOKS sealed and is not
+/// is the worst outcome, and on success the report gains a section naming
+/// the artifact that was checked
+/// (bugs/closed/sealed-shared-link-readds-native-objects.md).
+fn verify_sealed_shared(
+    s: &Sealed,
+    shared_path: &Path,
+    target_dir: &Path,
+    lib_name: &str,
+) -> Result<(), ExitCode> {
+    use std::collections::BTreeSet;
+    if cfg!(windows) {
+        return Ok(());
+    }
+    let (flags, kind): (&[&str], &str) = if cfg!(target_os = "macos") {
+        (&["-g", "--defined-only"], "global")
+    } else {
+        (&["-D", "--defined-only"], "dynamic")
+    };
+    let file = shared_path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let defined = match nm_names(&s.nm, flags, shared_path) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("cpc: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    };
+    let wanted: BTreeSet<&str> = s.symbols.iter().map(|x| x.as_str()).collect();
+    let stray: Vec<&String> = defined.iter().filter(|d| !wanted.contains(d.as_str())).collect();
+    if !stray.is_empty() {
+        eprintln!(
+            "cpc: the sealed {file} defines {} {kind} symbol(s) besides its exports:",
+            stray.len()
+        );
+        for x in stray.iter().take(20) {
+            eprintln!("    {x}");
+        }
+        if stray.len() > 20 {
+            eprintln!("    ... and {} more", stray.len() - 20);
+        }
+        eprintln!("    it was removed; this is a cpc defect — report it with the package");
+        let _ = fs::remove_file(shared_path);
+        return Err(ExitCode::FAILURE);
+    }
+    let report = target_dir.join(format!("{lib_name}.sealed.txt"));
+    let mut text = fs::read_to_string(&report).unwrap_or_default();
+    text.push_str(&format!(
+        "\n# {file}: checked after the shared link; its defined {kind} symbols are exactly:\n"
+    ));
+    for d in &defined {
+        text.push_str(d);
+        text.push('\n');
+    }
+    if let Err(e) = fs::write(&report, text) {
+        eprintln!("cpc: writing {}: {e}", report.display());
+        return Err(ExitCode::FAILURE);
+    }
+    eprintln!(
+        "cpc: sealed {file}: {} export(s), nothing else {kind} — {}",
+        defined.len(),
+        report.display()
+    );
+    Ok(())
 }
 
 /// The newest NDK version directory under the host's default Android SDK
@@ -4535,7 +4642,7 @@ fn build_lib_project(
     // `[library] sealed = true`: the pieces are resolved into ONE object with
     // only the exports global before anything is archived or linked.
     // `seal_pieces` says what that closes and what it cannot.
-    let sealed_obj: Option<PathBuf> = if lib.sealed {
+    let sealed: Option<Sealed> = if lib.sealed {
         match seal_pieces(
             m,
             lib,
@@ -4554,8 +4661,8 @@ fn build_lib_project(
     } else {
         None
     };
-    let archive_inputs: Vec<PathBuf> = match &sealed_obj {
-        Some(p) => vec![p.clone()],
+    let archive_inputs: Vec<PathBuf> = match &sealed {
+        Some(s) => vec![s.object.clone()],
         None => objs.clone(),
     };
     if want_static {
@@ -4619,9 +4726,9 @@ fn build_lib_project(
         // dependency was skipped and the .so linked with undefined symbols
         // that only surfaced at load time. ld64 does not care about order,
         // which is why macOS never showed it.
-        match &sealed_obj {
-            Some(p) => {
-                cmd.arg(p);
+        match &sealed {
+            Some(s) => {
+                cmd.arg(&s.object);
             }
             None => {
                 cmd.args(&objs);
@@ -4647,8 +4754,14 @@ fn build_lib_project(
         }
         // Phase 2 Slice 2C: forward each transitive dep's link args to the
         // .dylib link line. (Static archives don't carry these — consumers
-        // re-walk the graph.)
+        // re-walk the graph.) A sealed link forwards only what is NOT already
+        // inside the sealed object: an object or archive it resolved would
+        // come back as a second, GLOBAL copy of code the seal made local, and
+        // a consumer could call it (bugs/closed/sealed-shared-link-readds-native-objects.md).
         for arg in &dep_link_args {
+            if sealed.is_some() && is_sealed_input(arg) {
+                continue;
+            }
             cmd.arg(arg);
         }
         // v0.0.9 Phase 8 (cpc-gaps G-001): the consumer's own
@@ -4662,7 +4775,28 @@ fn build_lib_project(
                 if !obj.is_file() {
                     return emit_extra_object_missing(diag_mode, obj, &m.root.join("Cplus.toml"));
                 }
-                cmd.arg(obj);
+                // Already inside the sealed object — same reason as above.
+                if sealed.is_none() {
+                    cmd.arg(obj);
+                }
+            }
+        }
+        // A sealed shared library exports exactly the sealed exports. The
+        // linker is told so — an export list on Mach-O, a version script on
+        // ELF; a DLL already exports only what `/EXPORT:` names — and the
+        // artifact is checked afterwards, like the archive.
+        if let Some(s) = &sealed {
+            if cfg!(target_os = "macos") {
+                cmd.arg(format!("-Wl,-exported_symbols_list,{}", s.exports_file.display()));
+            } else if cfg!(all(unix, not(target_os = "macos"))) {
+                let script = obj_dir.join(format!("{}.version", lib.name));
+                let globals: String = s.symbols.iter().map(|x| format!("    {x};\n")).collect();
+                let text = format!("{{\n  global:\n{globals}  local: *;\n}};\n");
+                if let Err(e) = fs::write(&script, text) {
+                    eprintln!("cpc: writing {}: {e}", script.display());
+                    return ExitCode::FAILURE;
+                }
+                cmd.arg(format!("-Wl,--version-script,{}", script.display()));
             }
         }
         let dylib_status = cmd.arg("-o").arg(&dylib_path).status();
@@ -4675,6 +4809,11 @@ fn build_lib_project(
             Err(e) => {
                 eprintln!("cpc: failed to invoke clang -shared: {e}");
                 return ExitCode::FAILURE;
+            }
+        }
+        if let Some(s) = &sealed {
+            if let Err(code) = verify_sealed_shared(s, &dylib_path, &target_dir, &lib.name) {
+                return code;
             }
         }
     }
