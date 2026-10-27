@@ -12977,30 +12977,54 @@ impl<'a> FnState<'a> {
                     }
                 };
                 self.push_scope();
-                let i_slot = self.alloca_named(&var.name, Ty::I32);
-                self.bind(&var.name, i_slot.clone(), Ty::I32);
-                let end_slot = self.alloca_anon(Ty::I32);
-
-                let (start_v, _) = self.gen_expr(start_e).expect("range start");
-                // v0.0.7 Slice 1.2: for-range loop counter — i32 leaf.
-                self.gen_store(&Ty::I32, &start_v, &i_slot);
-                let (end_v, _) = self.gen_expr(end_e).expect("range end");
-                self.gen_store(&Ty::I32, &end_v, &end_slot);
+                let (start_v, start_ty) = self.gen_expr(start_e).expect("range start");
+                let (end_v, end_ty) = self.gen_expr(end_e).expect("range end");
+                // The counter is the typed bound's type. Sema recorded the
+                // literal bound's width at that type (`lit_widths`), so the
+                // two agree; two unsuffixed literals are `i32`
+                // (bugs/closed/a-range-loop-counts-only-in-i32.md).
+                let counter_ty = if crate::sema::is_unsuffixed_literal_expr(start_e) {
+                    end_ty
+                } else {
+                    start_ty
+                };
+                let cty = self.lty(&counter_ty);
+                let unsigned = counter_ty.is_unsigned_int();
+                // Bound AFTER the bounds are evaluated: a bound may name an
+                // outer binding of the same name.
+                let i_slot = self.alloca_named(&var.name, counter_ty.clone());
+                self.bind(&var.name, i_slot.clone(), counter_ty.clone());
+                let end_slot = self.alloca_anon(counter_ty.clone());
+                self.gen_store(&counter_ty, &start_v, &i_slot);
+                self.gen_store(&counter_ty, &end_v, &end_slot);
 
                 let head = self.next_block_label();
                 let body_lbl = self.next_block_label();
                 let step = self.next_block_label();
                 let exit = self.next_block_label();
+                // `..=` tests for the end BEFORE stepping, never after:
+                // stepping past the type's maximum wrapped to its minimum, and
+                // `i <= MAX` is true of every value, so `a..=MAX` never ended
+                // (bugs/closed/an-inclusive-range-ending-at-the-type-maximum-never-ends.md).
+                //   exclusive: head: i < end ? body : exit; step: i += 1; br head
+                //   inclusive: head (once): start <= end ? body : exit;
+                //              step: i == end ? exit : inc;  inc: i += 1; br body
+                let inc = if inclusive { Some(self.next_block_label()) } else { None };
 
                 self.emit_terminator(&format!("br label %{head}"));
                 self.open_block(&head);
                 let i_v = self.next_tmp();
-                self.gen_load(&i_v, &Ty::I32, &i_slot);
+                self.gen_load(&i_v, &counter_ty, &i_slot);
                 let e_v = self.next_tmp();
-                self.gen_load(&e_v, &Ty::I32, &end_slot);
+                self.gen_load(&e_v, &counter_ty, &end_slot);
                 let cond_v = self.next_tmp();
-                let cmp = if inclusive { "sle" } else { "slt" };
-                self.emit(&format!("{cond_v} = icmp {cmp} i32 {i_v}, {e_v}"));
+                let cmp = match (inclusive, unsigned) {
+                    (true, true) => "ule",
+                    (true, false) => "sle",
+                    (false, true) => "ult",
+                    (false, false) => "slt",
+                };
+                self.emit(&format!("{cond_v} = icmp {cmp} {cty} {i_v}, {e_v}"));
                 self.emit_terminator(&format!("br i1 {cond_v}, label %{body_lbl}, label %{exit}"));
 
                 self.open_block(&body_lbl);
@@ -13030,16 +13054,33 @@ impl<'a> FnState<'a> {
                 self.loop_labels.pop();
                 self.loop_scope_depth.pop();
 
-                // Step block: increment then back to head.
+                // Step block. v0.0.7 Slice 1.3: the back-edge gets `!llvm.loop`.
                 self.open_block(&step);
                 let cur_i = self.next_tmp();
-                self.gen_load(&cur_i, &Ty::I32, &i_slot);
-                let next_i = self.next_tmp();
-                self.emit(&format!("{next_i} = add i32 {cur_i}, 1"));
-                self.gen_store(&Ty::I32, &next_i, &i_slot);
-                // v0.0.7 Slice 1.3: back-edge gets `!llvm.loop`.
+                self.gen_load(&cur_i, &counter_ty, &i_slot);
                 let md = self.loop_metadata_for(attributes);
-                self.emit_terminator(&format!("br label %{head}{md}"));
+                match &inc {
+                    Some(inc) => {
+                        let cur_e = self.next_tmp();
+                        self.gen_load(&cur_e, &counter_ty, &end_slot);
+                        let at_end = self.next_tmp();
+                        self.emit(&format!("{at_end} = icmp eq {cty} {cur_i}, {cur_e}"));
+                        self.emit_terminator(&format!(
+                            "br i1 {at_end}, label %{exit}, label %{inc}"
+                        ));
+                        self.open_block(inc);
+                        let next_i = self.next_tmp();
+                        self.emit(&format!("{next_i} = add {cty} {cur_i}, 1"));
+                        self.gen_store(&counter_ty, &next_i, &i_slot);
+                        self.emit_terminator(&format!("br label %{body_lbl}{md}"));
+                    }
+                    None => {
+                        let next_i = self.next_tmp();
+                        self.emit(&format!("{next_i} = add {cty} {cur_i}, 1"));
+                        self.gen_store(&counter_ty, &next_i, &i_slot);
+                        self.emit_terminator(&format!("br label %{head}{md}"));
+                    }
+                }
 
                 self.pop_scope();
                 self.open_block(&exit);
@@ -24115,7 +24156,29 @@ fn main() -> i32 {\n\
     fn for_range_inclusive_uses_sle() {
         let ir =
             gen_src("fn main() -> i32 { var s: i32 = 0; for i in 0..=3 { s = s + i; } return s; }");
-        assert!(ir.contains("icmp sle i32"));
+        // The guard, once; then the step tests `i == end` BEFORE stepping, so
+        // an end at the type's maximum is reached and not stepped past.
+        assert!(ir.contains("icmp sle i32"), "{ir}");
+        assert!(ir.contains("icmp eq i32"), "{ir}");
+    }
+
+    /// The counter has the bounds' type: a `usize` end counts in `i64` on a
+    /// 64-bit target with unsigned compares; `..=255u8` walks `i8` and ends.
+    /// bugs/closed/a-range-loop-counts-only-in-i32.md
+    #[test]
+    fn for_range_counts_in_the_type_of_its_bounds() {
+        let ir = gen_src_mono(
+            "fn main() -> i32 { let n: usize = 3usize; var s: i32 = 0; for _i in 0..n { s = s + 1; } return s; }",
+        );
+        assert!(ir.contains("icmp ult i64"), "{ir}");
+        assert!(ir.contains("add i64"), "{ir}");
+        let ir = gen_src_mono(
+            "fn main() -> i32 { var s: i32 = 0; for _b in 0..=255u8 { s = s + 1; } return s; }",
+        );
+        assert!(ir.contains("icmp ule i8"), "{ir}");
+        assert!(ir.contains("icmp eq i8"), "{ir}");
+        assert!(ir.contains("add i8"), "{ir}");
+        assert!(!ir.contains("icmp sle i32"), "a u8 loop must not compare at i32:\n{ir}");
     }
 
     #[test]

@@ -266,7 +266,7 @@ A function name is used as a bare value (or another unsupported form such as `&x
 fn main() -> i32 { let x = 1; let y = &x; return 0; }
 ```
 
-**Fix.** Assign the function to a `fn(...)`-typed binding to take its address. For a method, pass `recv.method` where a handler pair is expected. C+ has no `&T` / `&mut T` at all — the caller relation is a prefix on the PARAMETER (`ref` / `take` / bare), and `#addr_of(place)` is the raw-pointer form. Use a range only in a `for` header. `for x in arr` over a fixed array is this code too — `for` takes a range or an `Iterator[T]` — so index it: `for i in 0..3 { let x: i32 = arr[i as usize]; }` (the range variable is `i32`; an index is `usize`).
+**Fix.** Assign the function to a `fn(...)`-typed binding to take its address. For a method, pass `recv.method` where a handler pair is expected. C+ has no `&T` / `&mut T` at all — the caller relation is a prefix on the PARAMETER (`ref` / `take` / bare), and `#addr_of(place)` is the raw-pointer form. Use a range only in a `for` header. `for x in arr` over a fixed array is this code too — `for` takes a range or an `Iterator[T]` — so index it: `for i in 0..3usize { let x: i32 = arr[i]; }` (the counter takes its bounds' type; a `usize` counter indexes directly).
 
 <sub>repro: checked · cplus-core/src/sema.rs:13138 · test cplus-core/src/sema.rs:ref_not_supported_e0312</sub>
 

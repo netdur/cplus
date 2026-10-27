@@ -235,8 +235,8 @@ impl Item {
 enum Lookup { Found(i64), Missing }
 
 fn price_of(items: vec::Vec[Item], name: str) -> Lookup {
-    for i in 0..(items.count() as i32) {
-        match items.at_ptr(i as usize) {
+    for i in 0..items.count() {
+        match items.at_ptr(i) {
             option::Option[*Item]::Some(p) => {
                 if { (*p).name } == name { return Lookup::Found({ (*p).price }); }
             }

@@ -575,7 +575,11 @@ C+ has no labelled break. `return EXPR;` is **required** to return a
 value — a trailing expression is the value of a *block*, but a function
 body returns via `return` (an unterminated value path is **E0333**).
 `assert EXPR;` traps on false. Ranges `a..b` (exclusive) and `a..=b`
-(inclusive) are values usable as iterators.
+(inclusive) appear only as the iterator of `for … in` (E0312 elsewhere).
+The counter takes the type of its bounds: `i32` when both are unsuffixed
+literals, otherwise the typed bound's type — `0..n` over a `usize` counts
+in `usize` and indexes directly, and `0..=255u8` visits every byte value
+and ends.
 
 ---
 

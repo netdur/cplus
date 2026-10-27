@@ -151,7 +151,7 @@ if cond { } else if other { } else { }
 let r: i32 = if cond { 1 } else { 2 };          // expression form: both arms, same type
 while cond { }
 loop { break; continue; }
-for i in 0..10 { }                              // exclusive; 0..=10 inclusive
+for i in 0..10 { }                              // exclusive; 0..=10 inclusive; the counter has the bounds' type
 for (var i: i32 = 0; i < n; i = i +% 1) { }     // C-style
 while let Pat = expr { }
 defer expr;                                     // runs at scope exit, LIFO, shared stack with drops
@@ -160,7 +160,8 @@ assert cond;                                    // traps on false — the only h
 
 `for … in` takes a range or an `Iterator[T]`, and nothing else (E0312).
 `Vec` supplies one — `for x in v.iter()`. Arrays and slices do not: index
-them over `0..n`. A parenthesized deref opening an `if` condition misparses:
+them over `0..n` — a `usize` `n` gives a `usize` counter, which indexes
+directly. A parenthesized deref opening an `if` condition misparses:
 write `if { (*p).field } == x`.
 
 ## Functions

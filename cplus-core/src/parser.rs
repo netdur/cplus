@@ -2878,8 +2878,21 @@ impl Parser {
                 span,
             });
         }
-        // Range form: for ident in expr body
-        let var = self.expect_ident()?;
+        // Range form: for ident in expr body. `for _ in 0..n` discards the
+        // counter the way `let _` does — a synthesized `_discard<offset>`
+        // name, unique per site and `_`-prefixed so unused-binding
+        // diagnostics stay quiet. Nothing is moved out of a loop counter, so
+        // unlike `let _` there is no consumption to decide
+        // (bugs/closed/a-for-loop-cannot-discard-its-binding.md).
+        let var = if self.at(&TokenKind::Underscore) {
+            let tok = self.expect(&TokenKind::Underscore, "`_`")?;
+            Ident {
+                name: format!("_discard{}", tok.span.start),
+                span: tok.span,
+            }
+        } else {
+            self.expect_ident()?
+        };
         self.expect(&TokenKind::In, "`in`")?;
         let iter = self.with_no_struct_lit(|p| p.parse_expr())?;
         let body = self.parse_block()?;
@@ -4802,6 +4815,30 @@ fn tok_name(k: &TokenKind) -> &'static str {
 mod tests {
     use super::*;
     use crate::lexer::tokenize;
+
+    /// `for _ in a..b` discards the counter as `let _` does: a synthesized,
+    /// `_`-prefixed name, distinct per site so two such loops can nest.
+    /// bugs/closed/a-for-loop-cannot-discard-its-binding.md
+    #[test]
+    fn for_discards_its_binding_with_underscore() {
+        let prog = parse_src(
+            "fn main() -> i32 { for _ in 0..3 { for _ in 0..2 { } } return 0; }",
+        )
+        .unwrap();
+        let ItemKind::Function(f) = &prog.items[0].kind else {
+            panic!("expected a fn");
+        };
+        let StmtKind::For(ForLoop::Range { var: outer, body, .. }, _) = &f.body.stmts[0].kind
+        else {
+            panic!("expected the outer for");
+        };
+        let StmtKind::For(ForLoop::Range { var: inner, .. }, _) = &body.stmts[0].kind else {
+            panic!("expected the inner for");
+        };
+        assert!(outer.name.starts_with("_discard"), "{}", outer.name);
+        assert!(inner.name.starts_with("_discard"), "{}", inner.name);
+        assert_ne!(outer.name, inner.name, "two discards at different sites must not collide");
+    }
 
     fn parse_src(src: &str) -> Result<Program, ParseError> {
         let toks = tokenize(src).expect("lex");

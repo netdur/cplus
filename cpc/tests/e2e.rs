@@ -23750,6 +23750,93 @@ fn a_narrow_return_export_forwarder_builds_and_answers_both_values_from_c() {
     );
 }
 
+/// `for _ in a..b` discards the counter as `let _` does, and two such loops
+/// nest. bugs/closed/a-for-loop-cannot-discard-its-binding.md
+#[test]
+fn a_for_loop_discards_its_binding_with_underscore() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("discard.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 { var n: i32 = 0; for _ in 0..3 { for _ in 0..2 { n = n + 1; } } return n; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("discard");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "`for _ in` must compile: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(6), "3 x 2 trips");
+}
+
+/// A range loop counts in the type of its bounds, and an inclusive range
+/// ending at the type's maximum ends. Each check returns its own code.
+/// bugs/closed/a-range-loop-counts-only-in-i32.md
+/// bugs/closed/an-inclusive-range-ending-at-the-type-maximum-never-ends.md
+#[test]
+fn a_range_loop_counts_in_its_bounds_type_and_an_inclusive_range_ends_at_the_maximum() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ranges.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+           // 1. a usize count past 2^31: the old `as i32` made it negative and ran zero times\n\
+           let big: usize = 3000000000usize;\n\
+           var n: i32 = 0;\n\
+           for _i in 0..big { n = n + 1; if n == 3 { break; } }\n\
+           if n != 3 { return 1; }\n\
+           // 2. a usize counter indexes directly\n\
+           let a: [i32; 3] = [4, 5, 6];\n\
+           let len: usize = 3usize;\n\
+           var s: i32 = 0;\n\
+           for i in 0..len { s = s + a[i]; }\n\
+           if s != 15 { return 2; }\n\
+           // 3. every byte value, once\n\
+           var bytes: i32 = 0;\n\
+           for _b in 0..=255u8 { bytes = bytes + 1; if bytes > 300 { return 3; } }\n\
+           if bytes != 256 { return 4; }\n\
+           // 4. i32 max, inclusive: two trips, then it ends\n\
+           var m: i32 = 0;\n\
+           for _i in 2147483646..=2147483647 { m = m + 1; if m > 5 { return 5; } }\n\
+           if m != 2 { return 6; }\n\
+           // 5. max..=max: one trip\n\
+           var one: i32 = 0;\n\
+           for _i in 2147483647..=2147483647 { one = one + 1; if one > 5 { return 7; } }\n\
+           if one != 1 { return 8; }\n\
+           // 6. usize max, inclusive, leaving every trip through `continue`\n\
+           let top: usize = 0usize -% 1usize;\n\
+           let below: usize = top - 1usize;\n\
+           var u: i32 = 0;\n\
+           for _i in below..=top { u = u + 1; if u > 5 { return 9; } continue; }\n\
+           if u != 2 { return 10; }\n\
+           // 7. an empty inclusive range runs no trip\n\
+           var none: i32 = 0;\n\
+           for _i in 5..=4 { none = none + 1; }\n\
+           if none != 0 { return 11; }\n\
+           // 8. two literal bounds are still i32\n\
+           var t: i32 = 0;\n\
+           for i in 0..3 { t = t + i; }\n\
+           if t != 3 { return 12; }\n\
+           return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("ranges");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "typed ranges must compile: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "check number {:?} failed", run.code());
+}
+
 /// The defined global symbols `nm` reports for an archive or object: the last
 /// token of every line that is neither empty nor a member header.
 #[cfg(target_os = "macos")]

@@ -862,7 +862,7 @@ that yields `Option[T]`. Pointer ↔ int goes through `usize` (E0315 otherwise).
 an `Iterator[T]`. Index instead:
 
 ```cplus
-for i in 0..3 { let v: i32 = a[i]; }
+for i in 0..3usize { let v: i32 = a[i]; }   // a usize counter indexes directly
 ```
 
 **`for x in it` OWNS each element**, and the binding drops at the end of every

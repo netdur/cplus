@@ -285,7 +285,7 @@ enum TailCheck {
 /// `1.0 / 255.0`, `(2 + 3) * 4`. It has no type of its own, so it takes the
 /// one its position asks for. It names no binding and moves nothing, so
 /// checking it later than its neighbours changes nothing but its type.
-fn is_unsuffixed_literal_expr(e: &Expr) -> bool {
+pub(crate) fn is_unsuffixed_literal_expr(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Unary { op: UnaryOp::Neg, operand } => is_unsuffixed_literal_expr(operand),
         ExprKind::Binary { op, lhs, rhs } => {
@@ -9542,13 +9542,51 @@ impl SemaCx<'_> {
                     ..
                 } = &iter.kind
                 {
-                    self.check_expr(s, Some(Ty::I32));
-                    self.check_expr(e, Some(Ty::I32));
+                    // The counter takes the type of its bounds, not a fixed
+                    // `i32`. A bound made only of unsuffixed literals has no
+                    // type of its own and takes the other bound's; two such
+                    // bounds are `i32`, as every existing loop is. So
+                    // `0..count` over a `usize` counts in `usize` and indexes
+                    // directly, and a count past 2^31 no longer has to pass
+                    // through an `as i32` that silently made it negative and
+                    // the loop run zero times
+                    // (bugs/closed/a-range-loop-counts-only-in-i32.md).
+                    let counter_ty = {
+                        let s_lit = is_unsuffixed_literal_expr(s);
+                        let e_lit = is_unsuffixed_literal_expr(e);
+                        if s_lit && e_lit {
+                            self.check_expr(s, Some(Ty::I32));
+                            self.check_expr(e, Some(Ty::I32));
+                            Ty::I32
+                        } else {
+                            // The typed bound first: it names the counter.
+                            let (typed, other) = if s_lit { (e, s) } else { (s, e) };
+                            let t = self.check_expr(typed, None);
+                            if matches!(t, Ty::Error) {
+                                let _ = self.check_expr(other, None);
+                                Ty::Error
+                            } else if !t.is_int() {
+                                self.err(
+                                    "E0302",
+                                    format!(
+                                        "type mismatch: a range bound must be an integer, found `{}`",
+                                        ty_display(&t)
+                                    ),
+                                    typed.span,
+                                );
+                                let _ = self.check_expr(other, None);
+                                Ty::Error
+                            } else {
+                                self.check_expr(other, Some(t.clone()));
+                                t
+                            }
+                        }
+                    };
                     self.scopes.push(HashMap::new());
                     self.scopes.last_mut().unwrap().insert(
                         var.name.clone(),
                         LocalInfo {
-                            ty: Ty::I32,
+                            ty: counter_ty,
                             mutable: false,
                             moved: false,
                             moved_at: None,
@@ -9585,7 +9623,7 @@ impl SemaCx<'_> {
                                     _ => "arr".to_string(),
                                 };
                                 let notes = vec![format!(
-                                    "iterate an array by index: `for i in 0..{n} {{ let x: {} = {src}[i as usize]; ... }}` — the range variable is `i32` and an index is `usize`",
+                                    "iterate an array by index: `for i in 0..{n}usize {{ let x: {} = {src}[i]; ... }}` — a `usize` counter indexes directly",
                                     ty_display(elem)
                                 )];
                                 self.err_note("E0312", msg, iter.span, notes);
@@ -24810,6 +24848,34 @@ mod tests {
 
     // ---- OBS.1: `#[watch]` hook existence + signature ----
 
+    /// The counter of a range loop takes the type of its typed bound; two
+    /// unsuffixed-literal bounds stay `i32`; a non-integer bound and two
+    /// differently typed bounds are each one E0302.
+    /// bugs/closed/a-range-loop-counts-only-in-i32.md
+    #[test]
+    fn a_range_loop_counts_in_the_type_of_its_bounds() {
+        let ds = check_src(
+            "fn main() -> i32 { let a: [i32; 3] = [1, 2, 3]; let n: usize = 3usize; var s: i32 = 0; \
+             for i in 0..n { s = s + a[i]; } return s; }",
+        );
+        assert!(ds.is_empty(), "a usize counter indexes directly: {ds:#?}");
+        let ds = check_src(
+            "fn main() -> i32 { var s: i32 = 0; for i in 0..3 { s = s + i; } return s; }",
+        );
+        assert!(ds.is_empty(), "two literal bounds are still i32: {ds:#?}");
+        let ds = check_src(
+            "fn main() -> i32 { let k: u8 = 250u8; var s: i32 = 0; \
+             for b in k..=255 { let x: u8 = b; s = s + (x as i32); } return s; }",
+        );
+        assert!(ds.is_empty(), "a typed start names the counter: {ds:#?}");
+        let ds = check_src(
+            "fn main() -> i32 { let a: i32 = 0; let b: usize = 3usize; for _i in a..b { } return 0; }",
+        );
+        assert_eq!(codes_of(&ds), vec!["E0302"], "two typed bounds of different types: {ds:#?}");
+        let ds = check_src("fn main() -> i32 { let f: f32 = 2.5; for _i in 0..f { } return 0; }");
+        assert_eq!(codes_of(&ds), vec!["E0302"], "a non-integer bound: {ds:#?}");
+    }
+
     fn codes_of(ds: &[Diagnostic]) -> Vec<&str> {
         ds.iter().map(|d| d.code.0).collect()
     }
@@ -25961,12 +26027,14 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
         let bad = "fn f() -> i32 { let arr: [i32; 3] = [1, 2, 3]; var s: i32 = 0; for x in arr { s = s + x; } return s; }\n";
         let ds = check_src(bad);
         let d = ds.iter().find(|d| d.code.0 == "E0312").expect("E0312");
+        // The hint spells the idiom a typed counter allows: a `usize` bound
+        // gives a `usize` counter, which indexes directly.
         assert!(
-            d.notes.iter().any(|n| n.contains("for i in 0..3 { let x: i32 = arr[i as usize]; ... }")),
+            d.notes.iter().any(|n| n.contains("for i in 0..3usize { let x: i32 = arr[i]; ... }")),
             "got: {:?}",
             d.notes
         );
-        let fixed = "fn f() -> i32 { let arr: [i32; 3] = [1, 2, 3]; var s: i32 = 0; for i in 0..3 { let x: i32 = arr[i as usize]; s = s + x; } return s; }\n";
+        let fixed = "fn f() -> i32 { let arr: [i32; 3] = [1, 2, 3]; var s: i32 = 0; for i in 0..3usize { let x: i32 = arr[i]; s = s + x; } return s; }\n";
         assert!(codes_of(&check_src(fixed)).is_empty(), "the prescribed loop must check");
     }
 
