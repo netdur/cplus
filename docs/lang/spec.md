@@ -185,7 +185,8 @@ impl        = 'impl' generic_params? type_path ( ':' type )? '{' method* '}' ;
 interface   = 'interface' IDENT generic_params? '{' fn_sig* '}' ;
 type_alias  = 'export'? 'type' IDENT generic_params? '=' type ';' ;
 const       = 'export'? 'const' IDENT ':' type '=' expr ';' ;
-static      = 'export'? 'static' IDENT ':' type '=' expr ';' ;
+static      = 'export'? 'static' IDENT ':' type '=' expr ';'
+            | 'extern' 'static' IDENT ':' type ';' ;
 
 generic_params = '[' generic_param ( ',' generic_param )* ']' ;
 generic_param  = IDENT ( ':' bound ( '+' bound )* )? ;
@@ -812,7 +813,13 @@ extern fn printf(fmt: *u8, ...) -> i32;   // C-ABI declaration
 
 `extern fn` declares a C-ABI function; calling one is an ordinary call
 (the `extern` declaration is itself the marker that this crosses to C).
-`...` declares varargs (extern signatures only). `#[repr(C)]` (§14) gives
+`...` declares varargs (extern signatures only). `extern static NAME: T;`
+declares data another object defines (C's `extern T name;`): it is read,
+written and addressed (`#addr_of`) like any `static`, and its linker
+symbol is the bare name or the `#[link_name]`. Like an `extern fn`, the
+C+ name is private to its declaring module. A `str`-typed one is
+**E0929** — `str` is a view no C object defines; declare the C layout and
+build the view from it. `#[repr(C)]` (§14) gives
 a struct C-compatible layout. A `[library]` package's entry-file `export`
 items keep their bare symbol names so C consumers link `add` as `_add`;
 non-`export` items stay mangled.
@@ -834,7 +841,7 @@ compiler passes or tools; they never themselves transform the AST.
 | `#[inline]` / `(always)` / `(never)` | fn, method | inlining hint |
 | `#[repr(...)]` | struct, union, enum | `C`, `packed`, `packed = N` for aggregates; an integer width for a payload-free enum |
 | `#[bits(N)]` | integer field | C bitfield inside a `#[repr(C)]` aggregate |
-| `#[link_name = "sym"]` | extern fn | bind the declaration to a specific linker symbol |
+| `#[link_name = "sym"]` | extern fn, extern static | bind the declaration to a specific linker symbol |
 | `#[requires(expr)]` / `#[ensures(expr)]` | fn, method | contracts checked at entry / at every return; `result` names the return value. The expression must be pure (**E0924**) |
 | `#[no_alloc]` | fn, method | forbid heap allocation in the fn and everything it calls |
 | `#[no_block]` | fn, method | forbid blocking calls, transitively |

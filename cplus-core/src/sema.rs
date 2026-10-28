@@ -2673,11 +2673,17 @@ pub struct StaticInfo {
     /// Resolved type of the static (what the user wrote after `:`).
     pub ty: Ty,
     /// Initializer expression, post-lower-validation. Always one of
-    /// the literal shapes accepted by `lower::is_const_initializer`.
-    pub init: Expr,
+    /// the literal shapes accepted by `lower::is_const_initializer`;
+    /// `None` for an `extern static`, whose storage another object defines.
+    pub init: Option<Expr>,
     /// Decl span for diagnostics that need to point at the original
     /// declaration (e.g. "first declared here").
     pub decl_span: ByteSpan,
+    /// `Some(linker symbol)` for an `extern static`: the `#[link_name]`, or
+    /// the bare declared name (the resolver module-qualifies the C+ name, as
+    /// it does an `extern fn`'s). Codegen declares `@symbol = external
+    /// global` and reaches the static through it.
+    pub symbol: Option<String>,
 }
 
 /// Slice 7GEN.5e step 3: method template stored on a generic-typed
@@ -7569,15 +7575,48 @@ impl SemaCx<'_> {
                     }
                     seen.insert(s.name.name.clone());
                     let declared = self.resolve_type(&s.ty);
-                    self.scopes.push(HashMap::new());
-                    let _ = self.check_expr(&s.value, Some(declared.clone()));
-                    self.scopes.pop();
+                    let mut symbol: Option<String> = None;
+                    if s.is_extern {
+                        // A `str` is a C+ view — pointer and length — that no C
+                        // object defines. The C data has a C layout; declare
+                        // that and build the view from it.
+                        if matches!(declared, Ty::Str) {
+                            self.err(
+                                "E0929",
+                                format!(
+                                    "`extern static {}: str` — `str` is a C+ view (pointer and length) no C object defines; declare the data as C lays it out (`*u8`, or a `#[repr(C)]` struct) and build the `str` from it",
+                                    s.name.name.rsplit('.').next().unwrap_or(&s.name.name)
+                                ),
+                                s.ty.span,
+                            );
+                        }
+                        // The same rule an `extern fn` follows: `#[link_name]`
+                        // pins the symbol, else it is the bare declared name.
+                        let link = s.attributes.iter().find_map(|a| {
+                            if a.path.name != "link_name" {
+                                return None;
+                            }
+                            match a.args.as_slice() {
+                                [AttrArg::Str(v, _)] => Some(v.clone()),
+                                _ => None,
+                            }
+                        });
+                        symbol = Some(link.unwrap_or_else(|| {
+                            s.name.name.rsplit('.').next().unwrap_or(&s.name.name).to_string()
+                        }));
+                    }
+                    if let Some(value) = &s.value {
+                        self.scopes.push(HashMap::new());
+                        let _ = self.check_expr(value, Some(declared.clone()));
+                        self.scopes.pop();
+                    }
                     self.statics_table.insert(
                         s.name.name.clone(),
                         StaticInfo {
                             ty: declared,
                             init: s.value.clone(),
                             decl_span: s.name.span,
+                            symbol,
                         },
                     );
                 }
@@ -36981,6 +37020,27 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
             "expected E0911, got {:?}",
             codes
         );
+    }
+
+    /// An `extern static` is a `static` whose storage another object defines:
+    /// read, written and addressed like any static, with no initializer to
+    /// check.
+    #[test]
+    fn an_extern_static_reads_writes_and_addresses_like_a_static() {
+        let codes = lowered_errors(
+            "extern static COUNTER: i32;\n\
+             fn main() -> i32 { COUNTER = COUNTER + 1; let p: *i32 = #addr_of(COUNTER); return *p; }",
+        );
+        assert!(codes.is_empty(), "{codes:?}");
+    }
+
+    /// `str` is a view no C object defines: E0929.
+    #[test]
+    fn an_extern_static_of_str_type_is_e0929() {
+        let codes = lowered_errors("extern static NAME: str;\nfn main() -> i32 { return 0; }");
+        assert!(codes.iter().any(|c| c == "E0929"), "{codes:?}");
+        let codes = lowered_errors("extern static NAME: *u8;\nfn main() -> i32 { return 0; }");
+        assert!(!codes.iter().any(|c| c == "E0929"), "{codes:?}");
     }
 
     // `const` stays literal-only: a struct literal on a `const` is E0911.

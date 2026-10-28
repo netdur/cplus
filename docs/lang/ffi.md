@@ -118,7 +118,25 @@ instruments C, and they are the tool for the raw tier.
 
 `extern fn` names are module-scoped in C+ — `#[link_name]` pins the actual
 linker symbol, which is also how one symbol gets several typed C+ faces
-(the `objc_msgSend` pattern). The libraries themselves come from the
+(the `objc_msgSend` pattern).
+
+C libraries publish data as well as functions, and `extern static` declares
+it:
+
+```cplus
+extern static environ: **u8;                       // read by value: environ[0]
+extern static WIFI_EVENT: *u8;                     // esp_event_base_t const WIFI_EVENT
+extern static g_wifi_osi_funcs: WifiOsiFuncs;      // &g_wifi_osi_funcs via #addr_of
+#[link_name = "_environ"] extern static env2: **u8;
+```
+
+An `extern static` is a `static` whose storage another object defines: it
+is read, written and addressed exactly like one, and its symbol is the bare
+name or the `#[link_name]`. Declare the type C lays out — `*u8` for a C
+string, a `#[repr(C)]` struct for a record; a `str` is a view no C object
+defines (E0929). C+ cannot see a `const` on the C side, so writing read-only
+data is the caller's error as it is in C. `cpc bindgen` emits one for every
+`extern T name;` a header declares. The libraries themselves come from the
 manifest's `[link]` table — `frameworks`, `libs`, `search-paths`,
 `extra-objects` — and a dependency's `[link]` travels with it
 ([packages.md](packages.md) §5).

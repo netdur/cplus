@@ -1108,8 +1108,10 @@ impl Emitter {
             if !in_header[i] {
                 continue;
             }
-            if decl.get("kind").and_then(|v| v.as_str()) == Some("FunctionDecl") {
-                self.emit_function(decl);
+            match decl.get("kind").and_then(|v| v.as_str()) {
+                Some("FunctionDecl") => self.emit_function(decl),
+                Some("VarDecl") => self.emit_variable(decl),
+                _ => {}
             }
         }
         // Flush any deferred items.
@@ -1338,6 +1340,43 @@ impl Emitter {
 
     fn finish(self) -> String {
         self.out
+    }
+
+    /// A header's `extern T name;` — data the library defines — becomes
+    /// `extern static name: T;`. Only the `extern` storage class binds: a
+    /// `static` global has no external symbol, and a definition in a header
+    /// belongs to whoever includes it. `const` is dropped with the other
+    /// qualifiers: a C+ `static` is always writable, and writing read-only
+    /// data is the caller's error, as it is in C.
+    fn emit_variable(&mut self, decl: &serde_json::Value) {
+        let name = match decl.get("name").and_then(|v| v.as_str()) {
+            Some(n) => n.to_string(),
+            None => return,
+        };
+        if decl.get("isImplicit").and_then(|v| v.as_bool()) == Some(true) {
+            return;
+        }
+        if decl.get("storageClass").and_then(|v| v.as_str()) != Some("extern") {
+            return;
+        }
+        if !self.seen_fns.insert(name.clone()) {
+            return;
+        }
+        let qual_type = decl
+            .get("type")
+            .and_then(|t| t.get("qualType"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        match self.map_type(qual_type) {
+            Ok(t) => self.out.push_str(&format!(
+                "extern static {}: {};\n",
+                sanitize_ident(&name),
+                t
+            )),
+            Err(why) => self.out.push_str(&format!(
+                "// SKIPPED `{name}`: type `{qual_type}` — {why}\n"
+            )),
+        }
     }
 
     fn emit_function(&mut self, decl: &serde_json::Value) {
@@ -2342,6 +2381,30 @@ mod tests {
         let extra = e.collect_value_reachable_records(&inner, &in_header);
         assert_eq!(extra.len(), 1);
         assert_eq!(extra[0].get("name").and_then(|v| v.as_str()), Some("tagPOINT"));
+    }
+
+    /// A header's `extern T name;` is C data the library defines — bound as
+    /// `extern static`; a `static` global has no symbol to bind.
+    #[test]
+    fn an_extern_variable_becomes_an_extern_static() {
+        let mut e = Emitter::new("unistd.h", false);
+        e.emit_variable(&serde_json::json!({
+            "kind": "VarDecl", "name": "environ", "storageClass": "extern",
+            "type": {"qualType": "char **"}
+        }));
+        e.emit_variable(&serde_json::json!({
+            "kind": "VarDecl", "name": "local_only", "storageClass": "static",
+            "type": {"qualType": "int"}
+        }));
+        e.emit_variable(&serde_json::json!({
+            "kind": "VarDecl", "name": "WIFI_EVENT", "storageClass": "extern",
+            "type": {"qualType": "const char *const"}
+        }));
+        let out = e.finish();
+        // C `char` is `i8` here, as it is in every function binding.
+        assert!(out.contains("extern static environ: **i8;\n"), "{out}");
+        assert!(!out.contains("local_only"), "{out}");
+        assert!(out.contains("extern static WIFI_EVENT: *i8;\n"), "{out}");
     }
 
     // v0.0.28: a C record's bitfields and packing are emitted as the C+

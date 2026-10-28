@@ -1668,7 +1668,12 @@ impl Lower {
                     consts.insert(c.name.name.clone(), (c.value.clone(), c.ty.clone()));
                 }
                 ItemKind::Static(s) => {
-                    if !is_static_initializer(&s.value) {
+                    // An `extern static` has no initializer: the storage is
+                    // another object's.
+                    let Some(value) = s.value.as_mut() else {
+                        continue;
+                    };
+                    if !is_static_initializer(value) {
                         // A scalar-typed static takes the same constant
                         // expressions a const does (`static M: u64 =
                         // (1u64 << 40) - 1;`), folded in place.
@@ -1678,14 +1683,14 @@ impl Lower {
                                 resolved: &mut resolved,
                                 visiting: &mut visiting,
                             };
-                            if let Ok(v) = self.const_eval(&s.value, Some(exp), &mut cx, false) {
-                                s.value = cval_to_expr(v, s.value.span);
+                            if let Ok(v) = self.const_eval(value, Some(exp), &mut cx, false) {
+                                *value = cval_to_expr(v, value.span);
                             }
                         } else {
                             self.err(
                                 "E0911",
                                 "static initializer must be a literal (integer, float, bool, string, unary-negated numeric literal), `#zero::[T]()`, an array literal/fill, a (non-generic) struct literal of such, a function name where the type is a fn pointer, or a scalar constant expression".to_string(),
-                                s.value.span,
+                                value.span,
                             );
                         }
                     }
@@ -1799,7 +1804,9 @@ impl Lower {
                 }
                 ItemKind::Static(s) => {
                     self.resolve_lens_in_type(&mut s.ty, consts);
-                    self.resolve_lens_in_expr(&mut s.value, consts);
+                    if let Some(value) = &mut s.value {
+                        self.resolve_lens_in_expr(value, consts);
+                    }
                 }
                 // v0.0.15: module-scope `#asm("...")` has no types or
                 // expressions carrying `const`-length lenses — nothing to do.

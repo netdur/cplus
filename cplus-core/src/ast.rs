@@ -182,8 +182,17 @@ pub struct StaticDecl {
     /// Initializer expression. Same literal-only rule as `ConstDecl`
     /// for v0.0.9 (struct-literal / array-literal extensions wait for
     /// a real consumer beyond the immediate raytracer use case).
-    pub value: Expr,
+    /// `None` only for an `extern static`, whose storage another object
+    /// defines.
+    pub value: Option<Expr>,
     pub is_export: bool,
+    /// `extern static NAME: T;` — a declaration of storage another object
+    /// file defines (`environ`, ESP-IDF's `WIFI_EVENT`, a framework
+    /// constant). No initializer and no definition emitted: codegen declares
+    /// an external global under the bare name or the `#[link_name]`, and
+    /// reads, writes and `#addr_of` work as on any `static`. Like an
+    /// `extern fn`, the C+ name is private to its declaring module.
+    pub is_extern: bool,
     pub attributes: Vec<Attribute>,
 }
 

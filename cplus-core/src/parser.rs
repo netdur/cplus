@@ -1252,6 +1252,47 @@ impl Parser {
     /// mutable — there is no `static mut`, and a Rust-habit `mut` is
     /// rejected with a hint. Type annotation mandatory; literal-only
     /// initializer enforced by sema.
+    /// `extern static NAME: T;` — storage another object file defines. The
+    /// `extern` and the attributes are already consumed by `parse_extern_fn`,
+    /// which routes here on seeing `static`.
+    fn parse_extern_static(
+        &mut self,
+        start: Span,
+        is_export: bool,
+        attributes: Vec<Attribute>,
+    ) -> Result<Item, ParseError> {
+        self.expect(&TokenKind::Static, "`static`")?;
+        if is_export {
+            return Err(self.err_at_peek(
+                "`export extern static` — a global this package defines and exports is `export static NAME: T = init;`; `extern static NAME: T;` declares storage another object defines",
+            ));
+        }
+        let name = self.expect_ident()?;
+        self.expect(
+            &TokenKind::Colon,
+            "`:` (an extern static requires an explicit type)",
+        )?;
+        let ty = self.parse_type()?;
+        if self.at(&TokenKind::Eq) {
+            return Err(self.err_at_peek(
+                "extern static — no initializer: the storage belongs to the object that defines the symbol; a global this package defines is `static NAME: T = init;`",
+            ));
+        }
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Item {
+            kind: ItemKind::Static(StaticDecl {
+                name,
+                ty,
+                value: None,
+                is_export: false,
+                is_extern: true,
+                attributes,
+            }),
+            span: start.merge(end),
+            origin_file: None,
+        })
+    }
+
     fn parse_static_decl(
         &mut self,
         is_export: bool,
@@ -1289,8 +1330,9 @@ impl Parser {
             kind: ItemKind::Static(StaticDecl {
                 name,
                 ty,
-                value,
+                value: Some(value),
                 is_export,
+                is_extern: false,
                 attributes,
             }),
             span: start.merge(end),
@@ -1494,6 +1536,15 @@ impl Parser {
         // runs in attrs::check; sema enforces extern-only semantic constraints
         // (e.g. link_name requires extern, repr does not apply to fns at all).
         self.expect(&TokenKind::Extern, "`extern`")?;
+        // `extern static NAME: T;` — C data, not a function.
+        if self.at(&TokenKind::Static) {
+            return self.parse_extern_static(start, is_export, attributes);
+        }
+        if self.at(&TokenKind::Let) || self.at(&TokenKind::Const) {
+            return Err(self.err_at_peek(
+                "extern — data another object defines is declared `extern static NAME: T;` (read, written and addressed like a `static`); `extern fn` declares a function",
+            ));
+        }
         self.expect(&TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident()?;
         // Reject generic params explicitly; an extern symbol is concrete.
@@ -6793,6 +6844,36 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
         };
         assert_eq!(s.name.name, "COUNTER");
         assert!(!s.is_export);
+    }
+
+    /// `extern static NAME: T;` — C data another object defines. It is a
+    /// `StaticDecl` with no value and `is_extern`, and it takes
+    /// `#[link_name]` as an `extern fn` does.
+    #[test]
+    fn extern_static_parses_as_a_static_with_no_value() {
+        let p = parse_src("#[link_name = \"_environ\"] extern static environ: **u8;").unwrap();
+        let ItemKind::Static(s) = &p.items[0].kind else {
+            panic!("expected ItemKind::Static, got {:?}", p.items[0].kind);
+        };
+        assert_eq!(s.name.name, "environ");
+        assert!(s.is_extern);
+        assert!(!s.is_export);
+        assert!(s.value.is_none());
+        assert_eq!(s.attributes.len(), 1);
+        assert_eq!(s.attributes[0].path.name, "link_name");
+    }
+
+    #[test]
+    fn extern_static_refuses_an_initializer_export_and_the_let_spelling() {
+        let e = parse_src("extern static X: i32 = 1;").unwrap_err();
+        assert!(format!("{e:?}").contains("no initializer"), "{e:?}");
+        let e = parse_src("export extern static X: i32;").unwrap_err();
+        assert!(format!("{e:?}").contains("`export extern static`"), "{e:?}");
+        let e = parse_src("extern let environ: **u8;").unwrap_err();
+        assert!(format!("{e:?}").contains("`extern static NAME: T;`"), "{e:?}");
+        // A plain static still takes no attributes.
+        let e = parse_src("#[link_name = \"x\"] static X: i32 = 0;").unwrap_err();
+        assert!(format!("{e:?}").contains("don't take attributes"), "{e:?}");
     }
 
     // v0.0.15: module-scope `#asm("...");` global asm item.

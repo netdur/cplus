@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **202 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **153** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **203 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **154** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -838,6 +838,19 @@ fn nothing(n: i32) { return; }
 **Fix.** On a function that returns nothing, write the postcondition about parameters and `this` instead; a `ref` parameter or `this` field is exactly what such a function changes. Otherwise rename the parameter that collides with `result`.
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_contract_attrs · test cplus-core/src/sema.rs:ensures_result_needs_something_to_return_e0928</sub>
+
+### E0929 · `extern static` of a type no C object defines
+
+An `extern static` declares storage another object defines, so its type must be one C lays out. `str` is a C+ view — a pointer and a length — that no C declaration produces.
+
+```cplus
+extern static NAME: str;
+// -> [E0929] `extern static NAME: str` — `str` is a C+ view (pointer and length) no C object defines; declare the data as C lays it out (`*u8`, or a `#[repr(C)]` struct) and build the `str` from it
+```
+
+**Fix.** Declare the data as C defines it — `*u8` for a C string, a `#[repr(C)]` struct for a record — and build the `str` from it in a function.
+
+<sub>repro: checked · cplus-core/src/sema.rs:collect_consts_and_statics · test cplus-core/src/sema.rs:an_extern_static_of_str_type_is_e0929</sub>
 
 ## Control flow and matching
 

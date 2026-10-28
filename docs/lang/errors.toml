@@ -3728,3 +3728,20 @@ example = '''
 fn nothing(n: i32) { return; }
 // -> [E0928] `result` names the value being returned, and this function returns nothing
 '''
+
+[[code]]
+id = "E0929"
+title = "`extern static` of a type no C object defines"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:collect_consts_and_statics"
+test = "cplus-core/src/sema.rs:an_extern_static_of_str_type_is_e0929"
+cause = "An `extern static` declares storage another object defines, so its type must be one C lays out. `str` is a C+ view — a pointer and a length — that no C declaration produces."
+fix = "Declare the data as C defines it — `*u8` for a C string, a `#[repr(C)]` struct for a record — and build the `str` from it in a function."
+example = '''
+extern static NAME: str;
+// -> [E0929] `extern static NAME: str` — `str` is a C+ view (pointer and length) no C object defines; declare the data as C lays it out (`*u8`, or a `#[repr(C)]` struct) and build the `str` from it
+'''

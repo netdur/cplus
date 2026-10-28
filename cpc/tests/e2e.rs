@@ -14497,6 +14497,156 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
     assert_eq!(run.code(), Some(42), "expected tiny::double(21) == 42");
 }
 
+/// `extern static NAME: T;` declares C data another object defines: read
+/// by value, written, and addressed like any `static`, under the bare name
+/// or a `#[link_name]`. The data is a C object linked through
+/// `extra-objects`, so this runs on every platform.
+/// bugs/closed/extern-accepts-only-functions-so-c-data-symbols-cannot-be-declared.md
+#[test]
+fn an_extern_static_reads_writes_and_addresses_c_data() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let objs_dir = dir.join("objs");
+    std::fs::create_dir_all(&objs_dir).unwrap();
+    let c_src = dir.join("data.c");
+    std::fs::write(
+        &c_src,
+        "int c_counter = 41;\n\
+         const char *c_name = \"slab\";\n\
+         unsigned c_seven = 7;\n\
+         int c_bump(void) { return ++c_counter; }\n\
+         int c_is_counter(int *p) { return p == &c_counter; }\n",
+    )
+    .unwrap();
+    let cc = Command::new("clang")
+        .arg("-c")
+        .arg(&c_src)
+        .arg("-o")
+        .arg(objs_dir.join("data.o"))
+        .status()
+        .expect("invoke clang -c");
+    assert!(cc.success(), "clang -c on data.c failed");
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"cdata\"\n\n[link]\nextra-objects = [\"${CPLUS_E2E_OBJDIR}/data.o\"]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "extern static c_counter: i32;\n\
+         extern static c_name: *u8;\n\
+         #[link_name = \"c_seven\"] extern static SEVEN: u32;\n\
+         extern fn c_bump() -> i32;\n\
+         extern fn c_is_counter(p: *i32) -> i32;\n\
+         fn main() -> i32 {\n\
+             if c_counter != 41 { return 1; }\n\
+             c_counter = 10;\n\
+             if c_bump() != 11 { return 2; }\n\
+             if c_counter != 11 { return 3; }\n\
+             if c_is_counter(#addr_of(c_counter)) != 1 { return 4; }\n\
+             if c_name[0] != 115u8 { return 5; }\n\
+             if SEVEN != 7u32 { return 6; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .env("CPLUS_E2E_OBJDIR", objs_dir.to_string_lossy().into_owned())
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(dir.join("target/debug/cdata")).status().expect("run");
+    assert_eq!(run.code(), Some(0), "each non-zero code names the step that read the wrong value");
+}
+
+/// The C runtime's own data: `environ` is a `char **` every Unix libc
+/// defines, read by value and indexed.
+#[test]
+#[cfg(unix)]
+fn an_extern_static_reads_the_c_runtimes_environ() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "extern static environ: **u8;\n\
+         fn main() -> i32 {\n\
+             let e: **u8 = environ;\n\
+             if e.is_null() { return 1; }\n\
+             let first: *u8 = e[0];\n\
+             if first.is_null() { return 2; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("t");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).env("CPLUS_E2E_PROBE", "1").status().expect("run");
+    assert_eq!(run.code(), Some(0));
+}
+
+/// Like an `extern fn`, an `extern static` is private to its declaring
+/// module: only the linker symbol is global. E0403 says which fix applies.
+#[test]
+fn an_extern_static_is_private_to_its_module_e0403() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"priv\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/sys.cplus"),
+        "extern static c_counter: i32;\nfn read_counter() -> i32 { return c_counter; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./sys\" as sys;\nfn main() -> i32 { return sys::c_counter; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0403"), "{stderr}");
+    assert!(stderr.contains("an `extern static` is private to its declaring module"), "{stderr}");
+}
+
+/// In a library the declaration stays a declaration: the archive refers to
+/// the symbol and never defines it, whatever the linkage rule gives the
+/// package's own statics.
+#[test]
+#[cfg(not(windows))]
+fn an_extern_static_in_a_library_is_not_defined_by_the_archive() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"needs_counter\"\n\n[library]\nentry = \"src/lib.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "extern static c_counter: i32;\n\
+         static OWN: i32 = 3;\n\
+         export extern fn counter_now() -> i32 { return c_counter + OWN; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let archive = dir.join("target/debug/libneeds_counter.a");
+    assert!(archive.is_file(), "archive at {}", archive.display());
+    let globals = defined_globals(nm_prog(), &archive);
+    assert!(
+        !globals.iter().any(|g| g.ends_with("c_counter")),
+        "the archive must not define the C data it declares: {globals:?}"
+    );
+    assert!(globals.iter().any(|g| g.ends_with("counter_now")), "{globals:?}");
+}
+
 #[test]
 fn dep_link_expands_env_var_in_extra_objects_end_to_end() {
     // v0.0.20: a `[link]` path may reference `${VAR}` so a vendor binding can

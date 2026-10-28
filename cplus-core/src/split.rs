@@ -925,6 +925,32 @@ entry:
         assert!(!piece(&s, "pkg.src.a").contains("@some_c_global ="), "once only");
     }
 
+    /// An `extern static` declares `@sym = external global T`: a retained
+    /// global with no module in its name, homed in the residual and copied
+    /// into every piece that reads it — a declaration may appear in any
+    /// number of objects.
+    #[test]
+    fn an_external_global_declaration_is_copied_into_every_piece_that_reads_it() {
+        let ir = "\
+@environ = external global ptr
+; cpc-home: pkg.src.a
+define weak_odr ptr @pkg.src.a.first() {
+entry:
+  %p = load ptr, ptr @environ
+  ret ptr %p
+}
+; cpc-home: pkg.src.b
+define weak_odr i32 @pkg.src.b.unrelated() {
+entry:
+  ret i32 0
+}
+";
+        let s = split_by_home(ir, "pkg");
+        let a = piece(&s, "pkg.src.a");
+        assert!(a.contains("@environ = external global ptr"), "{a}");
+        assert!(!piece(&s, "pkg.src.b").contains("@environ"), "b never reads it");
+    }
+
     #[test]
     fn an_internal_mutable_global_in_two_pieces_is_reported() {
         let ir = "\

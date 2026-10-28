@@ -112,6 +112,10 @@ struct ModuleMetadata {
     /// path. Pre-pass emission ensures the global exists before any
     /// function body references it.
     statics: RefCell<HashMap<String, Ty>>,
+    /// The `extern static`s among them: qualified C+ name → the linker symbol
+    /// the external global was declared under. A static absent here is
+    /// reached through its own qualified name.
+    static_symbols: RefCell<HashMap<String, String>>,
     /// v0.0.10 Phase 4A: per-selector cached-pointer globals. Populated
     /// by `emit_selector_globals` from sema's `MonoInfo::selectors`. Maps
     /// selector name → `(data_global, cached_global, byte_len)`. gen_intrinsic
@@ -6474,7 +6478,11 @@ fn collect_address_taken_fns(
             // call through that slot would then use the C convention against
             // a fastcc definition. That is a miscompile, not a link error,
             // which is why this arm exists before the feature it serves.
-            ItemKind::Static(st) => visit_expr(&st.value, sigs, types, &mut taken),
+            ItemKind::Static(st) => {
+                if let Some(value) = &st.value {
+                    visit_expr(value, sigs, types, &mut taken);
+                }
+            }
             ItemKind::Const(c) => visit_expr(&c.value, sigs, types, &mut taken),
             _ => {}
         }
@@ -6739,6 +6747,9 @@ fn emit_statics(
             "internal "
         }
     };
+    // The C symbols `extern static`s declare, so two declarations of one
+    // symbol (two modules each naming `environ`) are one `external global`.
+    let mut declared_externs: HashSet<String> = HashSet::new();
     for (qname, info) in statics_map {
         // Statics-id-drift fix: prefer the AST-derived type (codegen's id
         // universe) over sema's `info.ty` (sema's id universe) — the two
@@ -6748,13 +6759,28 @@ fn emit_statics(
             Some(t) if !matches!(t, Ty::Error) => t,
             _ => &info.ty,
         };
+        // An `extern static`: storage another object defines. A declaration
+        // — no linkage keyword, no initializer — under the linker symbol, and
+        // every read, write and `#addr_of` of the C+ name goes through it.
+        if let Some(symbol) = &info.symbol {
+            md.statics.borrow_mut().insert(qname.clone(), sty.clone());
+            md.static_symbols.borrow_mut().insert(qname.clone(), symbol.clone());
+            if declared_externs.insert(symbol.clone()) {
+                out.push_str(&format!("@{symbol} = external global {}\n", llvm_ty(sty, types)));
+            }
+            continue;
+        }
+        let init = info
+            .init
+            .as_ref()
+            .expect("a static that is not extern has an initializer (sema)");
         // v0.0.9 follow-up: `str`-typed statics need a paired data
         // global. Emit `@<name>.bytes = constant [N x i8] c"..."` for
         // the payload and `@<name> = {constant|global} { ptr, i64 } { ptr @<name>.bytes, i64 N }`
         // for the fat-pointer header. Reads through gen_expr's Ident
         // path then load `{ptr, i64}` from `@<name>` as any str does.
         if matches!(sty, Ty::Str) {
-            if let ExprKind::StrLit(s) = &info.init.kind {
+            if let ExprKind::StrLit(s) = &init.kind {
                 let bytes_sym = format!("{qname}.bytes");
                 let bytes_len = emit_cstr(out, &bytes_sym, s);
                 let str_len = bytes_len.saturating_sub(1); // emit_cstr adds NUL terminator
@@ -6768,7 +6794,7 @@ fn emit_statics(
             }
         }
         let lltype = llvm_ty(sty, types);
-        let llvalue = match render_static_literal(&info.init, sty, types, sigs) {
+        let llvalue = match render_static_literal(init, sty, types, sigs) {
             Some(s) => s,
             None => {
                 // Defense-in-depth: lower + sema should have rejected
@@ -13430,8 +13456,9 @@ impl<'a> FnState<'a> {
                 // here either.
                 let static_ty: Option<Ty> = self.md.statics.borrow().get(name).cloned();
                 if let Some(ty) = static_ty {
+                    let symbol = self.static_symbol(name);
                     let v = self.next_tmp();
-                    self.gen_load(&v, &ty, &format!("@{name}"));
+                    self.gen_load(&v, &ty, &format!("@{symbol}"));
                     return Some((v, ty));
                 }
                 let (slot, ty) = self.lookup(name).expect("sema validated").clone();
@@ -14709,6 +14736,17 @@ impl<'a> FnState<'a> {
         self.gen_place(a)
     }
 
+    /// The LLVM symbol a static is reached through: its qualified name, or
+    /// for an `extern static` the linker symbol it declared.
+    fn static_symbol(&self, name: &str) -> String {
+        self.md
+            .static_symbols
+            .borrow()
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+
     fn gen_place(&mut self, e: &Expr) -> (String, Ty) {
         // See through a trivial `{ place }` wrapper (raw-pointer reads are
         // written `{ *p }` / `{ (*p).f }`). Without this the block falls to the
@@ -14725,7 +14763,7 @@ impl<'a> FnState<'a> {
                 // permitted write.
                 let static_ty: Option<Ty> = self.md.statics.borrow().get(name).cloned();
                 if let Some(ty) = static_ty {
-                    return (format!("@{name}"), ty);
+                    return (format!("@{}", self.static_symbol(name)), ty);
                 }
                 let (slot, ty) = self.lookup(name).expect("sema validated").clone();
                 (slot, ty)
@@ -29975,6 +30013,29 @@ fn main() -> i32 {\n\
                 .contains("@X = global i8 1"),
             "expected scalar i8 global; IR:\n{ir}"
         );
+    }
+
+    /// An `extern static` is `@symbol = external global T`, declared once per
+    /// symbol, and every read, write and `#addr_of` of the C+ name goes
+    /// through the symbol — the C+ name is never a symbol of its own.
+    #[test]
+    fn an_extern_static_is_an_external_global_reached_through_its_symbol() {
+        let ir = gen_src_mono(
+            "#[link_name = \"c_seven\"] extern static SEVEN: u32;\n\
+             #[link_name = \"c_seven\"] extern static SEVEN_AGAIN: u32;\n\
+             extern static c_counter: i32;\n\
+             fn main() -> i32 {\n\
+                 c_counter = c_counter + (SEVEN as i32) + (SEVEN_AGAIN as i32);\n\
+                 let p: *i32 = #addr_of(c_counter);\n\
+                 return *p;\n\
+             }",
+        );
+        assert_eq!(ir.matches("@c_seven = external global i32\n").count(), 1, "{ir}");
+        assert!(ir.contains("@c_counter = external global i32\n"), "{ir}");
+        assert!(!ir.contains("@SEVEN"), "the C+ name is not a symbol:\n{ir}");
+        assert!(ir.contains("load i32, ptr @c_seven"), "{ir}");
+        assert!(ir.contains(", ptr @c_counter"), "{ir}");
+        assert!(!ir.contains("@c_counter = global") && !ir.contains("@c_seven = global"), "{ir}");
     }
 
     #[test]

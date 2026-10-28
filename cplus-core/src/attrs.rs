@@ -42,6 +42,10 @@ const TARGET_LOOP_STMT: u16 = 0b0_0100_0000;
 /// (reports/bug-26). An attribute meant to be legal on interfaces adds this
 /// bit to its own registration, and a consumer alongside it.
 const TARGET_INTERFACE: u16 = 0b1_0000_0000;
+/// `extern static NAME: T;` — the one static that takes attributes, because
+/// `#[link_name]` means the same thing on it as on an `extern fn`. A plain
+/// `static` still takes none (the parser refuses them).
+const TARGET_EXTERN_STATIC: u16 = 0b0_1000_0000;
 
 enum ArgsSpec {
     /// `#[name]` — no args allowed.
@@ -207,7 +211,7 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
     AttrSpec {
         name: "link_name",
         args: ArgsSpec::ExactlyOneStr,
-        targets: TARGET_FN,
+        targets: TARGET_FN | TARGET_EXTERN_STATIC,
         allow_duplicate: false,
     },
     // issue-06 step 6: `#[runtime_abi]` — this declaration names a symbol the
@@ -473,6 +477,10 @@ pub fn check_multi(
             // Phase 11 polish: type aliases admit no attributes (the
             // parser rejects them at the source level too).
             ItemKind::TypeAlias(_) => {}
+            // An `extern static` takes `#[link_name]`, as an `extern fn` does.
+            ItemKind::Static(s) if s.is_extern => {
+                ctx.check_attrs(&s.attributes, TARGET_EXTERN_STATIC, "extern static");
+            }
             // v0.0.9 Phase 4: const/static admit no attributes in the
             // first cut. The parser rejects them at the surface; this
             // arm is a defense-in-depth no-op.
@@ -1284,6 +1292,16 @@ mod tests {
     fn repr_invalid_arg_e0355() {
         let diags = check_src("#[repr(Rust)] struct P { x: i32 }");
         assert_eq!(codes(&diags), vec!["E0355"]);
+    }
+
+    /// `#[link_name]` means the same on an `extern static` as on an `extern
+    /// fn`; every other attribute is as wrong there as on a function.
+    #[test]
+    fn link_name_on_an_extern_static_is_legal_and_other_attributes_are_e0356() {
+        let d = check_src("#[link_name = \"c_seven\"] extern static SEVEN: u32;");
+        assert!(d.is_empty(), "{d:?}");
+        let d = check_src("#[inline] extern static SEVEN: u32;");
+        assert!(d.iter().any(|x| x.code.0 == "E0356"), "{d:?}");
     }
 
     #[test]

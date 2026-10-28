@@ -251,7 +251,7 @@ impl std::fmt::Display for ResolveError {
                     PrivateKind::Const => "const",
                     PrivateKind::Static => "static",
                 };
-                let why = private_reason(name);
+                let why = private_reason(name, kind);
                 match kind {
                     PrivateKind::Method => write!(
                         f,
@@ -693,7 +693,7 @@ impl LoadFailure {
                     PrivateKind::Const => "const",
                     PrivateKind::Static => "static",
                 };
-                let why = private_reason(name);
+                let why = private_reason(name, kind);
                 let msg = match kind {
                     PrivateKind::Method => {
                         format!("{what} `{owner}::{name}` is private ({why})")
@@ -2003,9 +2003,13 @@ fn exported_name(name: &str) -> bool {
 /// C+ name is not, so no rename exports it — the fix is to declare the extern
 /// where it is used, or wrap it in a plain `fn`. Telling that reader to "drop
 /// the `_`" names a `_` that is not there.
-fn private_reason(name: &str) -> &'static str {
+fn private_reason(name: &str, kind: &PrivateKind) -> &'static str {
     if name.starts_with('_') {
         "its leading `_` marks it module-private; drop the `_` to export"
+    } else if matches!(kind, PrivateKind::Static) {
+        "an `extern static` is private to its declaring module — only the linker \
+         symbol is global, not the C+ name; declare it in this file too, or \
+         read it through a plain `fn` the module exports"
     } else {
         "an `extern fn` is private to its declaring module — only the linker \
          symbol is global, not the C+ name; declare it in this file too, or \
@@ -2139,7 +2143,9 @@ fn merge(
                 ItemKind::Static(s) => {
                     all.insert(s.name.name.clone());
                     kinds.insert(s.name.name.clone(), ItemKindTag::Static);
-                    if exported_name(&s.name.name) {
+                    // An `extern static` is module-private for the reason an
+                    // `extern fn` is: only the linker symbol is global.
+                    if !s.is_extern && exported_name(&s.name.name) {
                         pubs.insert(s.name.name.clone());
                     }
                 }
@@ -2709,7 +2715,9 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
             s.name.name = ctx.qualify_local(&s.name.name);
             rewrite_type(&mut s.ty, ctx)?;
             let mut scope: HashSet<String> = HashSet::new();
-            rewrite_expr(&mut s.value, ctx, &mut scope)?;
+            if let Some(value) = &mut s.value {
+                rewrite_expr(value, ctx, &mut scope)?;
+            }
             ItemKind::Static(s)
         }
         // v0.0.15: module-scope `#asm("...")` is raw assembly with no names or

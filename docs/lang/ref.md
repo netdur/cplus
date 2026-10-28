@@ -116,6 +116,7 @@ var z: i32 = 0;        // mutable local
 let w: i32; w = 12;    // late init: first write counts; every path must assign (E0345)
 const K: u64 = (1u64 << 40) - 1u64;   // module-scope VALUE: folded, typed, inlined, no address
 static N: i32 = 0;     // module-scope mutable global: addressable, C-facing; access is bare
+extern static environ: **u8;   // data another object defines: read, write, #addr_of like a static
 ```
 
 No `mut` exists. `const` initializers are constant expressions (may
@@ -424,7 +425,7 @@ value-level and compiles both arms. Full model:
 | `#[repr(C)]` · `#[repr(C, packed)]` · `#[repr(C, packed = N)]` | struct/union | C layout · no padding · `#pragma pack(N)` |
 | `#[repr(u8…i64, C)]` | enum | pinned discriminant width (payload-free) |
 | `#[bits(N)]` | integer field | C bitfield inside `#[repr(C)]` |
-| `#[link_name = "sym"]` | extern fn | bind to a specific linker symbol |
+| `#[link_name = "sym"]` | extern fn, extern static | bind to a specific linker symbol |
 | `#[inline]` / `(always)` / `(never)` | fn | LLVM inline hints; `always` works at -O0 |
 | `#[no_alloc]` / `#[no_block]` / `#[max_stack(N)]` / `#[bounded_recursion]` | fn | real-time contracts, compiler-checked (E0901/E0906/E0907/E0908); project-wide via `[profile.realtime]` |
 | `#[unroll(N)]` / `#[vectorize_width(N)]` | loop | optimizer hints |

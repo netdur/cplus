@@ -905,6 +905,7 @@ The declaration is the marker; the call site stays bare.
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 extern fn fcntl(fd: i32, cmd: i32, ...) -> i32;   // VARARGS MUST BE DECLARED
+extern static environ: **u8;                      // C DATA: read, write, #addr_of like a static
 
 let p: *u8 = malloc(64);
 p[0] = 65;

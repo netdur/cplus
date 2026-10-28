@@ -60,6 +60,14 @@ compiler error report for IR that clang rejects.
   parsed garbage; a P-256 modular inverse received a wrong Montgomery
   constant). Functions compiled for `esp32-xtensa` keep no frame pointer
   now; every other target still carries `non-leaf`.
+- **`extern static` declares C data.** `extern static NAME: T;` is a
+  `static` whose storage another object defines — C's `extern T name;` —
+  read, written and addressed like any static, under the bare name or a
+  `#[link_name]`. Codegen declares it as an external global; the C+ name is
+  private to its declaring module, as an `extern fn`'s is. A `str`-typed one
+  is E0929. ESP-IDF's `WIFI_EVENT` and `g_wifi_osi_funcs`, `environ` and
+  framework constants no longer need the function-shaped workaround. `cpc
+  bindgen` emits one for every `extern T name;` a header declares.
 - **Diagnostics.** A missing method on a builtin type names that type
   (`no method foo on type u32`, not `str`), and the `stdlib/math` hint
   appears for every numeric width `math` declares. The E0312 hint for
