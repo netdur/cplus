@@ -306,11 +306,17 @@ supported yet, and importing any of
 
 ```
 thread  mutex  channel  env  net  netsys  reactor  executor  time  fs
+future  date  bundle  fs_sys  stdlib
 ```
 
-is **E0866** at resolve time rather than a failure deep in the IR. `async
+is **E0866** at resolve time rather than a failure deep in the IR (the
+second line is what stands on the first: `future` needs the reactor,
+`date` needs `time`, `bundle` needs `fs`, and the `stdlib` umbrella imports
+all of them). `async
 fn` on a 32-bit target is **E0867** — coroutine frames are a 64-bit
 feature today.
+A dependency prebuilt for such a target leaves those modules out of its
+slice: the archive holds exactly what the target can import.
 
 The iOS and Android targets exclude nothing: the whole stdlib is available
 there.

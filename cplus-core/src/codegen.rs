@@ -7792,7 +7792,11 @@ fn gen_function(
     // Slice 1E: record this fn's parameter types so the Return-statement
     // predicate can check musttail signature equality against the callee.
     state.enclosing_params = sig.params.iter().map(|ps| ps.ty.clone()).collect();
-    state.tail_call_eligible = true;
+    // Xtensa's backend has no tail-call lowering at all ("tail call is not
+    // implemented", a fatal in esp-clang on the first forwarder), so a
+    // `musttail` there is never legal. TCO is an optimization; the plain
+    // call is always correct.
+    state.tail_call_eligible = active_target().arch.supports_tail_calls();
     // v0.0.8 fix C: musttail requires caller and callee to share a cc.
     // Record the enclosing fn's cc decision so the Return-stmt predicate
     // can match it against the callee's cc.
@@ -13733,7 +13737,8 @@ impl<'a> FnState<'a> {
             let inner_lt = self.lty(&inner);
             let ptr = self.next_tmp();
             self.emit(&format!(
-                "{ptr} = getelementptr inbounds {inner_lt}, ptr {loaded_ptr}, i64 {idx_val}"
+                "{ptr} = getelementptr inbounds {inner_lt}, ptr {loaded_ptr}, {us} {idx_val}",
+                us = usize_llvm_ty()
             ));
             let v = self.next_tmp();
             self.gen_load(&v, &inner, &ptr);
@@ -13745,9 +13750,13 @@ impl<'a> FnState<'a> {
         let (idx_val, _) = self.gen_expr(index).expect("index has value");
         let llvm_arr = self.lty(&recv_ty);
         let llvm_elem = self.lty(&elem);
-        // Bounds check: `icmp uge i64 idx, N` → branch to trap.
+        // Bounds check: `icmp uge <usize> idx, N` → branch to trap. The index
+        // is a `usize` VALUE, so every operand that meets it is spelled at the
+        // target's pointer width — `i32` on the ESP32 targets, where a
+        // hard-coded `i64` made LLVM reject every array index
+        // (bugs/closed/indexing-an-array-on-a-32-bit-target-emits-i64-indices.md).
         let bound = self.next_tmp();
-        self.emit(&format!("{bound} = icmp uge i64 {idx_val}, {n}"));
+        self.emit(&format!("{bound} = icmp uge {us} {idx_val}, {n}", us = usize_llvm_ty()));
         let trap_lbl = self.next_block_label();
         let ok_lbl = self.next_block_label();
         self.emit_terminator(&format!(
@@ -13761,12 +13770,13 @@ impl<'a> FnState<'a> {
         // `llvm.assume`. -O2's ConstraintElimination uses this to drop
         // redundant checks on subsequent uses of `idx` against `n`.
         let in_bounds = self.next_tmp();
-        self.emit(&format!("{in_bounds} = icmp ult i64 {idx_val}, {n}"));
+        self.emit(&format!("{in_bounds} = icmp ult {us} {idx_val}, {n}", us = usize_llvm_ty()));
         self.emit(&format!("call void @llvm.assume(i1 {in_bounds})"));
         // GEP and load.
         let ptr = self.next_tmp();
         self.emit(&format!(
-            "{ptr} = getelementptr inbounds {llvm_arr}, ptr {recv_ptr}, i64 0, i64 {idx_val}"
+            "{ptr} = getelementptr inbounds {llvm_arr}, ptr {recv_ptr}, i64 0, {us} {idx_val}",
+            us = usize_llvm_ty()
         ));
         let v = self.next_tmp();
         // v0.0.7 Slice 1.2: array element load — element type's TBAA leaf.
@@ -14079,7 +14089,7 @@ impl<'a> FnState<'a> {
             // Publish the proven non-negative invariant via `llvm.assume`
             // (`!range` is illegal on `extractvalue`).
             let nn = self.next_tmp();
-            self.emit(&format!("{nn} = icmp sge i64 {r}, 0"));
+            self.emit(&format!("{nn} = icmp sge {us} {r}, 0"));
             self.emit(&format!("call void @llvm.assume(i1 {nn})"));
             return Some((r, Ty::Usize));
         }
@@ -14755,7 +14765,8 @@ impl<'a> FnState<'a> {
                     let inner_lt = self.lty(&inner);
                     let ptr = self.next_tmp();
                     self.emit(&format!(
-                        "{ptr} = getelementptr inbounds {inner_lt}, ptr {loaded_ptr}, i64 {idx_val}"
+                        "{ptr} = getelementptr inbounds {inner_lt}, ptr {loaded_ptr}, {us} {idx_val}",
+                us = usize_llvm_ty()
                     ));
                     return (ptr, inner);
                 }
@@ -14766,7 +14777,7 @@ impl<'a> FnState<'a> {
                 let llvm_arr = self.lty(&recv_ty);
                 // Bounds check.
                 let bound = self.next_tmp();
-                self.emit(&format!("{bound} = icmp uge i64 {idx_val}, {n}"));
+                self.emit(&format!("{bound} = icmp uge {us} {idx_val}, {n}", us = usize_llvm_ty()));
                 let trap_lbl = self.next_block_label();
                 let ok_lbl = self.next_block_label();
                 self.emit_terminator(&format!(
@@ -14778,10 +14789,13 @@ impl<'a> FnState<'a> {
                 self.open_block(&ok_lbl);
                 // Slice 1B: publish post-check fact `idx < N` via assume.
                 let in_bounds = self.next_tmp();
-                self.emit(&format!("{in_bounds} = icmp ult i64 {idx_val}, {n}"));
+                self.emit(&format!("{in_bounds} = icmp ult {us} {idx_val}, {n}", us = usize_llvm_ty()));
                 self.emit(&format!("call void @llvm.assume(i1 {in_bounds})"));
                 let ptr = self.next_tmp();
-                self.emit(&format!("{ptr} = getelementptr inbounds {llvm_arr}, ptr {recv_slot}, i64 0, i64 {idx_val}"));
+                self.emit(&format!(
+                    "{ptr} = getelementptr inbounds {llvm_arr}, ptr {recv_slot}, i64 0, {us} {idx_val}",
+                    us = usize_llvm_ty()
+                ));
                 (ptr, (*elem).clone())
             }
             // Slice 10.FFI.2: `*p` as an assignment target. `gen_place`
@@ -15122,7 +15136,7 @@ impl<'a> FnState<'a> {
                     self.emit(&format!("{rp} = extractvalue {{ ptr, {us} }} {r}, 0"));
                     self.emit(&format!("{rl} = extractvalue {{ ptr, {us} }} {r}, 1"));
                     let len_eq = self.next_tmp();
-                    self.emit(&format!("{len_eq} = icmp eq i64 {ll}, {rl}"));
+                    self.emit(&format!("{len_eq} = icmp eq {us} {ll}, {rl}"));
                     let cmp_lbl = self.next_block_label();
                     let unequal_lbl = self.next_block_label();
                     let merge_lbl = self.next_block_label();
@@ -19707,9 +19721,9 @@ impl<'a> FnState<'a> {
                     match &t {
                         Ty::String => {
                             let pp = self.next_tmp();
-                            self.emit(&format!("{pp} = extractvalue {{ ptr, i64, i64 }} {v}, 0"));
+                            self.emit(&format!("{pp} = extractvalue {{ ptr, {us}, {us} }} {v}, 0"));
                             let lp = self.next_tmp();
-                            self.emit(&format!("{lp} = extractvalue {{ ptr, i64, i64 }} {v}, 1"));
+                            self.emit(&format!("{lp} = extractvalue {{ ptr, {us}, {us} }} {v}, 1"));
                             pieces.push((pp, lp));
                         }
                         Ty::Str => {
@@ -20153,7 +20167,10 @@ impl<'a> FnState<'a> {
                     let (sv, is_temp, agg) = if is_text_part {
                         (v, owned_call_part, self.lty(&t))
                     } else {
-                        let s = "{ ptr, i64, i64 }".to_string();
+                        // `Text` is `{ ptr, usize, usize }`: `i32` halves on a
+                        // 32-bit target, where a literal `i64` here made the
+                        // Xtensa stdlib prebuild reject `path`'s interpolation.
+                        let s = format!("{{ ptr, {u}, {u} }}", u = usize_llvm_ty());
                         match t {
                             Ty::String => (v, false, s),
                             Ty::Str => (self.gen_to_string_str(&v).0, true, s),
@@ -20663,12 +20680,15 @@ impl<'a> FnState<'a> {
         // Inline FNV-1a byte loop. Allocate stack slots for the running
         // hash + counter so we can re-load through the loop.
         let h_slot = self.alloca_anon(Ty::U64);
-        let i_slot = self.alloca_anon(Ty::I64);
+        // The counter is a `usize`, like the length it runs to: on a 32-bit
+        // target both are `i32`, and an `i64` counter against an `i32` length
+        // was rejected IR (the array-index report's sibling).
+        let i_slot = self.alloca_anon(Ty::Usize);
         // v0.0.7 Slice 1.2: FNV-1a hash inner loop — all primitive
         // loads/stores get their TBAA leaf, lighting up LLVM's alias
         // analysis on the inner-loop hot path.
         self.gen_store(&Ty::U64, "-3750763034362895579", &h_slot);
-        self.gen_store(&Ty::I64, "0", &i_slot);
+        self.gen_store(&Ty::Usize, "0", &i_slot);
         let loop_bb = self.next_block_label();
         let body_bb = self.next_block_label();
         let done_bb = self.next_block_label();
@@ -20676,15 +20696,15 @@ impl<'a> FnState<'a> {
         self.body.push_str(&format!("{loop_bb}:\n"));
         self.terminated = false;
         let i_cur = self.next_tmp();
-        self.gen_load(&i_cur, &Ty::I64, &i_slot);
+        self.gen_load(&i_cur, &Ty::Usize, &i_slot);
         let cmp = self.next_tmp();
-        self.emit(&format!("{cmp} = icmp slt i64 {i_cur}, {n}"));
+        self.emit(&format!("{cmp} = icmp ult {us} {i_cur}, {n}"));
         self.emit_terminator(&format!("br i1 {cmp}, label %{body_bb}, label %{done_bb}"));
         self.body.push_str(&format!("{body_bb}:\n"));
         self.terminated = false;
         let byte_p = self.next_tmp();
         self.emit(&format!(
-            "{byte_p} = getelementptr inbounds i8, ptr {p}, i64 {i_cur}"
+            "{byte_p} = getelementptr inbounds i8, ptr {p}, {us} {i_cur}"
         ));
         let byte = self.next_tmp();
         self.gen_load(&byte, &Ty::I8, &byte_p);
@@ -20698,8 +20718,8 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{mixed} = mul i64 {xored}, 1099511628211"));
         self.gen_store(&Ty::U64, &mixed, &h_slot);
         let i_next = self.next_tmp();
-        self.emit(&format!("{i_next} = add i64 {i_cur}, 1"));
-        self.gen_store(&Ty::I64, &i_next, &i_slot);
+        self.emit(&format!("{i_next} = add {us} {i_cur}, 1"));
+        self.gen_store(&Ty::Usize, &i_next, &i_slot);
         self.emit_terminator(&format!("br label %{loop_bb}"));
         self.body.push_str(&format!("{done_bb}:\n"));
         self.terminated = false;
@@ -20732,7 +20752,7 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{rp} = extractvalue {{ ptr, {us} }} {rv}, 0"));
         self.emit(&format!("{rl} = extractvalue {{ ptr, {us} }} {rv}, 1"));
         let len_eq = self.next_tmp();
-        self.emit(&format!("{len_eq} = icmp eq i64 {ll}, {rl}"));
+        self.emit(&format!("{len_eq} = icmp eq {us} {ll}, {rl}"));
         let cmp_lbl = self.next_block_label();
         let unequal_lbl = self.next_block_label();
         let merge_lbl = self.next_block_label();

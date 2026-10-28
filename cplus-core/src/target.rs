@@ -37,6 +37,16 @@ pub enum TargetArch {
     Wasm32,
 }
 
+impl TargetArch {
+    /// Whether the backend can lower a tail call at all. LLVM's Xtensa
+    /// backend (esp-clang) cannot — a `musttail` call site there is a fatal
+    /// "tail call is not implemented" — so codegen never marks one for it.
+    /// Every other backend here lowers `musttail` when the call qualifies.
+    pub fn supports_tail_calls(self) -> bool {
+        !matches!(self, TargetArch::Xtensa)
+    }
+}
+
 /// Operating system, as codegen's ABI classifier and the driver's link
 /// behavior see it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,10 +286,21 @@ pub const ESP32_XTENSA: TargetSpec = TargetSpec {
     min_os_default: None,
     // The POSIX half of stdlib: pthread-backed (thread/mutex/channel),
     // the kqueue/epoll reactor and its consumers (executor/time/net/
-    // netsys/fs), and the process environment. `vendor/espidf` covers
-    // the embedded equivalents (timer, task sleep, console).
+    // netsys/fs), the process environment, and what stands on them.
+    // `vendor/espidf` covers the embedded equivalents (timer, task sleep,
+    // console).
     unsupported_stdlib: &[
         "thread", "mutex", "channel", "env", "net", "netsys", "reactor", "executor", "time", "fs",
+        // ... and every stdlib module that reaches one of those through a
+        // relative import, because the resolver's gate sees only absolute
+        // `stdlib/<module>` imports: `future` (reactor, thread), `date`
+        // (time), `bundle` (fs), the `fs_sys` floor (netsys), and the
+        // `stdlib` umbrella (all of them). The list has to be CLOSED under
+        // stdlib's own imports — `target::tests::stdlib_exclusion_lists_are_closed_under_relative_imports`
+        // pins that — or a prebuild for the target compiles an excluded module
+        // anyway and fails on its first `async fn`
+        // (bugs/closed/prebuilding-stdlib-for-esp32-fails-on-the-async-time-module.md).
+        "future", "date", "bundle", "fs_sys", "stdlib",
     ],
 };
 
@@ -307,6 +328,16 @@ pub const ESP32C3_RISCV32: TargetSpec = TargetSpec {
     min_os_default: None,
     unsupported_stdlib: &[
         "thread", "mutex", "channel", "env", "net", "netsys", "reactor", "executor", "time", "fs",
+        // ... and every stdlib module that reaches one of those through a
+        // relative import, because the resolver's gate sees only absolute
+        // `stdlib/<module>` imports: `future` (reactor, thread), `date`
+        // (time), `bundle` (fs), the `fs_sys` floor (netsys), and the
+        // `stdlib` umbrella (all of them). The list has to be CLOSED under
+        // stdlib's own imports — `target::tests::stdlib_exclusion_lists_are_closed_under_relative_imports`
+        // pins that — or a prebuild for the target compiles an excluded module
+        // anyway and fails on its first `async fn`
+        // (bugs/closed/prebuilding-stdlib-for-esp32-fails-on-the-async-time-module.md).
+        "future", "date", "bundle", "fs_sys", "stdlib",
     ],
 };
 
@@ -340,6 +371,16 @@ pub const WASM32: TargetSpec = TargetSpec {
     // virtual-FS stdlib lands.
     unsupported_stdlib: &[
         "thread", "mutex", "channel", "env", "net", "netsys", "reactor", "executor", "time", "fs",
+        // ... and every stdlib module that reaches one of those through a
+        // relative import, because the resolver's gate sees only absolute
+        // `stdlib/<module>` imports: `future` (reactor, thread), `date`
+        // (time), `bundle` (fs), the `fs_sys` floor (netsys), and the
+        // `stdlib` umbrella (all of them). The list has to be CLOSED under
+        // stdlib's own imports — `target::tests::stdlib_exclusion_lists_are_closed_under_relative_imports`
+        // pins that — or a prebuild for the target compiles an excluded module
+        // anyway and fails on its first `async fn`
+        // (bugs/closed/prebuilding-stdlib-for-esp32-fails-on-the-async-time-module.md).
+        "future", "date", "bundle", "fs_sys", "stdlib",
     ],
 };
 
@@ -742,6 +783,73 @@ mod tests {
         for spec in SUPPORTED {
             let hit = TargetSpec::from_name(spec.name);
             assert_eq!(hit, Some(*spec), "from_name should resolve `{}`", spec.name);
+        }
+    }
+
+    /// A target's `unsupported_stdlib` list must be CLOSED under stdlib's own
+    /// relative imports: the resolver gates only absolute `stdlib/<module>`
+    /// imports, so a module outside the list that imports `./executor` pulls
+    /// an excluded module into any build that reaches it — and a prebuild
+    /// reaches every module. Reads the real stdlib so the list cannot drift
+    /// from the tree. Platform variants (`fs_sys_linux`) count as their base.
+    /// bugs/closed/prebuilding-stdlib-for-esp32-fails-on-the-async-time-module.md
+    #[test]
+    fn stdlib_exclusion_lists_are_closed_under_relative_imports() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../vendor/stdlib/src");
+        let Ok(entries) = std::fs::read_dir(&src) else {
+            eprintln!("skipping: no vendor/stdlib beside this crate");
+            return;
+        };
+        let stems: Vec<String> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cplus"))
+            .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .collect();
+        let base_of = |stem: &str| -> String {
+            for suffix in ["_linux", "_windows", "_macos", "_android", "_ios", "_esp32", "_wasm"] {
+                if let Some(b) = stem.strip_suffix(suffix) {
+                    if stems.iter().any(|s| s == b) {
+                        return b.to_string();
+                    }
+                }
+            }
+            stem.to_string()
+        };
+        let mut imports: Vec<(String, Vec<String>)> = Vec::new();
+        for stem in &stems {
+            let text = std::fs::read_to_string(src.join(format!("{stem}.cplus"))).unwrap();
+            let targets: Vec<String> = text
+                .lines()
+                .filter_map(|l| {
+                    let l = l.trim_start();
+                    let rest = l.strip_prefix("import \"./")?;
+                    let end = rest.find('"')?;
+                    Some(base_of(&rest[..end]))
+                })
+                .collect();
+            imports.push((base_of(stem), targets));
+        }
+        for spec in SUPPORTED.iter().chain(std::iter::once(&WASM32)) {
+            if spec.unsupported_stdlib.is_empty() {
+                continue;
+            }
+            let listed = |m: &str| spec.unsupported_stdlib.contains(&m);
+            let mut leaks: Vec<String> = imports
+                .iter()
+                .filter(|(m, deps)| !listed(m) && m != "test_main" && deps.iter().any(|d| listed(d)))
+                .map(|(m, deps)| {
+                    let via: Vec<&String> = deps.iter().filter(|d| listed(d)).collect();
+                    format!("{m} -> {via:?}")
+                })
+                .collect();
+            leaks.sort();
+            leaks.dedup();
+            assert!(
+                leaks.is_empty(),
+                "`{}`: these stdlib modules reach an excluded module and must be excluded too:\n  {}",
+                spec.name,
+                leaks.join("\n  ")
+            );
         }
     }
 

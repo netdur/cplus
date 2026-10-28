@@ -23396,6 +23396,155 @@ fn target_esp32_async_fn_fires_e0867() {
     );
 }
 
+/// Every array and raw-pointer index operand is spelled at the target's
+/// pointer width: `usize` is `i32` on the ESP32 targets, and a hard-coded
+/// `i64` against it made LLVM reject every module that indexed an array
+/// ("'%t8' defined with type 'i32' but expected 'i64'"). The `str` hash loop
+/// had the same counter-against-length mismatch. Pure cpc for the IR; the
+/// object is emitted when esp-clang is installed, which is where the report
+/// failed. bugs/closed/indexing-an-array-on-a-32-bit-target-emits-i64-indices.md
+#[test]
+fn target_esp32_array_and_pointer_indexing_is_pointer_width_clean() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "export extern fn app_main() -> u32 {\n\
+             var w: [u32; 4] = [1u32, 2u32, 3u32, 4u32];\n\
+             let k: usize = 2usize;\n\
+             w[k] = 7u32;\n\
+             let r: u32 = w[k];\n\
+             let p: *u32 = #addr_of(w[0]);\n\
+             let q: u32 = p[k];\n\
+             let s: str = \"abc\";\n\
+             let h: u64 = s.hash();\n\
+             return r + q + (h as u32);\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "esp32 IR emission failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(ir.contains("icmp uge i32"), "the bounds check compares at i32: {ir}");
+    assert!(ir.contains("i64 0, i32 %"), "the array GEP indexes at i32: {ir}");
+    assert!(
+        ir.contains("getelementptr inbounds i32, ptr %") && ir.contains(", i32 %"),
+        "the raw-pointer GEP indexes at i32: {ir}"
+    );
+    for stale in ["icmp uge i64", "icmp ult i64", "icmp slt i64"] {
+        assert!(!ir.contains(stale), "no 64-bit index operand may remain in 32-bit IR ({stale}): {ir}");
+    }
+    if esp_clang_for_test().is_some() {
+        let obj = dir.join("t_esp32.o");
+        let out = Command::new(cpc)
+            .arg("--target")
+            .arg("esp32-xtensa")
+            .arg("--emit-obj")
+            .arg(&src)
+            .arg("-o")
+            .arg(&obj)
+            .output()
+            .expect("invoke cpc");
+        assert!(
+            out.status.success(),
+            "esp-clang must accept the indexing IR: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(obj.is_file());
+    } else {
+        eprintln!("esp-clang not installed: IR checked, object emission skipped");
+    }
+    // The host keeps its 64-bit shapes.
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success());
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(ir.contains("icmp uge i64"), "host bounds check stays i64: {ir}");
+}
+
+/// A dependency prebuilt for a target that lacks part of the stdlib leaves
+/// those modules out of its slice. Compiling them anyway failed the prebuild
+/// on the first `async fn` in `executor`/`time`, so no project that depended
+/// on stdlib could build for the ESP32 from the vendor tree as installed.
+/// Needs esp-clang: the slice is compiled with it.
+/// bugs/closed/prebuilding-stdlib-for-esp32-fails-on-the-async-time-module.md
+#[test]
+fn target_esp32_prebuilds_stdlib_without_its_excluded_modules() {
+    if esp_clang_for_test().is_none() {
+        eprintln!("skipping: esp-clang not installed");
+        return;
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    // The real stdlib, copied so the slice lands in the temp tree and not in
+    // the repository's vendor directory.
+    let repo_stdlib = Path::new(env!("CARGO_MANIFEST_DIR")).join("../vendor/stdlib");
+    let stdlib = dir.join("vendor/stdlib");
+    copy_tree_for_test(&repo_stdlib.join("src"), &stdlib.join("src"));
+    std::fs::copy(repo_stdlib.join("Cplus.toml"), stdlib.join("Cplus.toml")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"blink\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n\
+         [dependencies]\nstdlib = \"*\"\n\n[esp32]\nentry = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/str\" as _;\n\
+         export extern fn app_main() -> i32 { let s: str = \"hi\"; return s.count() as i32; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "an esp32 build that prebuilds stdlib must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdlib.join("lib/xtensa-esp32-elf/libstdlib.a").is_file(),
+        "the stdlib slice for the target is written"
+    );
+    let entry = std::fs::read_to_string(stdlib.join("target/cpc-prebuild-stdlib.cplus"))
+        .expect("the synthesized prebuild entry");
+    for excluded in ["time", "executor", "reactor", "thread", "fs", "net"] {
+        assert!(
+            !entry.contains(&format!("/{excluded}\"")),
+            "`{excluded}` is excluded on esp32 and must not be in the slice's entry:\n{entry}"
+        );
+    }
+    assert!(entry.contains("/str\""), "the modules the target supports are in:\n{entry}");
+}
+
+fn copy_tree_for_test(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree_for_test(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
 /// v0.0.22: esp32c3-riscv32 — the mainline-LLVM 32-bit comparison point.
 /// Pure-cpc IR assertions everywhere; object emission when esp-clang is
 /// installed (EM_RISCV = 243).

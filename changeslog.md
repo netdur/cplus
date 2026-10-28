@@ -44,6 +44,13 @@ compiler error report for IR that clang rejects.
   perform tail call elimination on a call site marked musttail") in debug
   and release. The tail call is a plain call when the two sides' return
   extension attributes differ.
+- **32-bit targets.** Every array and raw-pointer index operand, the `str`
+  hash loop's counter, both `str == str` length compares, `slice_len`'s
+  non-negative assumption and the `Text` triple in interpolation are
+  spelled at the target's pointer width, so a program that indexes an
+  array compiles for the ESP32 (it was rejected by esp-clang with
+  "defined with type 'i32' but expected 'i64'"). Xtensa's backend has no
+  tail-call lowering, so codegen never emits `musttail` for it.
 - **Diagnostics.** A missing method on a builtin type names that type
   (`no method foo on type u32`, not `str`), and the `stdlib/math` hint
   appears for every numeric width `math` declares. The E0312 hint for
@@ -74,6 +81,13 @@ compiler error report for IR that clang rejects.
   and before the sibling directory and the store. A missing entry is E0416
   at the manifest; E0854 now lists every directory it searched. The sibling
   fallback is documented for the first time.
+- **Prebuilding for a target that lacks part of the stdlib.** The stdlib
+  slice for an ESP32 target leaves out the modules the target excludes, so
+  a project that depends on `stdlib` or `espidf` builds for `esp32-xtensa`
+  from the vendor tree as installed (the prebuild used to fail on the first
+  `async fn` in `executor`). The exclusion list now also names what stands
+  on the excluded modules — `future`, `date`, `bundle`, `fs_sys`, the
+  `stdlib` umbrella — and importing those on an ESP32 target is E0866.
 - **Internal compiler errors.** When clang rejects the IR cpc generated, cpc
   says so and that it is a cpc bug, not the user's code, and keeps the IR at
   `<out>.rejected.ll`. A link failure keeps its plain message.
