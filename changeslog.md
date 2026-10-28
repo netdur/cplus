@@ -51,6 +51,15 @@ compiler error report for IR that clang rejects.
   array compiles for the ESP32 (it was rejected by esp-clang with
   "defined with type 'i32' but expected 'i64'"). Xtensa's backend has no
   tail-call lowering, so codegen never emits `musttail` for it.
+- **ESP32: the sixth argument of a non-leaf function survives.** In the
+  Xtensa windowed ABI the frame-pointer register `a7` is also the sixth
+  argument register, and the `"frame-pointer"="non-leaf"` every function
+  carried made esp-clang claim `a7` one instruction before its rescue copy
+  of the argument: every non-leaf function with six or more parameters read
+  a stack address for its sixth (a seven-argument `open(..., license, len)`
+  parsed garbage; a P-256 modular inverse received a wrong Montgomery
+  constant). Functions compiled for `esp32-xtensa` keep no frame pointer
+  now; every other target still carries `non-leaf`.
 - **Diagnostics.** A missing method on a builtin type names that type
   (`no method foo on type u32`, not `str`), and the `stdlib/math` hint
   appears for every numeric width `math` declares. The E0312 hint for

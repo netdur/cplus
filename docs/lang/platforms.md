@@ -318,6 +318,15 @@ feature today.
 A dependency prebuilt for such a target leaves those modules out of its
 slice: the archive holds exactly what the target can import.
 
+Functions compiled for `esp32-xtensa` keep no frame pointer. In the
+windowed ABI the frame-pointer register, `a7`, is also the sixth argument
+register, and asking esp-clang for a frame pointer in non-leaf functions
+only made it claim `a7` before it had saved the argument: every non-leaf
+function with six or more parameters received a stack address for its
+sixth. `a7` stays an argument register, as it does in esp-clang's own
+optimized C. The Xtensa backend lowers no tail calls either, so a call
+that is a tail call elsewhere is a plain call there.
+
 The iOS and Android targets exclude nothing: the whole stdlib is available
 there.
 

@@ -45,6 +45,26 @@ impl TargetArch {
     pub fn supports_tail_calls(self) -> bool {
         !matches!(self, TargetArch::Xtensa)
     }
+
+    /// The `"frame-pointer"` attribute every `define` carries: `non-leaf`
+    /// wherever the frame pointer is a dedicated register, `none` on Xtensa.
+    ///
+    /// In the Xtensa windowed ABI the frame-pointer register, `a7`, is also
+    /// the SIXTH ARGUMENT register. esp-clang's backend rescues that argument
+    /// before claiming `a7` only when the frame pointer is settled while the
+    /// arguments are lowered (`all`); with `non-leaf` it decides after, and
+    /// the rescue copy lands one instruction AFTER `mov a7, a1` — every
+    /// non-leaf function with six or more parameters read a stack address
+    /// for its sixth (measured on an ESP32-D0WDQ6: `leaf 66`, `non-leaf
+    /// 1073444912`). No frame pointer, no claim: `a7` stays an argument
+    /// register, which is also what esp-clang's own optimized C does.
+    pub fn frame_pointer_attr(self) -> &'static str {
+        if matches!(self, TargetArch::Xtensa) {
+            "none"
+        } else {
+            "non-leaf"
+        }
+    }
 }
 
 /// Operating system, as codegen's ABI classifier and the driver's link
@@ -784,6 +804,19 @@ mod tests {
             let hit = TargetSpec::from_name(spec.name);
             assert_eq!(hit, Some(*spec), "from_name should resolve `{}`", spec.name);
         }
+    }
+
+    /// The frame-pointer register is an argument register only on Xtensa
+    /// (`a7` carries the sixth argument), so only Xtensa keeps none.
+    /// bugs/closed/esp32-the-sixth-argument-of-a-non-leaf-function-is-clobbered.md
+    #[test]
+    fn only_xtensa_keeps_no_frame_pointer() {
+        assert_eq!(TargetArch::Xtensa.frame_pointer_attr(), "none");
+        for arch in [TargetArch::Aarch64, TargetArch::X86_64, TargetArch::Riscv32, TargetArch::Wasm32] {
+            assert_eq!(arch.frame_pointer_attr(), "non-leaf", "{arch:?}");
+        }
+        assert_eq!(ESP32_XTENSA.arch.frame_pointer_attr(), "none");
+        assert_eq!(ESP32C3_RISCV32.arch.frame_pointer_attr(), "non-leaf");
     }
 
     /// A target's `unsupported_stdlib` list must be CLOSED under stdlib's own

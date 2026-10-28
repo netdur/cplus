@@ -1758,7 +1758,13 @@ fn thread_join_sym() -> &'static str {
 }
 
 fn fn_attrs_for(sanitizers: &[&str]) -> String {
-    let mut attrs: Vec<&str> = vec!["\"frame-pointer\"=\"non-leaf\""];
+    // `non-leaf` everywhere but Xtensa, where the frame-pointer register is
+    // the sixth argument register — see `TargetArch::frame_pointer_attr`.
+    let frame_pointer = format!(
+        "\"frame-pointer\"=\"{}\"",
+        active_target().arch.frame_pointer_attr()
+    );
+    let mut attrs: Vec<&str> = vec![frame_pointer.as_str()];
     attrs.extend(sanitizers.iter().filter_map(|s| match *s {
         "address" => Some("sanitize_address"),
         "thread" => Some("sanitize_thread"),

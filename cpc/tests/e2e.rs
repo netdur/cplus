@@ -23545,6 +23545,155 @@ fn copy_tree_for_test(from: &Path, to: &Path) {
     }
 }
 
+/// esp32: the sixth argument of a non-leaf function was clobbered. In the
+/// Xtensa windowed ABI the sixth argument arrives in `a7`, and `a7` is also
+/// the frame-pointer register. With `"frame-pointer"="non-leaf"` esp-clang's
+/// backend decides on the frame pointer after the arguments are lowered, so
+/// its rescue copy of `a7` lands one instruction AFTER `mov a7, a1` — every
+/// non-leaf function with six or more parameters read a stack address for
+/// its sixth. Codegen keeps no frame pointer on Xtensa; every other arch
+/// still carries `non-leaf` (their frame-pointer register is no argument
+/// register). Pure cpc — no esp-clang needed.
+#[test]
+fn target_esp32_xtensa_defines_carry_no_frame_pointer() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, SIXTH_ARGUMENT_SRC).unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let ir = String::from_utf8_lossy(&out.stdout);
+    let defines: Vec<&str> = ir.lines().filter(|l| l.starts_with("define ")).collect();
+    assert!(defines.len() >= 4, "the three functions and the preamble's: {ir}");
+    for d in &defines {
+        assert!(
+            d.contains("\"frame-pointer\"=\"none\""),
+            "on Xtensa every define keeps no frame pointer (a7 is the sixth argument):\n{d}"
+        );
+    }
+    assert!(!ir.contains("\"frame-pointer\"=\"non-leaf\""), "{ir}");
+
+    // RISC-V's frame pointer is s0, not an argument register: unchanged.
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32c3-riscv32")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(ir.contains("@nonleaf6(") && ir.contains("\"frame-pointer\"=\"non-leaf\""), "{ir}");
+    assert!(!ir.contains("\"frame-pointer\"=\"none\""), "{ir}");
+}
+
+/// The report's shape, with the sixth argument used after the call in three
+/// forms: summed, beside a seventh (stack) argument, and as a pointer. The
+/// callee is an unknown extern so no optimization level removes the call.
+const SIXTH_ARGUMENT_SRC: &str = "extern fn board_note(x: u32);\n\
+    export extern fn nonleaf6(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32) -> u32 {\n\
+        board_note(a); return a + b + c + d + e + f;\n\
+    }\n\
+    export extern fn nonleaf7(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32) -> u32 {\n\
+        board_note(a); return f * 1000u32 + g;\n\
+    }\n\
+    export extern fn sixth_ptr(a: u32, b: u32, c: u32, d: u32, e: u32, p: *u32) -> u32 {\n\
+        board_note(a); return *p;\n\
+    }\n";
+
+/// The same program through esp-clang, at both optimization levels cpc
+/// uses: in each function's assembly, `a7` must be read before any
+/// instruction writes it. The unfixed tree failed here with
+/// `mov.n a7, a1` as the first instruction after `entry`.
+#[test]
+fn target_esp32_sixth_argument_survives_a_non_leaf_prologue() {
+    let Some(esp_clang) = esp_clang_for_test() else {
+        eprintln!("skipping: esp-clang not installed");
+        return;
+    };
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, SIXTH_ARGUMENT_SRC).unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let ll = dir.join("t.ll");
+    std::fs::write(&ll, &out.stdout).unwrap();
+    for opt in ["-O0", "-O3"] {
+        let asm = dir.join(format!("t{opt}.s"));
+        let out = Command::new(&esp_clang)
+            .args(["-target", "xtensa-esp32-elf", opt, "-S"])
+            .arg(&ll)
+            .arg("-o")
+            .arg(&asm)
+            .output()
+            .expect("invoke esp-clang");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let asm = std::fs::read_to_string(&asm).unwrap();
+        for name in ["nonleaf6", "nonleaf7", "sixth_ptr"] {
+            let body = xtensa_fn_body(&asm, name);
+            assert_a7_read_before_written(&body, name, opt);
+        }
+    }
+}
+
+fn xtensa_fn_body(asm: &str, name: &str) -> Vec<String> {
+    let start = format!("{name}:");
+    asm.lines()
+        .skip_while(|l| !l.starts_with(&start))
+        .skip(1)
+        .take_while(|l| !l.starts_with(".Lfunc_end"))
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty() && !l.starts_with('.') && !l.starts_with('#') && !l.ends_with(':'))
+        .collect()
+}
+
+/// Walk one function's instructions. An Xtensa store (`s8i`, `s16i`,
+/// `s32i`, `s32i.n`, `s32e`, ...) names its SOURCE first; every other
+/// instruction names its destination first. The sixth argument lives in
+/// `a7` on entry, so a write to `a7` before any read of it is the clobber.
+fn assert_a7_read_before_written(body: &[String], name: &str, opt: &str) {
+    assert!(!body.is_empty(), "{name} at {opt}: no body");
+    let mut read = false;
+    for line in body {
+        let mut parts = line.split_whitespace();
+        let mnemonic = parts.next().unwrap_or("");
+        let rest: String = parts.collect::<Vec<_>>().join(" ");
+        let operands: Vec<&str> = rest.split(',').map(|o| o.trim()).filter(|o| !o.is_empty()).collect();
+        let is_store = mnemonic.len() > 1
+            && mnemonic.starts_with('s')
+            && mnemonic.as_bytes()[1].is_ascii_digit();
+        let (dest, sources): (Option<&str>, &[&str]) = if is_store || operands.is_empty() {
+            (None, &operands[..])
+        } else {
+            (Some(operands[0]), &operands[1..])
+        };
+        if sources.iter().any(|o| *o == "a7") {
+            read = true;
+        }
+        if dest == Some("a7") {
+            assert!(
+                read,
+                "{name} at {opt}: `{line}` overwrites a7 (the sixth argument) before it is read:\n{}",
+                body.join("\n")
+            );
+        }
+    }
+    assert!(read, "{name} at {opt}: the sixth argument is never read:\n{}", body.join("\n"));
+}
+
 /// v0.0.22: esp32c3-riscv32 — the mainline-LLVM 32-bit comparison point.
 /// Pure-cpc IR assertions everywhere; object emission when esp-clang is
 /// installed (EM_RISCV = 243).
