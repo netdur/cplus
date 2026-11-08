@@ -104,7 +104,7 @@ jobs:
           exit 0
 
       - name: Upload Windows binaries (workflow artifact)
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cplus-x86_64-pc-windows-msvc
           path: |
@@ -142,7 +142,7 @@ jobs:
           Compress-Archive -Force -DestinationPath cplus-x86_64-pc-windows-msvc.zip -Path `
             target\release\cpc.exe, target\release\cpc-lsp.exe, target\release\cpc-bindgen.exe
 
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-windows-x86_64
           path: cplus-x86_64-pc-windows-msvc.zip
