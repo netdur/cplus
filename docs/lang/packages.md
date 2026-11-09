@@ -198,7 +198,11 @@ extra-objects = ["shaders.o"]             # prebuilt .o appended to the link
 ```
 
 A *dependency's* `[link]` travels automatically: depending on `metal` is
-enough to get `-framework Metal`. The dep walk validates
+enough to get `-framework Metal`. `frameworks` reach Apple link lines only;
+on Android, Linux, Windows, ESP32 and wasm they are left out. `libs` are not
+filtered, so a library that exists on one platform only (`objc`) goes in
+that platform's table, `[macos.link]` / `[ios.link]`, which is merged over
+`[link]` when building for it. The dep walk validates
 manifest-versus-filesystem for bundled binaries (a declared file that is
 missing, or an undeclared one present, is an error — the manifest is truth).
 

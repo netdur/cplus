@@ -20556,6 +20556,113 @@ fn static_str_array_of_empty_strings() {
     assert!(run.success(), "empty-str static array must exit 0, got {run}");
 }
 
+/// A `str` static with content, at any depth of the initializer: array
+/// elements, a fill, a struct field. Each literal is a `{ ptr, usize }` header
+/// over a payload global of its own. Only the scalar `static S: str = "x"` had
+/// a payload; every nested literal rendered the "no constant form" marker and
+/// clang rejected the module (bugs/closed/a-static-array-of-str-has-no-constant-form.md).
+#[test]
+fn static_str_literals_nested_in_arrays_and_structs_run() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("static_str_nested.cplus");
+    let bin = dir.join("static_str_nested");
+    std::fs::write(
+        &src,
+        "struct Entry { key: str, n: i32 }\n\
+         static NAMES: [str; 3] = [\"zero\", \"one\", \"\\x1b[0m\"];\n\
+         static TWICE: [str; 2] = [\"ab\"; 2];\n\
+         static E: Entry = Entry { key: \"wide\", n: 7 };\n\
+         static TABLE: [Entry; 2] = [Entry { key: \"a\", n: 1 }, Entry { key: \"\", n: 2 }];\n\
+         fn main() -> i32 {\n\
+             if NAMES[0 as usize] != \"zero\" { return 1; }\n\
+             if NAMES[1 as usize] != \"one\" { return 2; }\n\
+             if #str_len(NAMES[2 as usize]) != (4 as usize) { return 3; }\n\
+             if TWICE[1 as usize] != \"ab\" { return 4; }\n\
+             if E.key != \"wide\" { return 5; }\n\
+             if E.n != 7 { return 6; }\n\
+             if TABLE[0 as usize].key != \"a\" { return 7; }\n\
+             if TABLE[1 as usize].key != \"\" { return 8; }\n\
+             NAMES[1 as usize] = \"replaced\";\n\
+             if NAMES[1 as usize] != \"replaced\" { return 9; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "nested str statics must compile: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run static_str_nested");
+    assert!(run.success(), "nested str statics must read back, got {run}");
+}
+
+/// A `str` header's length is a `usize`, so on a 32-bit target the constant
+/// is `i32`. The scalar `static S: str` path wrote `{ ptr, i32 } { ptr ..., i64 N }`,
+/// which esp-clang rejects; the nested path must not repeat it.
+#[test]
+fn static_str_header_length_is_pointer_width_on_32_bit() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "static GREETING: str = \"hi\";\n\
+         static NAMES: [str; 2] = [\"zero\", \"one\"];\n\
+         export extern fn app_main() -> u32 {\n\
+             return (#str_len(GREETING) + #str_len(NAMES[1 as usize])) as u32;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "esp32 IR emission failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("{ ptr, i32 } { ptr @GREETING.str.0, i32 2 }"),
+        "the scalar header's length is i32: {ir}"
+    );
+    assert!(
+        ir.contains("[2 x { ptr, i32 }] [{ ptr, i32 } { ptr @NAMES.str.0, i32 4 }, { ptr, i32 } { ptr @NAMES.str.1, i32 3 }]"),
+        "each element header's length is i32: {ir}"
+    );
+    if esp_clang_for_test().is_some() {
+        let obj = dir.join("t_esp32.o");
+        let out = Command::new(cpc)
+            .arg("--target")
+            .arg("esp32-xtensa")
+            .arg("--emit-obj")
+            .arg(&src)
+            .arg("-o")
+            .arg(&obj)
+            .output()
+            .expect("invoke cpc");
+        assert!(
+            out.status.success(),
+            "esp-clang must accept the str statics: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    } else {
+        eprintln!("esp-clang not installed: IR checked, object emission skipped");
+    }
+}
+
 /// G-043 guard: `const` stays literal-only — an array initializer on a `const`
 /// is still E0911 (consts are inlined at use sites; arrays belong in `static`).
 #[test]
@@ -20579,6 +20686,10 @@ fn g043_const_array_initializer_still_rejected() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0911"), "expected E0911, got: {stderr}");
+    // The message speaks to the array it was given. It used to explain that
+    // "A FUNCTION NAME is not one" whatever the initializer was.
+    assert!(stderr.contains("An ARRAY is not one"), "the message names the array: {stderr}");
+    assert!(!stderr.contains("FUNCTION NAME"), "no fn-pointer advice for an array: {stderr}");
 }
 
 /// G-034 (llama.cplus): an indexed write to a `pub static mut [T; N]` resolved
@@ -27897,6 +28008,136 @@ fn print_link_args_names_every_dependency_slice_and_builds_nothing() {
     assert!(
         !dir.join("target/debug/app").exists(),
         "--print-link-args must not link the app"
+    );
+}
+
+/// A framework is an Apple bundle, so `-framework <name>` belongs on an Apple
+/// link line only. A dependency that names frameworks in a plain `[link]` used
+/// to put them on every link line: `--print-link-args` for android-arm64 gave
+/// the NDK `-framework Foundation`, which ld.lld reads as an input file
+/// (bugs/closed/print-link-args-gives-an-android-link-apple-frameworks.md).
+/// The `-l` libraries the same table names are not Apple's and stay.
+#[test]
+fn print_link_args_names_frameworks_only_for_an_apple_target() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    prebuild_fixture(&dir, "[link]\nframeworks = [\"Foundation\"]\nlibs = [\"m\"]\n", 7);
+
+    let host = build_app(cpc, &dir, &["--print-link-args"]);
+    assert!(
+        host.status.success(),
+        "host --print-link-args failed: {}",
+        String::from_utf8_lossy(&host.stderr)
+    );
+    let host_args: Vec<String> =
+        String::from_utf8_lossy(&host.stdout).lines().map(str::to_string).collect();
+    let has_framework = host_args.windows(2).any(|w| w[0] == "-framework" && w[1] == "Foundation");
+    if cfg!(target_os = "macos") {
+        assert!(has_framework, "a macOS link names the framework: {host_args:?}");
+    } else {
+        assert!(!has_framework, "a non-Apple host link names no framework: {host_args:?}");
+    }
+    assert!(host_args.iter().any(|a| a == "-lm"), "libs stay: {host_args:?}");
+
+    if ndk_clang_for_test().is_none() {
+        eprintln!("skipping the android half: no Android NDK (r28.2+) found");
+        return;
+    }
+    let droid = build_app(cpc, &dir, &["--target", "android-arm64", "--print-link-args"]);
+    assert!(
+        droid.status.success(),
+        "android --print-link-args failed: {}",
+        String::from_utf8_lossy(&droid.stderr)
+    );
+    let droid_args: Vec<String> =
+        String::from_utf8_lossy(&droid.stdout).lines().map(str::to_string).collect();
+    assert!(
+        !droid_args.iter().any(|a| a == "-framework" || a == "Foundation"),
+        "an Android link line has no frameworks: {droid_args:?}"
+    );
+    assert!(droid_args.iter().any(|a| a == "-lm"), "libs stay: {droid_args:?}");
+    assert!(
+        droid_args.iter().any(|a| a.ends_with("aarch64-linux-android/libmathy.a")),
+        "the dep's android slice is named: {droid_args:?}"
+    );
+}
+
+/// The library pipeline reports what it wrote, as the executable path always
+/// has. It used to exit 0 without a word, and for a cross build that hid the
+/// one fact a consumer needs: the archive holds the entry package only, and
+/// the rest of the program is named by `--print-link-args`
+/// (bugs/closed/a-cross-build-succeeds-silently-and-names-no-link-step.md).
+#[test]
+fn a_library_build_names_its_archive_and_where_its_dependencies_are() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+
+    // No dependencies: the archive is the whole program, so no hint.
+    let alone = tempdir();
+    std::fs::write(alone.join("Cplus.toml"), "[package]\nname = \"alone\"\n").unwrap();
+    std::fs::create_dir_all(alone.join("src")).unwrap();
+    std::fs::write(alone.join("src/alone.cplus"), "fn one() -> i32 { return 1; }\n").unwrap();
+    let out = build_app(cpc, &alone, &[]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        stdout.starts_with("ok: ") && stdout.trim_end().ends_with("target/debug/libalone.a"),
+        "one ok line naming the archive: {stdout}"
+    );
+    assert!(!stdout.contains("--print-link-args"), "nothing else to link: {stdout}");
+
+    // With a dependency: the line says where it is. The dependency's own
+    // prebuild is a library build too, and must not announce itself.
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"wrap\"\n\n[dependencies]\nmathy = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/wrap.cplus"),
+        "import \"mathy/mathy\" as mathy;\nfn twice() -> i32 { return mathy::answer() * 2; }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor/mathy/src")).unwrap();
+    std::fs::write(dir.join("vendor/mathy/Cplus.toml"), "[package]\nname = \"mathy\"\n").unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/src/mathy.cplus"),
+        "fn answer() -> i32 { return 7; }\n",
+    )
+    .unwrap();
+    let out = build_app(cpc, &dir, &["--release"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(stdout.lines().count(), 1, "one line, the prebuild says nothing on stdout: {stdout}");
+    assert!(stdout.contains("target/release/libwrap.a"), "{stdout}");
+    assert!(
+        stdout.contains("`cpc build --release --print-link-args`"),
+        "the hint is the command for this build: {stdout}"
+    );
+
+    // A cross app entry, the case that cost the time: the hint names the target.
+    if ndk_clang_for_test().is_none() {
+        eprintln!("skipping the android half: no Android NDK (r28.2+) found");
+        return;
+    }
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"wrap\"\n\n[android]\nentry = \"src/droid.cplus\"\n\n[dependencies]\nmathy = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/droid.cplus"),
+        "import \"mathy/mathy\" as mathy;\nexport extern fn main() -> i32 { return mathy::answer(); }\n",
+    )
+    .unwrap();
+    let out = build_app(cpc, &dir, &["--target", "android-arm64"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(stdout.contains("target/android-arm64/debug/libwrap.a"), "{stdout}");
+    assert!(
+        stdout.contains("`cpc build --target android-arm64 --print-link-args`"),
+        "the hint names the target: {stdout}"
     );
 }
 

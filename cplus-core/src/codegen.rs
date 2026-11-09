@@ -6710,7 +6710,6 @@ fn emit_statics(
     is_lib: bool,
     sigs: &HashMap<String, FnSig>,
 ) {
-    let us = usize_llvm_ty();
     if statics_map.is_empty() {
         return;
     }
@@ -6774,27 +6773,13 @@ fn emit_statics(
             .init
             .as_ref()
             .expect("a static that is not extern has an initializer (sema)");
-        // v0.0.9 follow-up: `str`-typed statics need a paired data
-        // global. Emit `@<name>.bytes = constant [N x i8] c"..."` for
-        // the payload and `@<name> = {constant|global} { ptr, i64 } { ptr @<name>.bytes, i64 N }`
-        // for the fat-pointer header. Reads through gen_expr's Ident
-        // path then load `{ptr, i64}` from `@<name>` as any str does.
-        if matches!(sty, Ty::Str) {
-            if let ExprKind::StrLit(s) = &init.kind {
-                let bytes_sym = format!("{qname}.bytes");
-                let bytes_len = emit_cstr(out, &bytes_sym, s);
-                let str_len = bytes_len.saturating_sub(1); // emit_cstr adds NUL terminator
-                let storage = "global";
-                let linkage = static_linkage(qname);
-                out.push_str(&format!(
-                    "@{qname} = {linkage}{storage} {{ ptr, {us} }} {{ ptr @{bytes_sym}, i64 {str_len} }}\n"
-                ));
-                md.statics.borrow_mut().insert(qname.clone(), sty.clone());
-                continue;
-            }
-        }
+        // A `str` anywhere in the initializer — the whole static, an array
+        // element, a struct field — is a `{ ptr, usize }` header over a
+        // payload global. The pool names those payloads after the static and
+        // collects their declarations, written ahead of the static itself.
+        let mut payloads = StaticPayloads { prefix: qname.clone(), next: 0, decls: String::new() };
         let lltype = llvm_ty(sty, types);
-        let llvalue = match render_static_literal(init, sty, types, sigs) {
+        let llvalue = match render_static_literal(init, sty, types, sigs, &mut payloads) {
             Some(s) => s,
             None => {
                 // Defense-in-depth: lower + sema should have rejected
@@ -6808,6 +6793,7 @@ fn emit_statics(
                 "<cpc-bug:static-initializer-has-no-constant-form>".to_string()
             }
         };
+        out.push_str(&payloads.decls);
         let storage = "global";
         let linkage = static_linkage(qname);
         out.push_str(&format!(
@@ -6824,11 +6810,22 @@ fn emit_statics(
 /// from `gen_expr(ExprKind::FloatLit)`. Returns `None` on any unsupported
 /// shape — the caller emits a `poison` operand in that case so the
 /// failure surfaces at LLVM-assembly time rather than silently.
+/// The payload globals one static's initializer needs: a `str` literal is a
+/// `{ ptr, usize }` header, and the bytes it points at are a global of their
+/// own. Each gets `@<static>.str.<n>` (private, so a library's copy and a
+/// consumer's never meet), and `decls` holds their definitions.
+struct StaticPayloads {
+    prefix: String,
+    next: u32,
+    decls: String,
+}
+
 fn render_static_literal(
     e: &Expr,
     ty: &Ty,
     types: &TypeTable,
     sigs: &HashMap<String, FnSig>,
+    payloads: &mut StaticPayloads,
 ) -> Option<String> {
     use crate::lexer::NumSuffix;
     match &e.kind {
@@ -6848,7 +6845,7 @@ fn render_static_literal(
             let elem_ll = llvm_ty(elem, types);
             let mut parts: Vec<String> = Vec::with_capacity(elements.len());
             for el in elements {
-                let v = render_static_literal(el, elem, types, sigs)?;
+                let v = render_static_literal(el, elem, types, sigs, payloads)?;
                 parts.push(format!("{elem_ll} {v}"));
             }
             Some(format!("[{}]", parts.join(", ")))
@@ -6860,7 +6857,7 @@ fn render_static_literal(
             if *count as u64 != *n as u64 {
                 return None;
             }
-            let v = render_static_literal(fill, elem, types, sigs)?;
+            let v = render_static_literal(fill, elem, types, sigs, payloads)?;
             if v == "0" || v == "0x0000000000000000" || v == "zeroinitializer" {
                 return Some("zeroinitializer".to_string());
             }
@@ -6887,7 +6884,7 @@ fn render_static_literal(
             let mut parts: Vec<String> = Vec::with_capacity(info.fields.len());
             for (fname, fty) in &info.fields {
                 let lit = fields.iter().find(|f| &f.name.name == fname)?;
-                let v = render_static_literal(&lit.value, fty, types, sigs)?;
+                let v = render_static_literal(&lit.value, fty, types, sigs, payloads)?;
                 let fty_ll = llvm_ty(fty, types);
                 parts.push(format!("{fty_ll} {v}"));
             }
@@ -6952,21 +6949,24 @@ fn render_static_literal(
                 Ty::F16 | Ty::F32 | Ty::F64,
             ) => match &operand.kind {
                 ExprKind::IntLit(v, _) => render_static_float(-(*v as f64), NumSuffix::None, ty),
-                _ => render_static_literal(expr, ty, types, sigs),
+                _ => render_static_literal(expr, ty, types, sigs, payloads),
             },
-            _ => render_static_literal(expr, ty, types, sigs),
+            _ => render_static_literal(expr, ty, types, sigs, payloads),
         },
-        // str-typed statics need a paired data global; v0.0.9 punts.
-        // Users should declare these as `const FOO: str = "..."` which
-        // lower-substitutes the literal at every use site (no global
-        // needed).
-        //
-        // The empty string is the exception: its `{ ptr, i64 }` header is
-        // `{ null, 0 }`, which needs no payload global. That is what makes
-        // `static NAMES: [str; N] = [""; N];` — a table of slots filled at
-        // run time — expressible; it lands in BSS like any zero fill.
+        // A `str` is a `{ ptr, usize }` header. The empty string's header is
+        // `{ null, 0 }` and needs no payload — which keeps
+        // `static NAMES: [str; N] = [""; N];`, a table of slots filled at run
+        // time, in BSS like any zero fill. Any other literal gets a payload
+        // global from the pool, and the header points at it.
         ExprKind::StrLit(s) if s.is_empty() && matches!(ty, Ty::Str) => {
             Some("zeroinitializer".to_string())
+        }
+        ExprKind::StrLit(s) if matches!(ty, Ty::Str) => {
+            let sym = format!("{}.str.{}", payloads.prefix, payloads.next);
+            payloads.next += 1;
+            // `emit_cstr` counts the NUL it appends; the str's length does not.
+            let len = emit_cstr(&mut payloads.decls, &sym, s) - 1;
+            Some(format!("{{ ptr @{sym}, {} {len} }}", usize_llvm_ty()))
         }
         ExprKind::StrLit(_) => None,
         // v0.0.12 G-033 (llama.cplus G-032): `#zero::[T]()` initializer.

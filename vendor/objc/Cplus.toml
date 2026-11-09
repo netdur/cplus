@@ -9,6 +9,13 @@ edition = "2026"
 [dependencies]
 stdlib = "*"
 
-[link]
+# The runtime is Apple's: libobjc and Foundation exist on macOS and iOS only.
+# Scoped per platform so a consumer that lists `objc` unscoped and builds for
+# Android (or Linux) is not handed `-lobjc`, which no other toolchain has.
+[macos.link]
+frameworks = ["Foundation"]
+libs       = ["objc"]
+
+[ios.link]
 frameworks = ["Foundation"]
 libs       = ["objc"]

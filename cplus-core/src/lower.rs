@@ -3747,12 +3747,18 @@ impl Lower {
             self.const_eval(&value, Some(exp), cx, false).ok()
         } else {
             // Non-scalar declared type with a non-literal initializer:
-            // the historical E0911.
-            self.err(
-                "E0911",
-                "const initializer must be a literal (integer, float, bool, string, unary-negated numeric literal, or `#zero::[T]()`) or a scalar constant expression. A FUNCTION NAME is not one: a const is substituted at each use, and the substituted name arrives without the type context that makes it a fn pointer. Declare it as a `static` instead — `static F: fn(i32) -> i32 = handler;` — which stores the address and works".to_string(),
-                value.span,
-            );
+            // the historical E0911. The tail names what the initializer IS,
+            // so the `static` it suggests is spelled for that shape: a
+            // message about function names on an array of strings sent the
+            // reader to a `static` with no reason given.
+            const HEAD: &str = "const initializer must be a literal (integer, float, bool, string, unary-negated numeric literal, or `#zero::[T]()`) or a scalar constant expression.";
+            let tail = match &value.kind {
+                ExprKind::Ident(_) => " A FUNCTION NAME is not one: a const is substituted at each use, and the substituted name arrives without the type context that makes it a fn pointer. Declare it as a `static` instead — `static F: fn(i32) -> i32 = handler;` — which stores the address and works",
+                ExprKind::ArrayLit { .. } | ExprKind::ArrayFill { .. } => " An ARRAY is not one: a const is substituted at each use, which would rebuild the array every time. Declare it as a `static` instead — `static NAMES: [str; 2] = [\"zero\", \"one\"];` — which stores it once",
+                ExprKind::StructLit { .. } => " A STRUCT literal is not one: a const is substituted at each use, which would rebuild the value every time. Declare it as a `static` instead — `static ORIGIN: Point = Point { x: 0, y: 0 };` — which stores it once",
+                _ => "",
+            };
+            self.err("E0911", format!("{HEAD}{tail}"), value.span);
             None
         };
         cx.visiting.pop();

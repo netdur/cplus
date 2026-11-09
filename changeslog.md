@@ -68,6 +68,13 @@ compiler error report for IR that clang rejects.
   is E0929. ESP-IDF's `WIFI_EVENT` and `g_wifi_osi_funcs`, `environ` and
   framework constants no longer need the function-shaped workaround. `cpc
   bindgen` emits one for every `extern T name;` a header declares.
+- **`str` literals inside a `static`.** An array, fill or struct literal
+  whose elements or fields are strings (`static NAMES: [str; 2] = ["zero",
+  "one"];`) builds; it used to pass the checker and fail in clang with an
+  internal compiler error. A `str` static on a 32-bit target (ESP32) had a
+  64-bit length in a 32-bit header and failed the same way; both are the
+  target's pointer width now. E0911 on a `const` array or struct says to
+  use a `static` and why, instead of a note about function names.
 - **Diagnostics.** A missing method on a builtin type names that type
   (`no method foo on type u32`, not `str`), and the `stdlib/math` hint
   appears for every numeric width `math` declares. The E0312 hint for
@@ -105,6 +112,17 @@ compiler error report for IR that clang rejects.
   `async fn` in `executor`). The exclusion list now also names what stands
   on the excluded modules — `future`, `date`, `bundle`, `fs_sys`, the
   `stdlib` umbrella — and importing those on an ESP32 target is E0866.
+- **Archive builds report what they wrote.** A library package, and an app
+  built for iOS, Android or ESP32, prints `ok: N modules -> <archive>` like
+  an executable build does, and adds the `--print-link-args` command for
+  the same target and mode when the package has dependencies, since the
+  archive holds only its own modules.
+- **`-framework` only on Apple link lines.** A dependency's `[link]
+  frameworks` no longer reach an Android, Linux, Windows, ESP32 or wasm link
+  (`--print-link-args` for `android-arm64` gave the NDK `-framework
+  Foundation`). `objc` names `Foundation` and `-lobjc` in `[macos.link]` and
+  `[ios.link]`, so depending on it unscoped no longer puts `-lobjc` on an
+  Android link.
 - **Internal compiler errors.** When clang rejects the IR cpc generated, cpc
   says so and that it is a cpc bug, not the user's code, and keeps the IR at
   `<out>.rejected.ll`. A link failure keeps its plain message.

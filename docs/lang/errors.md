@@ -2444,13 +2444,13 @@ fn main() -> i32 { return 0; }
 
 ### E0911 · `const`/`static` initializer shape not accepted
 
-A `const` or `static` initializer used a shape outside the accepted set. A scalar-typed const or static takes a literal or any constant expression (folded by lower, see E0921); a non-scalar `const` is literal-only; a non-scalar `static` allows `#zero::[T]()`, array literals/fills, and non-generic struct literals of such.
+A `const` or `static` initializer used a shape outside the accepted set. A scalar-typed const or static takes a literal or any constant expression (folded by lower, see E0921); a non-scalar `const` is literal-only; a non-scalar `static` allows `#zero::[T]()`, array literals/fills, and non-generic struct literals of such (string literals included). The message names the shape it was given: a function name, an array, a struct.
 
 ```cplus
 const C: [i32; 4] = [1, 2, 3, 4];
 ```
 
-**Fix.** Use a literal or constant expression (or, for a non-scalar `static`, one of the aggregate shapes).
+**Fix.** Use a literal or constant expression. A `const` is substituted at each use, so an array or struct belongs in a `static`, which stores it once: `static NAMES: [str; 2] = ["zero", "one"];`. Array elements and struct fields of a `static` may be string literals.
 
 <sub>repro: checked · cplus-core/src/lower.rs:resolve_const_scalar · test cplus-core/src/sema.rs:array_literal_in_const_still_rejected_e0911_g043</sub>
 

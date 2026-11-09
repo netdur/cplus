@@ -253,6 +253,13 @@ what you paste into Xcode's "Other Linker Flags" or a Gradle rule: the app's
 own archive is not enough, because every dependency's `[link]` frameworks
 and libs travel with it.
 
+A build that stops at the archive says so on success, and when the package
+has dependencies it names the command for the rest of the link line:
+
+```
+ok: 2 modules -> target/android-arm64/release/libhello.a (the archive holds this package only; its dependencies are linked from `cpc build --release --target android-arm64 --print-link-args`)
+```
+
 Cross-target artifacts land under `target/<target-name>/<mode>/`, so a host
 build and an iOS build coexist without a clean.
 

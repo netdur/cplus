@@ -2952,7 +2952,7 @@ fn ensure_one_slice_locked(
     // Pointing the library pipeline straight at the slice directory also
     // deposits its `.o` and its C header there — half a megabyte of build
     // litter inside what is meant to be the shipped surface.
-    let code = build_lib_project(vm, &lib, None, diag_mode, build_mode, true, false, sanitizers);
+    let code = build_lib_project(vm, &lib, None, diag_mode, build_mode, true, false, sanitizers, false);
     timings::report_titled(&format!("prebuild {}", vm.package.name));
     if code != ExitCode::SUCCESS {
         // Leave nothing half-built: a stale archive with a fresh fingerprint
@@ -3434,6 +3434,24 @@ fn search_path_args(dir: &str, platform: &str) -> Vec<String> {
     out
 }
 
+/// `-framework <name>` for each framework, on an Apple target; nothing on any
+/// other. A framework is an Apple bundle format, so the name means nothing to
+/// an ELF, COFF or wasm link — and `ld.lld` reads `-framework Foundation` as
+/// a stray input file called `Foundation`. A package that binds Apple APIs
+/// names its frameworks in a plain `[link]` and is still built for Android
+/// when a consumer lists it unscoped; that build must not hand the NDK an
+/// Apple link line (bugs/closed/print-link-args-gives-an-android-link-apple-frameworks.md).
+fn framework_args(frameworks: &[String]) -> Vec<String> {
+    let os = target::active_target().os;
+    if !matches!(os, target::TargetOs::Macos | target::TargetOs::Ios) {
+        return Vec::new();
+    }
+    frameworks
+        .iter()
+        .flat_map(|fw| ["-framework".to_string(), fw.clone()])
+        .collect()
+}
+
 /// A dependency's `[link]` contributions that are independent of binary
 /// slices: search paths, frameworks, system libs, prebuilt objects. Shared by
 /// the normal path and the `dev = true` path, which takes everything here and
@@ -3452,10 +3470,7 @@ fn splice_plain_link_args(
     for dir in &ls.search_paths {
         link_args.extend(search_path_args(dir, target::active_platform()));
     }
-    for fw in &ls.frameworks {
-        link_args.push("-framework".to_string());
-        link_args.push(fw.clone());
-    }
+    link_args.extend(framework_args(&ls.frameworks));
     for l in &ls.libs {
         link_args.push(format!("-l{l}"));
     }
@@ -3953,6 +3968,7 @@ fn build_project(
             fp_contract,
             c_abi_entry,
             sanitizers,
+            true,
         );
         timings::report_project(&m.package.name);
         return code;
@@ -4021,6 +4037,7 @@ fn build_project(
                 fp_contract,
                 false,
                 sanitizers,
+                true,
             );
             timings::report_project(&m.package.name);
             return code;
@@ -4042,7 +4059,7 @@ fn build_project(
             sealed: false,
         };
         let code =
-            build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false, sanitizers);
+            build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false, sanitizers, true);
         timings::report_project(&m.package.name);
         if code != ExitCode::SUCCESS {
             return code;
@@ -4188,18 +4205,15 @@ fn build_project(
     };
     let tmp = tmp_handle.path().to_path_buf();
     // The app's own link surface is its `[link]` table: `frameworks`
-    // expand to `-framework <name>` (macOS/iOS-specific — clang gates the
-    // flag), `libs` to `-l<name>` (cross-platform), and `search-paths` go
+    // expand to `-framework <name>` on an Apple target (`framework_args`),
+    // `libs` to `-l<name>` (cross-platform), and `search-paths` go
     // first so `-L<dir>` precedes any `-l<name>` (its own, or a dep's).
     let mut link_args: Vec<String> = Vec::new();
     if let Some(ls) = m.link.as_ref() {
         for dir in &ls.search_paths {
             link_args.extend(search_path_args(dir, target::active_platform()));
         }
-        for fw in &ls.frameworks {
-            link_args.push("-framework".to_string());
-            link_args.push(fw.clone());
-        }
+        link_args.extend(framework_args(&ls.frameworks));
         for lib in &ls.libs {
             link_args.push(format!("-l{lib}"));
         }
@@ -4431,6 +4445,7 @@ fn build_lib_project(
     fp_contract: bool,
     c_abi_entry: bool,
     sanitizers: &[&str],
+    announce: bool,
 ) -> ExitCode {
     if !lib.path.is_file() {
         let d = diag::Diagnostic {
@@ -4677,6 +4692,8 @@ fn build_lib_project(
         Some(s) => vec![s.object.clone()],
         None => objs.clone(),
     };
+    // What this build wrote, for the success line.
+    let mut products: Vec<PathBuf> = Vec::new();
     if want_static {
         let a_path = target_dir.join(format!("lib{}.a", lib.name));
         // `r` replace + `c` create-if-missing + `s` index. ar quietly
@@ -4694,7 +4711,7 @@ fn build_lib_project(
             .args(&archive_inputs)
             .status();
         match ar_status {
-            Ok(s) if s.success() => {}
+            Ok(s) if s.success() => products.push(a_path.clone()),
             Ok(s) => {
                 eprintln!("cpc: ar exited with {s}");
                 return ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8);
@@ -4746,9 +4763,7 @@ fn build_lib_project(
                 cmd.args(&objs);
             }
         }
-        for fw in &lib.frameworks {
-            cmd.arg("-framework").arg(fw);
-        }
+        cmd.args(framework_args(&lib.frameworks));
         for ll in &lib.libs {
             cmd.arg(format!("-l{ll}"));
         }
@@ -4828,9 +4843,49 @@ fn build_lib_project(
                 return code;
             }
         }
+        products.push(dylib_path);
     }
 
+    if announce {
+        announce_lib_products(&products, loaded_paths.len(), !dep_link_args.is_empty(), &tgt, build_mode);
+    }
     ExitCode::SUCCESS
+}
+
+/// The success line of a library-pipeline build: what was written, and —
+/// when the archive is not the whole program — where the rest of it is.
+///
+/// This pipeline used to finish without a word, unlike the executable path's
+/// `ok: N modules -> <path>`. For a cross build that silence hid the one fact
+/// a consumer needs: since prebuild became the default, `lib<name>.a` holds
+/// only this package's modules, and every dependency is its own slice that
+/// `--print-link-args` names. A stale hand-linked binary beside a freshly
+/// rewritten archive looked refreshed, and the link that followed failed
+/// with hundreds of undefined dependency symbols
+/// (bugs/closed/a-cross-build-succeeds-silently-and-names-no-link-step.md).
+fn announce_lib_products(
+    products: &[PathBuf],
+    modules: usize,
+    has_dep_link_args: bool,
+    tgt: &target::TargetSpec,
+    build_mode: BuildMode,
+) {
+    let shown: Vec<String> = products.iter().map(|p| p.display().to_string()).collect();
+    let mut line = format!("ok: {modules} modules -> {}", shown.join(", "));
+    let archived = products.iter().any(|p| p.extension().is_some_and(|e| e == "a"));
+    if archived && has_dep_link_args {
+        let mut cmd = String::from("cpc build");
+        if build_mode == BuildMode::Release {
+            cmd.push_str(" --release");
+        }
+        if !tgt.is_host() {
+            cmd.push_str(&format!(" --target {}", tgt.name));
+        }
+        line.push_str(&format!(
+            " (the archive holds this package only; its dependencies are linked from `{cmd} --print-link-args`)"
+        ));
+    }
+    println!("{line}");
 }
 
 /// `--emit-ll-project`: project build, but emit IR to stdout instead of
@@ -5504,10 +5559,7 @@ fn run_test(
             // Metal/Foundation) can't run their unit tests because
             // selectors resolve to symbols clang never linked.
             let mut la: Vec<String> = Vec::with_capacity(fw_list.len() * 2 + lib_list.len());
-            for fw in &fw_list {
-                la.push("-framework".to_string());
-                la.push(fw.clone());
-            }
+            la.extend(framework_args(&fw_list));
             for lib in &lib_list {
                 la.push(format!("-l{lib}"));
             }
