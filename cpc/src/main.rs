@@ -127,7 +127,9 @@ build flags (apply to `cpc FILE` and `cpc build`):
                                     there. Place before --emit-ll/--emit-asm FILE.
   --min-os VERSION                  override the OS floor baked into a versioned target
                                     triple: 13.0 for the ios targets, API 24 for
-                                    android-arm64. Place after --target.
+                                    android-arm64. Place after --target. On a macOS host
+                                    build it is the deployment target (15.0), passed to
+                                    clang as -mmacosx-version-min.
 
 debug / introspection (single-file):
   cpc --emit-ir                     print the frozen Phase-0 LLVM IR to stdout
@@ -150,6 +152,9 @@ debug / introspection (single-file):
   cpc build --print-asset-dir       stage ./assets/* for the target (flat: a name is relative to
                                     assets/) and print the directory. What an outside builder
                                     copies into an .app, or passes to `aapt2 link -A`.
+  cpc build --print-packages        where each dependency resolved from: name, version,
+                                    prebuilt|source, and the real directory (symlinks
+                                    followed). Builds nothing.
 
 other:
   --diagnostics=MODE                diagnostics output: human (default) | short | json
@@ -321,6 +326,21 @@ and the writes of a dependency build.
 
   cpc build --target ios-arm64-simulator
   cpc build --target ios-arm64-simulator --print-link-args
+"
+        }
+        Some(Subcommand::PrintPackages) => {
+            "\
+cpc build --print-packages [--target NAME]
+
+Print where each dependency resolved from, one per line:
+
+  <name> <version> <prebuilt|source> <directory>
+
+The directory is the real one, with symlinks followed, so a `vendor/`
+symlink into an old copy shows up as that copy. `prebuilt` means the build
+links the package's archive and reads its `lib/include/` headers; `source`
+means it compiles `src/`. A dependency that resolves nowhere prints
+`<name> - missing -`. Reads ./Cplus.toml. Builds nothing.
 "
         }
         Some(Subcommand::PrintAssetDir) => {
@@ -701,6 +721,10 @@ fn main() -> ExitCode {
                 subcommand = Some(Subcommand::PrintAssetDir);
                 i += 1;
             }
+            Some("--print-packages") => {
+                subcommand = Some(Subcommand::PrintPackages);
+                i += 1;
+            }
             Some("--timings") => {
                 timings::enable();
                 i += 1;
@@ -793,12 +817,15 @@ fn main() -> ExitCode {
                     eprintln!("cpc: --min-os expects a dotted numeric version, got `{v}`");
                     return ExitCode::FAILURE;
                 }
-                if target_spec.min_os_default.is_none() {
+                // A versioned triple splices the version in; a macOS host
+                // build passes it to clang as `-mmacosx-version-min`.
+                let host_macos = target_spec.triple.is_none() && target_spec.os == target::TargetOs::Macos;
+                if target_spec.min_os_default.is_none() && !host_macos {
                     eprintln!(
-                        "cpc: --min-os applies to targets with a versioned triple (ios-arm64, ios-arm64-simulator, android-arm64); current target is `{}`",
+                        "cpc: --min-os applies to a macOS host build and to targets with a versioned triple (ios-arm64, ios-arm64-simulator, android-arm64); current target is `{}`",
                         target_spec.name
                     );
-                    eprintln!("    place `--target NAME` before `--min-os VERSION`");
+                    eprintln!("    for a cross target, place `--target NAME` before `--min-os VERSION`");
                     return ExitCode::FAILURE;
                 }
                 target::set_min_os_override(v.to_string());
@@ -1146,6 +1173,7 @@ fn main() -> ExitCode {
             print_link_args(diag_mode, build_mode, &sanitizers)
         }
         (Some(Subcommand::PrintAssetDir), _) => print_asset_dir(diag_mode, build_mode),
+        (Some(Subcommand::PrintPackages), _) => print_packages(diag_mode),
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
         (Some(Subcommand::Test), _) => run_test(
             test_input,
@@ -1225,6 +1253,9 @@ enum Subcommand {
     /// project's assets from where cpc put them instead of re-deriving the
     /// rule. See `assets.rs`.
     PrintAssetDir,
+    /// `cpc build --print-packages` — where each dependency resolved from,
+    /// with symlinks followed, and whether it links prebuilt or compiles.
+    PrintPackages,
     Fmt,
     Test,
     Lsp,
@@ -2123,6 +2154,7 @@ fn clang_target_args(t: &TargetSpec) -> Vec<String> {
     // take one was refused when the flags were read.
     args.extend(target::cpu_tuning_clang_args(&target::cpu_tuning(), t.arch).unwrap_or_default());
     if t.triple.is_none() {
+        args.extend(target::macos_min_os_args());
         return args;
     }
     // `--min-os`-aware: the spliced triple when an override is installed.
@@ -2651,6 +2683,42 @@ fn asset_staging_dir(m: &manifest::Manifest, build_mode: BuildMode) -> PathBuf {
 /// and print the staging directory. See `assets.rs` for the rule and
 /// bugs/closed/project-assets-reach-only-a-packaged-macos-app.md for why an
 /// outside builder asks rather than copying `assets/` itself.
+/// `cpc build --print-packages`: `<name> <version> <prebuilt|source> <dir>`
+/// per active dependency, resolved by `vendor_dir_for` — the order the build
+/// uses — with the directory canonicalized.
+///
+/// Nothing in a build said which copy of a package it used. Slab's per-package
+/// `vendor/` symlinks pointed into a build tree that held September copies of
+/// stdlib, and the repo build and the release build differed for a session
+/// before anyone found out why. The real path names the copy.
+fn print_packages(diag_mode: DiagMode) -> ExitCode {
+    let m = match manifest::load(&PathBuf::from("Cplus.toml")) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_diag(&e.to_diagnostic(), diag_mode, "");
+            return ExitCode::FAILURE;
+        }
+    };
+    let platform = target::active_platform();
+    for dep in m.dependencies.iter().filter(|d| d.active_on(platform)) {
+        let Some(dir) = vendor_dir_for(&m, &dep.name) else {
+            println!("{} - missing -", dep.name);
+            continue;
+        };
+        let real = fs::canonicalize(&dir).unwrap_or(dir);
+        let (version, kind) = match manifest::load(&real.join("Cplus.toml")) {
+            Ok(vm) => {
+                let bundled = vm.link.as_ref().is_some_and(|l| !l.bundled.is_empty());
+                let kind = if vm.build.resolves_through_headers(bundled) { "prebuilt" } else { "source" };
+                (vm.package.version.clone(), kind)
+            }
+            Err(_) => ("?".to_string(), "source"),
+        };
+        println!("{} {} {} {}", dep.name, version, kind, real.display());
+    }
+    ExitCode::SUCCESS
+}
+
 fn print_asset_dir(diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
     let m = match manifest::load(&PathBuf::from("Cplus.toml")) {
         Ok(m) => m,
@@ -3192,6 +3260,13 @@ fn prebuild_fingerprint(
     // reverse) disagrees about where every vector argument is. Same slot,
     // same rebuild-on-flip trade as the sanitizer set above.
     target::cpu_tuning().hash(&mut h);
+    // AND THE DEPLOYMENT FLOOR. A slice built for this Mac's macOS and linked
+    // into an app whose floor is 15.0 is "built for newer macOS" at link time,
+    // and an availability check inside it was compiled against the wrong
+    // version. `--min-os` and the environment variable clang reads both set
+    // it; the artifact triple (a directory name) carries neither.
+    target::min_os_override().hash(&mut h);
+    std::env::var("MACOSX_DEPLOYMENT_TARGET").ok().hash(&mut h);
     package_input_digest(vendor_dir, &mut Vec::new())?.hash(&mut h);
     Ok(format!("{:016x}", h.finish()))
 }
@@ -4739,6 +4814,7 @@ fn build_lib_project(
         let dylib_path = target_dir.join(dylib_file);
         let mut cmd = Command::new(clang_program());
         cmd.arg("-shared").arg(opt).arg("-Wno-override-module");
+        cmd.args(target::macos_min_os_args());
         // A cdylib IS linked here, so it needs the runtime as well as the
         // instrumentation — a `-fsanitize=` on the link line is what pulls in
         // libclang_rt.
@@ -7605,6 +7681,9 @@ fn run_clang(
     };
     let mut cmd = Command::new(clang_program());
     cmd.arg(opt).arg("-Wno-override-module");
+    // `--min-os` on a macOS host build: the deployment floor, for the
+    // program's own object and the link.
+    cmd.args(target::macos_min_os_args());
     // `--target-cpu` / `--target-feature`: this invocation compiles the
     // program's own `.ll`, so it needs them as much as `clang -c` does.
     cmd.args(

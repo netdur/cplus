@@ -351,11 +351,16 @@ View lifetime rules (E0513, write-lock, last-use end) —
 ```cplus
 let a: [i32; 4] = [10, 20, 30, 40];   // a[i] bounds-checked; OOB traps
 let z: [u8; CAP] = [0u8; CAP];        // fill; CAP any const expression
-let s: T[] = v.as_slice();            // slice from Vec — arrays do NOT coerce to slices
-slice::sub::[T](s, from, to)          // -> Option[T[]]; also prefix/suffix/drop_first/drop_last
+let s: T[] = v.as_slice();            // slice from Vec
+f(["a", "b", name])                   // an array LITERAL passes as a `T[]` argument
+s[i]                                  // bounds-checked read; a slice is read-only
+slice::sub(s, from, to)               // -> Option[T[]]; also prefix/suffix/drop_first/drop_last
 ```
 
-Slices carry `count()` / `is_empty()`; `#slice_ptr`/`#slice_len` are the FFI
+An array literal at a `T[]` parameter is a view of a slot in the caller's
+frame that lives for the statement, like an interpolation: the callee may
+read it, and keeping or returning it is E0513. An array *value* is not a
+slice (E0302). Slices carry `count()` / `is_empty()`; `#slice_ptr`/`#slice_len` are the FFI
 tier. Arrays and slices have no `iter()` — index them over `0..n`.
 (`Vec` does: `for x in v.iter()`.)
 
@@ -621,6 +626,7 @@ cpc --emit-header FILE              # C header for export items
 cpc --emit-ll-project               # merged IR for the project
 cpc build --print-link-args         # what the DEPENDENCIES add to the link line
 cpc build --print-asset-dir         # stage ./assets/* for the target; print the directory
+cpc build --print-packages          # <name> <version> <prebuilt|source> <real dir>, per dependency
 cpc --realtime-report[=json]        # contract digest; non-zero on any violation
 ```
 

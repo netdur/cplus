@@ -958,6 +958,13 @@ pub struct MonoInfo {
     /// span (the old `Text::as_str` extraction, now implicit); the
     /// view-escape check (E0513) consults it for returned aggregate leaves.
     pub text_to_str_coercions: std::collections::HashSet<ByteSpan>,
+    /// Array literals passed where a `T[]` parameter is expected
+    /// (`process::run(["adb", "-s", serial])`). Recorded in
+    /// `check_arg_with_move`; codegen spills each array to a slot in the
+    /// caller's frame and passes `{ ptr, len }`. Argument positions only:
+    /// the slice lives for the call, and borrowck treats the literal as a
+    /// temporary of the statement (a callee may read it, not keep it).
+    pub array_to_slice_coercions: std::collections::HashSet<ByteSpan>,
     /// Unsuffixed numeric literals that sema typed other than their default
     /// (`i32`, `f64`) — `take_f32(0.4)`, `let a: u64 = 1 << 40;` — keyed by
     /// the literal's span. Codegen reads a literal's width from its suffix,
@@ -1303,6 +1310,7 @@ fn check_with_files_inner(
         shader_blobs_table: HashMap::new(),
         msg_send_shapes: std::collections::BTreeSet::new(),
         text_to_str_coercion_table: std::collections::HashSet::new(),
+        array_to_slice_coercion_table: std::collections::HashSet::new(),
         lit_width_table: HashMap::new(),
     };
     cx.record_value_types = record_types;
@@ -1651,6 +1659,7 @@ fn check_with_files_inner(
         selectors: std::mem::take(&mut cx.selectors_table),
         shader_blobs: std::mem::take(&mut cx.shader_blobs_table),
         text_to_str_coercions: std::mem::take(&mut cx.text_to_str_coercion_table),
+        array_to_slice_coercions: std::mem::take(&mut cx.array_to_slice_coercion_table),
         lit_widths: std::mem::take(&mut cx.lit_width_table),
         value_types: std::mem::take(&mut cx.value_types),
     };
@@ -2066,6 +2075,8 @@ struct SemaCx<'a> {
     /// v0.0.24 #11: spans of `Text`→`str` coercion sites (see
     /// [`MonoInfo::text_to_str_coercions`]).
     text_to_str_coercion_table: std::collections::HashSet<ByteSpan>,
+    /// See [`MonoInfo::array_to_slice_coercions`].
+    array_to_slice_coercion_table: std::collections::HashSet<ByteSpan>,
     /// See [`MonoInfo::lit_widths`].
     lit_width_table: HashMap<ByteSpan, Ty>,
 }
@@ -11978,12 +11989,27 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         Ty::Struct(id)
     }
 
+    /// Every method name a builtin type answers (`str`'s blessed set, a
+    /// numeric type's `stdlib/math` set) — for E0324's suggestion.
+    fn builtin_method_names(&self, bt: &str) -> Vec<String> {
+        self.builtin_methods
+            .keys()
+            .filter(|(t, _)| t == bt)
+            .map(|(_, m)| m.clone())
+            .collect()
+    }
+
     fn check_index(&mut self, receiver: &Expr, index: &Expr, span: ByteSpan) -> Ty {
         let recv_ty = self.check_expr(receiver, None);
         // Index must be `usize`. Numeric literals will coerce via expected-type rule.
         let _ = self.check_expr(index, Some(Ty::Usize));
         match recv_ty {
             Ty::Array(elem, _) => (*elem).clone(),
+            // A slice reads its element bounds-checked against its length,
+            // as an array does against `N`. The reference always said slices
+            // index over `0..n`; this arm was missing, so reading an element
+            // took `#slice_ptr` and a raw deref — the FFI tier.
+            Ty::Slice(elem) => (*elem).clone(),
             // Slice 10.FFI.2: indexing on a raw pointer is unchecked
             // pointer arithmetic. `p[i]` = `*(p + i)`. Pointee is the
             // result type. No bounds check (pointer length unknown).
@@ -14980,8 +15006,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             .map(|p| self.subst_param_sig(p, &subst))
             .collect();
         self.try_bound_method_refs(args, &subst_params, call_span);
-        for (param, arg) in gsig.params.iter().zip(args.iter()) {
+        for (i, (param, arg)) in gsig.params.iter().zip(args.iter()).enumerate() {
             let expected = self.subst_param_sig(param, &subst);
+            // `T[]` unified against an array to infer `T`. Only a LITERAL
+            // passes as a slice (`check_arg_with_move`'s rule): record it for
+            // codegen, and refuse an array value, which this path — checking
+            // each argument once, before `T` was known — would otherwise pass
+            // straight through to codegen as the wrong type.
+            if let (Ty::Slice(_), Some(Ty::Array(..))) = (&expected.ty, arg_tys.get(i)) {
+                if matches!(arg.kind, ExprKind::ArrayLit { .. } | ExprKind::ArrayFill { .. }) {
+                    self.array_to_slice_coercion_table.insert(arg.span);
+                } else {
+                    let found = arg_tys[i].clone();
+                    self.report_type_mismatch(&expected.ty, &found, arg.span);
+                }
+            }
             self.gate_checked_arg(arg, &expected);
         }
         // Slice 7GEN.5e step 4: bound check at the inference path.
@@ -15864,12 +15903,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                          `import \"stdlib/math\" as _;` (any file in the build suffices)"
                     ));
                 }
-            } else if matches!(name.name.as_str(), "len" | "length" | "size")
-                && self
-                    .builtin_methods
-                    .contains_key(&("str".to_string(), "count".to_string()))
-            {
-                notes.push("`str` spells it `count()`".to_string());
+            } else if let Some(hint) = method_name_hint(&name.name, &self.builtin_method_names("str")) {
+                notes.push(hint);
             } else if !self.builtin_impl_origin.contains_key("str") {
                 notes.push(
                     "the `str` method set is declared by stdlib — add \
@@ -16014,7 +16049,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     );
                 }
             }
-            self.err(
+            // The methods this receiver has: its own, and for the owned
+            // string the `str` reads it reaches through the coercion.
+            let mut available: Vec<String> =
+                self.structs[id.0 as usize].methods.keys().cloned().collect();
+            if self.designated_string_struct == Some(id) {
+                available.extend(self.builtin_method_names("str"));
+            }
+            let notes: Vec<String> = method_name_hint(&name.name, &available).into_iter().collect();
+            self.err_note(
                 "E0324",
                 format!(
                     "no method `{}` on struct `{}`",
@@ -16022,6 +16065,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     self.ty_display_named(&Ty::Struct(id))
                 ),
                 name.span,
+                notes,
             );
             for a in args {
                 let _ = self.check_expr(a, None);
@@ -18394,6 +18438,26 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if self.arg_bypasses_check(arg, expected) {
             return expected.ty.clone();
         }
+        // An array LITERAL where a `T[]` is expected passes as a view of
+        // itself: `run(["adb", "-s", serial])`. The literal is checked as the
+        // `[T; N]` its length makes it, so its elements take `T` from the
+        // position exactly as in `let a: [T; N] = [...]`.
+        if let Ty::Slice(elem) = &expected.ty {
+            let len = match &arg.kind {
+                ExprKind::ArrayLit { elements } if !elements.is_empty() => Some(elements.len() as u32),
+                ExprKind::ArrayFill { count, .. } if *count > 0 => Some(*count),
+                _ => None,
+            };
+            if let (Some(n), false) = (len, expected.is_ref) {
+                let as_array = Ty::Array(elem.clone(), n);
+                let actual = self.check_expr(arg, Some(as_array.clone()));
+                if actual == as_array {
+                    self.array_to_slice_coercion_table.insert(arg.span);
+                    return expected.ty.clone();
+                }
+                return actual;
+            }
+        }
         let actual = self.check_expr(arg, Some(expected.ty.clone()));
         self.gate_checked_arg(arg, expected);
         actual
@@ -19759,6 +19823,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 let recv_ty = self.check_expr(receiver, None);
                 if matches!(recv_ty, Ty::RawPtr(_)) {
                     return true;
+                }
+                // A slice is a borrowed view of storage someone else owns,
+                // read-only like a `str`.
+                if matches!(recv_ty, Ty::Slice(_)) {
+                    self.err(
+                        "E0305",
+                        "cannot assign through a slice: a `T[]` is a read-only view of storage it does not own; write to the owner (the array or `Vec`) instead".to_string(),
+                        target.span,
+                    );
+                    return false;
                 }
                 self.target_is_writable_place(receiver)
             }
@@ -21743,6 +21817,11 @@ fn unify_param_against_concrete(
         }
         (Ty::RawPtr(a), Ty::RawPtr(b)) => unify_param_against_concrete(a, b, subst, structs, enums),
         (Ty::Slice(a), Ty::Slice(b)) => unify_param_against_concrete(a, b, subst, structs, enums),
+        // An array literal passes where `T[]` is expected, so it infers `T`
+        // from its element type. Whether the argument may pass at all is
+        // `check_arg_with_move`'s call — only a LITERAL does, and anything else
+        // is refused there with E0302 once `T` is known.
+        (Ty::Slice(a), Ty::Array(b, _)) => unify_param_against_concrete(a, b, subst, structs, enums),
         // v0.0.23: a generic struct/enum parameter unifies against a concrete
         // instantiation of the *same template* by matching their type-args
         // pairwise — so a generic fn over a container parameter
@@ -22154,10 +22233,91 @@ fn walk_expr_names(
     }
 }
 
+/// What other languages call the methods C+ names differently, each with the
+/// C+ names to suggest. A suggestion is made only when the receiver has it, so
+/// `push` on a `Vec` says `append` and on a type with no `append` says nothing.
+const FOREIGN_METHOD_NAMES: &[(&[&str], &[&str])] = &[
+    (&["len", "length", "size"], &["count"]),
+    (&["starts_with", "startswith", "startsWith"], &["has_prefix"]),
+    (&["ends_with", "endswith", "endsWith"], &["has_suffix"]),
+    (&["push", "push_back", "push_str", "add"], &["append"]),
+    (&["pop", "pop_back"], &["remove_last"]),
+    (&["get"], &["at"]),
+    (&["contains", "has", "has_key"], &["contains_key", "contains"]),
+    (&["index_of", "indexOf", "position"], &["find"]),
+    (&["last_index_of", "lastIndexOf"], &["rfind"]),
+    (&["to_upper", "to_uppercase", "toUpperCase", "upper"], &["uppercased"]),
+    (&["to_lower", "to_lowercase", "toLowerCase", "lower"], &["lowercased"]),
+    (&["to_string", "toString", "to_owned"], &["to_text"]),
+    (&["replace", "replace_all"], &["replacing"]),
+    (&["substring", "substr", "sub"], &["slice"]),
+    (&["trim_left", "lstrip"], &["trim_start"]),
+    (&["trim_right", "rstrip"], &["trim_end"]),
+    (&["strip"], &["trim"]),
+    (&["parse", "parse_int", "to_int"], &["to_i64"]),
+    (&["parse_float", "to_float"], &["to_f64"]),
+    (&["clear"], &["remove_all"]),
+    (&["char_at", "charAt"], &["byte_at"]),
+    (&["cmp"], &["compare"]),
+];
+
+/// The note for an E0324: "did you mean `x`?" when `name` is another
+/// language's spelling of a method the receiver has, or a near miss of one
+/// (an edit distance of 1, or 2 for names of six letters or more).
+/// `available` is every method the receiver answers.
+fn method_name_hint(name: &str, available: &[String]) -> Option<String> {
+    let has = |n: &str| available.iter().any(|a| a == n);
+    for (foreign, ours) in FOREIGN_METHOD_NAMES {
+        if foreign.contains(&name) {
+            if let Some(m) = ours.iter().find(|m| has(m)) {
+                return Some(format!("did you mean `{m}`? C+ spells `{name}` as `{m}`"));
+            }
+        }
+    }
+    let limit = if name.chars().count() >= 6 { 2 } else { 1 };
+    let own = available
+        .iter()
+        .filter(|a| !a.starts_with('_') && a.as_str() != name)
+        .map(|a| (edit_distance(name, a), a))
+        .filter(|(d, _)| *d <= limit)
+        .min_by(|x, y| x.0.cmp(&y.0).then_with(|| x.1.cmp(y.1)))
+        .map(|(_, a)| format!("did you mean `{a}`?"));
+    if own.is_some() {
+        return own;
+    }
+    // A near miss of a FOREIGN spelling (`lenght`) still means the C+ name.
+    FOREIGN_METHOD_NAMES
+        .iter()
+        .filter(|(foreign, _)| foreign.iter().any(|f| edit_distance(name, f) <= limit))
+        .find_map(|(_, ours)| ours.iter().find(|m| has(m)))
+        .map(|m| format!("did you mean `{m}`?"))
+}
+
+/// Levenshtein distance over chars — names are short, so the quadratic table
+/// is nothing.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1; b.len() + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let sub = prev[j] + usize::from(ca != cb);
+            cur[j + 1] = sub.min(prev[j + 1] + 1).min(cur[j] + 1);
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
 fn ty_contains_param(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> bool {
     match ty {
         Ty::Param(_) => true,
         Ty::Array(elem, _) => ty_contains_param(elem, structs, enums),
+        // A `T[]` parameter mentions `T`. Without this arm it counted as
+        // concrete, was checked against the unsubstituted `T[]`, and no slice
+        // argument could ever infer `T` — `slice::sub(s, 1, 3)` needed `::[T]`.
+        Ty::Slice(elem) => ty_contains_param(elem, structs, enums),
         Ty::RawPtr(inner) => ty_contains_param(inner, structs, enums),
         Ty::FnPtr {
             params,
@@ -29992,8 +30152,8 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             .find(|d| d.code.0 == "E0324")
             .expect("E0324 expected");
         assert!(
-            d.notes.iter().any(|n| n.contains("count()")),
-            "expected the `count()` note; got {:?}",
+            d.notes.iter().any(|n| n.contains("did you mean `count`")),
+            "expected the `count` suggestion; got {:?}",
             d.notes
         );
     }

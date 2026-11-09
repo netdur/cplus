@@ -192,7 +192,48 @@ extern fn process_getpid() -> i32;
 
 fn current_id() -> i32 { return { process_getpid() }; }
 
+// Spawn `argv[0]` (searched on PATH) with `argv` as its arguments, its stdin,
+// stdout and stderr piped to this process. `cwd` = "" inherits the parent's.
+// `None` if argv is empty, an argument/cwd holds an interior NUL, or the spawn
+// fails.
 fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
+    return _start(argv, cwd, true);
+}
+
+// Run `argv[0]` (searched on PATH) to completion with the rest as its
+// arguments, and return its exit code (128 + signal if it was killed, 127 if
+// it could not be started). The child shares this process's stdin, stdout and
+// stderr, so its output streams straight to the terminal — what a tool that
+// drives `adb`, `git` or a compiler wants:
+//
+//     let code: i32 = process::run(["adb", "-s", serial, "push", local, remote]);
+//
+// An array literal passes as the `str[]`; nothing is copied into a `Text` the
+// caller has to build. Use `spawn` to read the output, `capture` to collect it.
+fn run(argv: str[], cwd: str = "") -> i32 {
+    var owned: vec::Vec[text::Text] = vec::new::[text::Text]();
+    for i in 0..argv.count() {
+        let _ = owned.append(text::from_str(argv[i]));
+    }
+    return match _start(owned, cwd, false) {
+        option::Option[Child]::Some(ch) => {
+            var child: Child = ch;
+            child.wait()
+        }
+        option::Option[Child]::None => 127 as i32,
+    };
+}
+
+// No pipe: the child keeps this process's descriptor. `close_end` skips it.
+fn no_pipe() -> Pipe { return Pipe { read: -1 as i32, write: -1 as i32, ok: true }; }
+
+fn close_end(fd: i32) {
+    if fd >= (0 as i32) { let _c: i32 = { close(fd) }; }
+}
+
+// The body of `spawn` and `run`. `piped` = false skips the pipes and the dup2
+// file actions, so the child inherits fds 0/1/2.
+fn _start(argv: vec::Vec[text::Text], cwd: str, piped: bool) -> option::Option[Child] {
     let argc: usize = argv.count();
     if argc == (0 as usize) { return option::Option[Child]::None; }
 
@@ -234,9 +275,9 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
     };
     let arg0: *u8 = { *(arr as **u8) };
 
-    let in_p: Pipe = make_pipe();
-    let out_p: Pipe = make_pipe();
-    let err_p: Pipe = make_pipe();
+    let in_p: Pipe = if piped { make_pipe() } else { no_pipe() };
+    let out_p: Pipe = if piped { make_pipe() } else { no_pipe() };
+    let err_p: Pipe = if piped { make_pipe() } else { no_pipe() };
     if !in_p.ok || !out_p.ok || !err_p.ok { return option::Option[Child]::None; }
 
     // File actions redirect the child's 0/1/2 onto our pipe ends. Every pipe fd
@@ -247,9 +288,9 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
     // would do here.
     let fa: *u8 = { malloc(file_actions_bytes()) };
     if fa.is_null() {
-        { close(in_p.read) }; { close(in_p.write) };
-        { close(out_p.read) }; { close(out_p.write) };
-        { close(err_p.read) }; { close(err_p.write) };
+        close_end(in_p.read); close_end(in_p.write);
+        close_end(out_p.read); close_end(out_p.write);
+        close_end(err_p.read); close_end(err_p.write);
         return option::Option[Child]::None;
     }
     let _fi: i32 = { posix_spawn_file_actions_init(fa) };
@@ -272,17 +313,19 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
         if sym.is_null() {
             let _fd: i32 = { posix_spawn_file_actions_destroy(fa) };
             { free(fa) };
-            { close(in_p.read) }; { close(in_p.write) };
-            { close(out_p.read) }; { close(out_p.write) };
-            { close(err_p.read) }; { close(err_p.write) };
+            close_end(in_p.read); close_end(in_p.write);
+            close_end(out_p.read); close_end(out_p.write);
+            close_end(err_p.read); close_end(err_p.write);
             return option::Option[Child]::None;
         }
         let addchdir: fn(*u8, *u8) -> i32 = { sym as fn(*u8, *u8) -> i32 };
         let _cd: i32 = { addchdir(fa, cwd_ptr) };
     }
-    let _d0: i32 = { posix_spawn_file_actions_adddup2(fa, in_p.read, 0 as i32) };
-    let _d1: i32 = { posix_spawn_file_actions_adddup2(fa, out_p.write, 1 as i32) };
-    let _d2: i32 = { posix_spawn_file_actions_adddup2(fa, err_p.write, 2 as i32) };
+    if piped {
+        let _d0: i32 = { posix_spawn_file_actions_adddup2(fa, in_p.read, 0 as i32) };
+        let _d1: i32 = { posix_spawn_file_actions_adddup2(fa, out_p.write, 1 as i32) };
+        let _d2: i32 = { posix_spawn_file_actions_adddup2(fa, err_p.write, 2 as i32) };
+    }
 
     let pid_buf: *u8 = { malloc(4 as usize) };
     let envp: *u8 = environ_ptr();
@@ -293,11 +336,11 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
     free(fa);
 
     // Parent drops the child-side ends whether or not the spawn succeeded.
-    { close(in_p.read) };
-    { close(out_p.write) };
-    { close(err_p.write) };
+    close_end(in_p.read);
+    close_end(out_p.write);
+    close_end(err_p.write);
     if rc != (0 as i32) {
-        { close(in_p.write) }; { close(out_p.read) }; { close(err_p.read) };
+        close_end(in_p.write); close_end(out_p.read); close_end(err_p.read);
         return option::Option[Child]::None;
     }
     return option::Option[Child]::Some(Child {
@@ -306,9 +349,9 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
 }
 
 impl Child {
-    fn pid(ref this) -> i32 { return this._pid; }
-    fn stdout_fd(ref this) -> i32 { return this._stdout; }
-    fn stderr_fd(ref this) -> i32 { return this._stderr; }
+    fn pid(this) -> i32 { return this._pid; }
+    fn stdout_fd(this) -> i32 { return this._stdout; }
+    fn stderr_fd(this) -> i32 { return this._stderr; }
 
     fn take_stdout_fd(ref this) -> i32 { let fd: i32 = this._stdout; this._stdout = -1 as i32; return fd; }
     fn take_stderr_fd(ref this) -> i32 { let fd: i32 = this._stderr; this._stderr = -1 as i32; return fd; }

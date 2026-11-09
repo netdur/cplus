@@ -24068,11 +24068,14 @@ fn target_min_os_overrides_versioned_triples() {
             "expected `{expect}` for {target}: {ir}"
         );
     }
-    // Unversioned targets reject the flag with the placement hint.
-    for args in [
-        vec!["--min-os", "15.0"],
-        vec!["--target", "esp32-xtensa", "--min-os", "9"],
-    ] {
+    // Unversioned targets reject the flag with the placement hint. A macOS
+    // host is the exception: there it is the deployment target
+    // (`min_os_sets_the_macos_deployment_target_of_a_host_build`).
+    let mut rejected = vec![vec!["--target", "esp32-xtensa", "--min-os", "9"]];
+    if !cfg!(target_os = "macos") {
+        rejected.push(vec!["--min-os", "15.0"]);
+    }
+    for args in rejected {
         let out = Command::new(cpc)
             .args(&args)
             .arg("--emit-ll")
@@ -28212,6 +28215,138 @@ fn an_android_entry_that_exports_main_links_an_executable() {
     assert!(loads > 0);
 }
 
+/// `--print-packages`: one `<name> <version> <prebuilt|source> <dir>` line per
+/// dependency, the directory with symlinks followed — so a `vendor/` symlink
+/// into an old copy names that copy. Slab's per-package symlinks into a build
+/// tree held September copies of stdlib and nothing in a build said so.
+#[test]
+fn print_packages_names_the_real_copy_of_each_dependency() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nmathy = \"*\"\nsrcpkg = \"*\"\nghost = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 0; }\n").unwrap();
+    // `mathy` lives elsewhere and is reached through a symlink.
+    let elsewhere = tempdir();
+    std::fs::create_dir_all(elsewhere.join("mathy/src")).unwrap();
+    std::fs::write(
+        elsewhere.join("mathy/Cplus.toml"),
+        "[package]\nname = \"mathy\"\nversion = \"0.4.2\"\n",
+    )
+    .unwrap();
+    std::fs::write(elsewhere.join("mathy/src/mathy.cplus"), "fn one() -> i32 { return 1; }\n").unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    symlink_dir(elsewhere.join("mathy"), dir.join("vendor/mathy")).unwrap();
+    // `srcpkg` opts out of prebuilding.
+    std::fs::create_dir_all(dir.join("vendor/srcpkg/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/srcpkg/Cplus.toml"),
+        "[package]\nname = \"srcpkg\"\nversion = \"1.0.0\"\n\n[build]\nprebuild = false\n",
+    )
+    .unwrap();
+
+    let out = build_app(cpc, &dir, &["--print-packages"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let real = std::fs::canonicalize(elsewhere.join("mathy")).unwrap();
+    assert!(
+        stdout.contains(&format!("mathy 0.4.2 prebuilt {}", real.display())),
+        "the symlink's target, not the link:\n{stdout}"
+    );
+    assert!(stdout.contains("srcpkg 1.0.0 source "), "{stdout}");
+    assert!(stdout.contains("ghost - missing -"), "{stdout}");
+    assert!(!dir.join("target").exists(), "--print-packages builds nothing");
+}
+
+/// `--min-os` on a macOS host build is the deployment target: the program,
+/// and its prebuilt dependency slices, which are rebuilt when the floor
+/// changes — a slice built for this Mac's macOS linked into a 13.0 app was a
+/// "built for newer macOS" link. Other unversioned targets still refuse it.
+#[test]
+fn min_os_sets_the_macos_deployment_target_of_a_host_build() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    prebuild_fixture(&dir, "", 7);
+    let minos = |path: &std::path::Path| -> String {
+        let out = Command::new("otool").arg("-l").arg(path).output().expect("otool");
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        text.lines()
+            .skip_while(|l| !l.contains("LC_BUILD_VERSION"))
+            .find(|l| l.trim_start().starts_with("minos"))
+            .map(|l| l.trim().to_string())
+            .unwrap_or_default()
+    };
+    let out = build_app(cpc, &dir, &["--min-os", "13.0"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(minos(&dir.join("target/debug/app")), "minos 13.0");
+    let slice = std::fs::read_dir(dir.join("vendor/mathy/lib"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path().join("libmathy.a"))
+        .find(|p| p.is_file())
+        .expect("mathy's host slice");
+    assert_eq!(minos(&slice), "minos 13.0", "the dependency slice has the same floor");
+
+    // A different floor rebuilds the slice.
+    let out = build_app(cpc, &dir, &["--min-os", "14.0"]);
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("prebuilding `mathy`"),
+        "the floor is part of the slice fingerprint"
+    );
+    assert_eq!(minos(&slice), "minos 14.0");
+
+    let out = build_app(cpc, &dir, &["--target", "esp32-xtensa", "--min-os", "1.0"]);
+    assert!(!out.status.success(), "an unversioned cross target refuses --min-os");
+}
+
+/// E0324 says the C+ name when a method is another language's spelling of one
+/// the receiver has, or a near miss of one; it says nothing it cannot back.
+#[test]
+fn a_missing_method_suggests_the_c_plus_name() {
+    let (ok, out) = try_build_stdlib_project(
+        "methodhint",
+        "import \"stdlib/str\" as _;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/vec\" as vec;\n\
+         fn main() -> i32 {\n\
+             let s: str = \"abc\";\n\
+             let t: text::Text = \"x\".to_text();\n\
+             var v: vec::Vec[i32] = vec::new();\n\
+             let a = s.starts_with(\"a\");\n\
+             let b = t.to_upper();\n\
+             v.push(1);\n\
+             let c = v.lenght();\n\
+             let d = s.trimm();\n\
+             let e = s.frobnicate();\n\
+             return 0;\n\
+         }\n",
+    );
+    assert!(!ok);
+    let note_after = |needle: &str| -> String {
+        let mut lines = out.lines();
+        while let Some(l) = lines.next() {
+            if l.contains(needle) {
+                return lines.take(2).find(|n| n.contains("= note")).unwrap_or("").to_string();
+            }
+        }
+        String::new()
+    };
+    assert!(note_after("`starts_with`").contains("`has_prefix`"), "{out}");
+    assert!(note_after("`to_upper`").contains("`uppercased`"), "{out}");
+    assert!(note_after("`push`").contains("`append`"), "{out}");
+    assert!(note_after("`lenght`").contains("`count`"), "{out}");
+    assert!(note_after("`trimm`").contains("`trim`"), "{out}");
+    assert!(!note_after("`frobnicate`").contains("did you mean"), "{out}");
+}
+
 #[test]
 fn print_link_args_is_empty_and_succeeds_for_a_project_with_no_dependencies() {
     // The negative half. A project that depends on nothing contributes no link
@@ -30347,6 +30482,146 @@ fn a_label_that_only_fits_another_type_is_an_error_not_a_value() {
 /// instantiated receiver type, which only a real build produces.
 /// `try_build_stdlib_project`, then run the binary: (built and exited 0,
 /// build output followed by the program's stdout).
+/// An array LITERAL passes where a `T[]` parameter is expected, as a view of
+/// a slot in the caller's frame: `process::run(["adb", "-s", serial])`.
+/// Elements take their type from the parameter (`i64[]` makes the literals
+/// i64), a fill works, `T` is inferred from the literal or from a `Vec`'s
+/// slice, and a slice reads its elements with `s[i]`.
+#[test]
+fn an_array_literal_passes_as_a_slice_argument() {
+    let (ok, out) = build_and_run_stdlib_project(
+        "slicearg",
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/slice\" as slice;\n\
+         fn total(xs: i64[]) -> i64 { var s: i64 = 0; for i in 0..xs.count() { s = s + xs[i]; } return s; }\n\
+         fn join(parts: str[]) -> text::Text {\n\
+             var t: text::Text = text::new();\n\
+             for i in 0..parts.count() { let _ = t.append(parts[i]); let _ = t.append(\"|\"); }\n\
+             return t;\n\
+         }\n\
+         fn count_of[T](xs: T[]) -> usize { return xs.count(); }\n\
+         fn first_of[T](xs: T[]) -> T { return xs[0 as usize]; }\n\
+         fn main() -> i32 {\n\
+             let serial: str = \"R5CW\";\n\
+             let dir = \"tmp\";\n\
+             io::println(join([\"adb\", \"-s\", serial, \"${dir}/x\"]));\n\
+             io::println(\"${total([1, 2, 3, 40000000000])} ${total([7; 3])}\");\n\
+             var v: vec::Vec[i32] = vec::new();\n\
+             let _ = v.append(6); let _ = v.append(7);\n\
+             let n: usize = count_of([4, 5]);\n\
+             let f: i64 = first_of::[i64]([9, 8]);\n\
+             let d: i32 = first_of(slice::drop_first(v.as_slice(), 1));\n\
+             io::println(\"${n} ${f} ${d}\");\n\
+             return 0;\n\
+         }\n",
+    );
+    assert!(ok, "{out}");
+    assert!(out.contains("adb|-s|R5CW|tmp/x|"), "{out}");
+    assert!(out.contains("40000000006 21"), "i64 elements from the parameter, and a fill: {out}");
+    assert!(out.contains("2 9 7"), "inference from a literal and from a Vec's slice: {out}");
+}
+
+/// `s[i]` on a slice is bounds-checked against its run-time length, and a
+/// slice is read-only: the reference always said slices index over `0..n`,
+/// and sema refused `s[i]` (E0331), so reading an element took `#slice_ptr`
+/// and a raw deref.
+#[test]
+fn a_slice_index_is_bounds_checked_and_read_only() {
+    let (ok, out) = build_and_run_stdlib_project(
+        "sliceoob",
+        "fn at(xs: i32[], i: usize) -> i32 { return xs[i]; }\n\
+         fn main() -> i32 { return at([1, 2], 5 as usize); }\n",
+    );
+    assert!(!ok, "an out-of-bounds slice read must trap: {out}");
+    let (ok, out) = try_build_stdlib_project(
+        "slicewrite",
+        "fn poke(xs: i32[]) { xs[0 as usize] = 3; }\n\
+         fn main() -> i32 { poke([1, 2]); return 0; }\n",
+    );
+    assert!(!ok && out.contains("E0305") && out.contains("read-only view"), "{out}");
+}
+
+/// The slot behind an array-literal slice lives for the statement, as an
+/// interpolation's does: a callee may READ it, never keep or return it.
+/// Each escape route is E0513, and an array VALUE (not a literal) is not a
+/// slice at all — E0302, on the plain and the inferred-generic path.
+#[test]
+fn an_array_literal_slice_argument_cannot_outlive_its_statement() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "kept",
+            "import \"stdlib/vec\" as vec;\n\
+             fn keep(ref out: vec::Vec[str[]], xs: str[]) { let _ = out.append(xs); }\n\
+             fn main() -> i32 { var v: vec::Vec[str[]] = vec::new::[str[]](); keep(v, [\"a\", \"b\"]); return 0; }\n",
+            "E0513",
+        ),
+        (
+            "bound",
+            "fn same(xs: str[]) -> str[] { return xs; }\n\
+             fn main() -> i32 { let s: str[] = same([\"a\", \"b\"]); return s.count() as i32; }\n",
+            "E0513",
+        ),
+        (
+            "returned",
+            "fn same(xs: str[]) -> str[] { return xs; }\n\
+             fn mk() -> str[] { return same([\"a\", \"b\"]); }\n\
+             fn main() -> i32 { return mk().count() as i32; }\n",
+            "E0513",
+        ),
+        (
+            "in_struct",
+            "struct Args { xs: str[] }\n\
+             fn wrap(xs: str[]) -> Args { return Args { xs: xs }; }\n\
+             fn main() -> i32 { let a: Args = wrap([\"a\", \"b\"]); return a.xs.count() as i32; }\n",
+            "E0513",
+        ),
+        (
+            "array_value",
+            "fn plain(xs: i32[]) -> usize { return xs.count(); }\n\
+             fn main() -> i32 { let arr: [i32; 2] = [4, 5]; return plain(arr) as i32; }\n",
+            "E0302",
+        ),
+        (
+            "array_value_generic",
+            "fn count_of[T](xs: T[]) -> usize { return xs.count(); }\n\
+             fn main() -> i32 { let arr: [i32; 2] = [4, 5]; return count_of(arr) as i32; }\n",
+            "E0302",
+        ),
+    ];
+    for (name, src, code) in cases {
+        let (ok, out) = try_build_stdlib_project(name, src);
+        assert!(!ok && out.contains(code), "[{name}] expected {code}:\n{out}");
+    }
+}
+
+/// `process::run` starts the child on this process's stdin/stdout/stderr and
+/// returns its exit code: output streams through instead of being piped and
+/// copied by hand. Missing binary = 127, like a shell. Spawning cannot run
+/// inside `cpc test` (see process.cplus), so this is a built program.
+#[test]
+fn process_run_shares_the_terminal_and_returns_the_exit_code() {
+    let (ok, out) = build_and_run_stdlib_project(
+        "procrun",
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/process\" as process;\n\
+         fn main() -> i32 {\n\
+             let who: str = \"world\";\n\
+             let a: i32 = process::run([\"sh\", \"-c\", \"echo hello $0; echo to-stderr 1>&2; exit 7\", who]);\n\
+             let b: i32 = process::run([\"pwd\"], cwd: \"/\");\n\
+             let c: i32 = process::run([\"no-such-binary-xyz\"]);\n\
+             io::println(\"code=${a} pwd=${b} missing=${c}\");\n\
+             return 0;\n\
+         }\n",
+    );
+    assert!(ok, "{out}");
+    assert!(out.contains("hello world\n"), "the child's stdout is this process's: {out}");
+    assert!(out.contains("to-stderr"), "and so is its stderr: {out}");
+    assert!(out.lines().any(|l| l == "/"), "cwd is honoured: {out}");
+    assert!(out.contains("code=7 pwd=0 missing=127"), "{out}");
+}
+
 fn build_and_run_stdlib_project(name: &str, main_src: &str) -> (bool, String) {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();

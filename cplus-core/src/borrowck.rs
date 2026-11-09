@@ -5744,7 +5744,12 @@ impl<'a> ViewRules<'a> {
     /// Report one kept argument that owns heap and has no name. Split from
     /// the walk so the receiver half and the free-fn half phrase it once.
     fn flag_kept_temporary(&mut self, arg: &Expr, callee_name: &str) {
-        let Some(what) = self.rvalue_owner_desc(arg) else {
+        // Only ever called for a VIEW position, so an array literal here is
+        // one passed as a slice of itself.
+        let Some(what) = self
+            .rvalue_owner_desc(arg)
+            .or_else(|| Self::array_literal_desc(arg))
+        else {
             return;
         };
         let callee_name = display_name(callee_name);
@@ -5783,6 +5788,18 @@ impl<'a> ViewRules<'a> {
             TypeKind::Path(n) | TypeKind::Generic { name: n, .. } => {
                 Some(format!("a temporary `{}`", display_name(n)))
             }
+            _ => None,
+        }
+    }
+
+    /// An array literal passed where a `T[]` is expected is a view of an
+    /// anonymous slot of the statement — sema's `array_to_slice_coercions`.
+    /// Its elements are Copy or views, so `rvalue_owner_desc` (which looks for
+    /// an owner with heap to free) never names it; the callers that know the
+    /// parameter is a slice ask this instead.
+    fn array_literal_desc(e: &Expr) -> Option<String> {
+        match Self::trivial_tail(e).kind {
+            ExprKind::ArrayLit { .. } | ExprKind::ArrayFill { .. } => Some("an array literal".to_string()),
             _ => None,
         }
     }
@@ -5994,6 +6011,15 @@ impl<'a> ViewRules<'a> {
             }
             if let Some(what) = self.rvalue_owner_desc(arg) {
                 return Some((what, shown));
+            }
+            let slice_param = entry
+                .param_tys
+                .get(i as usize)
+                .is_some_and(|t| matches!(t.kind, TypeKind::Slice(_)));
+            if slice_param {
+                if let Some(what) = Self::array_literal_desc(arg) {
+                    return Some((what, shown));
+                }
             }
             if let Some((what, _)) = self.temp_arg_of_returned_view(arg) {
                 return Some((what, shown));

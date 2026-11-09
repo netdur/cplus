@@ -112,19 +112,23 @@ fn open_append(path: str) -> result::Result[File, result::IoError] {
 }
 
 // File metadata from stat(2): size in bytes, mtime as Unix seconds (whole
-// seconds since 1970-01-01 UTC), and whether the path is a directory. Enables
+// seconds since 1970-01-01 UTC), and what kind of file the path names.
+// stat FOLLOWS symlinks, so both answers are about the target. A path can be
+// neither: a fifo, a socket, a device — which is why `is_file` is its own
+// field and not `!is_dir`. Enables
 // an in-process mtime sort (retiring `ls -t | head`) and a cheap size probe
 // (retiring the fopen/fseek(SEEK_END)/ftell dance).
 struct Metadata {
     size: i64,      // st_size
     mtime: i64,     // st_mtimespec.tv_sec
     is_dir: bool,   // (st_mode & S_IFMT) == S_IFDIR
+    is_file: bool,  // (st_mode & S_IFMT) == S_IFREG — a regular file
 }
 
 // The `struct stat` buffer is opaque here: its size and every field offset come
 // from `./fs_sys`, because both differ per platform (and, worse, the SIZE
 // happens to agree at 144 bytes while none of the offsets do). Only S_IFMT /
-// S_IFDIR are portable — 0xF000 / 0x4000 everywhere.
+// S_IFDIR / S_IFREG are portable — 0xF000 / 0x4000 / 0x8000 everywhere.
 fn metadata(path: str) -> result::Result[Metadata, result::IoError] {
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
@@ -142,8 +146,11 @@ fn metadata(path: str) -> result::Result[Metadata, result::IoError] {
             let mtime: i64 = fsys::stat_mtime_secs(buf);
             let size: i64 = fsys::stat_file_size(buf);
             free(buf);
-            let dir: bool = (mode & (0xF000 as u32)) == (0x4000 as u32);
-            return result::io_ok::[Metadata](Metadata { size: size, mtime: mtime, is_dir: dir });
+            let kind: u32 = mode & (0xF000 as u32);
+            return result::io_ok::[Metadata](Metadata {
+                size: size, mtime: mtime,
+                is_dir: kind == (0x4000 as u32), is_file: kind == (0x8000 as u32),
+            });
         }
         option::Option[text::CString]::None => {
             return result::io_err::[Metadata](result::IoError::InvalidInput);
@@ -164,6 +171,15 @@ fn mtime(path: str) -> result::Result[i64, result::IoError] {
     match metadata(path) {
         result::Result[Metadata, result::IoError]::Ok(m) => { return result::io_ok::[i64](m.mtime); }
         result::Result[Metadata, result::IoError]::Err(e) => { return result::io_err::[i64](e); }
+    }
+}
+
+// Does the path exist AND name a regular file (after following symlinks)?
+// False on any error (incl. missing), and for a directory, fifo or socket.
+fn is_file(path: str) -> bool {
+    match metadata(path) {
+        result::Result[Metadata, result::IoError]::Ok(m) => { return m.is_file; }
+        result::Result[Metadata, result::IoError]::Err(e) => { return false; }
     }
 }
 
@@ -697,6 +713,7 @@ fn metadata_reports_size_mtime_and_not_dir() {
         result::Result[Metadata, result::IoError]::Ok(m) => {
             assert m.size == (13 as i64);          // "hello fs stat" is 13 bytes
             assert !m.is_dir;
+            assert m.is_file;
             assert m.mtime > (1600000000 as i64);  // a real Unix time (post-2020)
         }
         result::Result[Metadata, result::IoError]::Err(e) => { assert false; }
@@ -707,10 +724,11 @@ fn metadata_reports_size_mtime_and_not_dir() {
 #[test]
 fn metadata_on_a_directory_reports_is_dir() {
     match metadata("/tmp") {
-        result::Result[Metadata, result::IoError]::Ok(m) => { assert m.is_dir; }
+        result::Result[Metadata, result::IoError]::Ok(m) => { assert m.is_dir; assert !m.is_file; }
         result::Result[Metadata, result::IoError]::Err(e) => { assert false; }
     }
     assert is_dir("/tmp");
+    assert !is_file("/tmp");
 }
 
 #[test]
@@ -720,6 +738,7 @@ fn metadata_missing_path_is_not_found() {
         result::Result[Metadata, result::IoError]::Err(e) => { assert e == result::IoError::NotFound; }
     }
     assert !is_dir("/tmp/cplus_stdlib_fs_does_not_exist_zzz");
+    assert !is_file("/tmp/cplus_stdlib_fs_does_not_exist_zzz");
 }
 
 #[test]
@@ -987,4 +1006,14 @@ fn renaming_something_absent_is_an_error_not_a_silent_success() {
         result::Result[bool, result::IoError]::Err(_e) => { }
     }
     assert exists(dst) == false;
+}
+
+// Neither a directory nor a regular file: `!is_dir` is not "is a file".
+// /dev/null is a character device on every POSIX host.
+#[test]
+fn a_device_is_neither_a_file_nor_a_directory() {
+    match metadata("/dev/null") {
+        result::Result[Metadata, result::IoError]::Ok(m) => { assert !m.is_dir; assert !m.is_file; }
+        result::Result[Metadata, result::IoError]::Err(e) => { assert false; }
+    }
 }

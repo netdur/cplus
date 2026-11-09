@@ -1036,7 +1036,8 @@ locals, calls, field assignments, blocks, and `if`/`for`.
 behavior byte-for-byte. Named targets include `host`, `ios-arm64`,
 `ios-arm64-simulator`, `android-arm64`, `esp32-xtensa`,
 `esp32c3-riscv32`. `--min-os VERSION` overrides the OS floor in versioned
-triples; unversioned targets reject it.
+triples and is the deployment target of a macOS host build; other
+unversioned targets reject it.
 
 Targets differ in pointer width (32-bit for the ESP32 targets, §4.1),
 C ABI (pinned per target), object format, and **handoff**: host-linked

@@ -41,7 +41,11 @@ The targets `--target` accepts:
 | `esp32c3-riscv32` | `esp32` | riscv32 | external builder | — |
 
 `--min-os VERSION` (written *after* `--target`) replaces the version token
-in the target's triple. A target whose triple carries no version rejects it.
+in the target's triple. On a macOS host build it is the deployment target
+(`cpc build --min-os 15.0`), the floor `MACOSX_DEPLOYMENT_TARGET` would
+set; it reaches the program, its link, and every prebuilt dependency slice,
+which is rebuilt when the floor changes. Any other target whose triple
+carries no version rejects it.
 
 `wasm` is a platform name the manifest and `#platform()` accept; it is
 reached through `cpc-wasm`, not through `--target`.

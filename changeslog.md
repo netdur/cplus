@@ -75,6 +75,14 @@ compiler error report for IR that clang rejects.
   64-bit length in a 32-bit header and failed the same way; both are the
   target's pointer width now. E0911 on a `const` array or struct says to
   use a `static` and why, instead of a note about function names.
+- **Slices.** `s[i]` reads a slice's element, bounds-checked against its
+  length; a slice is read-only (`s[i] = v` is E0305). Reading an element
+  used to need `#slice_ptr` and a raw deref. An array LITERAL passes where a
+  `T[]` parameter is expected (`f(["a", "b", name])`), as a view of a slot
+  in the caller's frame that lives for the statement: the callee may read
+  it, and keeping or returning it is E0513. An array value is still not a
+  slice. A generic `T[]` parameter now infers `T` from its argument, so
+  `slice::prefix(s, 2)` needs no `::[i32]`.
 - **Diagnostics.** A missing method on a builtin type names that type
   (`no method foo on type u32`, not `str`), and the `stdlib/math` hint
   appears for every numeric width `math` declares. The E0312 hint for
@@ -112,6 +120,16 @@ compiler error report for IR that clang rejects.
   `async fn` in `executor`). The exclusion list now also names what stands
   on the excluded modules — `future`, `date`, `bundle`, `fs_sys`, the
   `stdlib` umbrella — and importing those on an ESP32 target is E0866.
+- **`--min-os` on a macOS host build** sets the deployment target
+  (`-mmacosx-version-min`) for the program, its link and its prebuilt
+  dependency slices. The slice fingerprint now includes the floor (from
+  `--min-os` or `MACOSX_DEPLOYMENT_TARGET`), so changing it rebuilds them.
+- **`cpc build --print-packages`** prints `<name> <version>
+  <prebuilt|source> <directory>` per dependency, the directory with
+  symlinks followed: which copy of each package the build uses.
+- **E0324 suggests the C+ name** when a method is another language's
+  spelling of one the receiver has (`len` → `count`, `starts_with` →
+  `has_prefix`, `push` → `append`), or a near miss of one.
 - **Archive builds report what they wrote.** A library package, and an app
   built for iOS, Android or ESP32, prints `ok: N modules -> <archive>` like
   an executable build does, and adds the `--print-link-args` command for
@@ -145,6 +163,15 @@ compiler error report for IR that clang rejects.
 
 ### Standard library
 
+- **`process::run(argv, cwd:)`** runs a child on this process's stdin,
+  stdout and stderr and returns its exit code, so a tool driving `adb` or
+  `git` streams their output without a read/write loop:
+  `process::run(["adb", "-s", serial, "push", src, dst])`. 127 when the
+  child could not start. `Child.pid()`, `stdout_fd()` and `stderr_fd()`
+  take `this` (they read a field), so a `let` child can answer them.
+- **`fs::Metadata.is_file` and `fs::is_file(path)`**: a regular file, after
+  following symlinks. `!is_dir` was the only test, and it counted fifos,
+  sockets and devices as files.
 - `stdlib/math` declares `min`, `max` and `clamp` for every integer width;
   `clamp` answers `hi` when `lo > hi`, as the float ones do.
 

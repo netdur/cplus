@@ -33,7 +33,7 @@ Source of truth for edge cases: the header comment and impl in
 | [`net`](#net) | `TcpStream`, `TcpListener` |
 | [`netsys`](#netsys) | platform errno / constants (for `net`) |
 | [`env`](#env) | `var`, `argc`, `arg` |
-| [`process`](#process) | `spawn`, `capture`, `current_id` |
+| [`process`](#process) | `run`, `spawn`, `capture`, `current_id` |
 | [`platform`](#platform) | `Os`, `Arch`, `Version`, `os` / `arch` / `os_version` / `cpu_count` |
 | [`flags`](#flags) | `Flags` option-set over u64 bits |
 | [`slice`](#slice) | checked sub-views over `T[]` |
@@ -287,7 +287,7 @@ Stdout / stderr via libc `write`. Best-effort; no `Result`.
 
 ```cplus
 struct File { /* owned fd; Drop closes */ }
-struct Metadata { size: i64, mtime: i64, is_dir: bool }
+struct Metadata { size: i64, mtime: i64, is_dir: bool, is_file: bool }
 
 fn open_read(path: str) -> result::Result[File, result::IoError]
 fn create(path: str) -> result::Result[File, result::IoError]
@@ -296,6 +296,7 @@ fn metadata(path: str) -> result::Result[Metadata, result::IoError]
 fn size(path: str) -> result::Result[i64, result::IoError]
 fn mtime(path: str) -> result::Result[i64, result::IoError]
 fn is_dir(path: str) -> bool
+fn is_file(path: str) -> bool        // a regular file; a fifo or device is neither
 fn exists(path: str) -> bool
 fn create_dir(path: str) -> result::Result[bool, result::IoError]
 fn create_dir_all(path: str) -> result::Result[bool, result::IoError]
@@ -422,12 +423,24 @@ Owned `Text` for values; `None` if unset / out of range.
 ## process
 
 ```cplus
+fn run(argv: str[], cwd: str = "") -> i32
 fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child]
 fn capture(argv: vec::Vec[text::Text], cwd: str = "") -> Output
 fn current_id() -> i32
 ```
 
-`spawn` runs an argv with no shell; `Child.pid()` is the child's id.
+All three take an argv and use no shell. `run` starts the child on this
+process's stdin, stdout and stderr, waits, and returns the exit code (128 +
+signal if killed, 127 if it could not start): the output streams to the
+terminal as it is written. Its argv is a slice, so an array literal is the
+whole spelling:
+
+```cplus
+let code: i32 = process::run(["adb", "-s", serial, "push", local, remote]);
+```
+
+`spawn` pipes all three streams to the caller; `capture` collects them.
+`Child.pid()` is the child's id.
 `current_id()` is this process's own — the one a child sees as its parent.
 On Windows `current_id` works and spawning is not built yet.
 
@@ -542,6 +555,10 @@ slice::suffix::[i32](s, 3);      // last 3 (clamped)
 slice::drop_first::[i32](s, 1);
 slice::drop_last::[i32](s, 1);
 ```
+
+`T` is inferred from the slice argument, so `slice::prefix(s, 2)` needs no
+`::[i32]`. A slice reads its elements with `s[i]`, bounds-checked against
+its length; it is read-only.
 
 ## hash_map
 

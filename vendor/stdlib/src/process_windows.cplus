@@ -106,13 +106,18 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
     return option::Option[Child]::None;
 }
 
+fn run(argv: str[], cwd: str = "") -> i32 {
+    unsupported(#str_ptr("run\0"));
+    return 127 as i32;
+}
+
 // UNREACHABLE IN PRACTICE, because nothing here hands out a Child — but written
 // out rather than omitted, because the point of this file is that the surface
 // matches. Each answers what the Darwin body answers for a dead child.
 impl Child {
-    fn pid(ref this) -> i32 { return this._pid; }
-    fn stdout_fd(ref this) -> i32 { return this._stdout; }
-    fn stderr_fd(ref this) -> i32 { return this._stderr; }
+    fn pid(this) -> i32 { return this._pid; }
+    fn stdout_fd(this) -> i32 { return this._stdout; }
+    fn stderr_fd(this) -> i32 { return this._stderr; }
     fn take_stdout_fd(ref this) -> i32 { let fd: i32 = this._stdout; this._stdout = -1 as i32; return fd; }
     fn take_stderr_fd(ref this) -> i32 { let fd: i32 = this._stderr; this._stderr = -1 as i32; return fd; }
 

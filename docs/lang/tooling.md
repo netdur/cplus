@@ -47,7 +47,7 @@ Build flags, all of which apply to `cpc FILE`, `cpc build`, and `cpc test`:
 | `-g` / `--debug-info` | DWARF metadata, and `-g` to clang |
 | `--asan` / `--ubsan` / `--tsan` / `--msan` | LLVM sanitizers; asan/tsan/msan are mutually exclusive, ubsan composes |
 | `--target NAME` | cross-compile ([platforms.md](platforms.md)) |
-| `--min-os VERSION` | override a versioned triple's OS floor; place *after* `--target` |
+| `--min-os VERSION` | override a versioned triple's OS floor (place *after* `--target`), or a macOS host build's deployment target |
 | `--fp-contract=off\|on\|fast` | float contraction; `off` keeps `a*b+c` as fmul+fadd for bit-identical-to-C output |
 | `--target-cpu=NAME` | the CPU the backend selects instructions for: `-march` on x86_64, `-mcpu` on aarch64. Default is the arch baseline (SSE2 on x86_64, where an `f32x8` is two SSE halves and a vector `fma` is a libm call per lane); `x86-64-v3`, or `native` on a Haswell-or-later host, gives AVX2+FMA. Refused on other arches |
 | `--target-feature=+a,-b` | enable/disable individual LLVM features (`+avx2,+fma`, `-avx512f`), applied after `--target-cpu`. Both flags are part of every prebuilt dependency's fingerprint (under AVX an `f32x8` argument travels in a `ymm` register), so changing them rebuilds the slices; read them in source with `#target_feature` |
@@ -292,6 +292,7 @@ cpc --emit-obj FILE -o OUT.o # relocatable object
 cpc --emit-ll-project        # merged IR for the whole project
 cpc build --print-link-args  # what the dependencies add to the link line
 cpc build --print-asset-dir  # where ./assets/* is staged for the target
+cpc build --print-packages   # which copy of each dependency the build uses
 cpc --realtime-report[=json] # whole-project real-time contract digest
 ```
 

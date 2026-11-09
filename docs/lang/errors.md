@@ -184,13 +184,13 @@ fn main() -> i32 { return if 1 { 1 } else { 2 }; }
 
 ### E0305 · Assignment to immutable binding
 
-An assignment targets a binding (or a place rooted at one) that was not declared `var`.
+An assignment targets a binding (or a place rooted at one) that was not declared `var`. The same code refuses a write through a slice (`xs[i] = v` where `xs: T[]`): a slice is a read-only view of storage it does not own.
 
 ```cplus
 fn main() -> i32 { let x = 1; x = 2; return 0; }
 ```
 
-**Fix.** Declare the binding as `var`.
+**Fix.** Declare the binding as `var`; for a slice, write to the array or `Vec` it views.
 
 <sub>repro: checked · cplus-core/src/sema.rs:12042 · test cplus-core/src/sema.rs:assign_to_immutable_e0305</sub>
 

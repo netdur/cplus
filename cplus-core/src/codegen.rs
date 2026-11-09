@@ -143,6 +143,10 @@ struct ModuleMetadata {
     /// extracts the `Text`'s `{ptr,len}` prefix and packages a `str`
     /// fat-pointer instead of yielding the owned aggregate.
     text_to_str_coercions: RefCell<HashSet<crate::lexer::Span>>,
+    /// Array literals passed where a `T[]` parameter is expected (sema's
+    /// [`crate::sema::MonoInfo::array_to_slice_coercions`]). At each, `gen_expr`
+    /// spills the array to a slot in this frame and yields `{ ptr, len }`.
+    array_to_slice_coercions: RefCell<HashSet<crate::lexer::Span>>,
     /// Unsuffixed literals sema typed other than `i32`/`f64` (sema's
     /// [`crate::sema::MonoInfo::lit_widths`]). The literal's own
     /// suffix says nothing, so `gen_expr` reads the width from here.
@@ -1084,6 +1088,7 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -1116,6 +1121,7 @@ pub fn generate_with_mono(
         &mono.text_to_str_coercions,
         &mono.distinct_aliases,
         &mono.lit_widths,
+        &mono.array_to_slice_coercions,
     )
 }
 
@@ -1137,6 +1143,7 @@ pub fn generate_lib(program: &Program, mode: BuildMode) -> String {
         None,
         &[],
         true,
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &Default::default(),
@@ -1174,6 +1181,7 @@ pub fn generate_with_debug(
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -1196,6 +1204,7 @@ pub fn generate_with_options(
         source_file,
         sanitizers,
         false,
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &Default::default(),
@@ -1261,6 +1270,7 @@ pub fn generate_test_binary(
         &mono.text_to_str_coercions,
         &mono.distinct_aliases,
         &mono.lit_widths,
+        &mono.array_to_slice_coercions,
     )
 }
 
@@ -1285,6 +1295,7 @@ fn generate_inner(
     text_to_str_coercions: &HashSet<crate::lexer::Span>,
     distinct_aliases: &std::collections::BTreeMap<String, crate::ast::Type>,
     lit_widths: &HashMap<crate::lexer::Span, Ty>,
+    array_to_slice_coercions: &HashSet<crate::lexer::Span>,
 ) -> String {
     let types = collect_types(program, distinct_aliases);
     let sigs = collect_sigs(program, &types);
@@ -1302,6 +1313,7 @@ fn generate_inner(
     // the `{ptr,len}` prefix at each. No global emission — just the span set.
     *md.text_to_str_coercions.borrow_mut() = text_to_str_coercions.clone();
     *md.lit_widths.borrow_mut() = lit_widths.clone();
+    *md.array_to_slice_coercions.borrow_mut() = array_to_slice_coercions.clone();
     // v0.0.8 bench-gap fix C: compute the fastcc-eligible set once. A
     // user-defined function or method gets `fastcc` iff it has internal
     // linkage (non-`export`, non-`main`, non-extern, non-drop) AND its
@@ -13208,6 +13220,29 @@ impl<'a> FnState<'a> {
         {
             return Some(self.gen_text_to_str(e));
         }
+        // An array literal passed where a `T[]` is expected (sema recorded
+        // it): build the array in a slot of this frame and pass a view of it.
+        // The slot outlives the call — the only use borrowck allows.
+        if self.md.array_to_slice_coercions.borrow().contains(&e.span) {
+            let (arr, aty) = match &e.kind {
+                ExprKind::ArrayLit { elements } => self.gen_array_lit(elements, None),
+                ExprKind::ArrayFill { fill, count, .. } => self.gen_array_fill(fill, *count, None),
+                _ => unreachable!("sema records only array literals as slice arguments"),
+            };
+            let Ty::Array(elem, n) = aty.clone() else {
+                unreachable!("an array literal lowers to an array");
+            };
+            let slot = self.alloca_anon(aty.clone());
+            self.gen_store(&aty, &arr, &slot);
+            let lt = self.lty(&aty);
+            let base = self.next_tmp();
+            self.emit(&format!("{base} = getelementptr inbounds {lt}, ptr {slot}, i64 0, i64 0"));
+            let t1 = self.next_tmp();
+            let t2 = self.next_tmp();
+            self.emit(&format!("{t1} = insertvalue {{ ptr, {us} }} undef, ptr {base}, 0"));
+            self.emit(&format!("{t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {n}, 1"));
+            return Some((t2, Ty::Slice(elem)));
+        }
         match &e.kind {
             // v0.0.22 DSL.2: builder blocks desugar to ordinary AST in
             // the resolver walk or `lower`; codegen never sees one.
@@ -13777,6 +13812,9 @@ impl<'a> FnState<'a> {
             self.gen_load(&v, &inner, &ptr);
             return (v, inner);
         }
+        if let Ty::Slice(elem) = recv_ty.clone() {
+            return self.gen_slice_index(&recv_ptr, &recv_ty, &elem, index);
+        }
         let Ty::Array(elem, n) = recv_ty.clone() else {
             unreachable!("sema validated");
         };
@@ -13816,6 +13854,36 @@ impl<'a> FnState<'a> {
         let _ = llvm_elem;
         self.gen_load(&v, &elem, &ptr);
         (v, (*elem).clone())
+    }
+
+    /// `s[i]` on a slice: load the `{ ptr, len }` view from its slot, trap
+    /// when `i >= len` (the array rule, with the length read at run time),
+    /// then load the element. Read-only — sema refuses a write through a
+    /// slice, so there is no place form.
+    fn gen_slice_index(&mut self, recv_ptr: &str, recv_ty: &Ty, elem: &Ty, index: &Expr) -> (String, Ty) {
+        let us = usize_llvm_ty();
+        let view = self.next_tmp();
+        self.gen_load(&view, recv_ty, recv_ptr);
+        let base = self.next_tmp();
+        self.emit(&format!("{base} = extractvalue {{ ptr, {us} }} {view}, 0"));
+        let len = self.next_tmp();
+        self.emit(&format!("{len} = extractvalue {{ ptr, {us} }} {view}, 1"));
+        let (idx_val, _) = self.gen_expr(index).expect("index has value");
+        let bound = self.next_tmp();
+        self.emit(&format!("{bound} = icmp uge {us} {idx_val}, {len}"));
+        let trap_lbl = self.next_block_label();
+        let ok_lbl = self.next_block_label();
+        self.emit_terminator(&format!("br i1 {bound}, label %{trap_lbl}, label %{ok_lbl}"));
+        self.open_block(&trap_lbl);
+        self.emit("call void @llvm.trap()");
+        self.emit_terminator("unreachable");
+        self.open_block(&ok_lbl);
+        let elem_lt = self.lty(elem);
+        let ptr = self.next_tmp();
+        self.emit(&format!("{ptr} = getelementptr inbounds {elem_lt}, ptr {base}, {us} {idx_val}"));
+        let v = self.next_tmp();
+        self.gen_load(&v, elem, &ptr);
+        (v, elem.clone())
     }
 
     /// Build a struct literal: alloca a slot for the new value, store each
@@ -22448,6 +22516,7 @@ mod tests {
             &Default::default(),
             &Default::default(),
             &Default::default(),
+            &Default::default(),
         )
     }
 
@@ -25392,6 +25461,7 @@ fn main() -> i32 {\n\
             None,
             &[],
             false,
+            &Default::default(),
             &Default::default(),
             &Default::default(),
             &Default::default(),

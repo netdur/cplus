@@ -531,6 +531,28 @@ pub fn set_min_os_override(version: String) {
     *MIN_OS_OVERRIDE.lock().unwrap() = Some(version);
 }
 
+/// The `--min-os` override, if one was given. Part of a prebuilt slice's
+/// fingerprint: objects built for one deployment target and linked into an
+/// app for another are what `ld` warns about, and an API availability check
+/// compiled against the wrong floor is wrong at run time.
+pub fn min_os_override() -> Option<String> {
+    MIN_OS_OVERRIDE.lock().unwrap().clone()
+}
+
+/// `-mmacosx-version-min=<v>` for a host build on macOS that was given
+/// `--min-os`. The host target has no triple to splice a version into, so the
+/// floor reaches clang as its own flag — the one `MACOSX_DEPLOYMENT_TARGET`
+/// stands for. Empty everywhere else.
+pub fn macos_min_os_args() -> Vec<String> {
+    let t = active_target();
+    if t.triple.is_some() || t.os != TargetOs::Macos {
+        return Vec::new();
+    }
+    min_os_override()
+        .map(|v| vec![format!("-mmacosx-version-min={v}")])
+        .unwrap_or_default()
+}
+
 /// The version-spliced triple for a spec: the spec's `min_os_default`
 /// token replaced by `over`. Pure, for unit tests; `active_triple`
 /// applies it with the process-global override.
