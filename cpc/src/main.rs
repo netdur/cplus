@@ -2952,7 +2952,7 @@ fn ensure_one_slice_locked(
     // Pointing the library pipeline straight at the slice directory also
     // deposits its `.o` and its C header there — half a megabyte of build
     // litter inside what is meant to be the shipped surface.
-    let code = build_lib_project(vm, &lib, None, diag_mode, build_mode, true, false, sanitizers, false);
+    let code = build_lib_project(vm, &lib, None, diag_mode, build_mode, true, false, sanitizers, LibRole::Prebuild);
     timings::report_titled(&format!("prebuild {}", vm.package.name));
     if code != ExitCode::SUCCESS {
         // Leave nothing half-built: a stale archive with a fresh fingerprint
@@ -3968,7 +3968,7 @@ fn build_project(
             fp_contract,
             c_abi_entry,
             sanitizers,
-            true,
+            LibRole::Package,
         );
         timings::report_project(&m.package.name);
         return code;
@@ -4037,7 +4037,7 @@ fn build_project(
                 fp_contract,
                 false,
                 sanitizers,
-                true,
+                LibRole::Package,
             );
             timings::report_project(&m.package.name);
             return code;
@@ -4059,7 +4059,7 @@ fn build_project(
             sealed: false,
         };
         let code =
-            build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false, sanitizers, true);
+            build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false, sanitizers, LibRole::AppEntry);
         timings::report_project(&m.package.name);
         if code != ExitCode::SUCCESS {
             return code;
@@ -4445,7 +4445,7 @@ fn build_lib_project(
     fp_contract: bool,
     c_abi_entry: bool,
     sanitizers: &[&str],
-    announce: bool,
+    role: LibRole,
 ) -> ExitCode {
     if !lib.path.is_file() {
         let d = diag::Diagnostic {
@@ -4846,10 +4846,92 @@ fn build_lib_project(
         products.push(dylib_path);
     }
 
-    if announce {
+    // An Android app entry that exports `main` is a command-line program —
+    // a test runner, a benchmark, a tool run over `adb shell`. Nothing else
+    // will link it (Gradle links an APK's library, and an APK's library never
+    // exports `main`), so cpc does, with the NDK clang it already resolved.
+    if role == LibRole::AppEntry && tgt.os == target::TargetOs::Android && exports_main(&program) {
+        let Some(archive) = products.iter().find(|p| p.extension().is_some_and(|e| e == "a")) else {
+            eprintln!("cpc: an Android command-line program links from its archive, and none was written");
+            return ExitCode::FAILURE;
+        };
+        let exe = target_dir.join(&lib.name);
+        if let Err(code) = link_android_executable(&clang_prog, &tgt, archive, &dep_link_args, sanitizers, &exe) {
+            return code;
+        }
+        products = vec![exe];
+    }
+
+    if role != LibRole::Prebuild {
         announce_lib_products(&products, loaded_paths.len(), !dep_link_args.is_empty(), &tgt, build_mode);
     }
     ExitCode::SUCCESS
+}
+
+/// Who asked for a library-pipeline build, which decides what it says and
+/// whether anything follows the archive.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LibRole {
+    /// A dependency compiled into its slice for a consumer: quiet on stdout.
+    Prebuild,
+    /// `cpc build` of a library package or a `[library]` target.
+    Package,
+    /// `cpc build` of an app entry on an external-builder target (iOS,
+    /// Android, ESP32). On Android, an entry that exports `main` is also
+    /// linked into an executable.
+    AppEntry,
+}
+
+/// Whether the program defines `export extern fn main`, the C entry point a
+/// process starts in. An Android entry that defines it is a command-line
+/// program; one that does not is a library for an APK.
+fn exports_main(program: &cplus_core::ast::Program) -> bool {
+    program.items.iter().any(|item| {
+        matches!(&item.kind, cplus_core::ast::ItemKind::Function(f)
+            if f.name.name == "main" && f.is_extern && f.is_export && !f.is_declaration)
+    })
+}
+
+/// Link an Android command-line executable from the entry package's archive
+/// and the dependencies' link line — what Slab's release packager and every
+/// adb-run test runner used to spell out by hand
+/// (bugs/closed/android-command-line-tools-are-linked-by-hand.md).
+///
+/// The archive goes first: lld resolves left to right, and the archive's
+/// `main` is what pulls the dependency slices in. `-lm` and `-ldl` are
+/// bionic libraries the NDK's C driver does not add on its own (the C++
+/// driver does, which is why hand-written lines used clang++). Anything
+/// else — `log`, `android` — is named by the package that calls it, in its
+/// `[android.link]`. 16 KB page alignment is what Android 15+ devices with
+/// 16 KB pages require of every ELF they load; it costs nothing on 4 KB.
+fn link_android_executable(
+    clang_prog: &str,
+    tgt: &target::TargetSpec,
+    archive: &Path,
+    dep_link_args: &[String],
+    sanitizers: &[&str],
+    exe: &Path,
+) -> Result<(), ExitCode> {
+    let mut cmd = Command::new(clang_prog);
+    cmd.args(clang_target_args(tgt));
+    if !sanitizers.is_empty() {
+        cmd.arg(format!("-fsanitize={}", sanitizers.join(",")));
+    }
+    cmd.arg(archive);
+    cmd.args(dep_link_args);
+    cmd.args(["-lm", "-ldl", "-Wl,-z,max-page-size=16384"]);
+    cmd.arg("-o").arg(exe);
+    match cmd.status() {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => {
+            eprintln!("cpc: linking {} with the NDK clang exited with {s}", exe.display());
+            Err(ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8))
+        }
+        Err(e) => {
+            eprintln!("cpc: failed to invoke {clang_prog}: {e}");
+            Err(ExitCode::FAILURE)
+        }
+    }
 }
 
 /// The success line of a library-pipeline build: what was written, and —

@@ -28117,6 +28117,7 @@ fn a_library_build_names_its_archive_and_where_its_dependencies_are() {
     );
 
     // A cross app entry, the case that cost the time: the hint names the target.
+    // The entry is an APK's library (no `main`), so the archive is the product.
     if ndk_clang_for_test().is_none() {
         eprintln!("skipping the android half: no Android NDK (r28.2+) found");
         return;
@@ -28128,7 +28129,7 @@ fn a_library_build_names_its_archive_and_where_its_dependencies_are() {
     .unwrap();
     std::fs::write(
         dir.join("src/droid.cplus"),
-        "import \"mathy/mathy\" as mathy;\nexport extern fn main() -> i32 { return mathy::answer(); }\n",
+        "import \"mathy/mathy\" as mathy;\nexport extern fn wrap_answer() -> i32 { return mathy::answer(); }\n",
     )
     .unwrap();
     let out = build_app(cpc, &dir, &["--target", "android-arm64"]);
@@ -28139,6 +28140,76 @@ fn a_library_build_names_its_archive_and_where_its_dependencies_are() {
         stdout.contains("`cpc build --target android-arm64 --print-link-args`"),
         "the hint names the target: {stdout}"
     );
+}
+
+/// An Android app entry that exports `main` is a command-line program, and
+/// `cpc build` links it: an executable beside the archive, from the archive
+/// and the dependencies' slices, PIE (the NDK default) with 16 KB segment
+/// alignment. Projects that run a tool over `adb shell` used to carry their
+/// own NDK link line (bugs/closed/android-command-line-tools-are-linked-by-hand.md).
+/// An entry without `main` (an APK's library) still stops at the archive —
+/// checked in `a_library_build_names_its_archive_and_where_its_dependencies_are`.
+#[test]
+fn an_android_entry_that_exports_main_links_an_executable() {
+    if ndk_clang_for_test().is_none() {
+        eprintln!("skipping: no Android NDK (r28.2+) found");
+        return;
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"tool\"\n\n[android]\nentry = \"src/main.cplus\"\n\n[dependencies]\nmathy = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"mathy/mathy\" as mathy;\nexport extern fn main() -> i32 { return mathy::answer(); }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor/mathy/src")).unwrap();
+    std::fs::write(dir.join("vendor/mathy/Cplus.toml"), "[package]\nname = \"mathy\"\n").unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/src/mathy.cplus"),
+        "fn answer() -> i32 { return 7; }\n",
+    )
+    .unwrap();
+
+    let out = build_app(cpc, &dir, &["--target", "android-arm64"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let exe = dir.join("target/android-arm64/debug/tool");
+    assert!(
+        stdout.trim_end().ends_with("target/android-arm64/debug/tool"),
+        "the ok line names the executable: {stdout}"
+    );
+    assert!(!stdout.contains("--print-link-args"), "nothing is left to link: {stdout}");
+
+    // An ELF executable for aarch64, position-independent: e_type ET_DYN (3)
+    // with a PT_INTERP, which is what a PIE is.
+    let bytes = std::fs::read(&exe).expect("the executable is written");
+    assert_eq!(&bytes[0..4], b"\x7fELF");
+    assert_eq!((bytes[16], bytes[17]), (3, 0), "ET_DYN: a PIE");
+    assert_eq!((bytes[18], bytes[19]), (0xb7, 0x00), "EM_AARCH64");
+    let phoff = u64::from_le_bytes(bytes[32..40].try_into().unwrap()) as usize;
+    let phentsize = u16::from_le_bytes(bytes[54..56].try_into().unwrap()) as usize;
+    let phnum = u16::from_le_bytes(bytes[56..58].try_into().unwrap()) as usize;
+    let (mut interp, mut loads) = (false, 0);
+    for i in 0..phnum {
+        let ph = &bytes[phoff + i * phentsize..];
+        let p_type = u32::from_le_bytes(ph[0..4].try_into().unwrap());
+        let p_align = u64::from_le_bytes(ph[48..56].try_into().unwrap());
+        if p_type == 3 {
+            interp = true;
+        }
+        if p_type == 1 {
+            loads += 1;
+            assert_eq!(p_align, 16384, "every PT_LOAD is 16 KB aligned");
+        }
+    }
+    assert!(interp, "a dynamically linked executable has an interpreter");
+    assert!(loads > 0);
 }
 
 #[test]

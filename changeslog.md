@@ -117,6 +117,13 @@ compiler error report for IR that clang rejects.
   an executable build does, and adds the `--print-link-args` command for
   the same target and mode when the package has dependencies, since the
   archive holds only its own modules.
+- **Android command-line programs link.** An Android entry that defines
+  `export extern fn main` (a test runner, a benchmark, a tool run with
+  `adb shell`) builds to an executable, `target/android-arm64/<mode>/<name>`:
+  the archive and its dependencies' slices, linked by the NDK clang with
+  `-lm -ldl` and 16 KB page alignment. Other libraries come from the
+  packages' `[android.link]`. An entry without `main` still stops at the
+  archive.
 - **`-framework` only on Apple link lines.** A dependency's `[link]
   frameworks` no longer reach an Android, Linux, Windows, ESP32 or wasm link
   (`--print-link-args` for `android-arm64` gave the NDK `-framework

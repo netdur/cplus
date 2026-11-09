@@ -238,7 +238,11 @@ Not a manifest choice — a fact about the target:
 
 On an external-builder target cpc stops at the archive and the platform's
 own build system (Xcode, the Android NDK build, ESP-IDF) owns the final
-link. Two commands make that handoff workable:
+link. One exception: an Android entry that defines
+`export extern fn main() -> i32` is a command-line program (run over
+`adb shell`), which no platform build system links, so cpc links it into
+`target/android-arm64/<mode>/<name>` with the NDK clang, beside the archive.
+An APK's library never exports `main`, so nothing changes for one. Two commands make that handoff workable:
 
 ```bash
 cpc build --target ios-arm64            # target/ios-arm64/debug/lib<name>.a + <name>.h
