@@ -198,6 +198,15 @@ declares generics is copied verbatim, because a generic has no object code
 until a consumer instantiates it. This is what lets a prebuilt package be
 consumed without its source.
 
+A concrete module keeps a body in one case: when the borrow checker needs it.
+That is a function or method that stores a borrowed parameter (a view, or a
+`ref` target) or can return one, because that fact is computed from the body
+and a signature cannot say it. The consumer's borrow checker reads such a body,
+and the consumer's build then treats it as a declaration, so the code is linked
+from the package's archive. A function the header strips is known to return
+none of its parameters: `text::from_str(s)` is a copy, and a caller that keeps
+its result keeps nothing of `s`.
+
 `cpc --emit-header FILE` is a different thing: a **C** header for every
 C-ABI-representable `export` item, for a C consumer.
 

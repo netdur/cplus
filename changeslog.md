@@ -124,6 +124,15 @@ compiler error report for IR that clang rejects.
   `-lm -ldl` and 16 KB page alignment. Other libraries come from the
   packages' `[android.link]`. An entry without `main` still stops at the
   archive.
+- **Prebuilt packages and borrows through their headers.** A free function
+  whose return can carry a borrowed parameter keeps its body in
+  `lib/include/`, as a method already did, and a stripped one returns none
+  of its parameters. Before, every body-less function that turned a `str`
+  into an owned value counted as keeping its argument: with stdlib prebuilt,
+  `args.append(text::from_str(value))` made the helper a keeper, and passing
+  it an interpolation was E0513. A consumer no longer compiles the bodies a
+  header keeps; it declares them and links the archive's code. Compiling them
+  failed to link when the body called one of the module's private helpers.
 - **`-framework` only on Apple link lines.** A dependency's `[link]
   frameworks` no longer reach an Android, Linux, Windows, ESP32 or wasm link
   (`--print-link-args` for `android-arm64` gave the NDK `-framework

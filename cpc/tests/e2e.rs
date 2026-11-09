@@ -30894,6 +30894,137 @@ fn a_methods_returned_parameter_flow_survives_its_header() {
     assert!(ok, "a lookup through its header must not tie its key:\n{all}");
 }
 
+/// A FREE fn's return flow through its header, and the bodies a header keeps.
+///
+/// bugs/closed/a-prebuilt-stdlib-makes-from-str-keep-its-argument.md — `cpc
+/// headers` kept free-fn bodies only for `ref`-parameter flows, so a consumer
+/// saw every body-less `str -> T` producer as returning a view of its argument.
+/// `text::from_str` (a copy) then made `add(ref v, s) { v.append(from_str(s)) }`
+/// a keeper of `s`, and an interpolation passed to it was E0513 — only when
+/// stdlib was prebuilt. Now a free fn whose return carries a parameter ships its
+/// body, and a stripped one transports nothing.
+///
+/// bugs/closed/a-header-kept-body-calls-a-private-helper-the-archive-hides.md —
+/// a kept body was COMPILED by the consumer, and its call to a module-private
+/// helper (declared in the header, `internal` in the archive) did not link. Both
+/// a free fn and a method are checked; the consumer now declares kept bodies.
+#[test]
+fn a_free_fns_returned_parameter_flow_survives_its_header() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    const LIB: &str = "struct Holder { s: str }\n\
+         fn wrap(s: str) -> Holder { _note(s); return Holder { s: s }; }\n\
+         fn length(s: str) -> i32 { return #str_len(s) as i32; }\n\
+         impl Holder {\n\
+         fn pick(this, s: str) -> str { _note(s); return s; }\n\
+         }\n\
+         fn _note(s: str) { return; }\n";
+    let scaffold = |dir: &std::path::Path, main_src: &str| {
+        std::fs::create_dir_all(dir.join("vendor/holdpkg/src")).unwrap();
+        std::fs::write(
+            dir.join("vendor/holdpkg/Cplus.toml"),
+            "[package]\nname = \"holdpkg\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+             [dependencies]\nstdlib = \"*\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("vendor/holdpkg/src/hold.cplus"), LIB).unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("Cplus.toml"),
+            "[package]\nname = \"holduser\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+             [dependencies]\nstdlib = \"*\"\nholdpkg = \"*\"\n",
+        )
+        .unwrap();
+        symlink_dir(
+            format!("{}/../vendor/stdlib", env!("CARGO_MANIFEST_DIR")),
+            dir.join("vendor/stdlib"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("src/main.cplus"), main_src).unwrap();
+    };
+    let build = |dir: &std::path::Path| {
+        let out = Command::new(cpc).arg("build").current_dir(dir).output().expect("invoke cpc build");
+        (
+            out.status.success(),
+            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+        )
+    };
+
+    // 1. The header keeps `wrap`'s body (its return carries `s`) and strips
+    //    `length` (an i32 carries nothing) and the private helper.
+    let hdir = tempdir();
+    scaffold(&hdir, "fn main() -> i32 { return 0; }\n");
+    let out = Command::new(cpc)
+        .arg("headers")
+        .current_dir(hdir.join("vendor/holdpkg"))
+        .output()
+        .expect("invoke cpc headers");
+    assert!(out.status.success(), "cpc headers failed");
+    let header = std::fs::read_to_string(hdir.join("vendor/holdpkg/lib/include/hold.cplus"))
+        .expect("read generated header");
+    assert!(
+        header.contains("fn wrap(s: str) -> Holder { _note(s); return Holder { s: s }; }"),
+        "a free fn's return flow lives in its body — it must ship:\n{header}"
+    );
+    assert!(
+        header.contains("fn length(s: str) -> i32 ;") && header.contains("fn _note(s: str) ;"),
+        "bodies with no return flow stay stripped:\n{header}"
+    );
+
+    // 2. Through the header the flow still ties: the owner dies under `h`.
+    const BAD: &str = "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/str\" as _;\n\
+         import \"holdpkg/hold\" as hold;\n\
+         fn main() -> i32 {\n\
+         var h: hold::Holder = hold::wrap(\"a\");\n\
+         { let t: text::Text = \"item\".to_text(); h = hold::wrap(t.view()); }\n\
+         io::println(h.s);\n\
+         return 0;\n\
+         }\n";
+    let bdir = tempdir();
+    scaffold(&bdir, BAD);
+    let (ok, all) = build(&bdir);
+    assert!(!ok && all.contains("E0514"), "expected E0514 through the header:\n{all}");
+
+    // 3. The sound uses build, LINK (the kept bodies call `_note`) and run.
+    const GOOD: &str = "import \"holdpkg/hold\" as hold;\n\
+         fn main() -> i32 {\n\
+         let h: hold::Holder = hold::wrap(\"abc\");\n\
+         let p: str = h.pick(\"de\");\n\
+         return (#str_len(h.s) as i32) * 16 + (#str_len(p) as i32) * 4 + hold::length(\"x\");\n\
+         }\n";
+    let gdir = tempdir();
+    scaffold(&gdir, GOOD);
+    let (ok, all) = build(&gdir);
+    assert!(ok, "kept bodies calling a private helper must link:\n{all}");
+    let run = Command::new(gdir.join("target/debug/holduser")).status().expect("run");
+    assert_eq!(run.code(), Some(57), "3*16 + 2*4 + 1");
+
+    // 4. The report's program: a copy through prebuilt stdlib's `from_str` keeps
+    //    nothing, so an interpolation may be passed to the helper.
+    const COPY: &str = "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/vec\" as vec;\n\
+         fn add(ref args: vec::Vec[text::Text], value: str) { let _ = args.append(text::from_str(value)); }\n\
+         fn main() -> i32 {\n\
+         let dir = \"tmp\";\n\
+         var a = vec::new::[text::Text]();\n\
+         add(a, \"${dir}/x\");\n\
+         add(a, \"${dir}/y\");\n\
+         return a.count() as i32;\n\
+         }\n";
+    let cdir = tempdir();
+    scaffold(&cdir, COPY);
+    let (ok, all) = build(&cdir);
+    assert!(ok, "from_str copies; nothing is kept:\n{all}");
+    assert!(
+        all.contains("prebuilding `stdlib`") || cdir.join("vendor/stdlib/lib/include/text.cplus").is_file(),
+        "stdlib must go through its headers, or this checks nothing:\n{all}"
+    );
+    let run = Command::new(cdir.join("target/debug/holduser")).status().expect("run");
+    assert_eq!(run.code(), Some(2));
+}
+
 /// bugs/a-detached-future-outlives-the-storage-it-borrows.md — `spawn_local`
 /// hands the future to the reactor and returns, so the borrows the future
 /// carries have to outlive every frame. The tie an async call establishes is

@@ -93,6 +93,78 @@ fn bodies_must_ship(p: &Program) -> bool {
     })
 }
 
+/// Turn the bodies a STRIPPED header kept into declarations, once the borrow
+/// checker has read them.
+///
+/// `cpc headers` keeps a body in a stripped header only because the body is
+/// the one record of a flow (`generate_with_flows`); the code itself is in the
+/// package's archive. Compiling that body in the consumer was a second copy of
+/// it at best, and a link failure at worst: the body calls the module's
+/// private helpers, which the header declares and the archive defines
+/// `internal`, so `_helper` was an undefined symbol
+/// (bugs/closed/a-header-kept-body-calls-a-private-helper-the-archive-hides.md).
+///
+/// Only stripped modules: a module that ships verbatim (`bodies_must_ship` —
+/// generics, coroutines) is compiled by its consumer, since an instantiation
+/// cannot come from the archive. Run after borrowck and before codegen.
+/// `files` maps file id to the path the module was read from; a module counts
+/// as a header when that path is `<pkg>/lib/include/...`.
+pub fn declare_stripped_header_bodies(
+    program: &mut Program,
+    files: &std::collections::BTreeMap<String, (std::path::PathBuf, String)>,
+) {
+    let header_ids: std::collections::BTreeSet<&str> = files
+        .iter()
+        .filter(|(_, (path, _))| is_header_path(path))
+        .map(|(id, _)| id.as_str())
+        .collect();
+    if header_ids.is_empty() {
+        return;
+    }
+    let stripped: std::collections::BTreeSet<String> = header_ids
+        .iter()
+        .filter(|id| {
+            let module = Program {
+                imports: Vec::new(),
+                items: program
+                    .items
+                    .iter()
+                    .filter(|it| it.origin_file.as_deref() == Some(**id))
+                    .cloned()
+                    .collect(),
+            };
+            !bodies_must_ship(&module)
+        })
+        .map(|id| id.to_string())
+        .collect();
+    let empty = |b: &crate::ast::Block| crate::ast::Block { stmts: Vec::new(), tail: None, span: b.span };
+    for item in &mut program.items {
+        if !item.origin_file.as_ref().is_some_and(|o| stripped.contains(o)) {
+            continue;
+        }
+        match &mut item.kind {
+            ItemKind::Function(f) if !f.is_declaration && !f.is_extern => {
+                f.is_declaration = true;
+                f.body = empty(&f.body);
+            }
+            ItemKind::Impl(b) => {
+                for m in b.methods.iter_mut().filter(|m| !m.is_declaration) {
+                    m.is_declaration = true;
+                    m.body = empty(&m.body);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `<pkg>/lib/include/<module>.cplus` — a generated header, as the resolver
+/// reads it in place of `<pkg>/src/<module>.cplus`.
+fn is_header_path(p: &std::path::Path) -> bool {
+    let comps: Vec<&std::ffi::OsStr> = p.iter().collect();
+    comps.windows(2).any(|w| w[0] == "lib" && w[1] == "include")
+}
+
 /// Text replacements turning the module into its header form, as
 /// `(start, end, text)` half-open byte ranges, sorted and non-overlapping.
 fn replacements(

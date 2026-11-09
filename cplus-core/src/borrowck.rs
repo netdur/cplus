@@ -941,10 +941,10 @@ struct FnEntry {
     /// `generic_ret_positions`. Empty for methods and non-generic fns.
     generic_names: Vec<String>,
     /// A body-less declaration (a `lib/include` header). `cpc headers` ships
-    /// the body of every method whose return carries a borrow-position
-    /// parameter (`computed_flow_sites`), so a STRIPPED method is known to
-    /// carry none — `method_ret_param_positions` ties nothing for it rather
-    /// than every position.
+    /// the body of every method and free fn whose return carries a
+    /// borrow-position parameter (`computed_flow_sites`), so a STRIPPED one
+    /// is known to carry none — `method_ret_param_positions` and the free-fn
+    /// taint transport tie nothing for it rather than every position.
     is_declaration: bool,
 }
 
@@ -1986,6 +1986,15 @@ impl<'a> FlowCtx<'a> {
                                 .enumerate()
                                 .filter(|(i, _)| *i < 64 && bits & (1u64 << *i) != 0)
                                 .fold(0, |a, (_, t)| a | t),
+                            // A header declaration transports nothing: `cpc
+                            // headers` ships the body of every free fn whose
+                            // return carries a borrowed parameter
+                            // (`computed_flow_sites`), so a stripped one
+                            // carries none. Treating it as conservative made
+                            // `text::from_str` — a copy — a keeper of its
+                            // argument whenever stdlib was prebuilt
+                            // (bugs/closed/a-prebuilt-stdlib-makes-from-str-keep-its-argument.md).
+                            None if entry.is_declaration => 0,
                             None if entry.ret_view => {
                                 arg_taints.iter().fold(0, |a, t| a | t)
                             }
@@ -7546,12 +7555,29 @@ pub fn computed_flow_sites(prog: &Program) -> std::collections::BTreeSet<Span> {
             .is_some_and(|t| oracle.type_contains_view(t))
             || e.param_muts.get(i).copied().unwrap_or(false)
     };
+    // A free fn's RETURN flow counts one more position: a borrowed (non-`take`)
+    // non-Copy parameter is passed by pointer, so `fn wrap(t: Text) -> Holder`
+    // can hand back a view of `t`. Its declaration transports nothing at the
+    // call site, so every parameter that can carry a borrow out has to keep
+    // the body.
+    let ret_borrow_pos = |e: &FnEntry, i: usize| {
+        borrow_pos(e, i)
+            || (!e.param_moves.get(i).copied().unwrap_or(true)
+                && e.param_tys.get(i).is_some_and(|t| oracle.definitely_non_copy(t)))
+    };
     let mut out = std::collections::BTreeSet::new();
     for item in &prog.items {
         match &item.kind {
             ItemKind::Function(f) => {
+                // A parameter stored through a `ref` parameter, or one whose
+                // value can be RETURNED (`fn first(s: str) -> Holder`): both
+                // facts live only in the body.
                 if sigs.fns.get(&f.name.name).is_some_and(|e| {
                     e.computed_ref_flows.iter().any(|(src, _)| borrow_pos(e, *src))
+                        || e.computed_ret_flow.is_some_and(|bits| {
+                            (0..e.param_tys.len().min(64))
+                                .any(|i| bits & (1u64 << i) != 0 && ret_borrow_pos(e, i))
+                        })
                 }) {
                     out.insert(f.name.span);
                 }

@@ -5257,6 +5257,9 @@ fn load_and_check_project_full(
     if bc_errors {
         return Err(ExitCode::FAILURE);
     }
+    // A stripped header's kept bodies were there for borrowck, which has
+    // read them; the archive has the code.
+    cplus_core::header::declare_stripped_header_bodies(&mut loaded.program, &loaded.files);
     // Guard against a self-growing generic (`fn rec[T]() { rec::[*T](); }`)
     // whose instantiation set never converges — monomorphization would hang.
     // Runs the same fixed-point propagation mono uses, capped; a breach is
@@ -7117,6 +7120,7 @@ fn build_ir(
     if bc_errors {
         return Err(ExitCode::FAILURE);
     }
+    cplus_core::header::declare_stripped_header_bodies(&mut prog, &files_map);
     // Self-growing generic guard (E0910): a `fn rec[T]() { rec::[*T](); }`
     // expands without bound and would hang monomorphization. Detect + report
     // before mono runs. Both `cpc check` (via `run_check` → `build_ir`) and
