@@ -68,6 +68,18 @@ compiler error report for IR that clang rejects.
   is E0929. ESP-IDF's `WIFI_EVENT` and `g_wifi_osi_funcs`, `environ` and
   framework constants no longer need the function-shaped workaround. `cpc
   bindgen` emits one for every `extern T name;` a header declares.
+- **A temporary built in an `if` or `match` arm** (`let t = if c {
+  text::from_str("_${x}") } else { ... }`) is dropped at the end of its
+  statement, and its stack slot now lives that long. Its lifetime used to end
+  with the arm, so a release build could reuse the slot before the drop and
+  free whatever was there ("pointer being freed was not allocated"; debug
+  builds were unaffected).
+- **`#addr_of(s[i])` on a slice** is the element's bounds-checked address; it
+  was a codegen panic.
+- **A package is named by its manifest, not its folder.** A dependency in a
+  folder whose name differs from `[package] name`, typically reached through
+  a `vendor/` symlink, compiled under the folder's name in the consumer and
+  the package's name in its own archive, and the link failed.
 - **`str` literals inside a `static`.** An array, fill or struct literal
   whose elements or fields are strings (`static NAMES: [str; 2] = ["zero",
   "one"];`) builds; it used to pass the checker and fail in clang with an

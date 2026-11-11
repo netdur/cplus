@@ -30622,6 +30622,154 @@ fn process_run_shares_the_terminal_and_returns_the_exit_code() {
     assert!(out.contains("code=7 pwd=0 missing=127"), "{out}");
 }
 
+/// bugs/closed/an-if-arm-temporary-is-dropped-after-its-lifetime-ends.md — a
+/// temporary built inside an `if`/`match` arm is dropped at the end of the
+/// STATEMENT, but its slot's `lifetime.end` came at the end of the ARM. At
+/// `-O` LLVM reused the dead slot, and `Text.drop` freed whatever was there:
+/// "pointer being freed was not allocated", release builds only. Built
+/// `--release --asan`, which reports the stack-use-after-scope directly.
+#[test]
+fn an_arm_temporary_lives_until_its_statement_drops_it() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"armtemp\"\n\n[dependencies]\nstdlib = \"*\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    symlink_dir(format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")), dir.join("vendor")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/option\" as option;\n\
+         fn matches(item: str, name: str, apple: bool) -> bool {\n\
+             let expected = if apple { text::from_str(\"_${item}\") } else { text::from_str(item) };\n\
+             return name == expected.view();\n\
+         }\n\
+         fn check(dir: str, got: option::Option[i32]) -> bool {\n\
+             let ok = match got { option::Option::Some(_) => text::from_str(\"${dir}/unlock\").view() == \"tmp/unlock\", option::Option::None => false };\n\
+             return ok;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var hits = 0;\n\
+             if matches(\"slab_run\", \"_slab_run\", true) { hits = hits + 1; }\n\
+             if matches(\"slab_run\", \"slab_run\", false) { hits = hits + 1; }\n\
+             if check(\"tmp\", option::Option[i32]::Some(1)) { hits = hits + 1; }\n\
+             if !check(\"tmp\", option::Option[i32]::None) { hits = hits + 1; }\n\
+             for i in 0..50 {\n\
+                 let t = if i % 2 == 0 { text::from_str(\"even ${i}\") } else { text::from_str(\"odd\") };\n\
+                 if t.count() == 0 { hits = 0; }\n\
+             }\n\
+             io::println(\"${hits}\");\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .args(["build", "--release", "--asan"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(dir.join("target/release/armtemp")).output().expect("run");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(!stderr.contains("AddressSanitizer"), "{stderr}");
+    assert!(run.status.success(), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "4\n");
+}
+
+/// bugs/closed/vendor-symlink-name-mangles-differently.md — a package whose
+/// folder is not named after it (`pipeline/`, `name = "cinpoc_pipeline"`),
+/// vendored through a symlink, compiled its archive as `cinpoc_pipeline.*` (its
+/// own build qualifies ids with the manifest name) while the consumer derived
+/// `pipeline.*` from the folder: undefined symbols at link. Both prebuilt and
+/// from source, since a source build of the package must agree with itself.
+#[test]
+fn a_package_is_named_by_its_manifest_not_its_folder() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    for prebuild in [true, false] {
+        let dir = tempdir();
+        std::fs::create_dir_all(dir.join("pipeline/src")).unwrap();
+        std::fs::write(
+            dir.join("pipeline/Cplus.toml"),
+            format!(
+                "[package]\nname = \"cinpoc_pipeline\"\nversion = \"0.1.0\"\n{}",
+                if prebuild { "" } else { "\n[build]\nprebuild = false\n" }
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("pipeline/src/engine.cplus"),
+            "struct Engine { n: i32 }\n\
+             fn make(n: i32) -> Engine { return Engine { n: n }; }\n\
+             impl Engine {\n\
+                 fn doubled(this) -> i32 { return this.n * 2; }\n\
+                 fn drop(ref this) { return; }\n\
+             }\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("app/src")).unwrap();
+        std::fs::create_dir_all(dir.join("app/vendor")).unwrap();
+        std::fs::write(
+            dir.join("app/Cplus.toml"),
+            "[package]\nname = \"app\"\n\n[dependencies]\ncinpoc_pipeline = \"*\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("app/src/main.cplus"),
+            "import \"cinpoc_pipeline/engine\" as engine;\n\
+             fn main() -> i32 { let e: engine::Engine = engine::make(21); return e.doubled(); }\n",
+        )
+        .unwrap();
+        symlink_dir(dir.join("pipeline"), dir.join("app/vendor/cinpoc_pipeline")).unwrap();
+        let out = build_app(cpc, &dir.join("app"), &[]);
+        assert!(
+            out.status.success(),
+            "prebuild={prebuild}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = Command::new(dir.join("app/target/debug/app")).status().expect("run");
+        assert_eq!(run.code(), Some(42), "prebuild={prebuild}");
+    }
+}
+
+/// bugs/closed/addr-of-a-slice-element-crashes-codegen.md — `#addr_of(s[i])`
+/// on a slice passed sema and panicked in codegen ("entered unreachable
+/// code"): a slice index had a value form and no place form. It is the
+/// element's address, bounds-checked like the read.
+#[test]
+fn addr_of_a_slice_element_is_its_checked_address() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let run_src = |name: &str, src: &str| -> Option<i32> {
+        let file = dir.join(format!("{name}.cplus"));
+        let bin = dir.join(name);
+        std::fs::write(&file, src).unwrap();
+        let out = Command::new(cpc).arg(&file).arg("-o").arg(&bin).output().expect("invoke cpc");
+        assert!(out.status.success(), "[{name}] {}", String::from_utf8_lossy(&out.stderr));
+        Command::new(&bin).status().expect("run").code()
+    };
+    let copied = run_src(
+        "copy",
+        "extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;\n\
+         fn copy_into(dst: *u8, s: u8[]) {\n\
+             let n = s.count();\n\
+             if n > 0usize { let _c = memcpy(dst, #addr_of(s[0]), n); }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var a: [u8; 4] = [1u8, 2u8, 3u8, 4u8];\n\
+             var b: [u8; 4] = [0u8; 4];\n\
+             copy_into(#addr_of(b[0]), { #slice_from_raw_parts(#addr_of(a[0]), 4usize) });\n\
+             return b[3] as i32;\n\
+         }\n",
+    );
+    assert_eq!(copied, Some(4));
+    let oob = run_src(
+        "oob",
+        "fn addr(s: u8[]) -> *u8 { return #addr_of(s[5]); }\n\
+         fn main() -> i32 { let p: *u8 = addr([1u8, 2u8]); return 0; }\n",
+    );
+    assert_ne!(oob, Some(0), "an out-of-bounds element address traps");
+}
+
 fn build_and_run_stdlib_project(name: &str, main_src: &str) -> (bool, String) {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();

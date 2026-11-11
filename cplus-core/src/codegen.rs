@@ -11104,6 +11104,28 @@ impl<'a> FnState<'a> {
             .push((slot.to_string(), size));
     }
 
+    /// Undo `bracket_lifetime` for `slot`: drop it from whichever scope frame
+    /// holds it (so no `lifetime.end` is emitted) and remove its
+    /// `lifetime.start` from the body. Slot names are unique within a
+    /// function, so the line is unambiguous. A no-op for an unbracketed slot
+    /// (a debug build, the bottom frame, a place that was never spilled).
+    fn unbracket_lifetime(&mut self, slot: &str) {
+        let mut size: Option<u64> = None;
+        for frame in self.scope_allocas.iter_mut().rev() {
+            if let Some(i) = frame.iter().position(|(s, _)| s == slot) {
+                size = Some(frame.remove(i).1);
+                break;
+            }
+        }
+        let Some(size) = size else {
+            return;
+        };
+        let line = format!("  call void @llvm.lifetime.start.p0(i64 {size}, ptr {slot})\n");
+        if let Some(at) = self.body.rfind(&line) {
+            self.body.replace_range(at..at + line.len(), "");
+        }
+    }
+
     // ---- locals / scopes ----
 
     fn push_scope(&mut self) {
@@ -11174,6 +11196,19 @@ impl<'a> FnState<'a> {
         // to the entry block and initialised `false` (the path that never
         // creates the temp sees that), then set `true` right here, where the
         // value provably exists. `close_temp_scope` drops through the flag.
+        // THE SLOT MUST OUTLIVE ITS DROP. `alloca_anon` brackets a slot to the
+        // LEXICAL frame that allocated it — for a temp built inside an `if` or
+        // `match` arm, the arm's block — while the drop registered here runs at
+        // the end of the enclosing STATEMENT, after the arm's `lifetime.end`.
+        // In between the slot is dead to LLVM, and at `-O` it was reused (the
+        // `let` binding the arm's value took the same bytes), so `Text.drop`
+        // freed whatever lay there: "pointer being freed was not allocated" in
+        // release builds only (bugs/closed/an-if-arm-temporary-is-dropped-
+        // after-its-lifetime-ends.md). A temp's storage lives until its flag
+        // says it was dropped, which is not a lexical fact — so it has no
+        // bracket: the `lifetime.start` is withdrawn and the frame forgets it,
+        // leaving the slot live for the function like any unscoped alloca.
+        self.unbracket_lifetime(&slot);
         self.tmp_counter += 1;
         let flag = format!("%tmp.drop_flag{}", self.tmp_counter);
         self.allocas.push(format!("{flag} = alloca i1"));
@@ -13856,11 +13891,22 @@ impl<'a> FnState<'a> {
         (v, (*elem).clone())
     }
 
-    /// `s[i]` on a slice: load the `{ ptr, len }` view from its slot, trap
-    /// when `i >= len` (the array rule, with the length read at run time),
-    /// then load the element. Read-only — sema refuses a write through a
-    /// slice, so there is no place form.
+    /// `s[i]` on a slice: the element's value, read through
+    /// `gen_slice_elem_ptr`.
     fn gen_slice_index(&mut self, recv_ptr: &str, recv_ty: &Ty, elem: &Ty, index: &Expr) -> (String, Ty) {
+        let ptr = self.gen_slice_elem_ptr(recv_ptr, recv_ty, elem, index);
+        let v = self.next_tmp();
+        self.gen_load(&v, elem, &ptr);
+        (v, elem.clone())
+    }
+
+    /// The address of `s[i]`: load the `{ ptr, len }` view from its slot, trap
+    /// when `i >= len` (the array rule, with the length read at run time), and
+    /// GEP to the element. The place form of a slice index — reached by
+    /// `#addr_of(s[i])`, never by an assignment (sema refuses a write through
+    /// a slice). It had no place form at all, so `#addr_of(s[0])` was a
+    /// codegen panic (bugs/closed/addr-of-a-slice-element-crashes-codegen.md).
+    fn gen_slice_elem_ptr(&mut self, recv_ptr: &str, recv_ty: &Ty, elem: &Ty, index: &Expr) -> String {
         let us = usize_llvm_ty();
         let view = self.next_tmp();
         self.gen_load(&view, recv_ty, recv_ptr);
@@ -13881,9 +13927,7 @@ impl<'a> FnState<'a> {
         let elem_lt = self.lty(elem);
         let ptr = self.next_tmp();
         self.emit(&format!("{ptr} = getelementptr inbounds {elem_lt}, ptr {base}, {us} {idx_val}"));
-        let v = self.next_tmp();
-        self.gen_load(&v, elem, &ptr);
-        (v, elem.clone())
+        ptr
     }
 
     /// Build a struct literal: alloca a slot for the new value, store each
@@ -14881,6 +14925,10 @@ impl<'a> FnState<'a> {
                 us = usize_llvm_ty()
                     ));
                     return (ptr, inner);
+                }
+                if let Ty::Slice(elem) = recv_ty.clone() {
+                    let ptr = self.gen_slice_elem_ptr(&recv_slot, &recv_ty, &elem, index);
+                    return (ptr, (*elem).clone());
                 }
                 let Ty::Array(elem, n) = recv_ty.clone() else {
                     unreachable!("sema validated");

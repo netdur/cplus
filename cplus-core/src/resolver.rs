@@ -1788,6 +1788,25 @@ fn derive_file_id_in(canonical: &Path, manifest_root: &Path, vendor_dirs: &[Path
         // archive never links.
         _ => package_relative(canonical).unwrap_or(canonical),
     };
+    // The package boundary is a FOLDER; the package's identity is its NAME.
+    // The package's own build qualifies every id with `[package] name`
+    // (`derive_file_id_qualified`), so a consumer must too — or a package in
+    // `pipeline/` named `cinpoc_pipeline`, vendored through a symlink, links
+    // `pipeline.src.engine.*` against an archive that defines
+    // `cinpoc_pipeline.src.engine.*` (bugs/closed/vendor-symlink-name-mangles-
+    // differently.md).
+    let renamed: Option<PathBuf> = if rel.as_os_str().len() < canonical.as_os_str().len() {
+        package_root_of(canonical, rel).and_then(|root| {
+            let name = manifest_package_name(&root)?;
+            let mut comps = rel.components();
+            let folder = comps.next()?;
+            (comp_name(&folder) != Some(name.as_str()))
+                .then(|| Path::new(&name).join(comps.as_path()))
+        })
+    } else {
+        None
+    };
+    let rel: &Path = renamed.as_deref().unwrap_or(rel);
     let mut parts: Vec<String> = Vec::new();
     for c in rel.components() {
         match c {
@@ -1880,6 +1899,32 @@ fn path_is_under_vendor(rel: &Path) -> bool {
 /// Those hold dependencies by declaration, whatever they are called.
 fn in_search_dir(canonical: &Path, vendor_dirs: &[PathBuf]) -> bool {
     vendor_dirs.iter().any(|d| canonical.starts_with(d))
+}
+
+/// The package directory a dependency file's id is anchored at: the first
+/// component of `rel` (what `package_relative` returned), as a full path.
+fn package_root_of(canonical: &Path, rel: &Path) -> Option<PathBuf> {
+    let depth = rel.components().count();
+    let root = canonical.ancestors().nth(depth.checked_sub(1)?)?;
+    root.join("Cplus.toml").is_file().then(|| root.to_path_buf())
+}
+
+/// `[package] name` of the manifest in `root`, cached: every module of a
+/// package asks, and the answer cannot change during one compile.
+fn manifest_package_name(root: &Path) -> Option<String> {
+    static CACHE: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Option<String>>>> =
+        std::sync::Mutex::new(None);
+    let mut guard = CACHE.lock().ok()?;
+    let map = guard.get_or_insert_with(std::collections::HashMap::new);
+    if let Some(hit) = map.get(root) {
+        return hit.clone();
+    }
+    let name = crate::manifest::load(&root.join("Cplus.toml"))
+        .ok()
+        .map(|m| m.package.name)
+        .filter(|n| !n.is_empty());
+    map.insert(root.to_path_buf(), name.clone());
+    name
 }
 
 fn package_relative(canonical: &Path) -> Option<&Path> {
