@@ -172,6 +172,11 @@ compiler error report for IR that clang rejects.
 - **Internal compiler errors.** When clang rejects the IR cpc generated, cpc
   says so and that it is a cpc bug, not the user's code, and keeps the IR at
   `<out>.rejected.ll`. A link failure keeps its plain message.
+- **facet_android: a still `image` no longer aborts a debuggable app.** Every
+  image mount asked its drawable to stop animating through `Animatable`, and
+  a `BitmapDrawable` (any PNG or JPEG from a file or asset) does not implement
+  it; CheckJNI aborted the process. The drawable is now asked whether it is
+  `Animatable` first. Animated drawables start and stop as before.
 
 ### Standard library
 

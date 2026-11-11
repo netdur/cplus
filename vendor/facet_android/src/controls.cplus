@@ -2892,21 +2892,33 @@ fn tint_image(env: rt::Env, v: *u8, c: vocab::Color) {
 // START OR STOP, asked of whatever drawable is there. `Animatable` is the
 // interface both animated drawables implement, and calling through it is what
 // keeps this one line rather than a type test per source kind.
+//
+// ASKED FIRST, never called blind. A still image (a BitmapDrawable) is not
+// Animatable, and an interface's jmethodID called on an object that does not
+// implement it is NOT an exception to clear: CheckJNI aborts the process, and
+// without CheckJNI ART does not check at all. This runs on every create — the
+// playing bit is dirty at mount — so every still `image` came through here.
 fn play_image(env: rt::Env, v: *u8, playing: bool) {
     let d: jni::jobject = env.call_object_0(
         v, #str_ptr("android/widget/ImageView\0"), #str_ptr("getDrawable\0"),
         #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
     if d == (0 as jni::jobject) { env.clear_exception(); return; }
-    var name: *u8 = #str_ptr("stop\0");
-    if playing { name = #str_ptr("start\0"); }
-    env.call_void_0(d, #str_ptr("android/graphics/drawable/Animatable\0"), name,
-                    #str_ptr("()V\0"));
-    // A still image is not Animatable, and asking it to start is a
-    // NoSuchMethodError rather than a crash — cleared here, where it is
-    // expected, rather than left for the next JNI call to trip over.
-    env.clear_exception();
+    if is_animatable(env, d) {
+        var name: *u8 = #str_ptr("stop\0");
+        if playing { name = #str_ptr("start\0"); }
+        env.call_void_0(d, #str_ptr("android/graphics/drawable/Animatable\0"), name,
+                        #str_ptr("()V\0"));
+        env.clear_exception();
+    }
     env.delete_local_ref(d);
     return;
+}
+
+fn is_animatable(env: rt::Env, d: jni::jobject) -> bool {
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/graphics/drawable/Animatable\0"));
+    if cls == (0 as jni::jclass) { env.clear_exception(); return false; }
+    let ptr: *jni::JNIEnv = env.raw();
+    return { (*(*ptr)).IsInstanceOf(ptr, d, cls) } != (0 as jni::jboolean);
 }
 
 fn apply_button_image(env: rt::Env, tv: w::TextView, src: str, side: vocab::ContentLayout) {
