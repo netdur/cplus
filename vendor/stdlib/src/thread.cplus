@@ -803,3 +803,31 @@ fn thread_spawn_with_struct_input_round_trips() {
         spawn_with::[_Triple, i64](_Triple { a: 1, b: 2, c: 3 }, _sum_triple);
     assert h.join() == 6;
 }
+
+// netdu/cplus#17: the parallel_sum recipe crashed in `join` on Windows. A
+// 16-byte input is the shape that differs most between ABIs — SysV splits
+// it across two registers, Win64 passes it by reference — and two handles
+// are live at once, as in the recipe.
+struct _Range {
+    start: i64,
+    end: i64,
+}
+
+fn _sum_range(take r: _Range) -> i64 {
+    var total: i64 = 0 as i64;
+    var i: i64 = r.start;
+    while i < r.end {
+        total = total +% i;
+        i = i +% (1 as i64);
+    }
+    return total;
+}
+
+#[test]
+fn thread_spawn_with_two_workers_split_a_sum() {
+    let h1: JoinHandle[i64] =
+        spawn_with::[_Range, i64](_Range { start: 1, end: 501 }, _sum_range);
+    let h2: JoinHandle[i64] =
+        spawn_with::[_Range, i64](_Range { start: 501, end: 1001 }, _sum_range);
+    assert h1.join() +% h2.join() == 500500;
+}
