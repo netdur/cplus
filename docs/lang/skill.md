@@ -874,13 +874,16 @@ The parse error names the token without saying why (`expected ';' or '}'`), so a
 variable called `take` costs ten minutes if you do not know this. The iterator
 adapter is `prefix(n)`, not `take(n)`, for the same reason.
 
-**There is no array→slice coercion** — go through `Vec::as_slice`.
+**Slices (`T[]`) index with `s[i]` (read-only; `s[i] = v` is E0305), and array
+literals pass directly to `T[]` parameters** (`process::run(["adb", "devices"])`).
+Named `[T; N]` variables do not coerce to `T[]` — go through `Vec::as_slice`.
 
 **Bindings, all four cells:**
 
 ```cplus
 let x: i32 = 5;              // frozen local — no rebind, no field write
 var z: i32 = 0; z = 7;       // mutable local
+let Point { x, y } = p;      // struct destructuring (`var` and `field: name` also work)
 const PI: f32 = 3.14159f32;  // module-scope value, inlined, has no address
 static COUNTER: i32 = 0;     // module-scope mutable + addressable (the FFI boundary)
 ```
@@ -941,11 +944,13 @@ export fn probe_emit(name_ptr: *u8, name_len: usize) {
 }
 ```
 
-Everything not marked `export` is off limits from outside, **and the failure is
-silent**: internal functions are `fastcc` with module-scoped mangled names, so an
-lldb `call` or a hand-written C declaration reaches the symbol, passes garbage,
-and nothing reports it. If a harness needs to drive an internal path, write the
-two-line `export` wrapper — that is what it is for.
+Everything not marked `export` is off limits from outside: in an executable,
+non-exported functions are `internal fastcc` and vanish after optimization; in a
+library archive they keep external linkage across per-module `.o` files with
+module-scoped mangled names (`<pkg>__<module>__<fn>`), or become `internal
+fastcc` when `[library] sealed = true` merges the archive into a single unit. If
+a harness needs to drive an internal path, write the two-line `export` wrapper —
+that is what it is for.
 
 Never write a mangled name in source (E0405). Never spell a `__cplus_`-prefixed
 symbol without `#[runtime_abi]` (E0919).
@@ -1021,8 +1026,9 @@ Before implementing anything below the level of your actual task, check here.
 
 **stdlib** — `io` · `option` / `result` · `vec` · `hash_map` · `hash_set` ·
 `string_map` (owns its `Text` keys — `HashMap` needs Copy keys) · `string_set` ·
-`slice` · `flags` (option-set over u64 bits) · `text` · `str` · `cow` · `fs` ·
-`net` (TCP, numeric IPv4) · `env` · `process` (spawn/capture/signal) · `pty` ·
+`slice` · `flags` (option-set over u64 bits) · `text` · `str` · `cow` · `fs`
+(`exists`/`is_file`/`is_dir`/`metadata`) ·
+`net` (TCP, numeric IPv4) · `env` · `process` (`run`/`spawn`/`capture`/signal) · `pty` ·
 `thread` · `atomic` · `mutex` · `channel` (typed MPMC) · `box` / `arc` / `rc`
 (+ `Weak` via `downgrade`) · `future` / `executor` / `reactor` / `time` ·
 `iterator` (`gen fn` + `filter`/`prefix`/`map`) · `math` (scalar methods

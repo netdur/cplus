@@ -24,7 +24,7 @@ Sections: [Lexical](#lexical) · [Types](#types) · [Literals](#literals) ·
 ```cplus
 // line comment
 /* block comment — nests */
-/// doc comment: published by `cpc doc`, and a bare ``` fence in one
+/// doc comment: published by `cpc doc`, and a bare ``` or ```cplus fence in one
 /// becomes a test (see Tests & doctests)
 ```
 
@@ -113,6 +113,7 @@ expression its type, and overflowing that type is E0921.
 ```cplus
 let x: i32 = 5;        // immutable local: no rebind, no field writes, no ref/mutating methods
 var z: i32 = 0;        // mutable local
+let Point { x, y } = p;        // struct destructuring (`var` and `field: binding` also valid)
 let w: i32; w = 12;    // late init: first write counts; every path must assign (E0345)
 const K: u64 = (1u64 << 40) - 1u64;   // module-scope VALUE: folded, typed, inlined, no address
 static N: i32 = 0;     // module-scope mutable global: addressable, C-facing; access is bare
@@ -152,7 +153,7 @@ if cond { } else if other { } else { }
 let r: i32 = if cond { 1 } else { 2 };          // expression form: both arms, same type
 while cond { }
 loop { break; continue; }
-for i in 0..10 { }                              // exclusive; 0..=10 inclusive; the counter has the bounds' type
+for i in 0..10 { }                              // exclusive; 0..=10 inclusive; `for _ in 0..n` discards the counter
 for (var i: i32 = 0; i < n; i = i +% 1) { }     // C-style
 while let Pat = expr { }
 defer expr;                                     // runs at scope exit, LIFO, shared stack with drops
@@ -162,8 +163,7 @@ assert cond;                                    // traps on false — the only h
 `for … in` takes a range or an `Iterator[T]`, and nothing else (E0312).
 `Vec` supplies one — `for x in v.iter()`. Arrays and slices do not: index
 them over `0..n` — a `usize` `n` gives a `usize` counter, which indexes
-directly. A parenthesized deref opening an `if` condition misparses:
-write `if { (*p).field } == x`.
+directly.
 
 ## Functions
 
@@ -243,10 +243,9 @@ enum Maybe[T] { Some(T), None }                   // generic
                                                   // C's prev+1 rule; payload-free only
 ```
 
-Constructing a generic variant spells the type args
-(`Maybe[i32]::Some(7)`, E0303 bare); matching may drop them where the
-scrutinee fixes the instantiation — cross-module stdlib enums are spelled in
-full (`option::Option[i64]::Some(v)`). An owning enum's payload drops via
+Constructing a generic variant spells the type args when no expected type
+supplies them (`Maybe[i32]::Some(7)`, E0303 bare); matching infers them from
+the scrutinee (`option::Option::Some(v)`). An owning enum's payload drops via
 tag switch; a `match` that binds a name consumes the enum
 ([ownership.md](ownership.md) §6).
 
@@ -554,11 +553,12 @@ Exit 0 on all-pass, 2 on any failure. Details: [testing.md](testing.md).
 | `[package] name/version/edition` | identity; edition is `"2026"` |
 | `[package] app_id = "com.example.app"` | the app's identity on every platform (`CFBundleIdentifier`, Android `package=`); letters and digits per segment (E0415). `cpc build` warns W0008 when the platform file names another id |
 | `[package] entry = "src/…"` | app entry; default `src/main.cplus` when the file exists, no `[library]`, and no platform entry is declared |
+| `[package] vendor = ["dir", ...]` | extra dependency search roots (checked after `./vendor/<dep>`, before `$CPLUS_HOME`); relative paths resolve against the manifest directory (`~` expands to `$HOME`) |
 | `[<platform>] entry` | per-platform entry; declaring any scopes the app (E0413 elsewhere). Platforms: `macos linux windows ios android esp32 wasm` |
 | `[dependencies]` / `[<platform>.dependencies]` | flat, complete; `name = "*"` or a tree-URL spec |
 | `[android.maven]` | third-party Maven/AAR pins: `"group:artifact" = "version"`, exact, no wildcard. Android only (E0877 elsewhere); `cpc pm add . --maven G:A:V` writes one and downloads its closure |
 | `[windows] subsystem` | `"console"` (default) or `"windows"`. `"windows"` links a windowed app (`/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`, so `fn main` stays the entry): no console window opens beside it. App builds only; `cpc test` stays console. Windows only (E0406 elsewhere) |
-| `[library] kind/entry/name` | C-ABI product: `staticlib`(default)/`cdylib`/`both`; explicit `entry` = bare C names |
+| `[library] kind/entry/name/sealed` | C-ABI product: `staticlib`(default)/`cdylib`/`both`; explicit `entry` = bare C names; `sealed = true` internalizes all non-`export` functions into one archive unit |
 | `[link] frameworks/libs/search-paths/extra-objects` | the link surface; `${VAR}` expansion in paths. A dependency's `[link]` travels to its consumers |
 | `[link] bundled` | basenames of binaries this package ships at `lib/<triple>/`; the triple is derived, never declared. Declared-but-missing is E0860, undeclared-but-present is E0861 |
 | `[library] name/frameworks/libs` | the product library's output name and its own link additions |

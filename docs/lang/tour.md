@@ -237,10 +237,10 @@ enum Lookup { Found(i64), Missing }
 fn price_of(items: vec::Vec[Item], name: str) -> Lookup {
     for i in 0..items.count() {
         match items.at_ptr(i) {
-            option::Option[*Item]::Some(p) => {
-                if { (*p).name } == name { return Lookup::Found({ (*p).price }); }
+            option::Option::Some(p) => {
+                if { (*p).name } == name { return Lookup::Found((*p).price); }
             }
-            option::Option[*Item]::None => {}
+            option::Option::None => {}
         }
     }
     return Lookup::Missing;
@@ -265,9 +265,10 @@ fn main() -> i32 {
 
 Two details this program exercises deliberately: `Item` owns a `Text`, so
 `append` takes it by `take` — after `inventory.append(apples)` the local is
-gone; and `at_ptr` hands back a raw `*Item` view, dereferenced as `(*p)` —
-wrapped in braces inside the `if` condition, which is the house style for
-parenthesized deref reads.
+gone; and `at_ptr` hands back a raw `*Item` view, dereferenced as `(*p)`
+(`{ (*p).name }` is in a block so the non-`Copy` `Text` field is borrowed as a
+`str` view rather than moved out of `*p`, while `(*p).price` is `i64` `Copy`
+and reads directly).
 
 ## 9. Tests
 
@@ -298,9 +299,9 @@ The complete list of things that stop a first program from compiling:
 6. No closures — named `fn`s; stateful callbacks are a `(fn_ptr, ctx: *u8)`
    pair ([guide.md](guide.md)).
 7. Arrays aren't `for ... in` iterable — index `0..n` (E0312).
-8. Constructing a generic enum spells its args
-   (`Option[i64]::Some(v)`); a `use`-site pattern can drop them only for
-   same-module enums.
+8. Constructing a generic enum spells its args when no expected type supplies
+   them (`Option[i64]::Some(v)`); patterns infer them from the scrutinee
+   (`option::Option::Some(v)`).
 9. `count()`, not `len()`; `append`, not `push`.
 10. A mutating method or `ref` argument needs a `var` place (E0328).
 

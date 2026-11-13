@@ -72,8 +72,8 @@ failure.
 
 `at`, `find`, `to_i64`, `slice(from:, to:)` — a miss is a normal outcome,
 so it carries no explanation. Consume with `guard let` when the miss exits,
-`match` when both arms do work. Cross-module patterns spell the type
-(`option::Option[i64]::Some(v)`).
+`match` when both arms do work. Patterns infer the generic type arguments from
+the scrutinee (`option::Option::Some(v)`).
 
 ### `Result[T, E]` and your own enums
 
@@ -130,7 +130,7 @@ let s: status::Status = v.reserve(n);
 if !s.is_ok() { return s; }
 
 // Shape change — convert at the boundary, once.
-guard let option::Option[i64]::Some(v) = s.to_i64() else {
+guard let option::Option::Some(v) = s.to_i64() else {
     return Parse::Garbled;
 };
 

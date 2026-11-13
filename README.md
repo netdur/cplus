@@ -200,11 +200,11 @@ See [Packages and platforms](docs/lang/packages.md) and the
 | `cpc pm` | Add, install, update, and inspect dependencies; remove local vendored copies; resolve Android Maven/AAR dependencies. |
 | `cpc check` | Run the whole-project front end without code generation; the fast project validation path. |
 | `cpc check FILE` | Check and code-generate one import-free file without invoking clang. |
-| `cpc build` | Build the current project for the host or a selected target. |
+| `cpc build` | Build the current project for the host or a selected target (`--print-packages`, `--print-link-args`, `--print-asset-dir`). |
 | `cpc FILE -o BIN` | Compile and link one import-free source file. |
 | `cpc test` | Discover and run `#[test]` functions and doctests; supports filters, JSON, release mode, and sanitizers. |
 | `cpc fmt` | Format files or a project; supports check, stdout, and stdin modes. |
-| `cpc doc` / `cpc headers` | Generate Markdown API documentation or C headers. |
+| `cpc doc` / `cpc headers` | Generate Markdown API documentation or prebuilt-package C+ declaration headers (`--emit-header` for C ABI headers). |
 | `cpc graph` | Emit the resolved, typed code graph as JSON. |
 | `cpc query` | Ask one semantic question: definitions, references, callers, callees, hierarchy, members, types, scope, completion, or an edit context. |
 | `cpc mcp` | Keep the graph resident and expose it as MCP tools, including live unsaved-buffer updates. |

@@ -110,7 +110,7 @@ the program itself is wrong, never for input.
 |---|---|---|
 | fixed count, known at compile time | `[T; N]` | stack; bounds-checked; index with `0..n` |
 | growable sequence | `vec::Vec[T]` | mutators return `Status`; reads return `Option` |
-| borrowed window over either | `T[]` (slice) | via `Vec::as_slice` — arrays do NOT coerce |
+| borrowed window over either | `T[]` (slice) | via `Vec::as_slice` or an array literal argument `f([a, b])`; named `[T; N]` locals do NOT coerce |
 | keyed lookup | `hash_map::HashMap[K, V]` | `K: Hash + Eq` — derive both with empty impls |
 | one heap value, one owner | `box::Box[T]` | stable address; `unwrap()` moves it back out |
 | shared ownership, one thread | `rc::Rc[T]` | `with_mut` gate for mutation |
@@ -173,8 +173,9 @@ explanations live in the linked topic file.
   declared width and rejects overflow. W0007 warns on the constant forms
   and on `(1 << n) as u64` with a variable `n`; other runtime arithmetic
   over a literal is not checked, so the habit still matters.
-- **No array→slice coercion.** `[T; N]` does not pass where `T[]` is
-  expected; go through a `Vec` and `as_slice`, or index.
+- **No named-array→slice coercion.** A `[T; N]` variable does not pass where
+  `T[]` is expected (go through `Vec` + `as_slice`, or index), though an array
+  **literal** (`f(["a", "b"])`) passes directly as a temporary `T[]` slice.
 - **A view at a binding needs a named owner** — and a brace-block tail
   can *promote* a temporary's lifetime in ways an argument position
   doesn't. When a `str` binding fights you, name the `Text` first.
@@ -184,8 +185,6 @@ explanations live in the linked topic file.
   wildcard — and consumes the value. ([ownership.md](ownership.md) §drop)
 - **`take this` does not disarm drop.** Return the payload and let scope
   exit free the shell; freeing manually double-frees.
-- **A parenthesized deref opening an `if` misparses** — write
-  `if { (*p).field } == x`, braces first. House style does this everywhere.
 - **Variadic C functions must be declared with `...`.** A fixed-arity
   declaration of `fcntl` passes garbage silently on AArch64.
   ([ffi.md](ffi.md))
@@ -195,9 +194,9 @@ explanations live in the linked topic file.
 - **`#platform()` cannot gate an import.** Both arms of an `if` on it
   compile on every platform; varying imports is what a `_<platform>.cplus`
   file is for. ([platforms.md](platforms.md))
-- **A ` ```cplus ` fence inside a `///` comment is not a doctest.** Only a
-  bare three-backtick fence is extracted, so a tagged example silently
-  never runs. ([testing.md](testing.md))
+- **A fence tagged with anything other than `cplus` inside a `///` comment is
+  not a doctest.** Only bare ` ``` ` and ` ```cplus ` fences are extracted; any
+  other tag is treated as prose and never runs. ([testing.md](testing.md))
 
 ## 9. Style that the compiler doesn't enforce
 

@@ -183,7 +183,7 @@ variant     = IDENT ( '(' type ( ',' type )* ')' )? ','? ;
 
 impl        = 'impl' generic_params? type_path ( ':' type )? '{' method* '}' ;
 interface   = 'interface' IDENT generic_params? '{' fn_sig* '}' ;
-type_alias  = 'export'? 'type' IDENT generic_params? '=' type ';' ;
+type_alias  = 'export'? 'type' IDENT generic_params? '=' 'distinct'? type ';' ;
 const       = 'export'? 'const' IDENT ':' type '=' expr ';' ;
 static      = 'export'? 'static' IDENT ':' type '=' expr ';'
             | 'extern' 'static' IDENT ':' type ';' ;
@@ -201,10 +201,11 @@ unaliased form).
 
 ```ebnf
 type     = primitive
+         | simd_type
          | type_path generic_args?        // named: struct/enum/alias/param
          | '*' type                        // raw pointer
          | type '[]'                        // slice
-         | '[' type ';' (INT | IDENT) ']'   // array (length: literal or const)
+         | '[' type ';' expr ']'            // array (length: integer const expression)
          | '(' type ( ',' type )+ ')'       // tuple (arity >= 2)
          | '(' ')'                          // unit
          | 'fn' '(' (fn_arg (',' fn_arg)*)? ')' ret? ;  // function pointer
@@ -213,6 +214,11 @@ generic_args = '[' type ( ',' type )* ']' ;
 type_path    = IDENT ( '::' IDENT )* ;
 primitive    = 'i8'|'i16'|'i32'|'i64'|'u8'|'u16'|'u32'|'u64'
              | 'isize'|'usize'|'f16'|'f32'|'f64'|'bool'|'str' ;
+simd_type    = 'f32x4'|'f32x8'|'f32x16'|'f64x2'|'f64x4'
+             | 'i32x4'|'i32x8'|'u32x4'|'u32x8'|'i64x2'|'u64x2'
+             | 'i16x8'|'u16x8'|'i16x16'|'u16x16'|'i8x16'|'u8x16'|'i8x32'|'u8x32'
+             | 'mask32x4'|'mask32x8'|'mask32x16'|'mask64x2'|'mask64x4'
+             | 'mask16x8'|'mask16x16'|'mask8x16'|'mask8x32' ;
 ```
 
 See §4 for the type system.
@@ -226,7 +232,12 @@ stmt     = let_stmt | return_stmt | while_stmt | for_stmt | loop_stmt
          | if_let_stmt | while_let_stmt | guard_let_stmt
          | expr ';' | block_like_expr ;
 
-let_stmt = ( 'let' | 'var' ) pattern ( ':' type )? ( '=' expr )? ';' ;
+let_stmt = ( 'let' | 'var' ) pattern ( ':' type )? ( '=' expr )? ';'
+         | ( 'let' | 'var' ) type_path '{' field_bind ( ',' field_bind )* ','? '}' '=' expr ';' ;
+field_bind = IDENT ( ':' IDENT )? ;
+
+for_stmt = 'for' ( IDENT | '_' ) 'in' expr block
+         | 'for' '(' for_init? ';' expr? ';' ( expr ( ',' expr )* )? ')' block ;
 
 if_let_stmt    = 'if'    ( 'let' | 'var' ) pattern '=' expr block ( 'else' block )? ;
 while_let_stmt = 'while' ( 'let' | 'var' ) pattern '=' expr block ;
@@ -256,13 +267,14 @@ bitand      = shift ( '&' shift )* ;
 shift       = add ( ( '<<' | '>>' ) add )* ;
 add         = mul ( ( '+' | '-' | '+%' | '-%' ) mul )* ;
 mul         = cast ( ( '*' | '/' | '%' | '*%' ) cast )* ;
-cast        = unary ( 'as' type )* ;
+cast        = unary ( ( 'as' | 'as?' ) type )* ;
 unary       = ( '-' | '!' | '~' )* postfix ;
 postfix     = primary ( call_args | index | field | turbofish )* ;
 primary     = literal | path | IDENT | '(' expr ')' | tuple | array
             | block | if_expr | match_expr
             | struct_lit | intrinsic | builder_block | 'await' expr
             | 'yield' expr ;
+struct_lit  = type_path? '{' ( IDENT ':' expr ( ',' IDENT ':' expr )* ','? )? '}' ;
 ```
 
 **Operator precedence**, tightest to loosest:
@@ -271,7 +283,7 @@ primary     = literal | path | IDENT | '(' expr ')' | tuple | array
 |---|---|
 | postfix | `f(x)` call · `a[i]` index · `a.b` field/method · `::[T]` turbofish |
 | unary | `-` `!` `~` |
-| cast | `as` |
+| cast | `as` · `as?` |
 | multiplicative | `*` `/` `%` `*%` |
 | additive | `+` `-` `+%` `-%` |
 | shift | `<<` `>>` |
@@ -411,21 +423,43 @@ pointers (`str`, slices) carry a pointer and a `usize` length.
 
 - **struct** — nominal product type; named fields, each optionally
   `opaque` (§6.6). A field whose name begins with `_` is module-private.
+  Constructed as `Type { field: expr, ... }`, or in the type-inferred
+  anonymous form `{ field: expr, ... }` wherever an expected struct type is
+  known.
 - **enum** — tagged union; each variant optionally carries a tuple
-  payload. Pattern matching is exhaustiveness-checked (§8).
+  payload. Pattern matching is exhaustiveness-checked (§8), and pattern type
+  arguments are inferred from the scrutinee across modules.
 - **tuple** `(A, B, ...)` — arity ≥ 2; lowered to a synthesized struct
   with fields `_0`, `_1`, …; element access via `t.0`. `(x)` is grouping;
   `()` is unit.
-- **array** `[T; N]` — fixed length `N` (an integer literal or a
-  non-negative integer `const`); the fill form `[expr; N]` initializes
-  every slot. Indexing is bounds-checked at runtime. `arr.count()` and
-  `arr.is_empty()` are compiler-provided (the stdlib `count` convention).
+- **array** `[T; N]` — fixed length `N` (any non-negative integer constant
+  expression); the fill form `[expr; N]` initializes every slot. Indexing is
+  bounds-checked at runtime. `arr.count()` and `arr.is_empty()` are
+  compiler-provided (the stdlib `count` convention).
 - **slice** `T[]` — a `{ptr, len}` view over a contiguous run of `T`;
-  Copy (it is a view, not an owner). Constructed via
-  `#slice_from_raw_parts`; `#slice_ptr` / `#slice_len` read its parts
-  (the FFI tier). `xs.count()` and `xs.is_empty()` are compiler-provided.
-  Indexing is bounds-checked. A fuller slice/array method set awaits a
-  generic-impl story for builtin type constructors.
+  Copy (it is a view, not an owner). Constructed via `Vec::as_slice`,
+  `#slice_from_raw_parts`, or directly from an array literal passed to a
+  `T[]` parameter (`f([a, b, c])`, borrow-checked as a statement temporary;
+  named `[T; N]` variables do not coerce). `#slice_ptr` / `#slice_len` read
+  its parts (the FFI tier). `xs.count()` and `xs.is_empty()` are
+  compiler-provided, and `xs[i]` is a bounds-checked element read
+  (`xs[i] = v` is **E0305**; `#addr_of(xs[i])` yields `*T`).
+- **SIMD vectors and masks** — 19 fixed-lane vector types (`f32x4`, `f32x8`,
+  `f32x16`, `f64x2`, `f64x4`, `i32x4`, `i32x8`, `u32x4`, `u32x8`, `i64x2`,
+  `u64x2`, `i16x8`, `u16x8`, `i16x16`, `u16x16`, `i8x16`, `u8x16`, `i8x32`,
+  `u8x32`) and their matching lane-mask types (`mask{bits}x{lanes}`). All are
+  Copy value types lowered to LLVM vector IR. Built-in associated constructors
+  and methods: `splat(v)`, `new(l0, ...)`, `load(ptr)` / `load_unaligned(ptr)`,
+  `store(ptr)` / `store_unaligned(ptr)`, `from_array([T; N])` / `to_array()`,
+  `extract(i)` / `replace(i, v)`, `fma(b, c)` / `sqrt` / `abs` / `min` / `max`
+  / `floor` / `ceil` / `round` / `trunc` (float vectors), horizontal reductions
+  `reduce_add` / `reduce_mul` / `reduce_min` / `reduce_max` (and `sum` /
+  `product` / `min_lane` / `max_lane`; narrow-lane `sum`/`product` warns
+  **W0001**), lane-wise comparisons `lanes_eq` / `lanes_ne` / `lanes_lt` /
+  `lanes_le` / `lanes_gt` / `lanes_ge` returning `mask{bits}x{lanes}`, and
+  `mask.select(on_true, on_false)` / `mask.any()` / `mask.all()` /
+  `mask.none()` / `mask.bitmask()` / `mask.count_true()`. SIMD vectors do not
+  cross `extern fn` boundaries (pass `*Scalar` or `[Scalar; N]`).
 
 ### 4.3 Strings
 
@@ -455,8 +489,12 @@ pointers (`str`, slices) carry a pointer and a `usize` length.
 ### 4.5 Generics and aliases
 
 Generic type parameters are written `[T]` / `[T: Bound + Bound]` on
-functions, structs, enums, impls, and interfaces (§9, §10). A `type`
-alias is transparent: the alias and its target resolve to the same type.
+functions, structs, enums, impls, and interfaces (§9, §10). A plain
+`type X = T;` alias is transparent: the alias and its target resolve to the
+same type. A nominal integer brand `type X = distinct Int;` creates a new
+nominal type with the representation and ABI of `Int`: values enter and leave
+via `as`, comparison and `Copy`/`Eq`/`Hash`/`Ord` work directly, arithmetic is
+rejected (cast out first), and mixing distinct brands is **E0302**.
 
 ---
 
@@ -482,11 +520,15 @@ literal. A result that does not fit the width it took is **E0921**, as in
 a `const`. The operand of `as` has no context, so `(1 << 40) as u64` is
 computed in `i32`.
 
-**`as` casts** convert between numeric types, between integers and raw
-pointers, and between raw pointer types. Casts that the language forbids
+**`as` and `as?` casts.** `expr as T` converts between numeric types,
+between integers and raw pointers (via `usize`/`isize` only, **E0315**),
+and between raw pointer types. Casts that the language forbids
 (e.g. integer ↔ function pointer) are errors (**E0315** and neighbors).
 A cast converts the value: `1.0f32 as u32` is `1`. To keep the bits
 instead, use `#bitcast::[u32](1.0f32)`, which is `0x3F800000` (§12).
+`expr as? T` is the checked integer-to-integer cast: it returns
+`Option[T]` (`Some(v as T)` when `expr` fits in `T`'s range, `None` when
+it would overflow or go negative into an unsigned type).
 
 ---
 
@@ -567,8 +609,9 @@ syntax — a raw dereference `*p`, a pointer cast `x as *T`, the
 let x = if cond { 1 } else { 2 };       // both arms same type
 loop { if done() { break; } }           // unconditional; exits via break/return
 while c { ... }
-for i in 0..n { ... }                    // range iteration
+for i in 0..n { ... }                    // range iteration (`for _ in 0..n` discards the counter)
 for x in collection { ... }              // iterator iteration
+for (var i: i32 = 0; i < n; i = i +% 1) { ... }  // C-style loop
 ```
 
 `break` / `continue` are valid only inside a loop (**E0353** otherwise);

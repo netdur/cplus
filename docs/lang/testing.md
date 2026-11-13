@@ -245,8 +245,9 @@ packages to its GitHub release.
 
 ## 9. Gotchas
 
-- **A ` ```cplus ` fence in a `///` comment is not a doctest.** Three bare
-  backticks, or it never runs.
+- **A fence tagged with anything other than `cplus` in a `///` comment is not
+  a doctest.** Use bare ` ``` ` or ` ```cplus `; a tag like ` ```text ` or
+  ` ```sh ` is treated as prose and never runs.
 - **`cpc test FILE` cannot see imports.** Any file with an `import` needs
   project mode (E0852).
 - **`examples/` is outside every suite.** Building the examples after an
