@@ -644,3 +644,39 @@ fn test_reset_and_rebind() {
     assert db.changes() == (1 as i64);
     return;
 }
+
+// netdu/cplus#16: `sqlite3_exec` calls back once per row with the row's
+// values, and the callback is typed, so the compiler checks what is passed.
+fn exec_row_sum(ctx: *u8, argc: i32, argv: **i8, names: **i8) -> i32 {
+    assert argc == (1 as i32);
+    let value: *i8 = { *argv };
+    let digit: i32 = ({ *value } as i32) - (48 as i32);
+    { *(ctx as *i32) = *(ctx as *i32) + digit; }
+    return 0 as i32;
+}
+
+#[test]
+fn test_exec_calls_the_typed_callback_per_row() {
+    guard let result::Result[Connection, Error]::Ok(db0) = Connection::open_memory() else {
+        assert false;
+        return;
+    };
+    var db: Connection = db0;
+    let _c: result::Result[i64, Error] =
+        db.execute("create table t(n integer)");
+    let _i: result::Result[i64, Error] =
+        db.execute("insert into t(n) values (1), (2), (4)");
+    guard let option::Option[text::CString]::Some(sql) = c_string("select n from t") else {
+        assert false;
+        return;
+    };
+    var sum: i32 = 0 as i32;
+    var err: *i8 = 0 as *i8;
+    let rc: i32 = {
+        raw::sqlite3_exec(db._db, sql.as_ptr() as *i8, exec_row_sum,
+                          #addr_of(sum) as *u8, #addr_of(err))
+    };
+    assert rc == ok_code();
+    assert sum == (7 as i32);
+    return;
+}

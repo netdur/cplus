@@ -4,7 +4,12 @@
 // Every declaration below targets the C ABI. Calls into these from
 // C+ require `{ ... }` blocks.
 
-type sqlite3_callback = *u8;
+// HAND-EDITED after generation (netdu/cplus#16): cpc-bindgen types every C
+// function pointer as `*u8`. For `sqlite3_exec` that let a wrong pointer
+// through, `#addr_of` of the variable holding the fn for one, and the program
+// crashed only when a query returned rows, inside SQLite. Typed, the compiler
+// checks the callback. Keep this and `sqlite3_exec` below on regeneration.
+type sqlite3_callback = fn(*u8, i32, **i8, **i8) -> i32;
 #[repr(C)] struct sqlite3_file {
     opaque pMethods: *u8,
 }
@@ -337,8 +342,8 @@ fn sqlite3_close_v2(arg0: *u8) -> i32 {
     return { __c_sqlite3_close_v2(arg0) };
 }
 #[link_name = "sqlite3_exec"]
-extern fn __c_sqlite3_exec(arg0: *u8, sql: *i8, callback: *u8, arg3: *u8, errmsg: **i8) -> i32;
-fn sqlite3_exec(arg0: *u8, sql: *i8, callback: *u8, arg3: *u8, errmsg: **i8) -> i32 {
+extern fn __c_sqlite3_exec(arg0: *u8, sql: *i8, callback: sqlite3_callback, arg3: *u8, errmsg: **i8) -> i32;
+fn sqlite3_exec(arg0: *u8, sql: *i8, callback: sqlite3_callback, arg3: *u8, errmsg: **i8) -> i32 {
     return { __c_sqlite3_exec(arg0, sql, callback, arg3, errmsg) };
 }
 #[link_name = "sqlite3_initialize"]
