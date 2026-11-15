@@ -16,7 +16,6 @@ $compiler = Join-Path $repo 'target/release/cpc.exe'
 & python (Join-Path $PSScriptRoot '../winui_standalone/prepare_runtime.py') --packages $Packages --out $RuntimeDirectory
 if ($LASTEXITCODE -ne 0) { throw 'Runtime staging failed' }
 $runtime = (Resolve-Path $RuntimeDirectory).Path
-Copy-Item -LiteralPath (Join-Path $repo 'vendor/facet/assets/MaterialSymbolsOutlined.ttf') -Destination $runtime -Force
 # The gallery's assets, FLAT beside the executable: an asset name (`hat.png`,
 # `hybrid`) is resolved there, where `cpc build` would put them without `-o`.
 Copy-Item -Path (Join-Path $repo 'examples/facet_gallery/assets/*') -Destination $runtime -Recurse -Force

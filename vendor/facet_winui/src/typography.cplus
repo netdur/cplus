@@ -5,6 +5,9 @@ import "winrt/runtime" as rt;
 import "facet/vocabulary" as vocab;
 import "./native" as native;
 import "./style" as style;
+import "stdlib/bundle" as bundle;
+import "stdlib/fs" as fs;
+import "facet/icon_font" as icon_font;
 extern fn WindowsCreateString(source: *u16, length: u32, value: *usize) -> i32;
 extern fn WindowsGetStringRawBuffer(value: usize,length: *u32) -> *u16;
 extern fn LCMapStringEx(locale: *u16,flags: u32,source: *u16,count: i32,destination: *u16,capacity: i32,version: *u8,reserved: *u8,sort: isize) -> i32;
@@ -86,4 +89,42 @@ fn runs(label: ui::ITextBlock, spans: vocab::Spans) {
         native::check(collection.append(run.object()));i=i+1;
     }
     return;
+}
+// THE ICON FONT BESIDE THE EXECUTABLE, written there from the bytes compiled
+// into the binary (`facet/icon_font`). XAML's FontFamily opens a font file
+// only by `ms-appx:///`, which an unpackaged app resolves to the executable's
+// directory, so an app whose folder lacked the .ttf drew every symbol as a box
+// (netdu/cplus#26). The other ways to name embedded bytes were measured and
+// all draw boxes: a `file:///` URI, a plain absolute path, and a GDI
+// registration, whether AddFontMemResourceEx, AddFontResourceEx FR_PRIVATE or
+// even a session-wide AddFontResourceEx; XAML's DirectWrite sees none of them.
+// A copy already there is the application's own and is left alone. The write
+// goes to a per-process name first and is moved without replacing, so two
+// processes starting together never read half a font. A directory that cannot
+// be written is the old behaviour, no worse.
+extern fn CreateFileW(name: *u16, access: u32, share: u32, security: *u8, disposition: u32, flags: u32, template: *u8) -> *u8;
+extern fn WriteFile(file: *u8, data: *u8, size: u32, written: *u32, overlapped: *u8) -> i32;
+extern fn CloseHandle(handle: *u8) -> i32;
+extern fn MoveFileExW(from: *u16, to: *u16, flags: u32) -> i32;
+extern fn DeleteFileW(name: *u16) -> i32;
+extern fn GetCurrentProcessId() -> u32;
+static ICON_FONT_PLACED: bool=false;
+fn icon_family() -> str {
+    if !ICON_FONT_PLACED {ICON_FONT_PLACED=true; place_icon_font();}
+    return "ms-appx:///MaterialSymbolsOutlined.ttf#Material Symbols Outlined";
+}
+fn place_icon_font() {
+    let dir: text::Text=bundle::dir(); if dir.is_empty() {return;}
+    let path: text::Text="${dir}\\MaterialSymbolsOutlined.ttf"; if fs::exists(path.view()) {return;}
+    let partial: text::Text="${path}.${GetCurrentProcessId()}";
+    let target=native::must::[rt::HString](rt::HString::new(path.view()));let staged=native::must::[rt::HString](rt::HString::new(partial.view()));
+    var length: u32=0;let to=WindowsGetStringRawBuffer(target.raw(),#addr_of(length));let from=WindowsGetStringRawBuffer(staged.raw(),#addr_of(length));
+    // GENERIC_WRITE, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL.
+    let file=CreateFileW(from,0x40000000u32,0u32,0 as *u8,2u32,0x80u32,0 as *u8);
+    if file==((0usize-%1usize) as *u8) {return;}
+    let size: u32=icon_font::len() as u32;var written: u32=0;
+    let wrote=WriteFile(file,icon_font::bytes(),size,#addr_of(written),0 as *u8)!=0 && written==size;
+    let closed=CloseHandle(file)!=0;
+    if wrote && closed && MoveFileExW(from,to,0u32)!=0 {return;}
+    let _gone=DeleteFileW(from);
 }

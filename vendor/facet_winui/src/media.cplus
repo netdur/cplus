@@ -37,7 +37,7 @@ fn named(name: str) -> u32 {
 }
 fn icon(label: ui::ITextBlock,code: u32,size: f64,color: vocab::Color,font: str="") {
     let text: text::Text=typography::glyph(code);native::check(label.set_text(text.view()));
-    native::check(label.set_font_family(typography::font(if font.count()>0 {font} else {"ms-appx:///MaterialSymbolsOutlined.ttf#Material Symbols Outlined"})));
+    native::check(label.set_font_family(typography::font(if font.count()>0 {font} else {typography::icon_family()})));
     native::check(label.set_font_size(if size>0.0f64 {size} else {24.0f64}));
     native::check(label.set_foreground(style::brush(if color.is_set() {color} else {vocab::Color::ink()})));return;
 }

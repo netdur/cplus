@@ -52,7 +52,7 @@ fn apply(r: *record::View) {
         let label=native::must::[ui::ITextBlock](ui::ITextBlock::query((*r).content));
         // Unknown system names show the documented missing-glyph box.
         native::check(label.set_text(typography::glyph(if (*p).set==symbol::IconSet::System {0xfffdu32} else {(*p).icon}).view()));
-        native::check(label.set_font_family(typography::font(if (*p).set==symbol::IconSet::System {"Segoe UI"} else if !(*p).font.is_empty() {(*p).font.view()} else {"ms-appx:///MaterialSymbolsOutlined.ttf#Material Symbols Outlined"})));
+        native::check(label.set_font_family(typography::font(if (*p).set==symbol::IconSet::System {"Segoe UI"} else if !(*p).font.is_empty() {(*p).font.view()} else {typography::icon_family()})));
         native::check(label.set_font_size(size));native::check(label.set_foreground(style::brush(color)));
     }
 }

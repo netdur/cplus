@@ -43,7 +43,7 @@ fn icon(source: str) -> rt::Object {
     if media::image_source(source) {
         let value=native::must::[ui::BitmapIcon](ui::BitmapIcon::new());let bitmap=native::must::[ui::IBitmapIcon](ui::IBitmapIcon::query(value.object()));native::check(bitmap.set_show_as_monochrome(false));native::check(bitmap.set_uri_source(media::uri(source)));return value.object();
     }
-    let value=native::must::[ui::FontIcon](ui::FontIcon::new());let font=native::must::[ui::IFontIcon](ui::IFontIcon::query(value.object()));native::check(font.set_glyph(typography::glyph(media::named(source)).view()));native::check(font.set_font_family(typography::font("ms-appx:///MaterialSymbolsOutlined.ttf#Material Symbols Outlined")));native::check(font.set_font_size(20.0f64));return value.object();
+    let value=native::must::[ui::FontIcon](ui::FontIcon::new());let font=native::must::[ui::IFontIcon](ui::IFontIcon::query(value.object()));native::check(font.set_glyph(typography::glyph(media::named(source)).view()));native::check(font.set_font_family(typography::font(typography::icon_family())));native::check(font.set_font_size(20.0f64));return value.object();
 }
 fn apply(r: *record::View) {
     let p: *props::MenuItemProps=item_props(r);let state=(*r).extra as *Delivery;let dirty=core::dirty_of((*r).node);
