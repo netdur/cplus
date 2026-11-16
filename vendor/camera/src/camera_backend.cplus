@@ -236,6 +236,13 @@ struct _Session {
     opaque device: *u8,      // the AVCaptureDevice, +1 — runtime controls need it
     // The REQUESTED rate, kept so it can be re-applied. See `_reassert_rate`.
     want_frame_rate: i32,
+    // `Request::frames`, kept for the same reason. The WISH, not the format it
+    // negotiated: 0x0 must stay "the preset's choice" when re-asserted, and
+    // re-asserting the negotiated size instead pinned whatever format the
+    // device was left on by the previous session — measured, a default open
+    // read 640x480 after a 640x480 run and 1920x1080 after a 1920x1080 one.
+    want_frame_width: i32,
+    want_frame_height: i32,
     // `camera::PixelFormat::to_code()`. Decides the capture format and, with it,
     // whether `Frame::luma` has anything in it.
     want_pixel: i32,
@@ -730,6 +737,11 @@ fn _negotiate_format(dev: *u8, want_w: i32, want_h: i32, out_w: *i32, out_h: *i3
                     let area: i64 = { (fw as i64) * (fh as i64) };
                     var diff: i64 = area - want_area;
                     if diff < (0 as i64) { diff = (0 as i64) - diff; }
+                    // THE EXACT SIZE BEATS EVERY SIZE OF EQUAL AREA. Area alone
+                    // cannot tell 1920x1080 from 1080x1920, and a Mac camera
+                    // publishes both — so a size handed back from
+                    // `frame_sizes()` landed on whichever came first.
+                    if fw == want_w && fh == want_h { diff = -1 as i64; }
                     if !have || diff < best_diff {
                         have = true;
                         best_diff = diff;
@@ -806,6 +818,53 @@ fn _apply_frame_rate(dev: *u8, fps: i32) {
 fn _pick_photo_dims(dev: *u8, want_w: i32, want_h: i32, out_w: *i32, out_h: *i32) -> bool {
     { (*out_w) = 0 };
     { (*out_h) = 0 };
+    var sizes: vec::Vec[cam::Size] = vec::new::[cam::Size]();
+    if !_photo_dims_list(dev, #addr_of(sizes)) { return false; }
+
+    let any: bool = want_w <= (0 as i32) || want_h <= (0 as i32);
+    var want_area: i64 = 0 as i64;
+    if !any { want_area = (want_w as i64) * (want_h as i64); }
+    var have: bool = false;
+    var best_w: i32 = 0;
+    var best_h: i32 = 0;
+    var best_key: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < sizes.count() {
+        match sizes.at(i) {
+            option::Option[cam::Size]::Some(sz) => {
+                let area: i64 = (sz.width as i64) * (sz.height as i64);
+                // One comparison for both rules: the largest area wins `any`,
+                // the smallest distance wins a wish (negated, so larger wins).
+                var key: i64 = area;
+                if !any {
+                    var diff: i64 = area - want_area;
+                    if diff < (0 as i64) { diff = (0 as i64) - diff; }
+                    key = (0 as i64) - diff;
+                    // Exact beats equal area, as in `_negotiate_format`.
+                    if sz.width == want_w && sz.height == want_h { key = 1 as i64; }
+                }
+                if !have || key > best_key {
+                    have = true;
+                    best_key = key;
+                    best_w = sz.width;
+                    best_h = sz.height;
+                }
+            }
+            option::Option[cam::Size]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if !have { return false; }
+    { (*out_w) = best_w };
+    { (*out_h) = best_h };
+    return true;
+}
+
+// THE ACTIVE FORMAT'S `supportedMaxPhotoDimensions`, appended to `into` —
+// the one list both the pick above and `_camera_photo_sizes` read, so what a
+// caller is shown is exactly what a wish is matched against. False when the
+// property does not exist (before macOS 13 / iOS 16) or lists nothing.
+fn _photo_dims_list(dev: *u8, into: *vec::Vec[cam::Size]) -> bool {
     if dev.is_null() { return false; }
     let fmt: *u8 = av::CaptureDevice::from_raw(dev).active_format().raw();
     if fmt.is_null() { return false; }
@@ -818,14 +877,7 @@ fn _pick_photo_dims(dev: *u8, want_w: i32, want_h: i32, out_w: *i32, out_h: *i32
     let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
     let at: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
     let dims_sel: *u8 = rt::sel(#str_ptr("CMVideoDimensionsValue\0"));
-
-    let any: bool = want_w <= (0 as i32) || want_h <= (0 as i32);
-    var want_area: i64 = 0 as i64;
-    if !any { want_area = (want_w as i64) * (want_h as i64); }
-    var have: bool = false;
-    var best_w: i32 = 0;
-    var best_h: i32 = 0;
-    var best_key: i64 = 0 as i64;
+    var any: bool = false;
     var i: u64 = 0 as u64;
     while i < n {
         let v: *u8 = rt::msg_id_u64(arr, at, i);
@@ -834,29 +886,13 @@ fn _pick_photo_dims(dev: *u8, want_w: i32, want_h: i32, out_w: *i32, out_h: *i32
             let w: i32 = (packed & 0xFFFFFFFFu64) as i32;
             let h: i32 = (packed >> 32u64) as i32;
             if w > (0 as i32) && h > (0 as i32) {
-                let area: i64 = (w as i64) * (h as i64);
-                // One comparison for both rules: the largest area wins `any`,
-                // the smallest distance wins a wish (negated, so larger wins).
-                var key: i64 = area;
-                if !any {
-                    var diff: i64 = area - want_area;
-                    if diff < (0 as i64) { diff = (0 as i64) - diff; }
-                    key = (0 as i64) - diff;
-                }
-                if !have || key > best_key {
-                    have = true;
-                    best_key = key;
-                    best_w = w;
-                    best_h = h;
-                }
+                let _a = { (*into).append(cam::Size::new(w, h)) };
+                any = true;
             }
         }
         i = i + (1 as u64);
     }
-    if !have { return false; }
-    { (*out_w) = best_w };
-    { (*out_h) = best_h };
-    return true;
+    return any;
 }
 
 // Point the photo OUTPUT at the chosen size. The output's value is the
@@ -900,8 +936,8 @@ fn _reassert_rate(h: *u8) {
     // at all: a preview layer or a new output makes the session re-apply its
     // preset, which puts the device back on the preset's format. Re-selecting
     // the format then resets the duration, so the rate must follow it.
-    let want_w: i32 = { (*s).actual_width };
-    let want_h: i32 = { (*s).actual_height };
+    let want_w: i32 = { (*s).want_frame_width };
+    let want_h: i32 = { (*s).want_frame_height };
     if want_w > (0 as i32) && want_h > (0 as i32) {
         var got_w: i32 = 0;
         var got_h: i32 = 0;
@@ -1048,8 +1084,8 @@ export extern fn _camera_open(req: *_CRequest) -> *u8 {
     // format default. Set before this line the value reads back correctly at
     // the moment of setting and is 30 again a line later. A session with NO
     // OUTPUTS does not show it — the preset has nothing to satisfy — which is
-    // why an isolated probe said the setting was fine.
-    _apply_frame_rate(dev, { (*req).frame_rate });
+    // why an isolated probe said the setting was fine. Applied below, with the
+    // format it depends on, once the session record exists.
 
     var st: _Session = _Session {
         session: rt::retain(session),
@@ -1068,6 +1104,8 @@ export extern fn _camera_open(req: *_CRequest) -> *u8 {
         actual_height: got_h,
         device: rt::retain(dev),
         want_frame_rate: { (*req).frame_rate },
+        want_frame_width: want_width,
+        want_frame_height: want_height,
         want_pixel: { (*req).pixel },
         want_photo_width: { (*req).photo_width },
         want_photo_height: { (*req).photo_height },
@@ -1079,9 +1117,14 @@ export extern fn _camera_open(req: *_CRequest) -> *u8 {
         option::Option[box::Box[_Session]]::None => { 0 as *u8 },
     };
     if raw.is_null() { return 0 as *u8; }
-    // AFTER `startRunning`, for the frame-rate reason: the preset re-applied
-    // there moves the active format, and the photo size is chosen against it.
-    _apply_photo_dims(raw);
+    // EVERYTHING `startRunning` RESET, in `_reassert_rate`'s order — format,
+    // then rate, then the still's ceiling. Only the rate was re-applied here,
+    // so a `frames` wish lasted until `startRunning` and then sat on the
+    // preset's format until a preview or `on_frame` re-asserted it: a CLI
+    // asking for 640x480 read 1920x1080 from `frame_size()`. That went unseen
+    // while `frame_size()` echoed the negotiated record; reading the device
+    // live is what showed it (playground/camsizes).
+    _reassert_rate(raw);
     _LAST_ERROR = cam::Outcome::Ok.to_code();
     return raw;
 }
@@ -1427,6 +1470,44 @@ export extern fn _camera_photo_size(h: *u8, out_width: *i32, out_height: *i32) {
     _camera_frame_size(h, out_width, out_height);
 }
 
+// THE STILLS ON OFFER: the active format's list, which is what `photo` is
+// matched against. Without the property the still is the format's own size,
+// so that one size is the honest list.
+export extern fn _camera_photo_sizes(h: *u8, into: *vec::Vec[cam::Size]) {
+    if h.is_null() { return; }
+    let s: *_Session = h as *_Session;
+    if _photo_dims_list({ (*s).device }, into) { return; }
+    var w: i32 = 0;
+    var hh: i32 = 0;
+    _camera_frame_size(h, #addr_of(w), #addr_of(hh));
+    if w > (0 as i32) && hh > (0 as i32) { let _a = { (*into).append(cam::Size::new(w, hh)) }; }
+}
+
+// EVERY FORMAT'S DIMENSIONS — the list `frames` picks a format from. A size
+// recurs once per pixel format and rate range; the facade folds the repeats.
+export extern fn _camera_frame_sizes(h: *u8, into: *vec::Vec[cam::Size]) {
+    if h.is_null() { return; }
+    let s: *_Session = h as *_Session;
+    let dev: *u8 = { (*s).device };
+    if dev.is_null() { return; }
+    let formats: vec::Vec[av::CaptureDeviceFormat] = av::CaptureDevice::from_raw(dev).formats();
+    var i: usize = 0 as usize;
+    while i < formats.count() {
+        match formats.at_ptr(i) {
+            option::Option[*av::CaptureDeviceFormat]::Some(fp) => {
+                var fw: i32 = 0;
+                var fh: i32 = 0;
+                _format_size({ *fp }, #addr_of(fw), #addr_of(fh));
+                if fw > (0 as i32) && fh > (0 as i32) {
+                    let _a = { (*into).append(cam::Size::new(fw, fh)) };
+                }
+            },
+            option::Option[*av::CaptureDeviceFormat]::None => { },
+        }
+        i = i +% (1 as usize);
+    }
+}
+
 // WHAT THE STREAM DELIVERS, read back from the output's `videoSettings` rather
 // than remembered from the request — the `_camera_frame_size` judgement again: a
 // remembered answer goes stale the moment the session preset is re-applied.
@@ -1612,10 +1693,8 @@ export extern fn _camera_switch_to(h: *u8, facing: i32) -> i32 {
     { (*s).actual_facing = got };
 
     // Format and rate are the DEVICE's, so they do not come across with the
-    // session — re-negotiate against the new one.
-    var w: i32 = 0;
-    var hh: i32 = 0;
-    _negotiate_format(dev, { (*s).actual_width }, { (*s).actual_height }, #addr_of(w), #addr_of(hh));
+    // session — re-negotiate the WISH against the new one (`_reassert_rate`
+    // does the format first), not the size the old lens settled on.
     _reassert_rate(h);
     return cam::Outcome::Ok.to_code();
 }

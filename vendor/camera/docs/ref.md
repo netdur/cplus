@@ -136,8 +136,9 @@ fn Request::new(device: str = "", facing: Facing = Facing::Back,
 
 `frames` sizes the `on_frame` stream; `Size::any()` lets the platform pick,
 which is usually small. `photo` sizes a `capture` still; `Size::any()` means
-the LARGEST the camera publishes. Both take the nearest supported size by area
-and read back from `frame_size()` / `photo_size()`. Windows does not honour
+the LARGEST the camera publishes. Both take a published size exactly, otherwise
+the nearest by area, and read back from `frame_size()` / `photo_size()`. The
+published sizes are `frame_sizes()` / `photo_sizes()`. Windows does not honour
 `photo` — its still is a stream frame — and `photo_size()` says so.
 
 `device` names one camera. A name that matches nothing is REFUSED with
@@ -222,6 +223,23 @@ output's ceiling, chosen from the active format. Android: the configured JPEG
 reader, including after the one-step fallback when a session refused the full
 size. Linux: the MJPG size, the driver's own answer once a capture has
 negotiated it. Windows: `frame_size()`.
+
+```cplus
+fn frame_sizes(this) -> vec::Vec[Size]
+fn photo_sizes(this) -> vec::Vec[Size]
+```
+
+What this lens publishes, as the lists `Request::frames` and `Request::photo`
+are matched against: largest area first (the wider first on a tie), each
+size once. A size from the list handed back on a `Request` is taken exactly.
+Empty on a closed camera. They describe the lens the session is on, so
+`switch_to` changes them.
+
+Apple: `photo_sizes` is the active format's list, and the active format is what
+`frames` chose. Android: `getOutputSizes(YUV_420_888)` and `(JPEG)`. Linux: the
+streamed format's sizes and MJPG's, with a range device listing its two ends.
+Windows: one size, the one the reader is on, for both, because neither field is
+honoured there. See the guide.
 
 ```cplus
 fn on_frame(this, on_frame: fn(Frame, *u8), on_frame_ctx: *u8 = 0 as *u8) -> Outcome

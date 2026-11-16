@@ -59,7 +59,11 @@ public final class CplusCamera {
     // Volatile: written on the camera thread by the fallback, read from any.
     private volatile int photoW = 0, photoH = 0;
     private boolean photoFellBack;
-    private Size[] jpegSizes;
+    // WHAT THE LENS PUBLISHES, kept from the pick so `photoSizes()` and
+    // `frameSizes()` answer the same list the request was matched against.
+    // Volatile: replaced by `switchTo`, read from any thread.
+    private volatile Size[] jpegSizes;
+    private volatile Size[] yuvSizes;
     private int actualFacing = 0;
     private TextureView view;
     // The sensor's mounting angle, degrees clockwise from the device's natural
@@ -129,6 +133,23 @@ public final class CplusCamera {
     public int frameHeight() { return frameH; }
     public int photoWidth() { return photoW; }
     public int photoHeight() { return photoH; }
+
+    // The published lists, flat — width, height, width, height — as one
+    // snapshot, so the native side copies one array and never sees half of
+    // one lens's list and half of another's. Empty before
+    // `open` has found a lens or when the lens publishes nothing.
+    public int[] photoSizes() { return flatten(jpegSizes); }
+    public int[] frameSizes() { return flatten(yuvSizes); }
+
+    private static int[] flatten(Size[] sizes) {
+        if (sizes == null) { return new int[0]; }
+        int[] out = new int[sizes.length * 2];
+        for (int i = 0; i < sizes.length; i++) {
+            out[i * 2] = sizes[i].getWidth();
+            out[i * 2 + 1] = sizes[i].getHeight();
+        }
+        return out;
+    }
 
     public boolean open(Context ctx, boolean front, int wantWidth, int wantHeight,
                         int wantPhotoWidth, int wantPhotoHeight) {
@@ -534,12 +555,14 @@ public final class CplusCamera {
     // default for that.
     private void pickFrameSize(CameraManager m, String id) {
         frameW = 640; frameH = 480;
+        yuvSizes = null;
         try {
             StreamConfigurationMap map = m.getCameraCharacteristics(id)
                 .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             if (map == null) { return; }
             Size[] sizes = map.getOutputSizes(android.graphics.ImageFormat.YUV_420_888);
             if (sizes == null || sizes.length == 0) { return; }
+            yuvSizes = sizes;
 
             long want = (wantW > 0 && wantH > 0)
                 ? (long) wantW * (long) wantH
@@ -549,6 +572,10 @@ public final class CplusCamera {
             for (Size s : sizes) {
                 long area = (long) s.getWidth() * (long) s.getHeight();
                 long diff = Math.abs(area - want);
+                // The exact size beats every size of equal area: area alone
+                // cannot tell 1920x1080 from 1080x1920, and a size handed back
+                // from `frameSizes()` must be taken as it is.
+                if (s.getWidth() == wantW && s.getHeight() == wantH) { diff = -1; }
                 if (diff < bestDiff) { bestDiff = diff; best = s; }
             }
             if (best != null) { frameW = best.getWidth(); frameH = best.getHeight(); }
@@ -593,6 +620,7 @@ public final class CplusCamera {
                     if (area > bestArea) { bestArea = area; best = s; }
                 } else {
                     long diff = Math.abs(area - want);
+                    if (s.getWidth() == wantPhotoW && s.getHeight() == wantPhotoH) { diff = -1; }
                     if (diff < bestDiff) { bestDiff = diff; best = s; }
                 }
             }

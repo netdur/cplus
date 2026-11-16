@@ -524,10 +524,20 @@ struct Request {
     // per pixel usually wants SMALL, and the platform's default is closer to
     // that than the sensor's native size.
     //
+    // A size from `Camera::frame_sizes()` is taken EXACTLY — an exact match
+    // beats every size of equal area, so 1080x1920 is not 1920x1080.
+    //
     //   macOS   HONOURED — nearest supported `AVCaptureDeviceFormat` by area,
     //           via `setActiveFormat:`. Read back with `frame_size()`.
     //           Measured on a FaceTime HD camera: 320x240 -> 640x480 (nearest
-    //           available), 1920x1080 -> exact, unset -> 1920x1080.
+    //           available), 1920x1080 -> exact, unset -> 1920x1080; all 7
+    //           listed sizes exact (2026-11-16). Until then the wish was lost
+    //           at `startRunning` and came back only with a preview or
+    //           `on_frame` — see the guide.
+    //   Android HONOURED against `getOutputSizes(YUV_420_888)`. All 27 back
+    //           and 23 front sizes exact on a Galaxy S23 Ultra.
+    //   Windows NOT HONOURED: the reader's current media type is taken as is,
+    //           and `frame_sizes()` lists that one size.
     frames: Size,
 
     // The preferred size for a `capture` still. `Size::any()` means THE
@@ -790,6 +800,36 @@ impl Camera {
         var h: i32 = 0;
         { _camera_photo_size(this._h, #addr_of(w), #addr_of(h)) };
         return Size::new(w, h);
+    }
+
+    // WHAT THIS LENS PUBLISHES — the lists `Request::photo` and
+    // `Request::frames` are matched against, LARGEST FIRST, each size once.
+    // Pick one and pass it back on a `Request` and it is taken exactly: the
+    // nearest published size to a published size is itself.
+    //
+    // For the lens the session is on NOW — `switch_to` changes the list — and
+    // empty on a closed camera or a backend that will not say.
+    //
+    //   Apple    `photo_sizes` is the ACTIVE FORMAT's
+    //            `supportedMaxPhotoDimensions`, and the active format is what
+    //            `frames` chose — so the stills on offer depend on the frame
+    //            size. `frame_sizes` is every format's dimensions.
+    //   Android  `getOutputSizes(JPEG)` and `getOutputSizes(YUV_420_888)`. A
+    //            published still can still be refused BESIDE a large frame
+    //            stream; `photo_size()` reads the fallback back.
+    //   Linux    the device's MJPG and YUYV sizes (`VIDIOC_ENUM_FRAMESIZES`).
+    //   Windows  the source reader's media types, and a still is a frame —
+    //            so `photo_sizes` is `frame_sizes`.
+    fn photo_sizes(this) -> vec::Vec[Size] {
+        var raw: vec::Vec[Size] = vec::new::[Size]();
+        if this._h.is_not_null() { { _camera_photo_sizes(this._h, #addr_of(raw)) }; }
+        return _largest_first(raw);
+    }
+
+    fn frame_sizes(this) -> vec::Vec[Size] {
+        var raw: vec::Vec[Size] = vec::new::[Size]();
+        if this._h.is_not_null() { { _camera_frame_sizes(this._h, #addr_of(raw)) }; }
+        return _largest_first(raw);
     }
 
     // WHAT THE FRAMES ACTUALLY HOLD — read back from the platform, never echoed
@@ -1270,6 +1310,46 @@ fn _preview_release(v: *u8) {
     { _camera_preview_release(v) };
 }
 
+// ONE ORDER FOR EVERY BACKEND: largest area first, the wider first on a tie,
+// each size once, nothing zero. Platforms publish in their own order — Android
+// largest first, AVFoundation smallest, V4L2 as the driver lists — and Apple
+// repeats a size once per pixel format and frame-rate range.
+fn _largest_first(raw: vec::Vec[Size]) -> vec::Vec[Size] {
+    var out: vec::Vec[Size] = vec::with_capacity::[Size](raw.count());
+    var i: usize = 0 as usize;
+    while i < raw.count() {
+        match raw.at(i) {
+            option::Option[Size]::Some(s) => {
+                if !s.is_any() { _insert_by_area(out, s); }
+            }
+            option::Option[Size]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn _insert_by_area(ref out: vec::Vec[Size], s: Size) {
+    let area: i64 = (s.width as i64) * (s.height as i64);
+    var at: usize = 0 as usize;
+    while at < out.count() {
+        match out.at(at) {
+            option::Option[Size]::Some(o) => {
+                if o.width == s.width && o.height == s.height { return; }
+                let oa: i64 = (o.width as i64) * (o.height as i64);
+                if area > oa || (area == oa && s.width > o.width) {
+                    let _i = out.insert(s, at: at);
+                    return;
+                }
+            }
+            option::Option[Size]::None => { }
+        }
+        at = at +% (1 as usize);
+    }
+    let _a = out.append(s);
+    return;
+}
+
 extern fn _camera_count() -> i64;
 extern fn _camera_has(facing: i32) -> i32;
 extern fn _camera_open(req: *_CRequest) -> *u8;
@@ -1277,6 +1357,10 @@ extern fn _camera_actual_facing(h: *u8) -> i32;
 extern fn _camera_frame_rate(h: *u8) -> i32;
 extern fn _camera_frame_size(h: *u8, out_width: *i32, out_height: *i32);
 extern fn _camera_photo_size(h: *u8, out_width: *i32, out_height: *i32);
+// Append every size the platform publishes, in its own order, duplicates and
+// all; `_largest_first` makes the answer the same shape on every backend.
+extern fn _camera_photo_sizes(h: *u8, into: *vec::Vec[Size]);
+extern fn _camera_frame_sizes(h: *u8, into: *vec::Vec[Size]);
 extern fn _camera_pixel_format(h: *u8) -> i32;
 extern fn _camera_device(h: *u8, into: *text::Text) -> i32;
 extern fn _camera_set_zoom(h: *u8, factor: f64) -> i32;
@@ -1636,6 +1720,55 @@ fn a_photo_wish_defaults_to_any_and_crosses_the_seam_apart_from_frames() {
 fn a_closed_camera_reports_no_photo_size() {
     let c: Camera = Camera { _h: 0 as *u8 };
     assert c.photo_size().is_any();
+    return;
+}
+
+// EVERY BACKEND'S LIST COMES OUT THE SAME SHAPE. The input is the worst of
+// each platform at once: smallest first (AVFoundation), a size repeated per
+// pixel format (AVFoundation again), a zero, and two sizes of one area.
+#[test]
+fn published_sizes_come_out_largest_first_each_once() {
+    var raw: vec::Vec[Size] = vec::new::[Size]();
+    let _a = raw.append(Size::new(640, 480));
+    let _b = raw.append(Size::new(1920, 1080));
+    let _c = raw.append(Size::new(640, 480));
+    let _d = raw.append(Size::any());
+    let _e = raw.append(Size::new(4032, 3024));
+    let _f = raw.append(Size::new(1080, 1920));
+    let _g = raw.append(Size::new(1920, 1080));
+    let got: vec::Vec[Size] = _largest_first(raw);
+    assert got.count() == (4 as usize);
+    let want: [i32; 8] = [4032, 3024, 1920, 1080, 1080, 1920, 640, 480];
+    var i: usize = 0 as usize;
+    while i < (4 as usize) {
+        match got.at(i) {
+            option::Option[Size]::Some(s) => {
+                assert s.width == want[i * (2 as usize)];
+                assert s.height == want[i * (2 as usize) + (1 as usize)];
+            }
+            option::Option[Size]::None => { assert false; }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// NEGATIVE: nothing published is an empty list, not a list of one `any`.
+#[test]
+fn nothing_published_is_an_empty_list() {
+    var raw: vec::Vec[Size] = vec::new::[Size]();
+    let _a = raw.append(Size::any());
+    let _b = raw.append(Size::new(0, 480));
+    assert _largest_first(raw).is_empty();
+    return;
+}
+
+// A closed camera publishes nothing, without reaching the backend at all.
+#[test]
+fn a_closed_camera_publishes_no_sizes() {
+    let c: Camera = Camera { _h: 0 as *u8 };
+    assert c.photo_sizes().is_empty();
+    assert c.frame_sizes().is_empty();
     return;
 }
 

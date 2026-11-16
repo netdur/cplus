@@ -177,6 +177,69 @@ configure an 8000x6000 JPEG reader the S23 Ultra does not list, it configured
 it and delivered 1920x1440. That is why the package only ever picks from the
 published list: a size off it is not refused, it is silently replaced.
 
+## Choosing from what the camera publishes
+
+`Camera::frame_sizes()` and `Camera::photo_sizes()` list what the open lens
+publishes, largest first, each size once. They are the same lists `frames` and
+`photo` are matched against, so a size taken from one and handed back on a
+`Request` is the size you get:
+
+```cplus
+let sizes = cam.photo_sizes();                 // [4080x3060, 4000x3000, ... 176x144]
+// pick by your own rule — the largest 4:3, the smallest at least 1280 wide, ...
+camera::open(camera::Request::new(photo: chosen))   // photo_size() == chosen
+```
+
+The lists describe the lens the session is on. `switch_to` changes them; a
+closed camera answers empty lists.
+
+| | `frame_sizes` | `photo_sizes` |
+|---|---|---|
+| Apple | every format's dimensions | the ACTIVE format's `supportedMaxPhotoDimensions` — so it depends on the `frames` you chose |
+| Android | `getOutputSizes(YUV_420_888)` | `getOutputSizes(JPEG)` |
+| Linux | the streamed format's `VIDIOC_ENUM_FRAMESIZES` | MJPG's; empty with no MJPG, where `capture` is `Unsupported` |
+| Windows | the one size the reader is on | the same |
+
+A stepwise or continuous V4L2 device publishes a range, not a list: its largest
+and smallest ends are listed, and a size between them is clamped and rounded by
+the driver.
+
+**Windows lists one size because it honours neither field.** The backend takes
+the source reader's current media type and never sets one, so listing the
+device's native types would offer sizes a `Request` could not get.
+
+**An exact match beats nearest-by-area.** Area alone cannot tell 1920x1080 from
+1080x1920, and a Mac FaceTime camera publishes both, as well as 1760x1328 and
+1328x1760. Handing either one back landed on whichever the platform listed
+first. Every backend now takes the exact size when it is listed, and nearest by
+area only when it is not.
+
+Measured 2026-11-16, every listed size handed back:
+
+| camera | frame sizes | photo sizes | exact |
+|---|---|---|---|
+| MacBook FaceTime HD | 7, 1920x1080 by default | 1, and it follows `frames` | 7 of 7 |
+| Galaxy S23 Ultra, back | 27, 4080x3060 down to 176x144 | the same 27 | 54 of 54 |
+| Galaxy S23 Ultra, front | 23, 4000x3000 down to 176x144 | the same 23 | 46 of 46 |
+
+`playground/camsizes` is the Mac run; Android ran the same round trip inside
+`playground/cameraprobe_android`.
+
+### Gotcha: on macOS, `frames` was lost at open
+
+Measuring the round trip found a macOS defect. `_camera_open` chose the format
+before `startRunning`, and `startRunning` re-applies the session preset, which
+resets the format. Only the frame rate was re-applied after it. A session asked
+for 640x480 ran at 1920x1080 until a preview or `on_frame` re-asserted the
+format, so a capture-only or CLI caller never got its size. The bug went unseen
+while `frame_size()` reported the size recorded at open, and showed up once it
+read the device instead. Open now re-asserts format, rate and still size, in
+that order.
+
+The re-assert uses the WISH, not the size it negotiated. Re-asserting the
+negotiated size pinned an unrequested session to whatever format the previous
+session left the device on: a default open read 640x480 after a 640x480 run.
+
 ## Gotcha: `has` answers true for both facings on a desktop
 
 macOS reports its built-in camera's position as "unspecified" — there is no

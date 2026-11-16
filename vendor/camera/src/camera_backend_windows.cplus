@@ -44,6 +44,7 @@
 
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 import "./camera" as camera;
 
 // The request as the facade packs it. Layout must match `_CRequest`,
@@ -1144,6 +1145,22 @@ export extern fn _camera_photo_size(h: *u8, out_width: *i32, out_height: *i32) {
     _camera_frame_size(h, out_width, out_height);
 }
 
+// ONE SIZE, the one the reader is on, for both lists. This backend takes the
+// source reader's current media type and never sets one, so neither `frames`
+// nor `photo` is honoured — and listing the device's native types would offer
+// sizes that a `Request` handing them back would not get. The list is what a
+// caller can actually have; it grows when the reader is negotiated.
+export extern fn _camera_frame_sizes(h: *u8, into: *vec::Vec[camera::Size]) {
+    if !is_live(h) { return; }
+    if SESSION.width > (0 as i32) && SESSION.height > (0 as i32) {
+        let _a = { (*into).append(camera::Size::new(SESSION.width, SESSION.height)) };
+    }
+}
+
+export extern fn _camera_photo_sizes(h: *u8, into: *vec::Vec[camera::Size]) {
+    _camera_frame_sizes(h, into);
+}
+
 // NV12 and YUY2 both carry a full-resolution LUMA plane first, which is exactly
 // what `PixelFormat::Luma8` means and what `Frame::luma` slices. RGB32 is packed
 // and has no luma plane, so it reports `Bgra32` and the pixels arrive through
@@ -1976,7 +1993,24 @@ fn opening_and_closing_a_real_camera_reports_a_real_format() {
     // Windows has no facing: External, never a guess at a side.
     assert { _camera_actual_facing(h) } == (2 as i32);
 
+    // The published lists are the one size the reader is on — nothing a
+    // `Request` handing it back would not get.
+    var frames: vec::Vec[camera::Size] = vec::new::[camera::Size]();
+    { _camera_frame_sizes(h, #addr_of(frames)) };
+    assert frames.count() == (1 as usize);
+    match frames.at(0 as usize) {
+        option::Option[camera::Size]::Some(z) => { assert z.width == w && z.height == ht; }
+        option::Option[camera::Size]::None => { assert false; }
+    }
+    var photos: vec::Vec[camera::Size] = vec::new::[camera::Size]();
+    { _camera_photo_sizes(h, #addr_of(photos)) };
+    assert photos.count() == (1 as usize);
+
     { _camera_close(h) };
+    // NEGATIVE: a closed session publishes nothing.
+    var after: vec::Vec[camera::Size] = vec::new::[camera::Size]();
+    { _camera_frame_sizes(h, #addr_of(after)) };
+    assert after.is_empty();
     // Closed means closed: the geometry is gone rather than stale.
     var w2: i32 = 9 as i32;
     { _camera_frame_size(h, #addr_of(w2), #addr_of(ht)) };

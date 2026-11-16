@@ -30,6 +30,13 @@ compiler error report for IR that clang rejects.
   several megabytes of JPEG from a phone (6.5 MB measured on a Galaxy S23
   Ultra). Pass `Request::new(photo: Size::new(1920, 1080))`
   to keep the old size.
+- `camera::Camera::frame_sizes()` and `photo_sizes()` list what the open lens
+  publishes, largest first. A listed size handed back on a `Request` is taken
+  exactly; an exact match now beats a size of equal area, so 1080x1920 no
+  longer lands on 1920x1080. On macOS a `frames` request now holds from
+  `open`. It used to be lost at `startRunning` until a preview or `on_frame`
+  re-applied it. Windows lists only the size it delivers.
+- `jni::JNINativeInterface` types `GetIntArrayRegion`.
 
 ### Language and compiler
 

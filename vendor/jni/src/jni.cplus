@@ -369,7 +369,10 @@ struct JNINativeInterface {
     GetByteArrayRegion: fn(*JNIEnv, jbyteArray, jsize, jsize, *u8),
     opaque reserved_get_prim_region_2: *u8,
     opaque reserved_get_prim_region_3: *u8,
-    opaque reserved_get_prim_region_4: *u8,
+    // Copy OUT of a Java `int[]`: `len` i32s from `start` into `*i32`, which
+    // must have room. Typed for the camera's published size lists, which
+    // cross as one flat `int[]` snapshot rather than a call per element.
+    GetIntArrayRegion: fn(*JNIEnv, jintArray, jsize, jsize, *i32),
     opaque reserved_get_prim_region_5: *u8,
     opaque reserved_get_prim_region_6: *u8,
     opaque reserved_get_prim_region_7: *u8,
@@ -503,6 +506,10 @@ fn table_fields_sit_at_their_jni_h_indices() {
     // The static field block.
     assert { (*t).GetStaticFieldID as usize } == (144 as usize);
     assert { (*t).SetStaticDoubleField as usize } == (162 as usize);
+
+    // The primitive-array region copies.
+    assert { (*t).GetByteArrayRegion as usize } == (200 as usize);
+    assert { (*t).GetIntArrayRegion as usize } == (203 as usize);
     return;
 }
 

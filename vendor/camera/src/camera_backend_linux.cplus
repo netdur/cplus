@@ -63,6 +63,8 @@
 // and only then releases the buffers.
 
 import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
 import "./camera" as camera;
 import "gtk4/gtk4" as gtk;
 import "gdk/gdk" as gdk;
@@ -399,6 +401,9 @@ fn pick_mjpg_size(fd: i32, want_w: i32, want_h: i32, out_w: *i32, out_h: *i32) -
                 var diff: i64 = area -% want_area;
                 if diff < (0 as i64) { diff = (0 as i64) -% diff; }
                 key = (0 as i64) -% diff;
+                // Exact beats equal area: a size handed back from
+                // `photo_sizes()` is taken as it is, not as its area.
+                if w == want_w && h == want_h { key = 1 as i64; }
             }
             if !have || key > best_key {
                 have = true;
@@ -413,6 +418,31 @@ fn pick_mjpg_size(fd: i32, want_w: i32, want_h: i32, out_w: *i32, out_h: *i32) -
     { (*out_w) = best_w };
     { (*out_h) = best_h };
     return true;
+}
+
+// EVERY SIZE THE DEVICE PUBLISHES FOR `fourcc`, appended to `into`. A
+// DISCRETE device lists them; a STEPWISE or CONTINUOUS one publishes a range,
+// which has no list — its two ends are appended, and a wish between them is
+// clamped and rounded by `VIDIOC_S_FMT` as `pick_mjpg_size` describes.
+fn enum_sizes(fd: i32, fourcc: u32, into: *vec::Vec[camera::Size]) {
+    var i: u32 = 0 as u32;
+    while i < (256 as u32) {
+        var d: [u8; 44] = [0u8; 44];
+        let p: *u8 = { #addr_of(d) as *u8 };
+        put_u32(p, 0 as usize, i);
+        put_u32(p, 4 as usize, fourcc);
+        if xioctl(fd, VIDIOC_ENUM_FRAMESIZES(), p) < (0 as i32) { return; }
+        if get_u32(p, frmsize_off_type()) != frmsize_discrete() {
+            let _a = { (*into).append(camera::Size::new(get_u32(p, frmsize_off_max_w()) as i32,
+                                                        get_u32(p, frmsize_off_max_h()) as i32)) };
+            let _b = { (*into).append(camera::Size::new(get_u32(p, frmsize_off_min_w()) as i32,
+                                                        get_u32(p, frmsize_off_min_h()) as i32)) };
+            return;
+        }
+        let _c = { (*into).append(camera::Size::new(get_u32(p, frmsize_off_width()) as i32,
+                                                    get_u32(p, frmsize_off_height()) as i32)) };
+        i = i +% (1 as u32);
+    }
 }
 
 // ---- a session --------------------------------------------------------------------
@@ -994,6 +1024,22 @@ export extern fn _camera_photo_size(h: *u8, out_width: *i32, out_height: *i32) {
     if out_height != (0 as *i32) { { (*out_height) = if s == (0 as *Session) { 0 as i32 } else { (*s).photo_h } }; }
 }
 
+// STILLS COME FROM MJPG, so its sizes are the list — empty on a device with no
+// MJPG, where `_camera_capture` answers `Unsupported`. FRAMES are the sizes of
+// the format the session streams (YUYV, or MJPG on a device without it).
+export extern fn _camera_photo_sizes(h: *u8, into: *vec::Vec[camera::Size]) {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return; }
+    if !device_offers({ (*s).fd }, fourcc_mjpg()) { return; }
+    enum_sizes({ (*s).fd }, fourcc_mjpg(), into);
+}
+
+export extern fn _camera_frame_sizes(h: *u8, into: *vec::Vec[camera::Size]) {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return; }
+    enum_sizes({ (*s).fd }, { (*s).stream_fourcc }, into);
+}
+
 // EXTERNAL, and never a guess — the same answer and the same reason as the
 // Windows half. V4L2 does not report which way a camera points.
 export extern fn _camera_actual_facing(h: *u8) -> i32 {
@@ -1552,6 +1598,47 @@ fn a_still_really_is_a_jpeg_and_the_session_survives_it() {
     assert SEEN_FRAMES > before;
     assert { _camera_stop_frames(h) } == _ok();
     { _camera_close(h) };
+}
+
+// THE LISTS ARE WHAT THE SESSION NEGOTIATES AGAINST: the frame size the
+// session settled on is one of `frame_sizes`, and with no wish the still is
+// the largest of `photo_sizes` — so a size taken from either list and handed
+// back is the size a caller gets.
+#[test]
+fn the_published_lists_hold_what_the_session_chose() {
+    if !a_camera_is_here() { return; }
+    let h: *u8 = open_default();
+    assert h != (0 as *u8);
+    var frames: vec::Vec[camera::Size] = vec::new::[camera::Size]();
+    { _camera_frame_sizes(h, #addr_of(frames)) };
+    assert frames.count() > (0 as usize);
+    var fw: i32 = 0 as i32;
+    var fh: i32 = 0 as i32;
+    { _camera_frame_size(h, #addr_of(fw), #addr_of(fh)) };
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    while i < frames.count() {
+        match frames.at(i) {
+            option::Option[camera::Size]::Some(z) => { if z.width == fw && z.height == fh { found = true; } }
+            option::Option[camera::Size]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert found;
+
+    var photos: vec::Vec[camera::Size] = vec::new::[camera::Size]();
+    { _camera_photo_sizes(h, #addr_of(photos)) };
+    if device_offers({ (*(h as *Session)).fd }, fourcc_mjpg()) {
+        assert photos.count() > (0 as usize);
+    } else {
+        assert photos.is_empty();
+    }
+    { _camera_close(h) };
+
+    // NEGATIVE: a closed session publishes nothing.
+    var after: vec::Vec[camera::Size] = vec::new::[camera::Size]();
+    { _camera_frame_sizes(0 as *u8, #addr_of(after)) };
+    assert after.is_empty();
 }
 
 #[test]
