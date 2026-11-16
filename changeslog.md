@@ -25,6 +25,11 @@ compiler error report for IR that clang rejects.
   `(1 << 40) as u64` is unchanged.
 - A `[library]` with `sealed = true` is consumed through its C header, never
   imported by a C+ package (E0896).
+- `camera::capture` now delivers the largest still the camera publishes
+  rather than 1920x1080 on Android and the format's smallest on Apple —
+  several megabytes of JPEG from a phone (6.5 MB measured on a Galaxy S23
+  Ultra). Pass `Request::new(photo: Size::new(1920, 1080))`
+  to keep the old size.
 
 ### Language and compiler
 
@@ -177,6 +182,16 @@ compiler error report for IR that clang rejects.
   a `BitmapDrawable` (any PNG or JPEG from a file or asset) does not implement
   it; CheckJNI aborted the process. The drawable is now asked whether it is
   `Animatable` first. Animated drawables start and stop as before.
+- **camera: a still is as large as the camera publishes.** `Request::photo`
+  sizes `capture` the way `frames` sizes the stream; `Size::any()` (the
+  default) means the largest published still, and `Camera::photo_size()` reads
+  back what the next capture delivers. Android's still was a fixed 1920x1080 on
+  every device (a Galaxy S23 Ultra now delivers 4080x3060), and copies above
+  4 MB were truncated into an undecodable buffer; Apple took the active
+  format's SMALLEST still, `AVCapturePhotoSettings`' default. Android retries
+  once at a smaller still if a session refuses the full size beside a large
+  `frames` stream. Windows answers `photo_size()` with the frame size: its
+  still is an encoded stream frame.
 
 ### Standard library
 

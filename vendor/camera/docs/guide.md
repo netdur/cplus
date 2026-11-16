@@ -121,6 +121,62 @@ responsible for a free across a seam where forgetting is silent.
 of zero. A callback that sometimes never fires is the worst shape this seam
 could have: there is nothing for a caller to time out against.
 
+## A still is as large as the camera publishes
+
+`Request::photo` sizes the still the way `frames` sizes the stream, with the
+opposite default: `Size::any()` means the LARGEST still the camera publishes.
+A frame is work per pixel thirty times a second; a still is one picture
+somebody wants to read. Ask for a size and you get the nearest published one by
+area. `Camera::photo_size()` is what the next `capture` will deliver, read from
+the platform — and the JPEG carries its own size, so a handler need trust
+neither.
+
+```cplus
+camera::open(camera::Request::new(frames: camera::Size::new(640, 480)))   // small frames, full-size stills
+camera::open(camera::Request::new(photo: camera::Size::new(1920, 1080)))  // a 2 MP still, on purpose
+```
+
+Until 2026-11-16 there was no way to ask, and both mobile platforms got it
+wrong by default. Android's still reader was a fixed 1920x1080 on every device;
+a Galaxy S23 Ultra publishing 4080x3060 delivered 2 MP. Apple's
+`AVCapturePhotoSettings.maxPhotoDimensions` DEFAULTS TO THE SMALLEST size the
+active format supports — the SDK header says so — and nothing set it.
+
+What each platform does with it:
+
+* **Apple** chooses from the ACTIVE FORMAT's `supportedMaxPhotoDimensions`, so
+  the still can be no larger than the format `frames` picked allows. An iPhone
+  format usually publishes several sizes and the largest wins. A FaceTime HD
+  camera's formats each publish exactly one — their own — so on a Mac the still
+  follows the format and `photo` changes nothing (measured: 1920x1080 for
+  every request). The choice is re-made at every capture, because the format
+  moves whenever the session preset is re-applied.
+* **Android** chooses from `getOutputSizes(JPEG)`, not the high-resolution list
+  (those sizes are only promised in a burst-capture session). Every hardware
+  level guarantees a full-size JPEG beside a preview-sized stream. A large
+  `frames` stream plus a full-size still is NOT guaranteed, and a refusal
+  arrives as `onConfigureFailed` with no reason — so the package retries ONCE
+  at the largest still at or under the frame area (1920x1080 at least), logs
+  `CplusCamera: session refused a WxH still…`, and `photo_size()` reports the
+  smaller size. `switch_to` re-negotiates, because the front lens publishes its
+  own sizes (4000x3000 on the S23 Ultra, against 4080x3060 behind).
+* **Linux** chooses from the device's MJPG frame sizes
+  (`VIDIOC_ENUM_FRAMESIZES`), and the driver's answer to the MJPG negotiation
+  is what `photo_size()` reports after the first capture.
+* **Windows** does not honour it. A still there is a frame of the running
+  stream, encoded by WIC, so it is `frame_size()` — and `photo_size()` says so
+  rather than echoing the request.
+
+A full-size still is large: 6.5 MB of JPEG from the S23 Ultra. The Android
+half used to copy at most 4 MB and hand the handler the TRUNCATED buffer, which
+is not a decodable JPEG. It now copies the whole photo, and a buffer it cannot
+allocate is the empty slice — no photo — never a short one.
+
+**A camera HAL does not always refuse a size it does not publish.** Forced to
+configure an 8000x6000 JPEG reader the S23 Ultra does not list, it configured
+it and delivered 1920x1440. That is why the package only ever picks from the
+published list: a size off it is not refused, it is silently replaced.
+
 ## Gotcha: `has` answers true for both facings on a desktop
 
 macOS reports its built-in camera's position as "unspecified" — there is no
@@ -171,7 +227,7 @@ The platform round-trips live in probes:
 | Windows | `playground/cam_probe` (CLI), `cam_shot` (still), `cam_view` (raw window), `cam_facet` (preview in a facet tree) | **PASSES** — see below |
 | **iOS simulator** | — | **nothing to run: it has no camera** |
 | iOS device | a real iPad | **NOT YET RUN.** Cross-builds only |
-| Android device | `playground/cameraprobe_android` | not yet run |
+| Android device | `playground/cameraprobe_android` | **stills run** on a Galaxy S23 Ultra, 2026-11-16 — see below |
 
 The Android emulator run, both dex paths, `count=2`:
 
@@ -187,6 +243,22 @@ photo #2: 97698 bytes, jpeg=true      (repeat captures, no ImageReader stall)
 with the synthetic scene live in the `TextureView`, laid out by flex inside the
 facet tree. What that does NOT prove is image content, orientation against a
 real sensor, focus or torch.
+
+The still-size run on a Galaxy S23 Ultra, with the probe shooting on frames 60
+and 150 and `switch_to(Front)` at 210; `sof` is read from the JPEG's own SOF
+marker, not from the package:
+
+```
+READBACK size=640x480 photo=4080x3060
+PHOTO #1: 6545028 bytes, jpeg=true sof=4080x3060 photo_size=4080x3060
+PHOTO #2: 6402254 bytes, jpeg=true sof=4080x3060 photo_size=4080x3060
+SWITCH outcome=0 facing=1 photo_size=4000x3000
+PHOTO #3: 4647007 bytes, jpeg=true sof=4000x3000 photo_size=4000x3000
+photo: 1920x1080          -> 1098621 bytes, sof=1920x1080
+frames: 4080x3060 (YUV)   -> still 4080x3060; the device configured both
+forced configure failure  -> "session refused a 4080x3060 still beside 640x480
+                             frames; retrying at 1920x1080", sof=1920x1080
+```
 
 The Windows run, on an HP Wide Vision HD Camera:
 

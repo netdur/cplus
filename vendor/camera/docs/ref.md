@@ -125,13 +125,20 @@ session can be asked for rides on `Request`, whose fields all default:
 
 ```cplus
 fn Request::new(device: str = "", facing: Facing = Facing::Back,
-                frames: Size = Size::any(), frame_rate: i32 = 0,
+                frames: Size = Size::any(), photo: Size = Size::any(),
+                frame_rate: i32 = 0,
                 pixel: PixelFormat = PixelFormat::Any,
                 color: ColorSpace = ColorSpace::Any,
                 hdr: Wish = Wish::Auto, stabilization: Wish = Wish::Auto,
                 depth: Wish = Wish::Auto, high_speed: Wish = Wish::Auto,
                 buffers: i32 = 0) -> Request
 ```
+
+`frames` sizes the `on_frame` stream; `Size::any()` lets the platform pick,
+which is usually small. `photo` sizes a `capture` still; `Size::any()` means
+the LARGEST the camera publishes. Both take the nearest supported size by area
+and read back from `frame_size()` / `photo_size()`. Windows does not honour
+`photo` — its still is a stream frame — and `photo_size()` says so.
 
 `device` names one camera. A name that matches nothing is REFUSED with
 `Unsupported` rather than falling back to the first — handing back a different
@@ -171,6 +178,8 @@ fn capture(this, on_photo: fn(u8[], *u8), on_photo_ctx: *u8 = 0 as *u8) -> Outco
 ```
 
 Request one still. `Ok` means the request was accepted, not that a photo exists.
+The still is `photo_size()` — by default the largest the camera publishes, so
+expect several megabytes from a phone.
 
 `on_photo(jpeg, ctx)` runs on the MAIN THREAD on Apple and Android. On Linux it
 runs inline on the caller's thread before `capture` returns. **On Windows it
@@ -196,6 +205,23 @@ sideways is a defect; a frame that is sideways is a fact the caller can act on.
 
 The orientation is read AT CAPTURE, not at open: the device has usually been
 turned since.
+
+```cplus
+fn frame_size(this) -> Size
+fn photo_size(this) -> Size
+```
+
+`frame_size` is the size the frame stream settled on — `Size::any()` before
+the session has one. Every `Frame` carries its own width and height, so a
+handler never has to trust it; it is for laying out a UI before the first
+frame arrives.
+
+`photo_size` is the still the next `capture` will deliver, read from the
+platform, never echoed from `Request::photo`. `Size::any()` on a closed camera. Apple: the photo
+output's ceiling, chosen from the active format. Android: the configured JPEG
+reader, including after the one-step fallback when a session refused the full
+size. Linux: the MJPG size, the driver's own answer once a capture has
+negotiated it. Windows: `frame_size()`.
 
 ```cplus
 fn on_frame(this, on_frame: fn(Frame, *u8), on_frame_ctx: *u8 = 0 as *u8) -> Outcome

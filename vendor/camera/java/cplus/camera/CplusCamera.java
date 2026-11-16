@@ -52,6 +52,14 @@ public final class CplusCamera {
     private boolean streaming;
     private int wantW, wantH;
     private int frameW = 0, frameH = 0;
+    // The still, negotiated like the frames but with the opposite default: no
+    // request means the LARGEST JPEG the lens publishes. `photoFellBack` is the
+    // one retry `onConfigureFailed` is allowed — see `fallBackPhotoSize`.
+    private int wantPhotoW, wantPhotoH;
+    // Volatile: written on the camera thread by the fallback, read from any.
+    private volatile int photoW = 0, photoH = 0;
+    private boolean photoFellBack;
+    private Size[] jpegSizes;
     private int actualFacing = 0;
     private TextureView view;
     // The sensor's mounting angle, degrees clockwise from the device's natural
@@ -119,8 +127,11 @@ public final class CplusCamera {
     public int actualFacing() { return actualFacing; }
     public int frameWidth() { return frameW; }
     public int frameHeight() { return frameH; }
+    public int photoWidth() { return photoW; }
+    public int photoHeight() { return photoH; }
 
-    public boolean open(Context ctx, boolean front, int wantWidth, int wantHeight) {
+    public boolean open(Context ctx, boolean front, int wantWidth, int wantHeight,
+                        int wantPhotoWidth, int wantPhotoHeight) {
         lastError = 0;
         // CLEAR THE LATCH `close()` SET, and this object is reopened far more
         // often than it looks. `closed` was write-once: nothing ever set it
@@ -138,6 +149,9 @@ public final class CplusCamera {
         if (id == null) { lastError = 2; return false; }
         wantW = wantWidth;
         wantH = wantHeight;
+        wantPhotoW = wantPhotoWidth;
+        wantPhotoH = wantPhotoHeight;
+        photoFellBack = false;
         // WHAT WE ACTUALLY GOT. `idFor` falls back to the first camera when
         // nothing faces the requested way, so this is not the request echoed
         // back — an EXTERNAL camera reports neither front nor back and lands
@@ -150,19 +164,14 @@ public final class CplusCamera {
             Integer so0 = ch0.get(CameraCharacteristics.SENSOR_ORIENTATION);
             if (so0 != null) { sensorOrientation = so0.intValue(); }
             pickFrameSize(m0, id);
+            pickPhotoSize(m0, id);
         } catch (Throwable ignored) { }
         try {
             thread = new HandlerThread("cplus-camera");
             thread.start();
             handler = new Handler(thread.getLooper());
 
-            // 1920x1080 JPEG, and maxImages 2 rather than 1: the reader must be
-            // able to hold the next frame while the previous Image is still
-            // being copied out, or a capture during delivery is dropped.
-            reader = ImageReader.newInstance(1920, 1080, android.graphics.ImageFormat.JPEG, 2);
-            reader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
-                @Override public void onImageAvailable(ImageReader r) { deliver(r); }
-            }, handler);
+            buildPhotoReader();
 
             CameraManager m = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
             m.openCamera(id, new CameraDevice.StateCallback() {
@@ -243,6 +252,18 @@ public final class CplusCamera {
                 frames.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
                     @Override public void onImageAvailable(ImageReader r) { deliverFrame(r); }
                 }, handler);
+            }
+
+            // THE STILL TOO, by the same rule. The front lens of a phone
+            // publishes a different, usually smaller, set of JPEG sizes, and a
+            // reader the new lens does not publish fails the session silently.
+            // The fallback is re-armed: what the old lens could not configure
+            // says nothing about this one.
+            int oldPW = photoW, oldPH = photoH;
+            photoFellBack = false;
+            pickPhotoSize(m, id);
+            if (reader == null || photoW != oldPW || photoH != oldPH) {
+                buildPhotoReader();
             }
 
             m.openCamera(id, new CameraDevice.StateCallback() {
@@ -469,7 +490,16 @@ public final class CplusCamera {
                     session = s;
                     repeat();
                 }
-                @Override public void onConfigureFailed(CameraCaptureSession s) { session = null; }
+                @Override public void onConfigureFailed(CameraCaptureSession s) {
+                    session = null;
+                    // camera2 gives no reason. The one this package can cause
+                    // and repair is a still too large to sit beside the other
+                    // streams; anything else stays failed, as it always did.
+                    if (fallBackPhotoSize()) {
+                        buildPhotoReader();
+                        tryStart();
+                    }
+                }
             }, handler);
         } catch (Throwable ignored) { }
     }
@@ -523,6 +553,97 @@ public final class CplusCamera {
             }
             if (best != null) { frameW = best.getWidth(); frameH = best.getHeight(); }
         } catch (Throwable ignored) { }
+    }
+
+    // NEGOTIATE the still the same way, against the JPEG sizes the lens
+    // publishes — with the OPPOSITE default. No request means the largest: a
+    // still is one picture someone wants to read, not work per pixel per frame.
+    //
+    // It was a fixed 1920x1080 reader, on every device. A Galaxy S23 Ultra
+    // publishing 4000x3000 handed back 2 MP, and a device that did not publish
+    // 1920x1080 at all failed its session with no reason given.
+    //
+    // `getOutputSizes`, NOT `getHighResolutionOutputSizes`: the high-resolution
+    // list is sizes that cannot sustain 20fps, and they are only guaranteed in
+    // a BURST_CAPTURE session this package does not build. The plain list is
+    // what camera2's stream-combination tables promise against — and every
+    // level, LEGACY included, guarantees a preview, a preview-sized YUV stream
+    // and a MAXIMUM-sized JPEG together.
+    //
+    // With nothing published, 1920x1080 — the old fixed size, kept as the
+    // answer of last resort rather than inventing a new one.
+    private void pickPhotoSize(CameraManager m, String id) {
+        photoW = 1920; photoH = 1080;
+        jpegSizes = null;
+        try {
+            StreamConfigurationMap map = m.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+            if (map == null) { return; }
+            Size[] sizes = map.getOutputSizes(android.graphics.ImageFormat.JPEG);
+            if (sizes == null || sizes.length == 0) { return; }
+            jpegSizes = sizes;
+            boolean any = wantPhotoW <= 0 || wantPhotoH <= 0;
+            long want = any ? Long.MAX_VALUE : (long) wantPhotoW * (long) wantPhotoH;
+            Size best = null;
+            long bestDiff = Long.MAX_VALUE;
+            long bestArea = -1;
+            for (Size s : sizes) {
+                long area = (long) s.getWidth() * (long) s.getHeight();
+                if (any) {
+                    if (area > bestArea) { bestArea = area; best = s; }
+                } else {
+                    long diff = Math.abs(area - want);
+                    if (diff < bestDiff) { bestDiff = diff; best = s; }
+                }
+            }
+            if (best != null) { photoW = best.getWidth(); photoH = best.getHeight(); }
+        } catch (Throwable ignored) { }
+    }
+
+    // ONE STEP DOWN, ONCE, when the session refused to configure.
+    //
+    // The tables guarantee a MAXIMUM JPEG only beside PREVIEW-sized streams. A
+    // caller asking `frames` for more than that (a 4K YUV stream) plus a full
+    // sensor still is a combination a LIMITED device may refuse — and the
+    // refusal is `onConfigureFailed` with no reason. The guaranteed partner of
+    // a large stream is a JPEG at RECORD size, so the still drops to the
+    // largest published JPEG at or under the frame area (1920x1080 at the
+    // least). `photoSize()` reads the drop back; nothing is hidden.
+    //
+    // Returns whether there is a smaller size to try. A second failure stays
+    // failed, which is what every failure was before this existed.
+    private boolean fallBackPhotoSize() {
+        if (photoFellBack || jpegSizes == null) { return false; }
+        photoFellBack = true;
+        long cap = Math.max((long) frameW * (long) frameH, 1920L * 1080L);
+        long have = (long) photoW * (long) photoH;
+        Size best = null;
+        long bestArea = -1;
+        for (Size s : jpegSizes) {
+            long area = (long) s.getWidth() * (long) s.getHeight();
+            if (area <= cap && area < have && area > bestArea) { bestArea = area; best = s; }
+        }
+        if (best == null) { return false; }
+        android.util.Log.w("CplusCamera", "session refused a " + photoW + "x" + photoH
+            + " still beside " + frameW + "x" + frameH + " frames; retrying at "
+            + best.getWidth() + "x" + best.getHeight());
+        photoW = best.getWidth();
+        photoH = best.getHeight();
+        return true;
+    }
+
+    // (Re)build the still reader at `photoW`x`photoH`. maxImages 2 rather than
+    // 1: the reader must be able to hold the next image while the previous one
+    // is still being copied out, or a capture during delivery is dropped.
+    //
+    // The reader is a session TARGET, so a new one only takes effect at the
+    // next `tryStart` — every caller is about to cause one.
+    private void buildPhotoReader() {
+        try { if (reader != null) { reader.close(); } } catch (Throwable ignored) { }
+        reader = ImageReader.newInstance(photoW, photoH, android.graphics.ImageFormat.JPEG, 2);
+        reader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
+            @Override public void onImageAvailable(ImageReader r) { deliver(r); }
+        }, handler);
     }
 
     // ---- frames ------------------------------------------------------------

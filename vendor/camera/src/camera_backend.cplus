@@ -56,6 +56,12 @@ extern fn _memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
 // ends in `ld: symbol(s) not found`.
 //
 // `dispatch_queue_create` needs none of this: it is libSystem, always linked.
+// `-[NSValue CMVideoDimensionsValue]` answers a `CMVideoDimensions` — the
+// same `{ int32; int32; }` in one register as `_CM_DIMENSIONS`, so it is read
+// as a u64 the same way.
+#[link_name = "objc_msgSend"]
+extern fn _msg_dimensions(recv: *u8, selector: *u8) -> u64;
+
 #[link_name = "dlopen"]
 extern fn _dlopen(path: *u8, mode: i32) -> *u8;
 #[link_name = "dlsym"]
@@ -199,6 +205,8 @@ struct _CRequest {
     depth: i32,
     high_speed: i32,
     buffers: i32,
+    photo_width: i32,
+    photo_height: i32,
 }
 
 // A live session. Heap-allocated; `_camera_open` hands out the pointer and
@@ -231,6 +239,10 @@ struct _Session {
     // `camera::PixelFormat::to_code()`. Decides the capture format and, with it,
     // whether `Frame::luma` has anything in it.
     want_pixel: i32,
+    // `Request::photo`, kept for the same reason as the rate: the format it is
+    // chosen against moves, so the choice is re-made. 0x0 = the largest.
+    want_photo_width: i32,
+    want_photo_height: i32,
 }
 
 // The last failure `_camera_open` saw. A single slot rather than a per-session field
@@ -776,6 +788,100 @@ fn _apply_frame_rate(dev: *u8, fps: i32) {
     device.unlock_for_configuration();
 }
 
+// CHOOSE THE STILL'S SIZE from what the ACTIVE FORMAT publishes.
+//
+// `AVCapturePhotoSettings.maxPhotoDimensions` DEFAULTS TO THE SMALLEST of the
+// format's `supportedMaxPhotoDimensions` — the SDK header says so in as many
+// words — so a session that never set it took the smallest still the format
+// offers, whatever the sensor could do. Android had the same defect by a
+// different road (a fixed 1920x1080 reader); see
+// bugs/closed/a-camera-still-is-always-1920x1080.md.
+//
+// No wish means the LARGEST; otherwise the nearest by area, as `frames` is.
+// Only a size from the list is ever set: a dimension the format does not
+// publish is not refused politely, AVFoundation raises — which is a crash.
+//
+// False when there is nothing to choose from: before macOS 13 / iOS 16 the
+// property does not exist and the still follows the active format.
+fn _pick_photo_dims(dev: *u8, want_w: i32, want_h: i32, out_w: *i32, out_h: *i32) -> bool {
+    { (*out_w) = 0 };
+    { (*out_h) = 0 };
+    if dev.is_null() { return false; }
+    let fmt: *u8 = av::CaptureDevice::from_raw(dev).active_format().raw();
+    if fmt.is_null() { return false; }
+    let list_sel: *u8 = rt::sel(#str_ptr("supportedMaxPhotoDimensions\0"));
+    if rt::msg_i8_id(fmt, rt::sel(#str_ptr("respondsToSelector:\0")), list_sel) == (0 as i8) {
+        return false;
+    }
+    let arr: *u8 = rt::msg_id(fmt, list_sel);
+    if arr.is_null() { return false; }
+    let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+    let at: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+    let dims_sel: *u8 = rt::sel(#str_ptr("CMVideoDimensionsValue\0"));
+
+    let any: bool = want_w <= (0 as i32) || want_h <= (0 as i32);
+    var want_area: i64 = 0 as i64;
+    if !any { want_area = (want_w as i64) * (want_h as i64); }
+    var have: bool = false;
+    var best_w: i32 = 0;
+    var best_h: i32 = 0;
+    var best_key: i64 = 0 as i64;
+    var i: u64 = 0 as u64;
+    while i < n {
+        let v: *u8 = rt::msg_id_u64(arr, at, i);
+        if v.is_not_null() {
+            let packed: u64 = _msg_dimensions(v, dims_sel);
+            let w: i32 = (packed & 0xFFFFFFFFu64) as i32;
+            let h: i32 = (packed >> 32u64) as i32;
+            if w > (0 as i32) && h > (0 as i32) {
+                let area: i64 = (w as i64) * (h as i64);
+                // One comparison for both rules: the largest area wins `any`,
+                // the smallest distance wins a wish (negated, so larger wins).
+                var key: i64 = area;
+                if !any {
+                    var diff: i64 = area - want_area;
+                    if diff < (0 as i64) { diff = (0 as i64) - diff; }
+                    key = (0 as i64) - diff;
+                }
+                if !have || key > best_key {
+                    have = true;
+                    best_key = key;
+                    best_w = w;
+                    best_h = h;
+                }
+            }
+        }
+        i = i + (1 as u64);
+    }
+    if !have { return false; }
+    { (*out_w) = best_w };
+    { (*out_h) = best_h };
+    return true;
+}
+
+// Point the photo OUTPUT at the chosen size. The output's value is the
+// ceiling every capture's settings must stay under; the settings carry the
+// same value per shot in `_camera_capture`.
+//
+// Set only when it differs: the header warns that changing it "may trigger a
+// lengthy reconfiguration of the capture render pipeline".
+fn _apply_photo_dims(h: *u8) {
+    if h.is_null() { return; }
+    let s: *_Session = h as *_Session;
+    let out: *u8 = { (*s).output };
+    if out.is_null() { return; }
+    var w: i32 = 0;
+    var hh: i32 = 0;
+    if !_pick_photo_dims({ (*s).device }, { (*s).want_photo_width }, { (*s).want_photo_height },
+                         #addr_of(w), #addr_of(hh)) {
+        return;
+    }
+    let o: av::CapturePhotoOutput = av::CapturePhotoOutput::from_raw(out);
+    let cur: av::CMVideoDimensions = o.max_photo_dimensions();
+    if cur.width == w && cur.height == hh { return; }
+    o.set_max_photo_dimensions(av::CMVideoDimensions { width: w, height: hh });
+}
+
 // RE-APPLY THE REQUESTED RATE after anything that touches the session.
 //
 // A frame rate is not set once. Attaching an `AVCaptureVideoPreviewLayer` or
@@ -804,6 +910,10 @@ fn _reassert_rate(h: *u8) {
 
     let want: i32 = { (*s).want_frame_rate };
     if want > (0 as i32) { _apply_frame_rate(dev, want); }
+
+    // THE STILL'S CEILING IS THE FORMAT'S, so a format that moved takes the
+    // photo size with it — re-chosen against whatever is active now.
+    _apply_photo_dims(h);
 
     // AND THE OUTPUT'S PIXEL FORMAT. Third time this pattern has bitten:
     // re-applying the session preset resets the frame duration, the active
@@ -959,16 +1069,21 @@ export extern fn _camera_open(req: *_CRequest) -> *u8 {
         device: rt::retain(dev),
         want_frame_rate: { (*req).frame_rate },
         want_pixel: { (*req).pixel },
+        want_photo_width: { (*req).photo_width },
+        want_photo_height: { (*req).photo_height },
     };
     rt::release(session);
 
-    return match box::new::[_Session](st) {
-        option::Option[box::Box[_Session]]::Some(b) => {
-            _LAST_ERROR = cam::Outcome::Ok.to_code();
-            b.into_raw() as *u8
-        },
+    let raw: *u8 = match box::new::[_Session](st) {
+        option::Option[box::Box[_Session]]::Some(b) => { b.into_raw() as *u8 },
         option::Option[box::Box[_Session]]::None => { 0 as *u8 },
     };
+    if raw.is_null() { return 0 as *u8; }
+    // AFTER `startRunning`, for the frame-rate reason: the preset re-applied
+    // there moves the active format, and the photo size is chosen against it.
+    _apply_photo_dims(raw);
+    _LAST_ERROR = cam::Outcome::Ok.to_code();
+    return raw;
 }
 
 export extern fn _camera_close(h: *u8) {
@@ -1139,6 +1254,18 @@ export extern fn _camera_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i
 
     let settings: av::CapturePhotoSettings = av::CapturePhotoSettings::photo_settings();
     if settings.raw().is_null() { return cam::Outcome::Failed.to_code(); }
+
+    // THE SIZE, PER SHOT. The settings default to the format's SMALLEST still,
+    // not the output's ceiling, so the output alone changes nothing. Chosen
+    // again here because the format may have moved since the last time.
+    _apply_photo_dims(h);
+    if rt::msg_i8_id(settings.raw(), rt::sel(#str_ptr("respondsToSelector:\0")),
+                     rt::sel(#str_ptr("setMaxPhotoDimensions:\0"))) != (0 as i8) {
+        let cap: av::CMVideoDimensions = av::CapturePhotoOutput::from_raw(out).max_photo_dimensions();
+        if cap.width > (0 as i32) && cap.height > (0 as i32) {
+            settings.set_max_photo_dimensions(cap);
+        }
+    }
     av::CapturePhotoOutput::from_raw(out).capture_photo_with_settings(settings, d);
     return cam::Outcome::Ok.to_code();
 }
@@ -1277,6 +1404,29 @@ export extern fn _camera_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
     { (*out_height) = { (*s).actual_height } };
 }
 
+// THE STILL THE NEXT CAPTURE WILL TAKE: the photo output's ceiling, which
+// `_camera_capture` copies onto every shot's settings. Read live, for the
+// `_camera_frame_size` reason. Before macOS 13 / iOS 16 there is no such
+// property and the still is the active format's size, so that is the answer.
+export extern fn _camera_photo_size(h: *u8, out_width: *i32, out_height: *i32) {
+    { (*out_width) = 0 };
+    { (*out_height) = 0 };
+    if h.is_null() { return; }
+    let s: *_Session = h as *_Session;
+    let out: *u8 = { (*s).output };
+    if out.is_not_null()
+        && rt::msg_i8_id(out, rt::sel(#str_ptr("respondsToSelector:\0")),
+                         rt::sel(#str_ptr("maxPhotoDimensions\0"))) != (0 as i8) {
+        let d: av::CMVideoDimensions = av::CapturePhotoOutput::from_raw(out).max_photo_dimensions();
+        if d.width > (0 as i32) && d.height > (0 as i32) {
+            { (*out_width) = d.width };
+            { (*out_height) = d.height };
+            return;
+        }
+    }
+    _camera_frame_size(h, out_width, out_height);
+}
+
 // WHAT THE STREAM DELIVERS, read back from the output's `videoSettings` rather
 // than remembered from the request — the `_camera_frame_size` judgement again: a
 // remembered answer goes stale the moment the session preset is re-applied.
@@ -1403,7 +1553,9 @@ export extern fn _camera_set_white_balance(h: *u8, mode: i32) -> i32 {
 // number, asserted against THIS file's hand-written copy of `_CRequest`.
 #[test]
 fn the_seam_request_layout_matches_the_facade() {
-    assert { #size_of::[_CRequest]() } == (64 as usize);
+    // device + device_len (16), thirteen i32 (52) = 68, padded to 8: 72.
+    // Was 64 before `photo_width`/`photo_height` were appended.
+    assert { #size_of::[_CRequest]() } == (72 as usize);
     return;
 }
 

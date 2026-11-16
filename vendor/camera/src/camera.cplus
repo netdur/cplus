@@ -530,6 +530,43 @@ struct Request {
     //           available), 1920x1080 -> exact, unset -> 1920x1080.
     frames: Size,
 
+    // The preferred size for a `capture` still. `Size::any()` means THE
+    // LARGEST STILL THE CAMERA PUBLISHES, which is the opposite default to
+    // `frames` and for the opposite reason: a frame is work per pixel thirty
+    // times a second, a still is one picture somebody wants to read. Otherwise
+    // the nearest published size by AREA, the way `frames` negotiates.
+    //
+    // It was 1920x1080 on Android whatever this phone could do, and on Apple
+    // the smallest size the format supports — `AVCapturePhotoSettings`
+    // defaults to that, not to the largest. A 12 MP sensor handing back 2 MP
+    // is a document reader that cannot read; see
+    // bugs/closed/a-camera-still-is-always-1920x1080.md.
+    //
+    // Read what you got back with `Camera::photo_size()`. The JPEG carries
+    // its own size too, so a handler never has to trust either.
+    //
+    //   macOS   HONOURED within the ACTIVE FORMAT, which `frames` chooses: a
+    //           still can be no larger than that format's
+    //           `supportedMaxPhotoDimensions`. Measured 2026-11-16 on a
+    //           FaceTime HD camera, where every format publishes exactly ONE
+    //           size, its own — so the still is 1920x1080 and follows the
+    //           format, whatever `photo` says. JPEG SOF = `photo_size()`.
+    //   iOS     The same code. NOT MEASURED: an iPhone/iPad format publishing
+    //           several sizes is where this changes the picture.
+    //   Android HONOURED against `getOutputSizes(JPEG)`. Measured 2026-11-16
+    //           on a Galaxy S23 Ultra: `any` -> 4080x3060 back (6.5 MB),
+    //           4000x3000 front after `switch_to`; 1920x1080 -> exact. A
+    //           session that refuses the full-size still beside a large
+    //           `frames` stream retries ONCE at the largest still at or under
+    //           the frame area (1920x1080 at least), and `photo_size()` reads
+    //           the drop back. The S23 Ultra never refuses — 4080x3060 frames
+    //           plus a 4080x3060 still configured — so the retry was proved
+    //           by forcing it.
+    //   Linux   Chosen from the device's published MJPG sizes. NOT RUN.
+    //   Windows NOT HONOURED: a still is a frame of the running stream,
+    //           encoded, so it is `frame_size()` — and `photo_size()` says that.
+    photo: Size,
+
     // Frames per second. 0 means "any".
     //
     //   macOS   HONOURED, within the active format's published range, via
@@ -597,6 +634,7 @@ impl Request {
     fn new(device: str = "",
            facing: Facing = Facing::Back,
            frames: Size = Size::any(),
+           photo: Size = Size::any(),
            frame_rate: i32 = 0,
            pixel: PixelFormat = PixelFormat::Any,
            color: ColorSpace = ColorSpace::Any,
@@ -609,6 +647,7 @@ impl Request {
             device: device,
             facing: facing,
             frames: frames,
+            photo: photo,
             frame_rate: frame_rate,
             pixel: pixel,
             color: color,
@@ -639,6 +678,10 @@ struct _CRequest {
     depth: i32,
     high_speed: i32,
     buffers: i32,
+    // LAST, so the fields every backend already reads keep their offsets. 0x0
+    // is `Size::any()`: the largest still the camera publishes.
+    photo_width: i32,
+    photo_height: i32,
 }
 
 fn _camera_request_of(r: Request) -> _CRequest {
@@ -656,6 +699,8 @@ fn _camera_request_of(r: Request) -> _CRequest {
         depth: r.depth.to_code(),
         high_speed: r.high_speed.to_code(),
         buffers: r.buffers,
+        photo_width: r.photo.width,
+        photo_height: r.photo.height,
     };
 }
 
@@ -731,6 +776,19 @@ impl Camera {
         var w: i32 = 0;
         var h: i32 = 0;
         { _camera_frame_size(this._h, #addr_of(w), #addr_of(h)) };
+        return Size::new(w, h);
+    }
+
+    // THE STILL SIZE THE PLATFORM SETTLED ON — what the next `capture` will
+    // deliver, read from the platform rather than echoed from `Request::photo`.
+    // `Size::any()` on a closed camera, or before the session can say (Android
+    // opens asynchronously, and the size is negotiated as soon as the lens is
+    // known, so in practice it answers straight after `open`).
+    fn photo_size(this) -> Size {
+        if this._h.is_null() { return Size::any(); }
+        var w: i32 = 0;
+        var h: i32 = 0;
+        { _camera_photo_size(this._h, #addr_of(w), #addr_of(h)) };
         return Size::new(w, h);
     }
 
@@ -1218,6 +1276,7 @@ extern fn _camera_open(req: *_CRequest) -> *u8;
 extern fn _camera_actual_facing(h: *u8) -> i32;
 extern fn _camera_frame_rate(h: *u8) -> i32;
 extern fn _camera_frame_size(h: *u8, out_width: *i32, out_height: *i32);
+extern fn _camera_photo_size(h: *u8, out_width: *i32, out_height: *i32);
 extern fn _camera_pixel_format(h: *u8) -> i32;
 extern fn _camera_device(h: *u8, into: *text::Text) -> i32;
 extern fn _camera_set_zoom(h: *u8, factor: f64) -> i32;
@@ -1547,7 +1606,36 @@ fn a_packed_frame_with_only_a_native_buffer_is_not_empty() {
 // does, and a mismatch across the seam reads a neighbouring field as `pixel`.
 #[test]
 fn the_seam_request_layout_is_pinned() {
-    assert { #size_of::[_CRequest]() } == (64 as usize);
+    // device + device_len (16), thirteen i32 (52) = 68, padded to 8: 72.
+    // Was 64 before `photo_width`/`photo_height` were appended.
+    assert { #size_of::[_CRequest]() } == (72 as usize);
+    return;
+}
+
+// THE STILL DEFAULTS TO "ANY" — the largest the camera publishes — and a wish
+// crosses the seam in its own two fields, not in the frame size's. Before
+// `photo` existed there was nowhere to ask, and every Android still was
+// 1920x1080 (bugs/closed/a-camera-still-is-always-1920x1080.md).
+#[test]
+fn a_photo_wish_defaults_to_any_and_crosses_the_seam_apart_from_frames() {
+    let d: Request = Request::new();
+    assert d.photo.is_any();
+    let cd: _CRequest = _camera_request_of(d);
+    assert cd.photo_width == (0 as i32) && cd.photo_height == (0 as i32);
+
+    let r: Request = Request::new(frames: Size::new(640, 480), photo: Size::new(4000, 3000));
+    let c: _CRequest = _camera_request_of(r);
+    assert c.width == (640 as i32) && c.height == (480 as i32);
+    assert c.photo_width == (4000 as i32) && c.photo_height == (3000 as i32);
+    return;
+}
+
+// A closed camera will not say how big a still would be, without reaching the
+// backend at all.
+#[test]
+fn a_closed_camera_reports_no_photo_size() {
+    let c: Camera = Camera { _h: 0 as *u8 };
+    assert c.photo_size().is_any();
     return;
 }
 

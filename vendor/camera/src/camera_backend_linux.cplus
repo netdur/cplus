@@ -86,6 +86,8 @@ struct _CRequest {
     depth: i32,
     high_speed: i32,
     buffers: i32,
+    photo_width: i32,
+    photo_height: i32,
 }
 
 extern fn malloc(n: usize) -> *u8;
@@ -172,6 +174,7 @@ fn VIDIOC_S_PARM() -> u64 { return 0xc0cc5616 as u64; }          // _IOWR('V', 2
 fn VIDIOC_G_CTRL() -> u64 { return 0xc008561b as u64; }          // _IOWR('V', 27,   8)
 fn VIDIOC_S_CTRL() -> u64 { return 0xc008561c as u64; }          // _IOWR('V', 28,   8)
 fn VIDIOC_QUERYCTRL() -> u64 { return 0xc0445624 as u64; }       // _IOWR('V', 36,  68)
+fn VIDIOC_ENUM_FRAMESIZES() -> u64 { return 0xc02c564a as u64; } // _IOWR('V', 74,  44)
 
 // ---- struct sizes and offsets --------------------------------------------------
 
@@ -188,6 +191,20 @@ fn fmt_off_pixelformat() -> usize { return 16 as usize; }
 fn fmt_off_field() -> usize { return 20 as usize; }
 fn fmt_off_bytesperline() -> usize { return 24 as usize; }
 fn fmt_off_sizeimage() -> usize { return 28 as usize; }
+
+// v4l2_frmsizeenum: index, pixel_format, type, then a union — `discrete` is
+// { width, height }, `stepwise` is { min_w, max_w, step_w, min_h, max_h,
+// step_h } — then reserved[2]. 44 bytes, every field a u32.
+fn frmsize_bytes() -> usize { return 44 as usize; }
+fn frmsize_off_type() -> usize { return 8 as usize; }
+fn frmsize_off_width() -> usize { return 12 as usize; }          // discrete
+fn frmsize_off_height() -> usize { return 16 as usize; }
+fn frmsize_off_min_w() -> usize { return 12 as usize; }          // stepwise
+fn frmsize_off_max_w() -> usize { return 16 as usize; }
+fn frmsize_off_min_h() -> usize { return 24 as usize; }
+fn frmsize_off_max_h() -> usize { return 28 as usize; }
+// V4L2_FRMSIZE_TYPE_DISCRETE; CONTINUOUS (2) and STEPWISE (3) both read as a range.
+fn frmsize_discrete() -> u32 { return 1 as u32; }
 
 fn fmtdesc_bytes() -> usize { return 64 as usize; }
 fn fmtdesc_off_pixelformat() -> usize { return 44 as usize; }
@@ -323,6 +340,81 @@ fn device_offers(fd: i32, fourcc: u32) -> bool {
     return false;
 }
 
+// CHOOSE THE STILL'S SIZE from the MJPG sizes the device publishes.
+//
+// No wish means the LARGEST: a still is one picture somebody wants to read,
+// and it used to be taken at the STREAM's size — 640x480 on a camera whose
+// MJPG goes to 1920x1080. Otherwise the nearest by area, as `frames` is.
+//
+// A DISCRETE device lists sizes one index at a time. A STEPWISE or CONTINUOUS
+// one answers a single range at index 0; the wish is clamped into it and
+// `VIDIOC_S_FMT` rounds to the step, writing back what it chose.
+//
+// False when the device publishes nothing for MJPG, which leaves the old
+// behaviour — the stream's size — in place.
+fn pick_mjpg_size(fd: i32, want_w: i32, want_h: i32, out_w: *i32, out_h: *i32) -> bool {
+    let any: bool = want_w <= (0 as i32) || want_h <= (0 as i32);
+    var want_area: i64 = 0 as i64;
+    if !any { want_area = (want_w as i64) *% (want_h as i64); }
+    var have: bool = false;
+    var best_w: i32 = 0 as i32;
+    var best_h: i32 = 0 as i32;
+    var best_key: i64 = 0 as i64;
+    var i: u32 = 0 as u32;
+    while i < (256 as u32) {
+        var d: [u8; 44] = [0u8; 44];
+        let p: *u8 = { #addr_of(d) as *u8 };
+        put_u32(p, 0 as usize, i);
+        put_u32(p, 4 as usize, fourcc_mjpg());
+        if xioctl(fd, VIDIOC_ENUM_FRAMESIZES(), p) < (0 as i32) { break; }
+        if get_u32(p, frmsize_off_type()) != frmsize_discrete() {
+            // A range: one answer, at index 0 only.
+            let max_w: i32 = get_u32(p, frmsize_off_max_w()) as i32;
+            let max_h: i32 = get_u32(p, frmsize_off_max_h()) as i32;
+            var w: i32 = max_w;
+            var h: i32 = max_h;
+            if !any {
+                let min_w: i32 = get_u32(p, frmsize_off_min_w()) as i32;
+                let min_h: i32 = get_u32(p, frmsize_off_min_h()) as i32;
+                w = want_w;
+                h = want_h;
+                if w > max_w { w = max_w; }
+                if h > max_h { h = max_h; }
+                if w < min_w { w = min_w; }
+                if h < min_h { h = min_h; }
+            }
+            if w <= (0 as i32) || h <= (0 as i32) { return false; }
+            { (*out_w) = w };
+            { (*out_h) = h };
+            return true;
+        }
+        let w: i32 = get_u32(p, frmsize_off_width()) as i32;
+        let h: i32 = get_u32(p, frmsize_off_height()) as i32;
+        if w > (0 as i32) && h > (0 as i32) {
+            let area: i64 = (w as i64) *% (h as i64);
+            // One comparison for both rules: the largest area wins `any`, the
+            // smallest distance wins a wish (negated, so larger wins).
+            var key: i64 = area;
+            if !any {
+                var diff: i64 = area -% want_area;
+                if diff < (0 as i64) { diff = (0 as i64) -% diff; }
+                key = (0 as i64) -% diff;
+            }
+            if !have || key > best_key {
+                have = true;
+                best_key = key;
+                best_w = w;
+                best_h = h;
+            }
+        }
+        i = i +% (1 as u32);
+    }
+    if !have { return false; }
+    { (*out_w) = best_w };
+    { (*out_h) = best_h };
+    return true;
+}
+
 // ---- a session --------------------------------------------------------------------
 
 struct Session {
@@ -333,6 +425,13 @@ struct Session {
     stride: i32,               // of the LUMA plane handed to a frame handler
     fourcc: u32,               // what is negotiated right now
     stream_fourcc: u32,        // what the session streams when not capturing
+    // The still: what `Request::photo` asked for (0x0 = the largest), and the
+    // MJPG size chosen for it — refined to whatever the driver actually
+    // agreed to the first time a capture negotiates it.
+    want_photo_w: i32,
+    want_photo_h: i32,
+    photo_w: i32,
+    photo_h: i32,
     frame_rate: i32,
     nbuf: i32,
     opaque bufs: *u8,          // nbuf * 16: mapped pointer, then mapped length
@@ -844,6 +943,9 @@ export extern fn _camera_open(req: *_CRequest) -> *u8 {
         return 0 as *u8;
     }
     { (*s).stream_fourcc = { (*s).fourcc } };
+    { (*s).want_photo_w = { (*req).photo_width } };
+    { (*s).want_photo_h = { (*req).photo_height } };
+    choose_photo_size(s);
     set_frame_rate(s, { (*req).frame_rate });
     read_frame_rate(s);
 
@@ -864,6 +966,32 @@ export extern fn _camera_open(req: *_CRequest) -> *u8 {
         return 0 as *u8;
     }
     return s as *u8;
+}
+
+// The still's size before any capture has negotiated it: the published MJPG
+// size nearest the wish, or the stream's own size when the device publishes
+// none. 0x0 when there is no MJPG at all — `_camera_capture` answers
+// `Unsupported` there, and a size for a photo that cannot be taken is a lie.
+fn choose_photo_size(s: *Session) {
+    { (*s).photo_w = 0 as i32 };
+    { (*s).photo_h = 0 as i32 };
+    if !device_offers({ (*s).fd }, fourcc_mjpg()) { return; }
+    var w: i32 = 0 as i32;
+    var h: i32 = 0 as i32;
+    if pick_mjpg_size({ (*s).fd }, { (*s).want_photo_w }, { (*s).want_photo_h },
+                      #addr_of(w), #addr_of(h)) {
+        { (*s).photo_w = w };
+        { (*s).photo_h = h };
+        return;
+    }
+    { (*s).photo_w = { (*s).width } };
+    { (*s).photo_h = { (*s).height } };
+}
+
+export extern fn _camera_photo_size(h: *u8, out_width: *i32, out_height: *i32) {
+    let s: *Session = live(h);
+    if out_width != (0 as *i32) { { (*out_width) = if s == (0 as *Session) { 0 as i32 } else { (*s).photo_w } }; }
+    if out_height != (0 as *i32) { { (*out_height) = if s == (0 as *Session) { 0 as i32 } else { (*s).photo_h } }; }
 }
 
 // EXTERNAL, and never a guess — the same answer and the same reason as the
@@ -1129,9 +1257,19 @@ export extern fn _camera_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i
     stream_off(s);
     release_buffers(s);
 
+    // AT THE STILL'S SIZE, NOT THE STREAM'S. The driver writes back what it
+    // agreed to, and that — not the choice — is what `photo_size()` reports
+    // from here on.
+    var photo_w: i32 = { (*s).photo_w };
+    var photo_h: i32 = { (*s).photo_h };
+    if photo_w <= (0 as i32) || photo_h <= (0 as i32) { photo_w = want_w; photo_h = want_h; }
     var code: i32 = _failed();
-    if set_format(s, fourcc_mjpg(), want_w, want_h) && alloc_buffers(s, 4 as i32)
-        && stream_on(s) {
+    let negotiated: bool = set_format(s, fourcc_mjpg(), photo_w, photo_h);
+    if negotiated {
+        { (*s).photo_w = { (*s).width } };
+        { (*s).photo_h = { (*s).height } };
+    }
+    if negotiated && alloc_buffers(s, 4 as i32) && stream_on(s) {
         // THE FIRST FRAMES ARE NOT THE PICTURE. A UVC camera re-negotiated into
         // MJPG needs a few to settle its exposure, and handing back the first
         // one gives a dark or half-converged image. Five, then whichever
@@ -1292,6 +1430,9 @@ fn the_ioctl_numbers_are_what_the_macro_computes() {
         | ((4 as u64) *% (65536 as u64)) | (v *% (256 as u64)) | (18 as u64));
     assert VIDIOC_QUERYCTRL() == (((3 as u64) *% (1073741824 as u64))
         | ((68 as u64) *% (65536 as u64)) | (v *% (256 as u64)) | (36 as u64));
+    assert VIDIOC_ENUM_FRAMESIZES() == (((3 as u64) *% (1073741824 as u64))
+        | ((44 as u64) *% (65536 as u64)) | (v *% (256 as u64)) | (74 as u64));
+    assert frmsize_bytes() == (44 as usize);
 }
 
 #[test]
@@ -1388,9 +1529,19 @@ fn a_still_really_is_a_jpeg_and_the_session_survives_it() {
         spins = spins +% (1 as i32);
     }
     let before: i32 = SEEN_FRAMES;
+    // THE STILL HAS ITS OWN SIZE, chosen from the published MJPG sizes — the
+    // largest, since this request names none. A zero here is a session that
+    // could take a photo and will not say how big.
+    var pw: i32 = 0 as i32;
+    var ph: i32 = 0 as i32;
+    { _camera_photo_size(h, #addr_of(pw), #addr_of(ph)) };
+    assert pw > (0 as i32) && ph > (0 as i32);
     assert { _camera_capture(h, t_photo, 0 as *u8) } == _ok();
     assert SHOT_LEN > (1000 as usize);
     assert SHOT_SOI;
+    // After the capture it is the DRIVER's answer, and still a real size.
+    { _camera_photo_size(h, #addr_of(pw), #addr_of(ph)) };
+    assert pw > (0 as i32) && ph > (0 as i32);
     // THE PUMP COMES BACK. A capture that left the session dark would be a
     // preview that dies the first time someone takes a picture.
     spins = 0 as i32;

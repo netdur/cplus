@@ -64,6 +64,8 @@ struct _CRequest {
     depth: i32,
     high_speed: i32,
     buffers: i32,
+    photo_width: i32,
+    photo_height: i32,
 }
 
 extern fn malloc(n: usize) -> *u8;
@@ -1131,6 +1133,15 @@ export extern fn _camera_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
     if out_width != (0 as *i32) { { *out_width = SESSION.width }; }
     if out_height != (0 as *i32) { { *out_height = SESSION.height }; }
     return;
+}
+
+// A STILL HERE IS A FRAME OF THE RUNNING STREAM, encoded by WIC — so the photo
+// is exactly the frame size, and `Request::photo` is not honoured. Said rather
+// than echoed: answering the request here would report a size no capture ever
+// delivers. Honouring it means re-negotiating the source reader's media type
+// around the shot, the way the Linux half re-negotiates MJPG.
+export extern fn _camera_photo_size(h: *u8, out_width: *i32, out_height: *i32) {
+    _camera_frame_size(h, out_width, out_height);
 }
 
 // NV12 and YUY2 both carry a full-resolution LUMA plane first, which is exactly
