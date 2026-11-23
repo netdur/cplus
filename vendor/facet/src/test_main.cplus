@@ -4060,6 +4060,71 @@ fn dsl_scroll_block_with_two_items_holds_them_in_one_content() {
     }
 }
 
+// bugs/closed/facet-bordered-cannot-take-children-in-ui-macro.md. A `bordered`
+// is a stroke round ONE piece of content, and it took none: every bordered
+// card left `@ui` for a helper that built the node, narrowed it and called
+// `set_content` by hand.
+#[test]
+fn dsl_bordered_takes_its_content_as_a_block() {
+    var root: facet::Node = @ui {
+        bordered(key: "card",
+                 stroke: vocab::Brush::solid(vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 0.11f64)),
+                 stroke_width: 1.0f64,
+                 stroke_shape: vocab::Shape::rounded(12.0f64)) {
+            column(key: "inside") {
+                label("x", key: "bx")
+            }
+        }
+            .set_background_color(vocab::Color::raised())
+    };
+    assert root.key() == "card";
+    // The same slot the cursor's `set_content` fills — one door, not two.
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(c) => { assert { (*c).key() } == "inside"; }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    match bordered::from(#addr_of(root)) {
+        option::Option[bordered::Bordered]::Some(b) => {
+            assert b.stroke_width() == 1.0f64;
+            match b.content() {
+                option::Option[*facet::Node]::Some(c) => { assert { (*c).key() } == "inside"; }
+                option::Option[*facet::Node]::None => { assert false; }
+            }
+        }
+        option::Option[bordered::Bordered]::None => { assert false; }
+    }
+    match label::find("bx", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(l) => { assert l.text() == "x"; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+}
+
+#[test]
+fn dsl_bordered_block_with_two_items_holds_them_in_one_content() {
+    var root: facet::Node = @ui {
+        bordered(key: "card2", stroke_width: 1.0f64) {
+            label("a", key: "ba")
+            label("b", key: "bb")
+        }
+    };
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(c) => { assert { (*c).child_count() } == (2 as usize); }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+}
+
+// NEGATIVE: the block is optional. Every existing caller — all-named, no block
+// — gets a bordered with no content, exactly as before.
+#[test]
+fn a_bordered_without_a_block_still_has_no_content() {
+    var root: facet::Node = ui::bordered(key: "plain", stroke_width: 2.0f64);
+    assert root.key() == "plain";
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(_) => { assert false; }
+        option::Option[*facet::Node]::None => { }
+    }
+}
+
 #[test]
 fn a_scroll_without_a_block_still_has_no_content() {
     // Every existing caller: all-named, no block. The defaulted Builder is

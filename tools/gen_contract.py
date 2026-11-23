@@ -4521,7 +4521,13 @@ CONTAINER_FORWARDS = ["container", "column", "row", "hstack", "vstack",
                       "screen", "card", "zstack"]
 # Controls whose `@ui` element takes an OPTIONAL content block, attached
 # through the cursor's `set_content` — see emit_elements.
-BLOCK_CONTROLS = ("scroll",)
+#
+# `bordered` is the ledger's Border, whose whole job is to draw a stroke round
+# ONE piece of content — so `bordered(stroke: …) { column { … } }` is what it is
+# for, and without the block every bordered card left `@ui` for a procedural
+# helper that built the node, narrowed it and called `set_content` by hand
+# (bugs/closed/facet-bordered-cannot-take-children-in-ui-macro.md).
+BLOCK_CONTROLS = ("scroll", "bordered")
 # Controls whose block's items become CHILDREN — `tabs { pane… }`, MAUI's
 # TabbedPage with its pages written inside it.
 CHILD_BLOCK_CONTROLS = ("tabs",)

@@ -1756,6 +1756,47 @@ fn a_bordered_strokes_its_layer() {
     views::view_release(v);
 }
 
+// The block form reaches the screen: the content's view is INSIDE the
+// bordered's own view, laid out within it.
+#[test]
+fn a_bordered_block_mounts_its_content_inside_the_stroke() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = @ui {
+        column(key: "bd:root") {
+            bordered(key: "bd:card",
+                     stroke: vocab::Brush::solid(vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64)),
+                     stroke_width: 1.0f64,
+                     stroke_shape: vocab::Shape::rounded(12.0f64)) {
+                column(key: "bd:inside") {
+                    label("in the card", key: "bd:label")
+                }
+                    .padding(10.0f64)
+            }
+        }
+            .padding(20.0f64)
+    };
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "bordered",
+                                                               width: 400.0f64, height: 300.0f64));
+    assert win.is_not_null();
+    scheduler::tick();
+    let card: *u8 = view_of_key(rp, "bd:card");
+    let inside: *u8 = view_of_key(rp, "bd:inside");
+    let lbl: *u8 = view_of_key(rp, "bd:label");
+    assert card.is_not_null();
+    assert inside.is_not_null();
+    assert lbl.is_not_null();
+    assert { rt::msg_id(inside, rt::sel(#str_ptr("superview\0"))) } == card;
+    assert { rt::msg_id(lbl, rt::sel(#str_ptr("superview\0"))) } == inside;
+    // Laid out, not merely attached: the card wraps content that has a size.
+    assert ak::View::from_raw(card).frame().h > 20.0f64;
+    assert ak::View::from_raw(lbl).frame().w > 10.0f64;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
 #[test]
 fn page_dots_are_drawn_as_sublayers_and_re_tint_without_rebuilding() {
     // AppKit ships nothing of the kind, so they are drawn — as sublayers
@@ -20606,5 +20647,92 @@ fn set_frame_is_clamped_to_the_windows_minimum() {
     assert ak::Window::from_raw(win).frame().w == 900.0f64;
     window::close_window(win);
     backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// ---- the surface roles step apart with no theme installed --------------------
+//
+// bugs/closed/facet-theme-default-raised-equals-content.md. Measured on macOS
+// 26 before the fix: `surface`, `content` and `raised` all resolved to
+// (1, 1, 1) in Aqua and (0.118, 0.118, 0.118) in DarkAqua, so a `raised` card
+// on either was invisible until the app installed a whole theme.
+
+struct ThRgba { r: f64, g: f64, b: f64, a: f64 }
+
+fn th_resolved(c: vocab::Color, appearance: str) -> ThRgba {
+    let k: ak::Color = paint::ns_color(c);
+    let prev: ak::Appearance = ak::Appearance::current_appearance();
+    match ak::Appearance::appearance_named(appearance) {
+        option::Option[ak::Appearance]::Some(a) => { ak::Appearance::set_current_appearance(a); }
+        option::Option[ak::Appearance]::None => { }
+    }
+    var out: ThRgba = ThRgba { r: -1.0f64, g: -1.0f64, b: -1.0f64, a: -1.0f64 };
+    match k.color_using_color_space(ak::ColorSpace::s_r_g_b_color_space()) {
+        option::Option[ak::Color]::Some(s) => {
+            out = ThRgba { r: s.red_component(), g: s.green_component(),
+                           b: s.blue_component(), a: s.alpha_component() };
+        }
+        option::Option[ak::Color]::None => { }
+    }
+    ak::Appearance::set_current_appearance(prev);
+    return out;
+}
+
+fn th_abs(v: f64) -> f64 { if v < 0.0f64 { return 0.0f64 - v; } return v; }
+
+// How far apart two resolved colours are, as the largest channel difference.
+fn th_step(x: ThRgba, y: ThRgba) -> f64 {
+    var d: f64 = th_abs(x.r - y.r);
+    if th_abs(x.g - y.g) > d { d = th_abs(x.g - y.g); }
+    if th_abs(x.b - y.b) > d { d = th_abs(x.b - y.b); }
+    return d;
+}
+
+#[test]
+fn an_unthemed_raised_card_is_visible_on_surface_and_on_content() {
+    app::reset_default_for_tests();
+    theme::set_theme(theme::Theme::new());
+    for mode in 0..2 {
+        let ap: str = if mode == 0 { "NSAppearanceNameAqua" } else { "NSAppearanceNameDarkAqua" };
+        let raised: ThRgba = th_resolved(vocab::Color::raised(), ap);
+        let content: ThRgba = th_resolved(vocab::Color::content(), ap);
+        let surface: ThRgba = th_resolved(vocab::Color::surface(), ap);
+        // OPAQUE: a raised card floats over scrolling content, so a
+        // translucent fill would show the text passing beneath it.
+        assert raised.a > 0.99f64;
+        // A step the eye can find — more than a rounding difference — against
+        // both of the things a card sits on.
+        assert th_step(raised, content) > 0.02f64;
+        assert th_step(raised, surface) > 0.02f64;
+    }
+    // The direction of the step is the appearance's: a card is a shade DOWN
+    // from a white floor and a shade UP from a dark one.
+    assert th_resolved(vocab::Color::raised(), "NSAppearanceNameAqua").r
+         < th_resolved(vocab::Color::content(), "NSAppearanceNameAqua").r;
+    assert th_resolved(vocab::Color::raised(), "NSAppearanceNameDarkAqua").r
+         > th_resolved(vocab::Color::content(), "NSAppearanceNameDarkAqua").r;
+    app::reset_default_for_tests();
+}
+
+// NEGATIVE: the default is a FALLBACK. A theme that sets `raised` gets exactly
+// its colour, and the roles the fix did not touch still answer the platform.
+#[test]
+fn a_themed_raised_wins_and_the_platform_roles_are_untouched() {
+    app::reset_default_for_tests();
+    theme::set_theme(theme::Theme::new(
+        raised: vocab::Color::rgba(0.2f64, 0.4f64, 0.6f64, 1.0f64)));
+    let r: ThRgba = th_resolved(vocab::Color::raised(), "NSAppearanceNameAqua");
+    assert th_abs(r.r - 0.2f64) < 0.01f64;
+    assert th_abs(r.g - 0.4f64) < 0.01f64;
+    assert th_abs(r.b - 0.6f64) < 0.01f64;
+    theme::set_theme(theme::Theme::new());
+    // `surface` is still the window's own background and `content` the
+    // control background, whatever this OS makes of them.
+    let s: ThRgba = th_resolved(vocab::Color::surface(), "NSAppearanceNameAqua");
+    let w: ThRgba = th_resolved(vocab::Color::window_background(), "NSAppearanceNameAqua");
+    assert th_step(s, w) < 0.001f64;
+    let c: ThRgba = th_resolved(vocab::Color::content(), "NSAppearanceNameDarkAqua");
+    let k: ThRgba = th_resolved(vocab::Color::control_background(), "NSAppearanceNameDarkAqua");
+    assert th_step(c, k) < 0.001f64;
     app::reset_default_for_tests();
 }

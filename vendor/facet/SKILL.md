@@ -239,7 +239,9 @@ needs one (its base content, `{ }` when empty). `tabs` takes its panes as a bloc
 title — the key when unset, so keep keys stable and put copy in the title —
 and `.set_tab_symbol(icons::x)` its icon). `scroll` takes one optionally:
 `scroll(key: "s", axis: vocab::ScrollAxis::Vertical) { column { … } }` makes the
-block its content, exactly as the cursor's `set_content` would. Every other
+block its content, exactly as the cursor's `set_content` would. `bordered`
+takes one the same way — `bordered(stroke: …, stroke_width: 1.0f64) { column { … } }`
+is a stroked card with its content written inside it. Every other
 element is a leaf, and giving one a block is **E1010**.
 
 Say **`column`** and **`hstack`**. `vstack`/`row` are aliases for the same two

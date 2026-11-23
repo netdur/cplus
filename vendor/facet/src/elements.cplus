@@ -1041,6 +1041,7 @@ fn box(
 }
 
 fn bordered(
+    take b: Builder = Builder::new(),
     key: str = "",
     stroke: vocab::Brush = vocab::Brush::none(),
     stroke_dash: vocab::Dashes = vocab::Dashes::none(),
@@ -1051,7 +1052,7 @@ fn bordered(
     stroke_shape: vocab::Shape = vocab::Shape::none(),
     stroke_width: f64 = 0.0f64,
 ) -> core::Node {
-    return m_bordered::bordered(
+    var n: core::Node = m_bordered::bordered(
         key: key,
         stroke: stroke,
         stroke_dash: stroke_dash,
@@ -1062,6 +1063,12 @@ fn bordered(
         stroke_shape: stroke_shape,
         stroke_width: stroke_width,
     );
+    if !b.is_empty() {
+        if let option::Option::Some(c) = m_bordered::from(#addr_of(n)) {
+            let _c: m_bordered::Bordered = c.set_content(b.finish_for_slot());
+        }
+    }
+    return n;
 }
 
 fn scroll(
