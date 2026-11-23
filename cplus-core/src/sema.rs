@@ -875,10 +875,10 @@ pub struct MonoInfo {
     /// The impl-block bounds an instantiation does NOT meet:
     /// `(mangled instance name, impl param index, bound)`.
     ///
-    /// `impl Vec[T: Clone] { fn clone ... }` is for the `Vec`s whose element
+    /// `impl Bag[T: Clone] { fn copy_item ... }` is for the `Bag`s whose element
     /// is `Clone`, and sema already refuses a CALL on any other (E0502). But
     /// monomorphize synthesized the block for EVERY instantiation of the
-    /// template, so the body — `(*src).clone()` — was emitted for `Vec[*u8]`
+    /// template, so the body — `this.item.clone()` — was emitted for `Bag[*u8]`
     /// too, where the element has no `clone` to dispatch to, and codegen
     /// panicked ("sema validated") on a method nobody called. It went unseen
     /// while the only bounded blocks in the tree were `T: Copy` ones, whose
@@ -1293,7 +1293,6 @@ fn check_with_files_inner(
         self_type_stack: Vec::new(),
         interfaces: HashMap::new(),
         interface_impls: std::collections::HashSet::new(),
-        generic_interface_impls: HashMap::new(),
         marker_overrides: HashMap::new(),
         no_alloc_drop_types: std::collections::HashSet::new(),
         record_value_types: false,
@@ -1966,16 +1965,6 @@ struct SemaCx<'a> {
     /// E0506 (duplicate impl) and by future bound-checking call sites
     /// (E0502 — type does not satisfy interface bound, slice 7GEN.5).
     interface_impls: std::collections::HashSet<(String, String)>,
-    /// `(interface, generic template)` → the per-param bounds of a CONDITIONAL
-    /// interface impl on a generic type: `impl Vec[T: Clone]: Clone { ... }`
-    /// records `("Clone", "Vec") → [["Clone"]]`. An instantiation satisfies
-    /// the interface exactly when each of its arguments meets that
-    /// parameter's bounds — `Vec[Text]` does, `Vec[*u8]` does not. Empty
-    /// inner vecs are an unconditional impl on the template.
-    ///
-    /// The methods themselves ride `generic_impl_methods`, like any generic
-    /// impl block's; this table is only what `satisfies_bound` reads.
-    generic_interface_impls: HashMap<(String, String), Vec<Vec<String>>>,
     /// v0.0.14: registered `impl T: Send/Sync {}` marker overrides, keyed
     /// by `(marker, type_name)` where `type_name` is the source-written name
     /// (the template leaf for a generic target, e.g. `"Arc"`). The value is
@@ -5188,54 +5177,27 @@ impl SemaCx<'_> {
         }
         match ty {
             Ty::Struct(id) => {
-                let def = &self.structs[id.0 as usize];
-                if self
-                    .interface_impls
-                    .contains(&(bound.to_string(), def.name.clone()))
-                {
-                    return true;
-                }
-                self.generic_origin_satisfies(def.generic_origin.as_ref(), bound)
+                let name = &self.structs[id.0 as usize].name;
+                self.interface_impls
+                    .contains(&(bound.to_string(), name.clone()))
             }
-            // An enum answers a bound the same two ways a struct does: a
-            // direct `impl E: Iface { ... }`, or a conditional impl on the
-            // template it was instantiated from. (Until 2026-11-23 neither
-            // could be written — an interface impl needed a struct target —
-            // so a payload-carrying enum could satisfy no bound at all and a
-            // `Vec` of one could not be cloned.)
+            // issue-11 item 6: no `(interface, enum)` pair can reach
+            // `interface_impls` — `validate_interface_impls` resolves the
+            // target through `struct_by_name` and rejects anything else with
+            // E0325 before the sole insert. An enum answering a bound would
+            // mean that changed; a `false` here would then be a silent wrong
+            // answer, so it says so instead.
             Ty::Enum(id) => {
-                let def = &self.enums[id.0 as usize];
-                if self
-                    .interface_impls
-                    .contains(&(bound.to_string(), def.name.clone()))
-                {
-                    return true;
-                }
-                self.generic_origin_satisfies(def.generic_origin.as_ref(), bound)
+                let name = self.enums[id.0 as usize].name.clone();
+                debug_assert!(
+                    !self.interface_impls.contains(&(bound.to_string(), name)),
+                    "an enum registered an interface impl — `satisfies_bound`'s \
+                     enum arm was unreachable by construction"
+                );
+                false
             }
             _ => false,
         }
-    }
-
-    /// Does an instantiation of a generic template satisfy `bound` through a
-    /// conditional interface impl on the template? `Vec[Text]: Clone` holds
-    /// because `impl Vec[T: Clone]: Clone` exists and `Text: Clone`; the
-    /// recursion is what makes `Vec[Vec[Text]]` hold too.
-    fn generic_origin_satisfies(&self, origin: Option<&(String, Vec<Ty>)>, bound: &str) -> bool {
-        let Some((tmpl, args)) = origin else {
-            return false;
-        };
-        let Some(param_bounds) = self
-            .generic_interface_impls
-            .get(&(bound.to_string(), tmpl.clone()))
-        else {
-            return false;
-        };
-        args.iter().enumerate().all(|(idx, arg)| {
-            param_bounds
-                .get(idx)
-                .is_none_or(|bs| bs.iter().all(|b| self.satisfies_bound(arg, b)))
-        })
     }
 
     /// Resolve variant payload types after all type names are known. This
@@ -6597,78 +6559,9 @@ impl SemaCx<'_> {
                 });
                 continue;
             };
-            // A GENERIC TEMPLATE or an ENUM as the target. Neither has a
-            // `StructDef` to check signatures against (a template has no
-            // concrete `This`; an enum is not in the struct table), so these
-            // two get the checks that need none — the interface's methods are
-            // all written in this block and nothing else is — and register.
-            // E0505 (signature mismatch) is NOT checked on this path.
-            let is_generic_target = !b.target_generic_params.is_empty()
-                && (self.struct_generic_templates.contains_key(&b.target.name)
-                    || self.enum_generic_templates.contains_key(&b.target.name));
-            let is_enum_target = b.target_generic_params.is_empty()
-                && !self.struct_by_name.contains_key(&b.target.name)
-                && self.enum_by_name.contains_key(&b.target.name);
-            if is_generic_target || is_enum_target {
-                let mut complete = true;
-                for mname in iface.methods.keys() {
-                    if !b.methods.iter().any(|m| &m.name.name == mname) {
-                        complete = false;
-                        diags.push(Diag {
-                            code: "E0503",
-                            msg: format!(
-                                "`impl {}: {}` is missing method `{}` required by interface",
-                                b.target.name, iface_name.name, mname
-                            ),
-                            span: b.methods.first().map(|m| m.name.span).unwrap_or(b.target.span),
-                            origin_file: item.origin_file.clone(),
-                        });
-                    }
-                }
-                for m in &b.methods {
-                    if !iface.methods.contains_key(&m.name.name) {
-                        diags.push(Diag {
-                            code: "E0504",
-                            msg: format!(
-                                "method `{}` in `impl {}: {}` is not declared by the interface; move it to an inherent `impl {} {{ ... }}` block",
-                                m.name.name, iface_name.name, b.target.name, b.target.name
-                            ),
-                            span: m.name.span,
-                            origin_file: item.origin_file.clone(),
-                        });
-                    }
-                }
-                if !complete {
-                    continue;
-                }
-                let duplicate = if is_generic_target {
-                    let bounds: Vec<Vec<String>> = b
-                        .target_generic_params
-                        .iter()
-                        .map(|gp| gp.bounds.iter().map(|bn| bn.name.clone()).collect())
-                        .collect();
-                    self.generic_interface_impls
-                        .insert((iface_name.name.clone(), b.target.name.clone()), bounds)
-                        .is_some()
-                } else {
-                    !self
-                        .interface_impls
-                        .insert((iface_name.name.clone(), b.target.name.clone()))
-                };
-                if duplicate {
-                    diags.push(Diag {
-                        code: "E0506",
-                        msg: format!(
-                            "duplicate `impl {}: {}` — a type may have at most one impl of any given interface",
-                            b.target.name, iface_name.name
-                        ),
-                        span: iface_name.span,
-                        origin_file: item.origin_file.clone(),
-                    });
-                }
-                continue;
-            }
-            // Resolve the target type: a concrete struct from here on.
+            // Resolve the target type. Interface-for-target must be a
+            // known struct (Phase 7 first cut — interface-for-enum or
+            // interface-for-builtin lands later).
             let Some(&target_id) = self.struct_by_name.get(&b.target.name) else {
                 diags.push(Diag {
                     code: "E0325",

@@ -552,36 +552,6 @@ impl Vec[T] {
     }
 }
 
-// A DEEP COPY, for a Vec whose elements can be copied. Conditional on the
-// element: `Vec[Text]` clones, `Vec[Handle]` (no `Clone`) does not, and the
-// bound is the whole of the condition.
-//
-// This is what lets a struct with a `Vec` field derive `Clone` with an empty
-// impl. Before it, every such struct hand-wrote an element loop — six of them
-// in one application (bugs/closed/cplus-vec-no-in-place-enum-mutation-or-
-// clone.md).
-//
-// WHOLE OR EMPTY, the rule every value producer in stdlib follows: if the
-// buffer cannot be allocated the copy is a valid empty Vec, never a prefix.
-// The capacity is reserved up front, so no append after that can fail.
-impl Vec[T: Clone]: Clone {
-    fn clone(this) -> Vec[T] {
-        var out: Vec[T] = with_capacity::[T](this._len);
-        if out._cap < this._len { return new::[T](); }
-        var i: usize = 0 as usize;
-        while i < this._len {
-            let src: *T = { this._ptr + i };
-            let dest: *T = { out._ptr + i };
-            { *dest = { (*src).clone() }; }
-            // One at a time, so a drop of `out` part-way frees exactly what
-            // has been written.
-            out._len = i +% (1 as usize);
-            i = i +% (1 as usize);
-        }
-        return out;
-    }
-}
-
 // Copy element reads + bulk-append, on the `T: Copy` boundary (the value
 // crosses by independent copy, never an alias into storage).
 impl Vec[T: Copy] {
@@ -1092,125 +1062,33 @@ fn drain_of_an_empty_vec_yields_nothing() {
     assert rows.count() == (0 as usize);
 }
 
-// ---- Clone, and replace -----------------------------------------------------
+// ---- replace ----------------------------------------------------------------
 //
-// bugs/closed/cplus-vec-no-in-place-enum-mutation-or-clone.md. The tests that
-// need `Text` (a struct deriving Clone over a `Vec[Text]`) are in text.cplus,
-// which imports this module and not the other way round.
+// bugs/closed/cplus-vec-no-in-place-enum-mutation-or-clone.md. That report's
+// two language wishes were REJECTED; this verb is the library answer to its
+// one measurable cost — remove + insert shifting the tail twice.
 
 // Owns nothing but counts its own drops, which makes it move-only — so a test
-// can see that a clone owns what it holds and that every element is dropped
-// exactly once.
-static CL_LIVE: i32 = 0;
+// can see that every element is dropped exactly once.
+static RP_LIVE: i32 = 0;
 
 struct Counted { id: i32 }
 
 impl Counted {
     fn make(id: i32) -> Counted {
-        CL_LIVE = CL_LIVE + 1;
+        RP_LIVE = RP_LIVE + 1;
         return Counted { id: id };
     }
-    fn drop(ref this) { CL_LIVE = CL_LIVE - 1; }
-}
-
-impl Counted: Clone {
-    fn clone(this) -> Counted {
-        CL_LIVE = CL_LIVE + 1;
-        return Counted { id: this.id };
-    }
+    fn drop(ref this) { RP_LIVE = RP_LIVE - 1; }
 }
 
 enum Piece { One(Counted), Two(Counted, i32), Gap }
-
-impl Piece: Clone {
-    fn clone(this) -> Piece {
-        return match this {
-            Piece::One(c) => Piece::One(c.clone()),
-            Piece::Two(c, n) => Piece::Two(c.clone(), n),
-            Piece::Gap => Piece::Gap,
-        };
-    }
-}
-
-fn dup[T: Clone](v: T) -> T { return v.clone(); }
 
 fn id_at(v: Vec[Counted], i: usize) -> i32 {
     return match v.at_ptr(i) {
         option::Option[*Counted]::Some(p) => { (*p).id },
         option::Option[*Counted]::None => -1,
     };
-}
-
-#[test]
-fn a_vec_clone_is_deep_and_each_side_owns_its_elements() {
-    CL_LIVE = 0;
-    {
-        var a: Vec[Counted] = new::[Counted]();
-        let _x: status::Status = a.append(Counted::make(1));
-        let _y: status::Status = a.append(Counted::make(2));
-        let _z: status::Status = a.append(Counted::make(3));
-        assert CL_LIVE == 3;
-        {
-            var b: Vec[Counted] = a.clone();
-            assert CL_LIVE == 6;
-            assert b.count() == (3 as usize);
-            assert id_at(b, 0 as usize) == 1;
-            assert id_at(b, 2 as usize) == 3;
-            // DEEP: writing the copy leaves the original alone, and the
-            // reverse.
-            let _s: status::Status = b.set(Counted::make(90), at: 0 as usize);
-            let _t: status::Status = a.append(Counted::make(4));
-            assert id_at(a, 0 as usize) == 1;
-            assert id_at(b, 0 as usize) == 90;
-            assert a.count() == (4 as usize);
-            assert b.count() == (3 as usize);
-            assert CL_LIVE == 7;
-        }
-        // The copy is gone; the original still owns its four.
-        assert CL_LIVE == 4;
-    }
-    assert CL_LIVE == 0;
-}
-
-#[test]
-fn a_vec_of_copy_elements_clones_too() {
-    var a: Vec[i32] = new::[i32]();
-    let _x: status::Status = a.append(3);
-    let _y: status::Status = a.append(4);
-    var b: Vec[i32] = a.clone();
-    let _s: status::Status = b.set(9, at: 0 as usize);
-    assert match a.at(0 as usize) { option::Option[i32]::Some(v) => v == 3, option::Option[i32]::None => false };
-    assert match b.at(0 as usize) { option::Option[i32]::Some(v) => v == 9, option::Option[i32]::None => false };
-    assert match b.at(1 as usize) { option::Option[i32]::Some(v) => v == 4, option::Option[i32]::None => false };
-}
-
-#[test]
-fn an_empty_vec_clones_to_an_empty_vec() {
-    let a: Vec[Counted] = new::[Counted]();
-    let b: Vec[Counted] = a.clone();
-    assert b.count() == (0 as usize);
-    assert b.is_empty();
-}
-
-#[test]
-fn a_vec_of_vecs_clones_all_the_way_down() {
-    CL_LIVE = 0;
-    {
-        var inner: Vec[Counted] = new::[Counted]();
-        let _x: status::Status = inner.append(Counted::make(5));
-        var outer: Vec[Vec[Counted]] = new::[Vec[Counted]]();
-        let _y: status::Status = outer.append(inner);
-        let copy: Vec[Vec[Counted]] = outer.clone();
-        assert copy.count() == (1 as usize);
-        assert CL_LIVE == 2;
-        match copy.at_ptr(0 as usize) {
-            option::Option[*Vec[Counted]]::Some(p) => {
-                assert { (*p).count() } == (1 as usize);
-            }
-            option::Option[*Vec[Counted]]::None => { assert false; }
-        }
-    }
-    assert CL_LIVE == 0;
 }
 
 // Reads a piece WITHOUT consuming it: a bare parameter borrows, and a payload
@@ -1231,42 +1109,8 @@ fn piece_id(v: Vec[Piece], i: usize) -> i32 {
 }
 
 #[test]
-fn a_vec_of_a_payload_enum_clones_through_the_enums_own_clone() {
-    CL_LIVE = 0;
-    {
-        var a: Vec[Piece] = new::[Piece]();
-        let _x: status::Status = a.append(Piece::One(Counted::make(7)));
-        let _y: status::Status = a.append(Piece::Two(Counted::make(8), 100));
-        let _z: status::Status = a.append(Piece::Gap);
-        let b: Vec[Piece] = a.clone();
-        assert b.count() == (3 as usize);
-        assert CL_LIVE == 4;
-        assert piece_id(b, 0 as usize) == 7;
-        assert piece_id(b, 1 as usize) == 108;
-        assert piece_id(b, 2 as usize) == 0;
-    }
-    assert CL_LIVE == 0;
-}
-
-// A `Vec` IS `Clone` — the bound, not just the method — so it passes through a
-// generic that asks for one.
-#[test]
-fn a_vec_satisfies_a_clone_bound() {
-    CL_LIVE = 0;
-    {
-        var a: Vec[Counted] = new::[Counted]();
-        let _x: status::Status = a.append(Counted::make(1));
-        let b: Vec[Counted] = dup::[Vec[Counted]](a);
-        assert b.count() == (1 as usize);
-        assert a.count() == (1 as usize);
-        assert CL_LIVE == 2;
-    }
-    assert CL_LIVE == 0;
-}
-
-#[test]
 fn replace_swaps_in_place_and_hands_back_the_old_element() {
-    CL_LIVE = 0;
+    RP_LIVE = 0;
     {
         var a: Vec[Counted] = new::[Counted]();
         let _x: status::Status = a.append(Counted::make(1));
@@ -1276,22 +1120,23 @@ fn replace_swaps_in_place_and_hands_back_the_old_element() {
             option::Option[Counted]::Some(old) => {
                 assert old.id == 2;
                 // Four alive: three in the Vec and the one handed back.
-                assert CL_LIVE == 4;
+                assert RP_LIVE == 4;
             }
             option::Option[Counted]::None => { assert false; }
         }
-        assert CL_LIVE == 3;
+        assert RP_LIVE == 3;
         // Nothing moved: the neighbours are where they were.
         assert a.count() == (3 as usize);
         assert id_at(a, 0 as usize) == 1;
         assert id_at(a, 1 as usize) == 20;
         assert id_at(a, 2 as usize) == 3;
     }
-    assert CL_LIVE == 0;
+    assert RP_LIVE == 0;
 }
 
-// The idiom the verb exists for: change what is inside an enum's payload, in
-// place, without shifting the rest of the Vec.
+// The idiom the verb exists for: change what is inside an enum's payload
+// without shifting the rest of the Vec. Take it out, rebuild it by MOVE,
+// put it back.
 fn bumped(take p: Piece, by: i32) -> Piece {
     return match p {
         Piece::Two(c, n) => Piece::Two(c, n + by),
@@ -1301,7 +1146,7 @@ fn bumped(take p: Piece, by: i32) -> Piece {
 
 #[test]
 fn replace_and_set_update_an_enum_payload_in_place() {
-    CL_LIVE = 0;
+    RP_LIVE = 0;
     {
         var a: Vec[Piece] = new::[Piece]();
         let _x: status::Status = a.append(Piece::Gap);
@@ -1315,16 +1160,16 @@ fn replace_and_set_update_an_enum_payload_in_place() {
         assert piece_id(a, 1 as usize) == 43;
         assert piece_id(a, 2 as usize) == 5;
         // The payload was MOVED through, never copied: still two alive.
-        assert CL_LIVE == 2;
+        assert RP_LIVE == 2;
     }
-    assert CL_LIVE == 0;
+    assert RP_LIVE == 0;
 }
 
 // NEGATIVE: out of range changes nothing, answers None, and the value that
 // was offered is dropped rather than leaked.
 #[test]
 fn replace_out_of_range_answers_none_and_drops_the_offer() {
-    CL_LIVE = 0;
+    RP_LIVE = 0;
     {
         var a: Vec[Counted] = new::[Counted]();
         let _x: status::Status = a.append(Counted::make(1));
@@ -1332,9 +1177,9 @@ fn replace_out_of_range_answers_none_and_drops_the_offer() {
             option::Option[Counted]::Some(_) => { assert false; }
             option::Option[Counted]::None => { }
         }
-        assert CL_LIVE == 1;
+        assert RP_LIVE == 1;
         assert a.count() == (1 as usize);
         assert id_at(a, 0 as usize) == 1;
     }
-    assert CL_LIVE == 0;
+    assert RP_LIVE == 0;
 }

@@ -552,7 +552,7 @@ fn main() -> i32 { let p: P = P {}; return p.missing(); }
 
 [[code]]
 id = "E0325"
-title = "`impl` on an unknown type"
+title = "`impl` on an unknown or non-struct type"
 category = "Names, types, and items"
 severity = "error"
 repro = "checked"
@@ -560,8 +560,8 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:2440"
 test = "cplus-core/src/sema.rs:impl_on_unknown_type_e0325"
-cause = "An `impl` names a target that is not a declared struct or enum in scope. An inherent `impl T { ... }` and an interface impl `impl T: Interface { ... }` both take a struct or an enum, generic or not; a generic target names its parameters (`impl Vec[T: Clone]: Clone { ... }`), and the interface then holds for exactly the instantiations whose arguments meet those bounds."
-fix = "Name a declared struct or enum. For a generic type, write its parameters on the target."
+cause = "An `impl` names a target that is not a declared struct or (non-generic) enum in scope."
+fix = "The target must be a declared struct or enum in scope."
 example = '''
 impl Foo { fn f(this) {} }
 fn main() -> i32 { return 0; }
@@ -3184,8 +3184,8 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/lower.rs:expand_derives"
 test = "cplus-core/src/lower.rs:derive_payload_enum_field_rejected_e0920"
-cause = "An empty `impl Type: Interface {}` asked the compiler to derive a memberwise implementation, but one of the struct's fields has a shape the derived method cannot handle: an enum with payload variants (no generated `match` in v1 — except for `Clone`, which clones such a field through the enum's own `clone`), an array / slice / tuple field, a pointer field where the interface needs `hash` or `cmp` or a text form, or — for `ToText` — a build with no `#[lang(\"string\")]` type."
-fix = "Write the named method by hand for this type, or change the field to a derivable shape. For payload enums the usual fix is a hand-written method that `match`es on the variants; for `Clone`, write `impl E: Clone { fn clone(this) -> E { ... } }` on the enum and the struct's empty `impl S: Clone {}` then derives."
+cause = "An empty `impl Type: Interface {}` asked the compiler to derive a memberwise implementation, but one of the struct's fields has a shape the derived method cannot handle: an enum with payload variants (no generated `match` in v1), an array / slice / tuple field, a pointer field where the interface needs `hash` or `cmp` or a text form, or — for `ToText` — a build with no `#[lang(\"string\")]` type."
+fix = "Write the named method by hand for this type, or change the field to a derivable shape. For payload enums the usual fix is a hand-written method that `match`es on the variants."
 example = '''
 enum E { A, B(i32) }
 struct P { e: E }

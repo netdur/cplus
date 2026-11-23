@@ -715,29 +715,15 @@ marker impl applies only to `Send`/`Sync` — **E0860**/**E0861**). The act
 of hand-writing a marker impl the compiler will not auto-derive is the
 assertion. Conditional forms are allowed: `impl Arc[T: Send + Sync]: Send {}`.
 
-An interface impl takes a struct or an enum as its target, generic or not.
-On a generic target the impl is **conditional**: its header names the type's
-parameters with their bounds, and the interface holds for exactly the
-instantiations whose arguments meet them.
-
-```cplus
-impl Vec[T: Clone]: Clone {
-    fn clone(this) -> Vec[T] { ... }      // may call `clone` on a `T`
-}
-```
-
-`Vec[Text]` satisfies `Clone`; `Vec[*u8]` does not, and a use that needs it
-there is **E0502**. The condition recurses through nested instantiations
-(`Vec[Vec[Text]]`). A bounded impl block's methods — interface or inherent —
-exist only for the instantiations that meet the block's bounds: no body is
-generated for the others (a `Copy`-bounded block is the exception and is
-always generated). A generic body that calls such a method on its own type
-parameter must state the bound on that parameter — `impl Wrap[T: Copy]` to
-call `Bag[T: Copy]::get` — because the body is checked once, against the
-template; leaving it out is **W0010** today and will be **E0502**. An impl on a generic target or on an enum is checked
-for coverage (**E0503**), stray methods (**E0504**) and duplicates
-(**E0506**); signature conformance (**E0505**) is checked for concrete struct
-targets only.
+An interface impl with methods takes a concrete struct as its target; a
+generic type or an enum there is **E0325**. A bounded INHERENT block
+(`impl Bag[T: Copy] { ... }`) is the conditional form the language has: its
+methods exist only for the instantiations that meet the bound — no body is
+generated for the others, except for a `Copy`-bounded block, which is always
+generated. A generic body that calls such a method on its own type parameter
+must state the bound on that parameter — `impl Wrap[T: Copy]` to call
+`Bag[T: Copy]::get` — because the body is checked once, against the template;
+leaving it out is **W0010** today and will be **E0502**.
 
 ---
 

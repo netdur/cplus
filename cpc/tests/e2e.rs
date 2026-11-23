@@ -32296,9 +32296,8 @@ fn a_childs_stdout_is_read_by_lines_from_safe_code_and_a_stale_line_is_rejected(
     assert!(text.contains("E0381"), "expected E0381, got: {text}");
 }
 
-// ---- conditional interface impls, and the bounded-impl emission they exposed ----
+// ---- a bounded impl block belongs to the instantiations that meet its bound ----
 //
-// bugs/closed/cplus-vec-no-in-place-enum-mutation-or-clone.md and
 // bugs/closed/cpc-emits-a-bounded-impl-body-for-an-instantiation-that-fails-the-bound.md.
 
 /// Compile a single import-free file and answer `(succeeded, stdout+stderr)`.
@@ -32386,220 +32385,70 @@ fn calling_a_bounded_impl_method_on_an_unentitled_instantiation_is_still_e0502()
     assert!(!text.contains("internal error"), "a diagnostic, not a crash: {text}");
 }
 
-const COND_IMPL_PRELUDE: &str = "\
-struct Owned { v: i32 }\n\
-impl Owned { fn drop(ref this) { } }\n\
-impl Owned: Clone { fn clone(this) -> Owned { return Owned { v: this.v + 1 }; } }\n\
-struct Plain { v: i32 }\n\
-impl Plain { fn drop(ref this) { } }\n\
-struct Bag[T] { item: T }\n\
-impl Bag[T: Clone]: Clone {\n\
-\x20   fn clone(this) -> Bag[T] { return Bag[T] { item: this.item.clone() }; }\n\
-}\n\
-fn dup[T: Clone](v: T) -> T { return v.clone(); }\n";
-
-/// `impl Bag[T: Clone]: Clone { ... }` — an interface impl on a GENERIC type,
-/// conditional on its parameter. `Bag[Owned]` satisfies `Clone` because
-/// `Owned` does, so it passes a `T: Clone` bound; and the condition recurses,
-/// so `Bag[Bag[Owned]]` does too. Each `clone` adds one, which is how the
-/// test knows the element's own `clone` ran at every level.
+/// REJECTED, AND PINNED AS REJECTED. An interface impl takes a concrete
+/// struct. `impl Vec[T: Clone]: Clone` (conditional, on a generic type) and
+/// `impl Block: Clone` (on an enum) were asked for in
+/// bugs/closed/cplus-vec-no-in-place-enum-mutation-or-clone.md, built, and
+/// taken back out: both are new language surface, and the language is frozen.
+/// The correct use is in that report and in skill.md §11 — copy a `Vec`'s
+/// elements yourself, and give an enum an INHERENT `clone`.
 #[test]
-fn a_conditional_interface_impl_makes_an_instantiation_satisfy_the_bound() {
-    let out = compile_and_run_src(
-        "condimpl",
-        &format!(
-            "{COND_IMPL_PRELUDE}\
-             fn main() -> i32 {{\n\
-             \x20   let a: Bag[Owned] = Bag[Owned] {{ item: Owned {{ v: 10 }} }};\n\
-             \x20   let b: Bag[Owned] = dup::[Bag[Owned]](a);\n\
-             \x20   let nested: Bag[Bag[Owned]] = Bag[Bag[Owned]] {{ item: Bag[Owned] {{ item: Owned {{ v: 20 }} }} }};\n\
-             \x20   let n2: Bag[Bag[Owned]] = dup::[Bag[Bag[Owned]]](nested);\n\
-             \x20   let c: Bag[i32] = Bag[i32] {{ item: 5 }};\n\
-             \x20   let d: Bag[i32] = dup::[Bag[i32]](c);\n\
-             \x20   return b.item.v + n2.item.item.v + d.item;\n\
-             }}\n"
+fn an_interface_impl_on_a_generic_type_or_an_enum_is_still_e0325() {
+    let cases: [(&str, &str); 2] = [
+        (
+            "generic_iface",
+            "struct Bag[T] { item: T }\n\
+             impl Bag[T: Clone]: Clone {\n\
+             \x20   fn clone(this) -> Bag[T] { return Bag[T] { item: this.item.clone() }; }\n\
+             }\n\
+             fn main() -> i32 { return 0; }\n",
         ),
-    );
-    // 11 + 21 + 5.
-    assert_eq!(out.status.code(), Some(37));
+        (
+            "enum_iface",
+            "enum Block { A(i32), B }\n\
+             impl Block: Clone {\n\
+             \x20   fn clone(this) -> Block { return match this { Block::A(n) => Block::A(n), Block::B => Block::B }; }\n\
+             }\n\
+             fn main() -> i32 { return 0; }\n",
+        ),
+    ];
+    for (name, src) in cases {
+        let (ok, text) = try_compile_src(name, src);
+        assert!(!ok, "{name} must not compile: {text}");
+        assert!(text.contains("E0325"), "{name}: expected E0325, got: {text}");
+        assert!(!text.contains("internal error"), "{name}: a diagnostic, not a crash: {text}");
+    }
 }
 
-/// NEGATIVE: the impl is CONDITIONAL. `Bag[Plain]` — an element with no
-/// `Clone` — does not satisfy the bound, at a generic function or at the
-/// method itself.
+/// The correct use, which needs nothing new: an enum's `clone` is an INHERENT
+/// method, and a `Vec` of them is copied element by element.
 #[test]
-fn a_conditional_interface_impl_does_not_cover_an_argument_that_fails_its_bound() {
-    let (ok, text) = try_compile_src(
-        "condimpl_bad",
-        &format!(
-            "{COND_IMPL_PRELUDE}\
-             fn main() -> i32 {{\n\
-             \x20   let a: Bag[Plain] = Bag[Plain] {{ item: Plain {{ v: 1 }} }};\n\
-             \x20   let b: Bag[Plain] = dup::[Bag[Plain]](a);\n\
-             \x20   return b.item.v;\n\
-             }}\n"
-        ),
-    );
-    assert!(!ok, "must not compile: {text}");
-    assert!(text.contains("E0502"), "expected E0502, got: {text}");
-
-    let (ok, text) = try_compile_src(
-        "condimpl_bad_call",
-        &format!(
-            "{COND_IMPL_PRELUDE}\
-             fn main() -> i32 {{\n\
-             \x20   let a: Bag[Plain] = Bag[Plain] {{ item: Plain {{ v: 1 }} }};\n\
-             \x20   let b: Bag[Plain] = a.clone();\n\
-             \x20   return b.item.v;\n\
-             }}\n"
-        ),
-    );
-    assert!(!ok, "must not compile: {text}");
-    assert!(text.contains("E0502"), "expected E0502, got: {text}");
-}
-
-/// An ENUM may carry an interface impl. A payload-carrying enum derives
-/// nothing, and until now could not declare an impl either, so it could
-/// satisfy no bound at all — a `Vec` of one could not be cloned. And a struct
-/// with such a field now derives `Clone` through the enum's own `clone`.
-#[test]
-fn an_enum_interface_impl_satisfies_the_bound_and_feeds_a_derive() {
+fn an_enum_clones_through_an_inherent_method() {
     let out = compile_and_run_src(
-        "enumimpl",
+        "enum_inherent_clone",
         "struct Owned { v: i32 }\n\
-         impl Owned { fn drop(ref this) { } }\n\
-         impl Owned: Clone { fn clone(this) -> Owned { return Owned { v: this.v }; } }\n\
+         impl Owned { fn drop(ref this) { } fn copy(this) -> Owned { return Owned { v: this.v }; } }\n\
          enum Block { Text(Owned), Pair(Owned, i32), Empty }\n\
-         impl Block: Clone {\n\
+         impl Block {\n\
          \x20   fn clone(this) -> Block {\n\
          \x20       return match this {\n\
-         \x20           Block::Text(o) => Block::Text(o.clone()),\n\
-         \x20           Block::Pair(o, n) => Block::Pair(o.clone(), n + 1),\n\
+         \x20           Block::Text(o) => Block::Text(o.copy()),\n\
+         \x20           Block::Pair(o, n) => Block::Pair(o.copy(), n + 1),\n\
          \x20           Block::Empty => Block::Empty,\n\
          \x20       };\n\
          \x20   }\n\
          }\n\
-         struct Holder { b: Block, id: i32 }\n\
-         impl Holder: Clone {}\n\
-         fn dup[T: Clone](v: T) -> T { return v.clone(); }\n\
          fn value(b: Block) -> i32 {\n\
          \x20   return match b { Block::Text(o) => o.v, Block::Pair(o, n) => o.v + n, Block::Empty => 0 };\n\
          }\n\
          fn main() -> i32 {\n\
          \x20   let a: Block = Block::Pair(Owned { v: 10 }, 5);\n\
-         \x20   let b: Block = dup::[Block](a);\n\
-         \x20   let h: Holder = Holder { b: Block::Text(Owned { v: 20 }), id: 3 };\n\
-         \x20   let h2: Holder = h.clone();\n\
-         \x20   return value(b) + value(h2.b) + h2.id;\n\
+         \x20   let b: Block = a.clone();\n\
+         \x20   return value(a) + value(b);\n\
          }\n",
     );
-    // (10 + 6) + 20 + 3.
-    assert_eq!(out.status.code(), Some(39));
-}
-
-/// NEGATIVE: the two new impl targets are still CHECKED. A missing interface
-/// method is E0503, a method the interface does not declare is E0504, and a
-/// second impl of the same interface is E0506 — on an enum and on a generic
-/// type alike.
-#[test]
-fn enum_and_generic_interface_impls_are_checked_for_coverage_and_duplicates() {
-    let iface = "interface Named { fn name(this) -> i32; fn rank(this) -> i32; }\n";
-    let cases: [(&str, &str, &str); 6] = [
-        (
-            "enum_missing",
-            "enum E { A(i32), B }\n\
-             impl E: Named { fn name(this) -> i32 { return 1; } }\n",
-            "E0503",
-        ),
-        (
-            "enum_extra",
-            "enum E { A(i32), B }\n\
-             impl E: Named {\n\
-             \x20   fn name(this) -> i32 { return 1; }\n\
-             \x20   fn rank(this) -> i32 { return 2; }\n\
-             \x20   fn other(this) -> i32 { return 3; }\n\
-             }\n",
-            "E0504",
-        ),
-        (
-            "enum_duplicate",
-            "enum E { A(i32), B }\n\
-             impl E: Named { fn name(this) -> i32 { return 1; } fn rank(this) -> i32 { return 2; } }\n\
-             impl E: Named { fn name(this) -> i32 { return 1; } fn rank(this) -> i32 { return 2; } }\n",
-            "E0506",
-        ),
-        (
-            "generic_duplicate",
-            "struct G[T] { item: T }\n\
-             impl G[T]: Named { fn name(this) -> i32 { return 1; } fn rank(this) -> i32 { return 2; } }\n\
-             impl G[T]: Named { fn name(this) -> i32 { return 1; } fn rank(this) -> i32 { return 2; } }\n",
-            "E0506",
-        ),
-        (
-            "generic_missing",
-            "struct G[T] { item: T }\n\
-             impl G[T]: Named { fn name(this) -> i32 { return 1; } }\n",
-            "E0503",
-        ),
-        (
-            "generic_extra",
-            "struct G[T] { item: T }\n\
-             impl G[T]: Named {\n\
-             \x20   fn name(this) -> i32 { return 1; }\n\
-             \x20   fn rank(this) -> i32 { return 2; }\n\
-             \x20   fn other(this) -> i32 { return 3; }\n\
-             }\n",
-            "E0504",
-        ),
-    ];
-    for (name, body, code) in cases {
-        let (ok, text) = try_compile_src(
-            name,
-            &format!("{iface}{body}fn main() -> i32 {{ return 0; }}\n"),
-        );
-        assert!(!ok, "{name} must not compile: {text}");
-        assert!(text.contains(code), "{name}: expected {code}, got: {text}");
-        assert!(!text.contains("internal error"), "{name}: a diagnostic, not a crash: {text}");
-    }
-}
-
-/// A USER interface, not only a blessed one: the conditional impl is a general
-/// rule about `impl Generic[T: B]: Iface`, with the bound itself user-declared.
-#[test]
-fn a_conditional_impl_of_a_user_interface_is_conditional_on_a_user_bound() {
-    let prelude = "interface Weigh { fn weight(this) -> i32; }\n\
-                   struct Stone { g: i32 }\n\
-                   impl Stone: Weigh { fn weight(this) -> i32 { return this.g; } }\n\
-                   struct Feather { n: i32 }\n\
-                   struct Crate[T] { a: T, b: T }\n\
-                   impl Crate[T: Weigh]: Weigh {\n\
-                   \x20   fn weight(this) -> i32 { return this.a.weight() + this.b.weight(); }\n\
-                   }\n\
-                   fn total[T: Weigh](x: T) -> i32 { return x.weight(); }\n";
-    let out = compile_and_run_src(
-        "userbound",
-        &format!(
-            "{prelude}\
-             fn main() -> i32 {{\n\
-             \x20   let c: Crate[Stone] = Crate[Stone] {{ a: Stone {{ g: 30 }}, b: Stone {{ g: 12 }} }};\n\
-             \x20   return total::[Crate[Stone]](c);\n\
-             }}\n"
-        ),
-    );
-    assert_eq!(out.status.code(), Some(42));
-
-    let (ok, text) = try_compile_src(
-        "userbound_bad",
-        &format!(
-            "{prelude}\
-             fn main() -> i32 {{\n\
-             \x20   let c: Crate[Feather] = Crate[Feather] {{ a: Feather {{ n: 1 }}, b: Feather {{ n: 2 }} }};\n\
-             \x20   return total::[Crate[Feather]](c);\n\
-             }}\n"
-        ),
-    );
-    assert!(!ok, "must not compile: {text}");
-    assert!(text.contains("E0502"), "expected E0502, got: {text}");
+    // 15 + 16.
+    assert_eq!(out.status.code(), Some(31));
 }
 
 // ---- a generic body states the bounds it relies on ---------------------------

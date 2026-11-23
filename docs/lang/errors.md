@@ -422,16 +422,16 @@ fn main() -> i32 { let p: P = P {}; return p.missing(); }
 
 <sub>repro: checked · cplus-core/src/sema.rs:7379 · test cplus-core/src/sema.rs:no_such_method_e0324</sub>
 
-### E0325 · `impl` on an unknown type
+### E0325 · `impl` on an unknown or non-struct type
 
-An `impl` names a target that is not a declared struct or enum in scope. An inherent `impl T { ... }` and an interface impl `impl T: Interface { ... }` both take a struct or an enum, generic or not; a generic target names its parameters (`impl Vec[T: Clone]: Clone { ... }`), and the interface then holds for exactly the instantiations whose arguments meet those bounds.
+An `impl` names a target that is not a declared struct or (non-generic) enum in scope.
 
 ```cplus
 impl Foo { fn f(this) {} }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Name a declared struct or enum. For a generic type, write its parameters on the target.
+**Fix.** The target must be a declared struct or enum in scope.
 
 <sub>repro: checked · cplus-core/src/sema.rs:2440 · test cplus-core/src/sema.rs:impl_on_unknown_type_e0325</sub>
 
@@ -722,7 +722,7 @@ fn main() -> i32 { return 0; }
 
 ### E0920 · Field not derivable for this interface
 
-An empty `impl Type: Interface {}` asked the compiler to derive a memberwise implementation, but one of the struct's fields has a shape the derived method cannot handle: an enum with payload variants (no generated `match` in v1 — except for `Clone`, which clones such a field through the enum's own `clone`), an array / slice / tuple field, a pointer field where the interface needs `hash` or `cmp` or a text form, or — for `ToText` — a build with no `#[lang("string")]` type.
+An empty `impl Type: Interface {}` asked the compiler to derive a memberwise implementation, but one of the struct's fields has a shape the derived method cannot handle: an enum with payload variants (no generated `match` in v1), an array / slice / tuple field, a pointer field where the interface needs `hash` or `cmp` or a text form, or — for `ToText` — a build with no `#[lang("string")]` type.
 
 ```cplus
 enum E { A, B(i32) }
@@ -732,7 +732,7 @@ fn main() -> i32 { return 0; }
 // -> [E0920] cannot derive `Eq` for `P`: field `e` — its enum type has payload variants; write `eq` manually
 ```
 
-**Fix.** Write the named method by hand for this type, or change the field to a derivable shape. For payload enums the usual fix is a hand-written method that `match`es on the variants; for `Clone`, write `impl E: Clone { fn clone(this) -> E { ... } }` on the enum and the struct's empty `impl S: Clone {}` then derives.
+**Fix.** Write the named method by hand for this type, or change the field to a derivable shape. For payload enums the usual fix is a hand-written method that `match`es on the variants.
 
 <sub>repro: checked · cplus-core/src/lower.rs:expand_derives · test cplus-core/src/lower.rs:derive_payload_enum_field_rejected_e0920</sub>
 

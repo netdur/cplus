@@ -603,11 +603,11 @@ What that generation cannot do, and what to write instead:
   `eq`/`cmp`/`hash`/`clone` and their bounds already work — which is what makes
   one usable as a `HashMap` key. An empty impl on one is E0916 telling you to
   delete it.
-- **A payload-CARRYING enum derives none of them — write the impl by hand,**
-  on the enum: `impl Block: Clone { fn clone(this) -> Block { return match this
-  { ... }; } }`. That is a real interface impl, so the enum then satisfies a
-  `T: Clone` bound, a `Vec[Block]` clones, and a struct with a `Block` field
-  derives `Clone` with an empty impl.
+- **A payload-CARRYING enum satisfies none of them.** Write the method by hand,
+  as an INHERENT method on the enum — `impl Block { fn clone(this) -> Block {
+  return match this { ... }; } }`. An interface impl takes a concrete struct, so
+  `impl Block: Clone` is E0325, and a struct with such a field does not derive
+  (E0920): its own `clone` is written out too, calling the enum's.
 - **Array, slice and tuple fields are not derivable** (E0920) — hand-write that
   one method.
 - Deriving targets structs only. An empty impl of a *user* interface stays an
@@ -737,8 +737,7 @@ union and the caller matches it.
 > There is no `.unwrap()`, `.expect()`, `.map()`, `.and_then()`, `.unwrap_or()`,
 > `.ok_or()`, `.is_ok()`, `.is_some()`. Handle them with `match`, `if let` or
 > `guard let` — those are the only three. (`.unwrap()` on `Box[T]` is a
-> different thing: it moves the owned value back off the heap. And
-> `Option[T]` does have `.clone()` when `T` does — a copy, not a combinator.)
+> different thing: it moves the owned value back off the heap.)
 >
 > **A mutator's `status::Status` is the only news of its failure.** It changes
 > nothing when it fails, so `v.set(x, at: i);` as a bare statement can do nothing
@@ -1058,16 +1057,17 @@ nominal type id, so the extension import-gate has nothing to key on. Extend a
 NAMED type instead when you can — that path is import-gated. **`Vec::iter` yields Copy elements
 only** — to move owned ones out use `Vec::drain`, which drains in order, lazily.
 **`HashMap` needs Copy keys**, so a `Text`-keyed map is `string_map`, which owns
-its keys. **`Vec[T]` and `Option[T]` are `Clone` exactly when `T` is** — a
-conditional impl (`impl Vec[T: Clone]: Clone`), so `v.clone()` is a deep copy, a
-struct holding either derives `Clone` with an empty impl, and a `Vec` of
-something with no `clone` is E0502 rather than a shallow surprise. Do not
-hand-write an element loop to copy a `Vec`. **To change an element where it
-sits, `Vec::replace(value, at:)` swaps it out in O(1)** and hands you the old
-one; `set` puts the rebuilt one back. That is the idiom for an enum element,
-whose payload cannot be borrowed mutably:
-`if let Some(old) = v.replace(Block::Empty, at: i) { let _ = v.set(grown(old), at: i); }`
-— never `remove(at:)` + `insert(at:)`, which shifts the tail twice.
+its keys. And **`Vec` has no `clone`**: combined with E0509 (§3.4) that means a
+`Vec` field of a Drop type can be neither moved out nor copied wholesale, so
+installing one into another field is an element-by-element copy you write
+yourself — a loop over `at_ptr`, appending each element's own copy. That is
+deliberate: a copy of N owned things is N allocations, and it is spelled where
+it is paid. **To change an element where it sits, `Vec::replace(value, at:)`
+swaps it out in O(1)** and hands you the old one; `set` puts the rebuilt one
+back. An enum's payload cannot be borrowed mutably, so that IS how one is
+changed: `if let Some(old) = v.replace(Block::Empty, at: i) { let _ =
+v.set(grown(old), at: i); }` — never `remove(at:)` + `insert(at:)`, which
+shifts the tail twice.
 
 **Smart pointers**, mapped from C++: `unique_ptr` → `box::Box[T]`, `shared_ptr` →
 `arc::Arc[T]` (or `rc::Rc[T]` single-threaded), `weak_ptr` → `Weak[T]`. There is
@@ -1282,8 +1282,8 @@ Four things that are invisible in the types:
   the live field compiles and usually looks fine — what it costs is a `Text`
   freed under a main thread that is reading it.
 - **That install is a COPY, not a move.** The service owns heap fields so it has
-  a destructor, and moving an owning field out of a Drop type is E0509 (§3.4).
-  `this.hits = this.staged.clone();` is the copy.
+  a destructor, and moving an owning field out of a Drop type is E0509 (§3.4) —
+  and `Vec` has no `clone`. Write the element copy.
 - **A second call QUEUES on a resource and is DROPPED on a job** (`run_job`
   returns `false`). So a job's caller must decide which ask wins and say why. And
   because the resource queue is faithful, the CALLER collapses bursts — a watcher

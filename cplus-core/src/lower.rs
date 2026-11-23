@@ -3791,8 +3791,7 @@ impl Lower {
 //   Hash   — FNV-1a 64 fold: ints/str via blessed `.hash()`, floats via
 //            `#bitcast` to the same-width uint, bool/enums via `as u64`,
 //            nominal via `.hash()`
-//   Clone  — copyables verbatim, nominal AND payload-enum fields via
-//            `.clone()` (an enum may carry `impl E: Clone { ... }`)
+//   Clone  — copyables verbatim, nominal via `.clone()`
 //   ToText — one interpolated literal `"Name { f: ${...}, ... }"`; nominal
 //            fields spelled `${this.f.to_text()}` (a bare struct part is
 //            the open codegen gap found 2026-08-08), payload-free enums as
@@ -4434,16 +4433,13 @@ impl Lower {
                             | DeriveFieldKind::Str
                             | DeriveFieldKind::PlainEnum
                             | DeriveFieldKind::Ptr => d_field("self", fname, span),
-                            // A PAYLOAD ENUM CLONES THROUGH ITS OWN `clone`, like
-                            // any other nominal field. It used to be refused
-                            // here outright, because an enum could not carry
-                            // an interface impl and so could never have one —
-                            // which left every struct holding an
-                            // `Option[Text]` to hand-write its copy. An enum
-                            // with no `clone` is still an error, from sema,
-                            // naming the method it could not find.
-                            DeriveFieldKind::Nominal | DeriveFieldKind::PayloadEnum => {
+                            DeriveFieldKind::Nominal => {
                                 d_mcall(d_field("self", fname, span), "clone", vec![], span)
+                            }
+                            DeriveFieldKind::PayloadEnum => {
+                                bad(self, fname, "its enum type has payload variants; write `clone` manually");
+                                ok = false;
+                                continue;
                             }
                             DeriveFieldKind::Unsupported(what) => {
                                 bad(self, fname, &format!("{what} are not derivable"));
@@ -5889,31 +5885,6 @@ fn main() -> i32 { return 0; }\n";
             diags.iter().any(|d| d.code.0 == "E0920"),
             "got {diags:#?}"
         );
-    }
-
-    // Clone is the one derive a payload-enum field does not stop: the field is
-    // cloned through its own `clone`, which an enum can now declare. `Eq` on
-    // the same struct is still E0920 — only the Clone arm changed.
-    #[test]
-    fn derive_clone_reaches_a_payload_enum_field_through_its_clone() {
-        let (prog, diags) = run(
-            "enum E { A, B(i32) }\n\
-             struct P { e: E }\n\
-             impl P: Clone {}\n\
-             fn main() -> i32 { return 0; }",
-        );
-        assert!(
-            diags.iter().all(|d| d.code.0 != "E0920"),
-            "got {diags:#?}"
-        );
-        assert_eq!(find_impl(&prog, "P", "Clone").methods.len(), 1);
-        let (_prog, diags) = run(
-            "enum E { A, B(i32) }\n\
-             struct P { e: E }\n\
-             impl P: Eq {}\n\
-             fn main() -> i32 { return 0; }",
-        );
-        assert!(diags.iter().any(|d| d.code.0 == "E0920"), "got {diags:#?}");
     }
 
     #[test]
