@@ -612,6 +612,12 @@ struct RowSource {
     // answer) means "build and measure", which is what every list did before.
     row_height_of: fn(usize, *u8) -> f64,
     opaque row_height_of_ctx: *u8,
+    // ...and the form that is TOLD THE WIDTH, asked first. This backend always
+    // has the number when it asks — the table's column, the grid's item width
+    // — so it costs a parameter here and a tree walk per row in an
+    // application that had to look it up.
+    row_height_at: fn(usize, f64, *u8) -> f64,
+    opaque row_height_at_ctx: *u8,
     // Which SHAPE a row has, and therefore which reuse pool its cell comes
     // from. `no_row_kind` answers 0 for everything — one pool, which is what
     // this table had before a list could say otherwise.
@@ -806,8 +812,8 @@ fn height_of(s: *RowSource, row: i64, w: f64) -> f64 {
     // states only `row_height` has no `row_height_of` to ask, so it returns
     // here having built nothing.
     let fh: f64 = { (*s).fixed_height };
-    let hof: fn(usize, *u8) -> f64 = { (*s).row_height_of };
-    if fh >= 1.0f64 && hof == props::no_row_height_of { return fh; }
+    let states: bool = props::states_row_height({ (*s).row_height_at }, { (*s).row_height_of });
+    if fh >= 1.0f64 && !states { return fh; }
 
     let hp: *vec::Vec[f64] = { #addr_of((*s).heights) };
     // A HEIGHT BELONGS TO A WIDTH whatever it is keyed by, so a real width
@@ -854,7 +860,7 @@ fn height_of(s: *RowSource, row: i64, w: f64) -> f64 {
     // measured by building rebuilds the whole model on every frame of a drag.
     // A 0 answer means "I cannot compute this one", and it falls through to
     // the build below — so a partial answer is a legal answer.
-    if hof != props::no_row_height_of && row >= (0 as i64) {
+    if states && row >= (0 as i64) {
         // THE DATA INDEX, not the table row — `row_height_of(i)` means the same
         // `i` that `row(i)` means, and a grouped table's table rows are offset
         // by the headers above them. A HEADER has no data index and is built
@@ -862,7 +868,12 @@ fn height_of(s: *RowSource, row: i64, w: f64) -> f64 {
         // per group, and they are not what makes a resize expensive.
         let at: i64 = resolve_row(s, row);
         if at >= (0 as i64) {
-            let stated: f64 = hof(at as usize, { (*s).row_height_of_ctx });
+            // AT THE WIDTH THIS QUESTION IS BEING ASKED AT. `w` is the row's
+            // own width — the column, not the scroll view — which is the
+            // number a wrapped row's height actually depends on.
+            let stated: f64 = props::stated_row_height(
+                { (*s).row_height_at }, { (*s).row_height_at_ctx },
+                { (*s).row_height_of }, { (*s).row_height_of_ctx }, at as usize, w);
             if stated >= 1.0f64 {
                 // Cached against the TABLE row, which is what the delegate is
                 // asked about.
@@ -1536,11 +1547,14 @@ fn place_row_content(cell: *u8, np: *core::Node, w: f64, h: f64) {
 // A HEADER has no data index, so `row_height_of` is not asked about it; it
 // takes the flat height, which is what it took before.
 fn stated_row_height(s: *RowSource, row: i64) -> f64 {
-    let hof: fn(usize, *u8) -> f64 = { (*s).row_height_of };
-    if hof != props::no_row_height_of && row >= (0 as i64) {
+    if props::states_row_height({ (*s).row_height_at }, { (*s).row_height_of })
+       && row >= (0 as i64) {
         let at: i64 = resolve_row(s, row);
         if at >= (0 as i64) {
-            let stated: f64 = hof(at as usize, { (*s).row_height_of_ctx });
+            let stated: f64 = props::stated_row_height(
+                { (*s).row_height_at }, { (*s).row_height_at_ctx },
+                { (*s).row_height_of }, { (*s).row_height_of_ctx },
+                at as usize, row_width(s));
             if stated >= 1.0f64 { return stated; }
         }
     }
@@ -2821,6 +2835,8 @@ fn apply_relist_rows(cv: *u8, n: *core::Node, dirty: u64) {
     // states at length below — the height rides the ROW band.
     { (*s).row_height_of = { (*p).row_height_of } };
     { (*s).row_height_of_ctx = { (*p).row_height_of_ctx } };
+    { (*s).row_height_at = { (*p).row_height_at } };
+    { (*s).row_height_at_ctx = { (*p).row_height_at_ctx } };
     // HOW MANY COLUMNS A LINE HOLDS. One is a list, which is every relist that
     // never mentions the verb. The count it is REPLACING is read first: a
     // regrid keeps the first visible row, and that row is found under the
@@ -2996,6 +3012,8 @@ fn row_source_for(tv: *u8, n: *core::Node) -> *RowSource {
         group_size: props::no_group_size,
         group_header: props::no_group_header,
         row_height_of: props::no_row_height_of,
+        row_height_at: props::no_row_height_at,
+        row_height_at_ctx: 0 as *u8,
         row_height_of_ctx: 0 as *u8,
         row_kind: props::no_row_kind,
         row_kind_ctx: 0 as *u8,
@@ -3159,6 +3177,8 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     // flat transcript did not.
     { (*s).row_height_of = { (*p).row_height_of } };
     { (*s).row_height_of_ctx = { (*p).row_height_of_ctx } };
+    { (*s).row_height_at = { (*p).row_height_at } };
+    { (*s).row_height_at_ctx = { (*p).row_height_at_ctx } };
     // The row's SHAPE rides the same band, for the same reason: it is part of
     // describing what a row IS, and it decides which pool the cell comes from.
     { (*s).row_kind = { (*p).row_kind } };

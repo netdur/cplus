@@ -36,6 +36,34 @@ fn bind_ctx_of(own: *u8, row: *u8) -> *u8 {
 // Zero means "no answer" — the measure pass builds the row instead,
 // which is what every list did before this could be stated.
 fn no_row_height_of(row: usize, ctx: *u8) -> f64 { return 0.0f64; }
+// The width-told form of the same absence.
+fn no_row_height_at(row: usize, width: f64, ctx: *u8) -> f64 { return 0.0f64; }
+
+// THE STATED HEIGHT OF DATA ROW `at`, LAID OUT `width` WIDE — or 0 for
+// "nobody said", which a backend answers by building and measuring.
+// The one place the precedence lives, so every recycling backend and
+// every control that states heights reads it the same way: the
+// width-told answer first, the width-less one second. A stated height
+// under one point is a decline, exactly as it always was.
+fn stated_row_height(at_fn: fn(usize, f64, *u8) -> f64, at_ctx: *u8,
+                     of_fn: fn(usize, *u8) -> f64, of_ctx: *u8,
+                     at: usize, width: f64) -> f64 {
+    if at_fn != no_row_height_at {
+        let h: f64 = at_fn(at, width, at_ctx);
+        if h >= 1.0f64 { return h; }
+    }
+    if of_fn != no_row_height_of {
+        let h2: f64 = of_fn(at, of_ctx);
+        if h2 >= 1.0f64 { return h2; }
+    }
+    return 0.0f64;
+}
+
+// Is a height stated at all, by either form?
+fn states_row_height(at_fn: fn(usize, f64, *u8) -> f64,
+                     of_fn: fn(usize, *u8) -> f64) -> bool {
+    return at_fn != no_row_height_at || of_fn != no_row_height_of;
+}
 // Every row the same SHAPE, which is what one reuse pool means and
 // what a list without kinds has always promised.
 fn no_row_kind(row: usize, ctx: *u8) -> usize { return 0 as usize; }
@@ -739,6 +767,8 @@ struct CollectionProps {
     opaque bind_ctx: *u8,
     row_height_of: fn(usize, *u8) -> f64,    // facet — the height of row `i`, answered WITHOUT building it
     opaque row_height_of_ctx: *u8,
+    row_height_at: fn(usize, f64, *u8) -> f64,    // facet — the height of row `i` laid out `width` wide, answered WITHOUT building it
+    opaque row_height_at_ctx: *u8,
     row_kind: fn(usize, *u8) -> usize,    // facet — which SHAPE row `i` has, so cells pool per shape
     opaque row_kind_ctx: *u8,
     group_count: i64,    // facet — how many groups, when is_grouped
@@ -772,6 +802,8 @@ impl CollectionProps {
             bind_ctx: 0 as *u8,
             row_height_of: no_row_height_of,
             row_height_of_ctx: 0 as *u8,
+            row_height_at: no_row_height_at,
+            row_height_at_ctx: 0 as *u8,
             row_kind: no_row_kind,
             row_kind_ctx: 0 as *u8,
             group_count: 0 as i64,
@@ -1245,6 +1277,8 @@ struct ListProps {
     opaque bind_ctx: *u8,
     row_height_of: fn(usize, *u8) -> f64,    // facet — the height of row `i`, answered WITHOUT building it
     opaque row_height_of_ctx: *u8,
+    row_height_at: fn(usize, f64, *u8) -> f64,    // facet — the height of row `i` laid out `width` wide, answered WITHOUT building it
+    opaque row_height_at_ctx: *u8,
     row_kind: fn(usize, *u8) -> usize,    // facet — which SHAPE row `i` has, so cells pool per shape
     opaque row_kind_ctx: *u8,
     group_count: i64,    // facet — how many groups, when is_grouped
@@ -1298,6 +1332,8 @@ impl ListProps {
             bind_ctx: 0 as *u8,
             row_height_of: no_row_height_of,
             row_height_of_ctx: 0 as *u8,
+            row_height_at: no_row_height_at,
+            row_height_at_ctx: 0 as *u8,
             row_kind: no_row_kind,
             row_kind_ctx: 0 as *u8,
             group_count: 0 as i64,

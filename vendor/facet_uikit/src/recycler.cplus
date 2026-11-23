@@ -582,7 +582,9 @@ fn relist_row_height(tv: *u8, n: *core::Node, at: usize, w: f64) -> f64 {
     // width changes, so a rotation with no answer here realises the visible
     // set again. A 0 answer means "I cannot compute this one" and falls
     // through to the measurement below, so a partial answer is a legal answer.
-    let stated: f64 = h.stated_row_height(at);
+    // ...and TOLD THE WIDTH it is being asked at, which a wrapped row's height
+    // is a function of and which only this side knows.
+    let stated: f64 = h.stated_row_height(at, width: w);
     if stated >= 1.0f64 { return stated; }
     let uneven: bool = h.uneven_rows();
     if uneven == false && { (*m).uniform_h } > 0.0f64 { return { (*m).uniform_h }; }
@@ -884,11 +886,14 @@ fn imp_height_for_row(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> f64 
         return 44.0f64;
     }
     if { (*p).has_uneven_rows } {
-        let f: fn(usize, *u8) -> f64 = { (*p).row_height_of };
-        if f != (0 as fn(usize, *u8) -> f64) {
-            let h: f64 = f(flat_index(p, index_path), { (*p).row_height_of_ctx });
-            if h > 0.0f64 { return h; }
-        }
+        // The width-told form first, at the table's own width — the shared
+        // reader keeps the precedence the same on every backend.
+        let tw: f64 = { rt::msg_rect(tv, rt::sel(#str_ptr("bounds\0"))) }.w;
+        let h: f64 = props::stated_row_height(
+            { (*p).row_height_at }, { (*p).row_height_at_ctx },
+            { (*p).row_height_of }, { (*p).row_height_of_ctx },
+            flat_index(p, index_path), tw);
+        if h > 0.0f64 { return h; }
     }
     let h: i64 = { (*p).row_height };
     if h > (0 as i64) { return h as f64; }
@@ -2623,11 +2628,15 @@ fn imp_cv_size_for_item(self_obj: *u8, cmd: *u8, cv: *u8,
     if core::kind_of(n) != props::K_COLLECTION { return fallback; }
     let p: *props::CollectionProps = collection_props(cv);
     if p == (0 as *props::CollectionProps) { return fallback; }
-    let f: fn(usize, *u8) -> f64 = { (*p).row_height_of };
-    if f == props::no_row_height_of { return fallback; }
+    if !props::states_row_height({ (*p).row_height_at }, { (*p).row_height_of }) {
+        return fallback;
+    }
     let at: i64 = cv_flat_index(cv, index_path);
     if at < (0 as i64) { return fallback; }
-    let h: f64 = f(at as usize, { (*p).row_height_of_ctx });
+    // The item's own width — what the layout hands each cell.
+    let h: f64 = props::stated_row_height(
+        { (*p).row_height_at }, { (*p).row_height_at_ctx },
+        { (*p).row_height_of }, { (*p).row_height_of_ctx }, at as usize, { fallback.w });
     // A ZERO OR NEGATIVE STATED HEIGHT IS NOT AN ANSWER — the application
     // declined to state one for this row, which is what the layout's own size
     // is for. Taking it literally would collapse the row to nothing.

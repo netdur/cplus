@@ -455,6 +455,23 @@ impl List {
         return this;
     }
 
+    // THE HEIGHT OF ROW `at` LAID OUT `width` WIDE, WITHOUT BUILDING IT.
+    //
+    // `set_row_height_of` with the one number a wrapped row needs. The
+    // width is the row's own — what the backend will lay it out at, inset
+    // and columns already taken off — so the answer needs no `find` and no
+    // cached frame, and it is right on every frame of a resize. Asked
+    // before `row_height_of`; answer 0 to decline a row.
+    fn set_row_height_at(this, f: fn(usize, f64, *u8) -> f64,
+                         row_height_at_ctx: *u8 = 0 as *u8) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        { (*p).row_height_at = f };
+        { (*p).row_height_at_ctx = row_height_at_ctx };
+        core::touch(this._p, P_ROW);
+        return this;
+    }
+
     // ROW `at` CHANGED IN PLACE — same count, same sequence, new content.
     // Without this the only way to say it is a row/count write, and a
     // recycling backend answers one of those by discarding every measured

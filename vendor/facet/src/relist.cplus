@@ -147,6 +147,16 @@ struct RelistProps {
     // two mechanisms compose with no precedence rule between them.
     row_height_of: fn(usize, *u8) -> f64,
     opaque row_height_of_ctx: *u8,
+    // THE SAME ANSWER, TOLD THE WIDTH. A height belongs to a width — that is
+    // the whole reason the cache above is dropped when it moves — and the
+    // width a row is laid out at is the backend's fact: its own inset taken
+    // off, divided by `columns`. An application answering `row_height_of` for
+    // wrapped text had to go and find that number, which meant a `find` of its
+    // own list PER ROW (900 tree walks a reload in one transcript). This form
+    // is handed it. Asked first; 0 falls through to `row_height_of`, then to
+    // the measurement.
+    row_height_at: fn(usize, f64, *u8) -> f64,
+    opaque row_height_at_ctx: *u8,
     // The subscription, owned. Dropping the props cancels it — which is why it
     // is stored rather than detached: a listener that outlives the props reads
     // `ctx` as a freed pointer on the next append.
@@ -201,6 +211,8 @@ impl RelistProps {
             uneven_rows: false,
             row_height_of: props::no_row_height_of,
             row_height_of_ctx: 0 as *u8,
+            row_height_at: props::no_row_height_at,
+            row_height_at_ctx: 0 as *u8,
             sub: events::SignalSubscription[obs_vec::Change]::none(),
             live: vec::new::[*core::Node](),
             scroll_to_index: -1 as i64,
@@ -413,6 +425,8 @@ fn relist[T](
     row_height_of: fn(usize, *u8) -> f64 = props::no_row_height_of,
     row_height_of_ctx: *u8 = 0 as *u8,
     columns: usize = 1 as usize,
+    row_height_at: fn(usize, f64, *u8) -> f64 = props::no_row_height_at,
+    row_height_at_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: RelistProps = RelistProps::new();
     p.rows = { #addr_of(rows) as *u8 };
@@ -422,6 +436,8 @@ fn relist[T](
     p.uneven_rows = uneven_rows;
     p.row_height_of = row_height_of;
     p.row_height_of_ctx = row_height_of_ctx;
+    p.row_height_at = row_height_at;
+    p.row_height_at_ctx = row_height_at_ctx;
     p.columns = _at_least_one(columns);
     return match box::new::[RelistProps](p) {
         option::Option[box::Box[RelistProps]]::Some(b) => {
@@ -632,19 +648,34 @@ impl Relist {
         return this;
     }
 
+    // The width-told form — see `RelistProps.row_height_at`. The `width` is
+    // the row's own, as the backend will lay it out, so a wrapped row's height
+    // is arithmetic over the two arguments and nothing has to be looked up.
+    fn set_row_height_at(this, f: fn(usize, f64, *u8) -> f64,
+                         row_height_at_ctx: *u8 = 0 as *u8) -> Relist {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return this; }
+        { (*p).row_height_at = f };
+        { (*p).row_height_at_ctx = row_height_at_ctx };
+        core::touch(this._p, P_ROWS);
+        return this;
+    }
+
     // THE STATED HEIGHT OF ROW `at`, or 0 for "nobody said" — which covers
     // both an element that states no function and one whose function declines
     // this row. The reader for a backend that holds a CURSOR rather than the
     // props, so the sentinel comparison and the "0 means I cannot compute
     // this one" reading each have one home.
-    fn stated_row_height(this, at: usize) -> f64 {
+    //
+    // `width` is the width the row is laid out at. A backend that knows it
+    // passes it; 0 is what a caller with no width to offer says, and a
+    // `row_height_at` handed 0 is expected to decline.
+    fn stated_row_height(this, at: usize, width: f64 = 0.0f64) -> f64 {
         let p: *RelistProps = this._props();
         if p.is_null() { return 0.0f64; }
-        let f: fn(usize, *u8) -> f64 = { (*p).row_height_of };
-        if f == props::no_row_height_of { return 0.0f64; }
-        let h: f64 = f(at, { (*p).row_height_of_ctx });
-        if h < 1.0f64 { return 0.0f64; }
-        return h;
+        return props::stated_row_height({ (*p).row_height_at }, { (*p).row_height_at_ctx },
+                                        { (*p).row_height_of }, { (*p).row_height_of_ctx },
+                                        at, width);
     }
 
     // WHETHER A HEIGHT IS STATED AT ALL. `props::no_row_height_of` is the
@@ -653,7 +684,7 @@ impl Relist {
     fn states_row_height(this) -> bool {
         let p: *RelistProps = this._props();
         if p.is_null() { return false; }
-        return { (*p).row_height_of } != props::no_row_height_of;
+        return props::states_row_height({ (*p).row_height_at }, { (*p).row_height_of });
     }
 
     // The change waiting to be applied, and whether there is one. The backend's
@@ -1437,4 +1468,110 @@ fn stating_a_height_after_the_fact_raises_the_row_band() {
         }
         option::Option[Relist]::None => { assert false; }
     }
+}
+
+// ---- a stated height that is TOLD THE WIDTH ---------------------------------
+//
+// bugs/closed/facet-relist-row-height-of-omits-width.md.
+
+// A wrapped row: one 20pt line per 100pt of text it cannot fit. Declines (0)
+// when it is handed no width, which is what a caller with none to offer passes.
+fn _wrapped_height(index: usize, width: f64, ctx: *u8) -> f64 {
+    if width < 1.0f64 { return 0.0f64; }
+    let text_w: f64 = 400.0f64;
+    var lines: f64 = 1.0f64;
+    var fits: f64 = width;
+    while fits < text_w { lines = lines + 1.0f64; fits = fits + width; }
+    return lines * 20.0f64;
+}
+
+// Declines every odd row whatever the width.
+fn _wrapped_height_partial(index: usize, width: f64, ctx: *u8) -> f64 {
+    if (index % (2 as usize)) == (1 as usize) { return 0.0f64; }
+    return 60.0f64;
+}
+
+#[test]
+fn a_width_told_height_answers_from_the_width_it_is_handed() {
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    var n: core::Node = relist(rows, key: "hw", builder: _row, uneven_rows: true,
+                               row_height_at: _wrapped_height);
+    match from(#addr_of(n)) {
+        option::Option[Relist]::Some(h) => {
+            assert h.states_row_height();
+            // The same row, three widths, three heights — and nothing was
+            // looked up to get them.
+            assert h.stated_row_height(0 as usize, width: 400.0f64) == 20.0f64;
+            assert h.stated_row_height(0 as usize, width: 200.0f64) == 40.0f64;
+            assert h.stated_row_height(0 as usize, width: 100.0f64) == 80.0f64;
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn the_width_told_height_is_asked_before_the_width_less_one() {
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    let _b: status::Status = rows.append(_Entry { n: 2 });
+    var n: core::Node = relist(rows, key: "hb", builder: _row, uneven_rows: true,
+                               row_height_of: _stated_height,
+                               row_height_at: _wrapped_height_partial);
+    match from(#addr_of(n)) {
+        option::Option[Relist]::Some(h) => {
+            // Row 0: the width-told form answers, and wins.
+            assert h.stated_row_height(0 as usize, width: 300.0f64) == 60.0f64;
+            // Row 1: it declines, and the width-less form is asked next —
+            // a partial answer is a legal answer at both levels.
+            assert h.stated_row_height(1 as usize, width: 300.0f64)
+                == _stated_height(1 as usize, 0 as *u8);
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn stating_a_width_told_height_after_the_fact_raises_the_row_band() {
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    var n: core::Node = relist(rows, key: "hx", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    match from(np) {
+        option::Option[Relist]::Some(h) => {
+            assert h.states_row_height() == false;
+            core::clear_dirty(np);
+            let _s: Relist = h.set_row_height_at(_wrapped_height);
+            assert h.states_row_height();
+            assert (core::dirty_of(np) & P_ROWS) != (0 as u64);
+            assert h.stated_row_height(0 as usize, width: 200.0f64) == 40.0f64;
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+// NEGATIVE: a caller with no width to offer says 0, and a width-told height
+// handed 0 declines rather than dividing by it — the row is then measured.
+#[test]
+fn a_width_told_height_with_no_width_declines() {
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    var n: core::Node = relist(rows, key: "hz", builder: _row, uneven_rows: true,
+                               row_height_at: _wrapped_height);
+    match from(#addr_of(n)) {
+        option::Option[Relist]::Some(h) => {
+            assert h.stated_row_height(0 as usize) == 0.0f64;
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+// NEGATIVE: neither form stated is still "nobody said", and the shared reader
+// answers 0 for it without calling anything.
+#[test]
+fn with_neither_height_stated_the_shared_reader_answers_zero() {
+    assert props::states_row_height(props::no_row_height_at, props::no_row_height_of) == false;
+    assert props::stated_row_height(props::no_row_height_at, 0 as *u8,
+                                    props::no_row_height_of, 0 as *u8,
+                                    3 as usize, 320.0f64) == 0.0f64;
 }

@@ -502,6 +502,8 @@ if let option::Option::Some(l) = m_list::find("panel:list") {
     let _l: m_list::List = l
         .set_row(this.row_at)                          // fn(usize, *u8) -> Node
         .set_row_height_of(this.row_height)            // fn(usize, *u8) -> f64
+        // or, for rows that wrap:  .set_row_height_at(this.row_height_at)
+        //                          fn(usize, f64 /* row width */, *u8) -> f64
         .set_selection_mode(vocab::SelectionMode::Single)
         .set_count(this.rows.count());                 // count LAST
 }
@@ -610,6 +612,11 @@ Five things about lists that compile wrong:
    bubble), measure the string — with the same font the label will draw and at
    the width the row is really laid out at (a table keeps an inset for itself;
    measuring at the wider number clips the last line off every row).
+   `set_row_height_at(fn(index, width, ctx) -> f64)` is `set_row_height_of`
+   handed that width: the row's own, inset and columns already taken off. Use
+   it for anything that wraps. Do not `find` your own list inside the height
+   callback to read its frame — that is a tree walk per row, per reload, per
+   frame of a resize.
 
 4. **Decoration must not take the pointer.** A label answers the hit test with
    itself, so text laid over a clickable card is a hole in the card exactly where

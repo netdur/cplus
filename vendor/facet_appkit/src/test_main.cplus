@@ -20787,6 +20787,149 @@ fn a_worker_burst_reaches_the_main_thread_as_one_coalesced_turn() {
     assert CQ_HOP.is_pending() == false;
     // And it is not spent: the next ask is a new turn.
     assert CQ_HOP.schedule();
-    scheduler::drain_main_once();
+    // BOUNDED TURNS, not one. `drain_main_once` returns after ONE source, and
+    // in the full suite the run loop has others — timers earlier tests armed —
+    // so a single turn can be spent on one of those. (Alone, the dispatch
+    // queue is the only source and one turn is enough, which is how this
+    // passed filtered and failed in the whole run.)
+    turns = 0;
+    while CQ_COALESCED_RUNS < 2 && turns < 10000 {
+        scheduler::drain_main_once();
+        turns = turns + 1;
+    }
     assert CQ_COALESCED_RUNS == 2;
+    assert CQ_HOP.is_pending() == false;
+}
+
+// ---- a stated height that is TOLD THE WIDTH ----------------------------------
+//
+// bugs/closed/facet-relist-row-height-of-omits-width.md. The backend always
+// had the number when it asked — the column for a table, the item width for a
+// grid — and the callback was not handed it, so an application measuring
+// wrapped text went and found its own list in the tree, once per row.
+
+static RHW_LAST_WIDTH: f64 = 0.0f64;
+static RHW_ASKED: i64 = 0 as i64;
+static RHW_BUILDS: i64 = 0 as i64;
+
+// 400pt of text at 20pt a line: the height is a function of the width alone.
+fn rhw_wrapped(index: usize, width: f64, ctx: *u8) -> f64 {
+    RHW_ASKED = RHW_ASKED + (1 as i64);
+    RHW_LAST_WIDTH = width;
+    if width < 1.0f64 { return 0.0f64; }
+    var lines: f64 = 1.0f64;
+    var fits: f64 = width;
+    while fits < 400.0f64 { lines = lines + 1.0f64; fits = fits + width; }
+    return lines * 20.0f64;
+}
+
+// Declines everything: the width-less form (or the measurement) must answer.
+fn rhw_declines(index: usize, width: f64, ctx: *u8) -> f64 { return 0.0f64; }
+
+fn rhw_row(index: usize, ctx: *u8) -> core::Node {
+    RHW_BUILDS = RHW_BUILDS + (1 as i64);
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("row", key: ""));
+    return core::column(b, key: "");
+}
+
+fn rhw_list(count: usize, at: fn(usize, f64, *u8) -> f64) -> core::Node {
+    var n: core::Node = list::list(key: "rhw", uneven_rows: true);
+    let p: *core::Node = #addr_of(n);
+    match list::find("rhw", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(rhw_row);
+            let b: list::List = a.set_count(count);
+            let _c: list::List = b.set_row_height_at(at);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return n;
+}
+
+#[test]
+fn a_lists_width_told_height_is_handed_the_column_width_it_is_laid_out_at() {
+    backend::install();
+    RHW_ASKED = 0 as i64;
+    RHW_BUILDS = 0 as i64;
+    var n: core::Node = rhw_list(50 as usize, rhw_wrapped);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+
+    recycler::set_column_width(v, 400.0f64);
+    assert recycler::height_of_row(v, 0 as i64) == 20.0f64;
+    // THE COLUMN'S width, which is what the row is laid out at — the same
+    // number the backend measures a built row against.
+    assert RHW_LAST_WIDTH == recycler::column_width_of(v);
+    assert RHW_LAST_WIDTH == 400.0f64;
+
+    // The width moves, as it does on every frame of a resize, and the SAME
+    // row answers a different height with nothing built and nothing looked up.
+    recycler::set_column_width(v, 200.0f64);
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert RHW_LAST_WIDTH == 200.0f64;
+    recycler::set_column_width(v, 100.0f64);
+    assert recycler::height_of_row(v, 0 as i64) == 80.0f64;
+    assert RHW_BUILDS == (0 as i64);
+    views::view_release(v);
+}
+
+#[test]
+fn a_relists_width_told_height_is_handed_its_item_width() {
+    backend::install();
+    RHW_ASKED = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "rhwr", builder: rlb_row,
+                                       uneven_rows: true, row_height_at: rhw_wrapped);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    recycler::set_column_width(v, 400.0f64);
+    recycler::reset_measure_realises();
+    assert recycler::height_of_row(v, 0 as i64) == 20.0f64;
+    assert RHW_LAST_WIDTH == recycler::column_width_of(v);
+    recycler::set_column_width(v, 200.0f64);
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert RHW_LAST_WIDTH == recycler::column_width_of(v);
+    // Stated, so nothing was realised to learn either height.
+    assert recycler::measure_realises() == (0 as i64);
+}
+
+// The precedence, on the backend: the width-told form is asked first and a
+// decline reaches the width-less form, which is what a list stating both gets.
+#[test]
+fn a_width_told_height_that_declines_falls_to_the_width_less_one() {
+    backend::install();
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    var n: core::Node = sh_list(10 as usize, sh_height);
+    let p: *core::Node = #addr_of(n);
+    match list::find("sh", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _c: list::List = x.set_row_height_at(rhw_declines);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 1 as i64) == 24.0f64;
+    assert SH_ASKED == (2 as i64);
+    assert SH_BUILDS == (0 as i64);
+    views::view_release(v);
+}
+
+// NEGATIVE: a width-told height that declines with NOTHING behind it is the
+// old behaviour exactly — the row is built and measured.
+#[test]
+fn a_width_told_height_that_declines_alone_falls_back_to_building() {
+    backend::install();
+    RHW_BUILDS = 0 as i64;
+    var n: core::Node = rhw_list(10 as usize, rhw_declines);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let h: f64 = recycler::height_of_row(v, 3 as i64);
+    assert h > 0.0f64;
+    assert RHW_BUILDS == (1 as i64);
+    views::view_release(v);
 }

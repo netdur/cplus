@@ -2587,6 +2587,17 @@ ROW_SOURCE_FIELDS = [
     ("row_height_of", "fn(usize, *u8) -> f64", "no_row_height_of",
      "facet — the height of row `i`, answered WITHOUT building it"),
     ("opaque row_height_of_ctx", "*u8", "0 as *u8", None),
+    # THE SAME QUESTION, TOLD THE WIDTH. A wrapped row's height is a function
+    # of how wide it is laid out, and only the backend knows that number — a
+    # table keeps an inset for itself, a grid divides by its columns. Without
+    # it an application answering `row_height_of` had to find its own list in
+    # the tree to read a frame, once PER ROW, on every reload and every frame
+    # of a resize (bugs/closed/facet-relist-row-height-of-omits-width.md).
+    # Asked FIRST when stated; a 0 answer falls through to `row_height_of` and
+    # then to the measurement, so the three compose with no precedence rule.
+    ("row_height_at", "fn(usize, f64, *u8) -> f64", "no_row_height_at",
+     "facet — the height of row `i` laid out `width` wide, answered WITHOUT building it"),
+    ("opaque row_height_at_ctx", "*u8", "0 as *u8", None),
     # WHICH SHAPE row `i` has. A recycling backend vends cells from a pool and
     # hands back whatever scrolled off, so a `bind` — which writes into an
     # EXISTING subtree — is sound only while every row has the same shape. That
@@ -2942,6 +2953,34 @@ def emit_props(rows_by_control, by_type):
            "// Zero means \"no answer\" — the measure pass builds the row instead,\n"
            "// which is what every list did before this could be stated.\n"
            "fn no_row_height_of(row: usize, ctx: *u8) -> f64 { return 0.0f64; }\n"
+           "// The width-told form of the same absence.\n"
+           "fn no_row_height_at(row: usize, width: f64, ctx: *u8) -> f64 { return 0.0f64; }\n"
+           "\n"
+           "// THE STATED HEIGHT OF DATA ROW `at`, LAID OUT `width` WIDE — or 0 for\n"
+           "// \"nobody said\", which a backend answers by building and measuring.\n"
+           "// The one place the precedence lives, so every recycling backend and\n"
+           "// every control that states heights reads it the same way: the\n"
+           "// width-told answer first, the width-less one second. A stated height\n"
+           "// under one point is a decline, exactly as it always was.\n"
+           "fn stated_row_height(at_fn: fn(usize, f64, *u8) -> f64, at_ctx: *u8,\n"
+           "                     of_fn: fn(usize, *u8) -> f64, of_ctx: *u8,\n"
+           "                     at: usize, width: f64) -> f64 {\n"
+           "    if at_fn != no_row_height_at {\n"
+           "        let h: f64 = at_fn(at, width, at_ctx);\n"
+           "        if h >= 1.0f64 { return h; }\n"
+           "    }\n"
+           "    if of_fn != no_row_height_of {\n"
+           "        let h2: f64 = of_fn(at, of_ctx);\n"
+           "        if h2 >= 1.0f64 { return h2; }\n"
+           "    }\n"
+           "    return 0.0f64;\n"
+           "}\n"
+           "\n"
+           "// Is a height stated at all, by either form?\n"
+           "fn states_row_height(at_fn: fn(usize, f64, *u8) -> f64,\n"
+           "                     of_fn: fn(usize, *u8) -> f64) -> bool {\n"
+           "    return at_fn != no_row_height_at || of_fn != no_row_height_of;\n"
+           "}\n"
            "// Every row the same SHAPE, which is what one reuse pool means and\n"
            "// what a list without kinds has always promised.\n"
            "fn no_row_kind(row: usize, ctx: *u8) -> usize { return 0 as usize; }\n"
@@ -4060,6 +4099,21 @@ def emit_control(row_type, merged):
         o.append("        { (*p).row_height_of_ctx = row_height_of_ctx };\n")
         o.append("        core::touch(this._p, P_ROW);\n")
         o.append("        return this;\n    }\n")
+        o.append("\n    // THE HEIGHT OF ROW `at` LAID OUT `width` WIDE, WITHOUT BUILDING IT.\n")
+        o.append("    //\n")
+        o.append("    // `set_row_height_of` with the one number a wrapped row needs. The\n")
+        o.append("    // width is the row's own — what the backend will lay it out at, inset\n")
+        o.append("    // and columns already taken off — so the answer needs no `find` and no\n")
+        o.append("    // cached frame, and it is right on every frame of a resize. Asked\n")
+        o.append("    // before `row_height_of`; answer 0 to decline a row.\n")
+        o.append(f"    fn set_row_height_at(this, f: fn(usize, f64, *u8) -> f64,\n")
+        o.append(f"                         row_height_at_ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).row_height_at = f };\n")
+        o.append("        { (*p).row_height_at_ctx = row_height_at_ctx };\n")
+        o.append("        core::touch(this._p, P_ROW);\n")
+        o.append("        return this;\n    }\n")
         o.append("\n    // ROW `at` CHANGED IN PLACE — same count, same sequence, new content.\n")
         o.append("    // Without this the only way to say it is a row/count write, and a\n")
         o.append("    // recycling backend answers one of those by discarding every measured\n")
@@ -4656,6 +4710,8 @@ fn relist[T](
     row_height_of: fn(usize, *u8) -> f64 = props::no_row_height_of,
     row_height_of_ctx: *u8 = 0 as *u8,
     columns: usize = 1 as usize,
+    row_height_at: fn(usize, f64, *u8) -> f64 = props::no_row_height_at,
+    row_height_at_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     // TURBOFISH, and it is not optional here. Inference DOES read `T` off a
     // bare `ref rows: ObsVec[T]` place when the caller's collection is
@@ -4670,7 +4726,9 @@ fn relist[T](
                                  uneven_rows: uneven_rows,
                                  row_height_of: row_height_of,
                                  row_height_of_ctx: row_height_of_ctx,
-                                 columns: columns);
+                                 columns: columns,
+                                 row_height_at: row_height_at,
+                                 row_height_at_ctx: row_height_at_ctx);
 }
 """
 
