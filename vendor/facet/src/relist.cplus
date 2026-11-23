@@ -52,6 +52,40 @@ import "./props" as props;
 import "./band" as band;
 import "./vocabulary" as vocab;
 
+// Where a scrolling list is, along its scroll axis. All three in points.
+struct ScrollMetrics {
+    // How far the viewport's leading edge is from the content's.
+    offset: f64,
+    // How much of the content is visible.
+    viewport: f64,
+    // How much content there is.
+    content: f64,
+}
+
+impl ScrollMetrics {
+    fn zero() -> ScrollMetrics {
+        return ScrollMetrics { offset: 0.0f64, viewport: 0.0f64, content: 0.0f64 };
+    }
+
+    // How far there is still to scroll. Never negative: content shorter than
+    // the viewport is zero from its end, and so is an overscroll bounce.
+    fn distance_to_end(this) -> f64 {
+        let d: f64 = this.content - (this.offset + this.viewport);
+        if d < 0.0f64 { return 0.0f64; }
+        return d;
+    }
+
+    fn is_at_end(this, slack: f64 = 24.0f64) -> bool {
+        return this.distance_to_end() <= slack;
+    }
+}
+
+// The backend's reader for `Relist::scroll_metrics`. One per process, like
+// every other install: a backend is.
+static METRICS_FN: fn(*core::Node) -> ScrollMetrics = #zero::[fn(*core::Node) -> ScrollMetrics]();
+
+fn set_scroll_metrics_fn(f: fn(*core::Node) -> ScrollMetrics) { METRICS_FN = f; return; }
+
 // The next free hand-written kind. symbol 1000, tree 1001, split 1002,
 // window_buttons 1003, text_button 1004.
 const K_RELIST: u32 = 1005u32;
@@ -70,6 +104,11 @@ const P_COLUMNS: u64 = 8u64;
 // that carries it out and the index goes back to -1, so a later unrelated
 // write does not scroll the list a second time.
 const P_SCROLL_TO: u64 = 4u64;
+// SCROLL TO THE VERY END — the last pixel, not the top of the last row. Its
+// own bit, because it is a different command from `scroll_to(last)`: when the
+// last row is taller than the viewport, bringing that row "into view" shows
+// its top and leaves the newest lines below the fold.
+const P_SCROLL_TO_END: u64 = 64u64;
 
 // Zero and one both mean a single column, which is a list — the same reading
 // `collection`'s own column verb gives zero, and the same reading the contract
@@ -180,6 +219,8 @@ struct RelistProps {
     live: vec::Vec[*core::Node],
     // WHICH ROW TO BRING INTO VIEW, or -1 for none. Consumed by the apply.
     scroll_to_index: i64,
+    // The pending `scroll_to_end`, taken by the backend like the index above.
+    scroll_to_end: bool,
     // HOW MANY COLUMNS A LINE HOLDS. One is a list.
     //
     // ON THE ELEMENT, AND THAT NEEDS A REASON, because almost nothing else is.
@@ -216,6 +257,7 @@ impl RelistProps {
             sub: events::SignalSubscription[obs_vec::Change]::none(),
             live: vec::new::[*core::Node](),
             scroll_to_index: -1 as i64,
+            scroll_to_end: false,
             columns: 1 as usize,
         };
     }
@@ -551,6 +593,63 @@ impl Relist {
         { (*p).scroll_to_index = at as i64 };
         core::touch(this._p, P_SCROLL_TO);
         return this;
+    }
+
+    // SCROLL TO THE END OF THE CONTENT — the last pixel. What a transcript
+    // does when a reply is streaming in: `scroll_to(last)` brings the last row
+    // INTO VIEW, which for a row taller than the viewport means its top, and
+    // the words that just arrived are below the fold.
+    //
+    // Pair it with `is_at_end()` so the reader keeps the scroll bar: ask
+    // BEFORE the write, follow only if they were already there.
+    //
+    //     let follow: bool = rows.is_at_end();
+    //     this.append_chunk(text);
+    //     if follow { let _r: relist::Relist = rows.scroll_to_end(); }
+    //
+    // A command, like `scroll_to`: carried out once, on the pass that applies
+    // the row change it was issued with, so the new content exists by then.
+    fn scroll_to_end(this) -> Relist {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return this; }
+        { (*p).scroll_to_end = true };
+        core::touch(this._p, P_SCROLL_TO_END);
+        return this;
+    }
+
+    // The backend's half of `scroll_to_end`: true once, then false.
+    fn take_scroll_to_end(this) -> bool {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return false; }
+        let want: bool = { (*p).scroll_to_end };
+        { (*p).scroll_to_end = false };
+        return want;
+    }
+
+    // WHERE THE SCROLLER IS: the offset from the start, the viewport's extent
+    // and the content's, along the axis the list scrolls. ASKED of the
+    // backend each time, not stored — the answer moves on every scroll, resize
+    // and row change, and a copy would be stale by the next frame.
+    //
+    // With no backend, or before the list is mounted, it answers zeroes —
+    // which `is_at_end` reads as "at the end", because a list with nothing to
+    // scroll has nowhere else to be.
+    fn scroll_metrics(this) -> ScrollMetrics {
+        let f: fn(*core::Node) -> ScrollMetrics = METRICS_FN;
+        if f.is_null() { return ScrollMetrics::zero(); }
+        return f(this._p);
+    }
+
+    // IS THE READER AT THE END — within `slack` points of it? The question to
+    // ask before a write that grows the content, and the one `observe_scrolled`
+    // could not answer: it says that a scroll happened, not where it left the
+    // viewport.
+    //
+    // `slack` forgives a few points of overscroll and sub-pixel settling; a
+    // reader who scrolled up to re-read something is hundreds of points away,
+    // not twenty.
+    fn is_at_end(this, slack: f64 = 24.0f64) -> bool {
+        return this.scroll_metrics().is_at_end(slack: slack);
     }
 
     // The backend's half: which row to bring into view, and -1 once it has been
@@ -1574,4 +1673,102 @@ fn with_neither_height_stated_the_shared_reader_answers_zero() {
     assert props::stated_row_height(props::no_row_height_at, 0 as *u8,
                                     props::no_row_height_of, 0 as *u8,
                                     3 as usize, 320.0f64) == 0.0f64;
+}
+
+// ---- scroll_to_end and the scroll position -----------------------------------
+//
+// bugs/closed/facet-relist-no-portable-tail-follow-or-scroll-to-end.md.
+
+fn _metrics_mid(n: *core::Node) -> ScrollMetrics {
+    return ScrollMetrics { offset: 300.0f64, viewport: 400.0f64, content: 2000.0f64 };
+}
+
+fn _metrics_end(n: *core::Node) -> ScrollMetrics {
+    return ScrollMetrics { offset: 1590.0f64, viewport: 400.0f64, content: 2000.0f64 };
+}
+
+#[test]
+fn scroll_to_end_is_a_command_and_is_taken_once() {
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    var n: core::Node = relist(rows, key: "se", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    match from(np) {
+        option::Option[Relist]::Some(h) => {
+            assert h.take_scroll_to_end() == false;
+            core::clear_dirty(np);
+            let _r: Relist = h.scroll_to_end();
+            // Its OWN bit — not `scroll_to`'s, which means a different thing.
+            assert (core::dirty_of(np) & P_SCROLL_TO_END) != (0 as u64);
+            assert (core::dirty_of(np) & P_SCROLL_TO) == (0 as u64);
+            assert h.take_scroll_to_end();
+            assert h.take_scroll_to_end() == false;
+            // ...and it leaves a pending `scroll_to` alone.
+            let _s: Relist = h.scroll_to(3 as usize);
+            let _t: Relist = h.scroll_to_end();
+            assert h.take_scroll_to() == (3 as i64);
+            assert h.take_scroll_to_end();
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn the_scroll_position_is_asked_of_the_backend_each_time() {
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    var n: core::Node = relist(rows, key: "sm", builder: _row);
+    match from(#addr_of(n)) {
+        option::Option[Relist]::Some(h) => {
+            set_scroll_metrics_fn(_metrics_mid);
+            let m: ScrollMetrics = h.scroll_metrics();
+            assert m.offset == 300.0f64;
+            assert m.viewport == 400.0f64;
+            assert m.content == 2000.0f64;
+            assert m.distance_to_end() == 1300.0f64;
+            // A reader 1,300 points up is not following the tail.
+            assert h.is_at_end() == false;
+            // Not stored: the next ask reads the backend again.
+            set_scroll_metrics_fn(_metrics_end);
+            assert h.scroll_metrics().distance_to_end() == 10.0f64;
+            assert h.is_at_end();
+            // The slack is the caller's to tighten.
+            assert h.is_at_end(slack: 5.0f64) == false;
+            assert h.is_at_end(slack: 10.0f64);
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+    set_scroll_metrics_fn(#zero::[fn(*core::Node) -> ScrollMetrics]());
+}
+
+// NEGATIVE: with no backend there is nothing to scroll, and that reads as "at
+// the end" — a headless transcript follows its tail rather than refusing to.
+#[test]
+fn with_no_backend_a_relist_is_at_its_end() {
+    set_scroll_metrics_fn(#zero::[fn(*core::Node) -> ScrollMetrics]());
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "sz", builder: _row);
+    match from(#addr_of(n)) {
+        option::Option[Relist]::Some(h) => {
+            let m: ScrollMetrics = h.scroll_metrics();
+            assert m.offset == 0.0f64;
+            assert m.content == 0.0f64;
+            assert h.is_at_end();
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+// NEGATIVE: the arithmetic at its edges. Content shorter than the viewport and
+// an overscroll past the end are both zero from the end, never negative.
+#[test]
+fn distance_to_end_is_never_negative() {
+    let short: ScrollMetrics = ScrollMetrics { offset: 0.0f64, viewport: 400.0f64, content: 120.0f64 };
+    assert short.distance_to_end() == 0.0f64;
+    assert short.is_at_end(slack: 0.0f64);
+    let bounce: ScrollMetrics = ScrollMetrics { offset: 1650.0f64, viewport: 400.0f64, content: 2000.0f64 };
+    assert bounce.distance_to_end() == 0.0f64;
+    let top: ScrollMetrics = ScrollMetrics { offset: 0.0f64, viewport: 400.0f64, content: 2000.0f64 };
+    assert top.distance_to_end() == 1600.0f64;
+    assert top.is_at_end() == false;
 }

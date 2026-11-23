@@ -828,6 +828,38 @@ for.
 | GTK | Pango's generic `monospace` | the platform's documented behaviour; not run |
 | WinUI | — | **not resolved yet**: the name is passed through and falls back to the default face |
 
+## relist: following the tail
+
+A streaming transcript needs to know where its reader is, and to reach the
+very end of its content. Both are on the `relist` cursor:
+
+| | |
+|---|---|
+| `scroll_metrics() -> ScrollMetrics` | `offset`, `viewport`, `content`, in points along the scroll axis — asked of the backend each time |
+| `is_at_end(slack: 24.0) -> bool` | is the reader within `slack` points of the end |
+| `scroll_to_end()` | scroll to the last pixel of the content |
+| `scroll_to(at:)` | bring a row into view (its top, when the row is taller than the viewport) |
+
+```cplus
+let follow: bool = rows.is_at_end();      // BEFORE the write
+this.append_chunk(text);
+if follow { let _r: relist::Relist = rows.scroll_to_end(); }
+```
+
+Ask before the write: growing the content moves the end away from the reader,
+so afterwards nobody is "at the end". A reader who scrolled up is left where
+they are, and scrolling back down re-arms the follow with no state kept by the
+application.
+
+`ScrollMetrics::distance_to_end()` is `content - (offset + viewport)`, never
+negative. With no backend, or before the list is mounted, the metrics are
+zero, which reads as "at the end".
+
+AppKit: tested in a real window. UIKit: built for the simulator, not run; it
+does not account for the adjusted content inset. Android, GTK and WinUI do not
+answer `scroll_metrics` (zeroes, so `is_at_end()` is always true there) and do
+not carry out `scroll_to_end` yet.
+
 ## facet/text_metrics
 
 How big a string is, without building anything — the number a `row_height_at`

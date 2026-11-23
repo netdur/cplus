@@ -1474,6 +1474,10 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
         // what keeps UIKit from raising on an out-of-range index path.
         scroll_to(v, h.take_scroll_to());
     }
+    // `scroll_to_end`: the last pixel, after the rows for the same reason.
+    if (dirty & relist::P_SCROLL_TO_END) != (0 as u64) {
+        if h.take_scroll_to_end() { relist_scroll_to_end(v); }
+    }
     if m != (0 as *RelistMeasure) { { (*m).cols = relist_columns(n) }; }
     // AN ESTIMATE ONLY WHERE MEASURING IS DEAR. An uneven list measures per
     // row, so the table is given an estimate and asks as rows arrive; a
@@ -1486,6 +1490,34 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
         { rt::msg_void_f64(v, rt::sel(#str_ptr("setEstimatedRowHeight:\0")), est) };
     }
     return;
+}
+
+// THE END IS A NUMBER on a UIScrollView: content height less the viewport. The
+// table is laid out first so `contentSize` counts the rows just inserted.
+// NOT ACCOUNTED FOR: `adjustedContentInset` — under a bar or a home indicator
+// the true end is that inset further. Written without a device to check it on.
+fn relist_scroll_to_end(tv: *u8) {
+    if tv == (0 as *u8) { return; }
+    { rt::msg_void(tv, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    let m: relist::ScrollMetrics = scroll_metrics_of(tv);
+    var y: f64 = m.content - m.viewport;
+    if y < 0.0f64 { y = 0.0f64; }
+    { msg_void_point_i8(tv, rt::sel(#str_ptr("setContentOffset:animated:\0")),
+                        rt::Point { x: 0.0f64, y: y }, 0 as i8) };
+}
+
+// A table view IS its scroll view: the bounds' origin is the offset, their
+// height the viewport, `contentSize` the content.
+fn scroll_metrics_of(tv: *u8) -> relist::ScrollMetrics {
+    if tv == (0 as *u8) { return relist::ScrollMetrics::zero(); }
+    let b: rt::Rect = { rt::msg_rect(tv, rt::sel(#str_ptr("bounds\0"))) };
+    let cs: rt::Size = { rt::msg_size(tv, rt::sel(#str_ptr("contentSize\0"))) };
+    return relist::ScrollMetrics { offset: b.y, viewport: b.h, content: cs.h };
+}
+
+// `relist::scroll_metrics`, for the backend hook.
+fn relist_scroll_metrics(n: *core::Node) -> relist::ScrollMetrics {
+    return scroll_metrics_of(core::view_of(n));
 }
 
 // THE ROW A REGRID KEEPS: the first visible line, as an ITEM index under the

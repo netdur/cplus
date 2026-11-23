@@ -632,7 +632,11 @@ Five things about lists that compile wrong:
    wants `set_input_transparent(true)`.
 
 5. **The reader decides where the scroll goes.** Ask whether the view was AT THE
-   END *before* the write and honour that answer after it. Pinned to the bottom,
+   END *before* the write and honour that answer after it — on a `relist`,
+   `let follow: bool = rows.is_at_end();` before, `if follow { rows.scroll_to_end(); }`
+   after. `scroll_to_end` is the last PIXEL; `scroll_to(last)` is the top of the
+   last row, which for a streaming reply taller than the window leaves the
+   newest words below the fold. Pinned to the bottom,
    an arriving row reads as text arriving; anywhere else, following it drags the
    paragraph being read off the screen ten times a second. Scrolling back down
    re-arms it, so the rule needs no state of its own. And when one row REPLACES

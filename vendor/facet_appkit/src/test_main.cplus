@@ -21228,3 +21228,192 @@ fn a_wrapping_label_with_an_explicit_width_is_as_tall_as_its_text_at_that_width(
     backend::uninstall();
     app::reset_default_for_tests();
 }
+
+// ---- relist: where the scroller is, and scrolling to the very end --------------
+//
+// bugs/closed/facet-relist-no-portable-tail-follow-or-scroll-to-end.md. Both
+// in a real window, on a real scroll view: the two things a streaming
+// transcript needs and an application had to import AppKit to get.
+
+static TF_TALL_LAST: bool = false;
+static TF_COUNT: usize = 0 as usize;
+
+// Forty points a row — and, when asked, a LAST row far taller than the window.
+fn tf_height(index: usize, ctx: *u8) -> f64 {
+    if TF_TALL_LAST && (index +% (1 as usize)) == TF_COUNT { return 1200.0f64; }
+    return 40.0f64;
+}
+
+fn tf_open(ref rows: obs_vec::ObsVec[RLEntry], count: i32, root_out: *core::Node) -> *u8 {
+    var i: i32 = 0;
+    while i < count { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    TF_COUNT = count as usize;
+    var b: core::Builder = core::Builder::new();
+    b.add(relist::relist(rows, key: "tf:list", builder: rlb_row, uneven_rows: true,
+                         row_height_of: tf_height).grow(1.0f64));
+    { *root_out = core::column(b, key: "tf:root").align(flex::Align::Stretch) };
+    let win: *u8 = window::open_window(root_out, screen::Chrome::new(title: "tail",
+                                                                     width: 400.0f64, height: 300.0f64));
+    scheduler::tick();
+    return win;
+}
+
+#[test]
+fn a_relist_reports_where_its_scroller_is() {
+    backend::install();
+    app::reset_default_for_tests();
+    TF_TALL_LAST = false;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var root: core::Node = core::column(core::Builder::new(), key: "tf:tmp");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = tf_open(rows, 200, rp);
+    assert win.is_not_null();
+    guard let option::Option[relist::Relist]::Some(list) =
+        relist::find("tf:list", within: rp) else { assert false; return; };
+
+    let top: relist::ScrollMetrics = list.scroll_metrics();
+    // 200 rows of 40 in a window 300 tall: far more content than viewport, and
+    // the reader is at the top of it.
+    assert top.content >= 7900.0f64;
+    assert top.viewport > 100.0f64;
+    assert top.viewport <= 300.0f64;
+    assert top.offset < 1.0f64;
+    assert top.distance_to_end() > 7000.0f64;
+    assert list.is_at_end() == false;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn scroll_to_end_reaches_the_last_pixel_and_is_at_end_says_so() {
+    backend::install();
+    app::reset_default_for_tests();
+    TF_TALL_LAST = false;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var root: core::Node = core::column(core::Builder::new(), key: "tf:tmp");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = tf_open(rows, 200, rp);
+    guard let option::Option[relist::Relist]::Some(list) =
+        relist::find("tf:list", within: rp) else { assert false; return; };
+    assert list.is_at_end() == false;
+
+    let _r: relist::Relist = list.scroll_to_end();
+    scheduler::tick();
+    let end: relist::ScrollMetrics = list.scroll_metrics();
+    assert end.distance_to_end() < 1.0f64;
+    assert end.offset > 7000.0f64;
+    assert list.is_at_end();
+    assert list.is_at_end(slack: 0.5f64);
+
+    // Scrolling back up is seen too — which is what lets an application stop
+    // following the moment the reader does.
+    let _s: relist::Relist = list.scroll_to(0 as usize);
+    scheduler::tick();
+    assert list.is_at_end() == false;
+    assert list.scroll_metrics().offset < 1.0f64;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// THE SECOND HALF OF THE REPORT. The last row is 1,200 points tall in a
+// 300-point window. `scroll_to(last)` brings that row into view — its TOP —
+// and the end of it is still nine hundred points below the fold.
+// `scroll_to_end` is the last pixel.
+#[test]
+fn scroll_to_end_shows_the_end_of_a_row_taller_than_the_window() {
+    backend::install();
+    app::reset_default_for_tests();
+    TF_TALL_LAST = true;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var root: core::Node = core::column(core::Builder::new(), key: "tf:tmp");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = tf_open(rows, 50, rp);
+    guard let option::Option[relist::Relist]::Some(list) =
+        relist::find("tf:list", within: rp) else { assert false; return; };
+
+    let _a: relist::Relist = list.scroll_to(49 as usize);
+    scheduler::tick();
+    let at_row: relist::ScrollMetrics = list.scroll_metrics();
+    assert at_row.distance_to_end() > 500.0f64;
+    assert list.is_at_end() == false;
+
+    let _b: relist::Relist = list.scroll_to_end();
+    scheduler::tick();
+    assert list.scroll_metrics().distance_to_end() < 1.0f64;
+    assert list.is_at_end();
+    TF_TALL_LAST = false;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// THE IDIOM, both ways: ask BEFORE the write, follow only if the reader was
+// already at the end. Pinned, an appended row arrives in view; scrolled up, the
+// same append leaves the reader exactly where they were.
+#[test]
+fn following_the_tail_only_when_the_reader_was_at_the_end() {
+    backend::install();
+    app::reset_default_for_tests();
+    TF_TALL_LAST = false;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var root: core::Node = core::column(core::Builder::new(), key: "tf:tmp");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = tf_open(rows, 100, rp);
+    guard let option::Option[relist::Relist]::Some(list) =
+        relist::find("tf:list", within: rp) else { assert false; return; };
+    let _e: relist::Relist = list.scroll_to_end();
+    scheduler::tick();
+    assert list.is_at_end();
+
+    // PINNED: the reader was at the end, so the new rows are followed.
+    var follow: bool = list.is_at_end();
+    var i: i32 = 0;
+    while i < 10 { let _a: status::Status = rows.append(RLEntry { n: 100 +% i }); i = i +% 1; }
+    TF_COUNT = 110 as usize;
+    if follow { let _f: relist::Relist = list.scroll_to_end(); }
+    scheduler::tick();
+    let after: relist::ScrollMetrics = list.scroll_metrics();
+    assert after.content >= 4300.0f64;            // 110 rows now
+    assert after.distance_to_end() < 1.0f64;
+
+    // SCROLLED UP: the reader is re-reading, so the same append does NOT move
+    // them. This is the half an unconditional `scroll_to(last)` gets wrong.
+    let _u: relist::Relist = list.scroll_to(5 as usize);
+    scheduler::tick();
+    let reading: f64 = list.scroll_metrics().offset;
+    follow = list.is_at_end();
+    assert follow == false;
+    i = 0;
+    while i < 10 { let _a: status::Status = rows.append(RLEntry { n: 200 +% i }); i = i +% 1; }
+    TF_COUNT = 120 as usize;
+    if follow { let _f: relist::Relist = list.scroll_to_end(); }
+    scheduler::tick();
+    let still: relist::ScrollMetrics = list.scroll_metrics();
+    assert still.content >= 4700.0f64;            // the rows did arrive
+    assert still.offset == reading;               // and the reader did not move
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// NEGATIVE: an unmounted relist has no scroller to ask. It answers zeroes,
+// and `scroll_to_end` on it is a command with nothing to carry it out — not
+// a crash.
+#[test]
+fn an_unmounted_relist_answers_zero_metrics() {
+    backend::install();
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    var n: core::Node = relist::relist(rows, key: "tf:loose", builder: rlb_row);
+    match relist::from(#addr_of(n)) {
+        option::Option[relist::Relist]::Some(h) => {
+            let m: relist::ScrollMetrics = h.scroll_metrics();
+            assert m.content == 0.0f64;
+            assert m.viewport == 0.0f64;
+            assert h.is_at_end();
+        }
+        option::Option[relist::Relist]::None => { assert false; }
+    }
+}

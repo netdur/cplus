@@ -30,6 +30,8 @@
 
 import "stdlib/option" as option;
 import "facet/facet" as core;
+import "./recycler" as recycler;
+import "facet/relist" as relist;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/services" as services;
@@ -104,6 +106,7 @@ fn install() {
     theme::set_is_dark_fn(is_dark);
     // facet/text_metrics: a string measured through this backend's own label.
     text_metrics::set_measure_fn(views::measure_text);
+    relist::set_scroll_metrics_fn(recycler::relist_scroll_metrics);
     // The window cursor's platform half. Fewer slots than AppKit fills, and
     // deliberately — see `window::window_host`.
     app_window::install_host(window::window_host());
@@ -133,6 +136,7 @@ fn uninstall() {
     app_window::uninstall_host();
     theme::set_is_dark_fn(0 as fn() -> bool);
     text_metrics::set_measure_fn(0 as fn(str, f64, *text_metrics::Style) -> vocab::Size);
+    relist::set_scroll_metrics_fn(0 as fn(*core::Node) -> relist::ScrollMetrics);
     theme::set_theme_changed_fn(0 as fn());
     INSTALLED = false;
     return;

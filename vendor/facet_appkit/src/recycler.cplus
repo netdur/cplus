@@ -2756,6 +2756,51 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
     // collection view for an item it does not have, and the row band returns
     // early down five different paths.
     grid_apply_scroll(cv, n, dirty);
+    grid_apply_scroll_to_end(cv, n, dirty);
+}
+
+// SCROLL TO THE LAST PIXEL — `relist::scroll_to_end`. After the rows, for the
+// same reason `scroll_to` is: the content this is the end OF has to exist.
+// `grid_scroll_to_bottom` is the scroll the width-change path already makes
+// when it follows its own tail; a command now reaches the same code.
+fn grid_apply_scroll_to_end(cv: *u8, n: *core::Node, dirty: u64) {
+    if (dirty & relist::P_SCROLL_TO_END) == (0 as u64) { return; }
+    var want: bool = false;
+    match relist::from(n) {
+        option::Option[relist::Relist]::Some(h) => { want = h.take_scroll_to_end(); }
+        option::Option[relist::Relist]::None => { }
+    }
+    if !want { return; }
+    let s: *RowSource = source_of(cv);
+    if s.is_null() { return; }
+    grid_scroll_to_bottom(cv, s);
+}
+
+// WHERE THE SCROLLER IS — `relist::scroll_metrics`. Read off the scroll view
+// that encloses the collection view: the clip view's bounds are the viewport
+// (their origin is the offset) and the collection view's frame is the content.
+// A list not in a scroll view yet answers zeroes, which reads as "at the end".
+fn relist_scroll_metrics(n: *core::Node) -> relist::ScrollMetrics {
+    let v: *u8 = core::view_of(n);
+    if v.is_null() { return relist::ScrollMetrics::zero(); }
+    let cv: *u8 = grid_of(v);
+    if cv.is_null() { return relist::ScrollMetrics::zero(); }
+    let esv: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+    if esv.is_null() { return relist::ScrollMetrics::zero(); }
+    let vis: rt::Rect = { rt::msg_rect(esv, rt::sel(#str_ptr("documentVisibleRect\0"))) };
+    // THE LAYOUT'S content size, not the collection view's frame. The frame is
+    // only brought up to date by a layout pass (or by `grid_fit_to_content`),
+    // so right after rows are appended it still has the OLD height — measured:
+    // ten rows appended to a list scrolled away from its end left the frame at
+    // 4400 where the content was 4800. The layout object answers for the rows
+    // it has been told about, which is the question.
+    var content: f64 = { rt::msg_rect(cv, rt::sel(#str_ptr("frame\0"))) }.h;
+    let lay: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("collectionViewLayout\0"))) };
+    if lay.is_not_null() {
+        let cs: rt::Size = { rt::msg_size(lay, rt::sel(#str_ptr("collectionViewContentSize\0"))) };
+        if cs.h > 0.0f64 { content = cs.h; }
+    }
+    return relist::ScrollMetrics { offset: vis.y, viewport: vis.h, content: content };
 }
 
 // BRING A ROW INTO VIEW — the companion to `find`, and what makes "only
