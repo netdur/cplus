@@ -220,6 +220,14 @@ runs the full width, under the sidebar), so the divider position is read from
 split view, so anything addressing the split itself goes through
 `geometry::split_view_of`.
 
+`collapse` takes the two routes too. A plain split writes the divider to the
+edge, and the delegate answers no floor or ceiling while a pane is collapsed —
+`setPosition:` consults it exactly as a drag does, so a floor held there kept a
+collapsed pane on screen at its minimum. A controller-backed split sets
+`NSSplitViewItem.collapsed` instead: the item's `minimumThickness` would hold a
+divider write the same way, and `canCollapse` (off, see above) only governs
+what the user can do.
+
 A split with no role takes exactly the path it always took: this package's own
 `FacetSplitView`, its delegate, and no toolbar the tree did not ask for.
 

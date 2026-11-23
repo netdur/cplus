@@ -261,6 +261,11 @@ fn split(
     if d.is_not_null() {
         { (*d).key = text::from_str(key) };
         { (*d).kind = K_SPLIT };
+        // EACH PANE IS A NATIVE SLOT. A bare `column { header body }` as a
+        // pane used to get no view, so its two children went into the split as
+        // panes two and three (bugs/closed/facet-split-unkeyed-pane-skips-
+        // backing-view.md). The mount walk reads this and backs every pane.
+        { (*d).children_fill_slots = true };
         match box::new::[SplitProps](p) {
             option::Option[box::Box[SplitProps]]::Some(bx) => {
                 { (*d).props = bx.into_raw() };
@@ -597,4 +602,97 @@ fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[Spli
         option::Option[*core::Node]::Some(p) => from(p),
         option::Option[*core::Node]::None => option::Option[Split]::None,
     };
+}
+
+// ---- a pane is a native slot -------------------------------------------------
+//
+// bugs/closed/facet-split-unkeyed-pane-skips-backing-view.md. Against the fake
+// renderer, which backs a bare container exactly when a real backend does.
+
+fn sp_leaf(key: str) -> core::Node {
+    return core::node_with(key, 1 as u32, 0 as *u8, core::no_release);
+}
+
+fn sp_bare_pane_tree(as_split: bool) -> core::Node {
+    var main: core::Builder = core::Builder::new();
+    main.add(sp_leaf("header"));
+    main.add(sp_leaf("body"));
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "side"));
+    b.add(core::column(main));                       // unkeyed, unpainted
+    if as_split { return split(b, key: "sp"); }
+    return core::column(b, key: "sp");
+}
+
+#[test]
+fn an_unkeyed_pane_of_a_split_is_backed_by_the_mount_walk() {
+    mount::fr_reset();
+    mount::install(mount::fr_renderer());
+    var root: core::Node = sp_bare_pane_tree(true);
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    // split + side + THE BARE PANE + header + body.
+    assert mount::FR_CREATES == 5;
+    match core::child_of(rp, 1 as usize) {
+        option::Option[*core::Node]::Some(pane) => {
+            assert core::fills_slot(pane);
+            assert core::view_of(pane).is_not_null();
+            // The header went into the pane, not into the split.
+            // (side, pane) -> split, then (header, body) -> pane: the last
+            // insert's host is the pane's own view.
+            let hosts: usize = mount::FR_INS_HOSTS.count();
+            assert hosts == (4 as usize);
+            match mount::FR_INS_HOSTS.at(hosts -% (1 as usize)) {
+                option::Option[u64]::Some(h) => {
+                    assert h == (#addr(core::view_of(pane)) as u64);
+                }
+                option::Option[u64]::None => { assert false; }
+            }
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::uninstall();
+}
+
+// NEGATIVE: the same tree under a plain column. The bare container costs no
+// view and its children pass through, as they always have.
+#[test]
+fn an_unkeyed_child_of_a_plain_container_is_still_passed_through() {
+    mount::fr_reset();
+    mount::install(mount::fr_renderer());
+    var root: core::Node = sp_bare_pane_tree(false);
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    assert mount::FR_CREATES == 4;
+    match core::child_of(rp, 1 as usize) {
+        option::Option[*core::Node]::Some(pane) => {
+            assert core::fills_slot(pane) == false;
+            assert core::view_of(pane).is_null();
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::uninstall();
+}
+
+// A pane put into a LIVE split is a slot too — the mark is made on the way in,
+// not only at the first mount.
+#[test]
+fn a_pane_inserted_into_a_live_split_is_backed() {
+    mount::fr_reset();
+    mount::install(mount::fr_renderer());
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "side"));
+    var root: core::Node = split(b, key: "sp");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    var main: core::Builder = core::Builder::new();
+    main.add(sp_leaf("late"));
+    assert mount::add_child(rp, core::column(main));
+    match core::child_of(rp, 1 as usize) {
+        option::Option[*core::Node]::Some(pane) => {
+            assert core::view_of(pane).is_not_null();
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::uninstall();
 }

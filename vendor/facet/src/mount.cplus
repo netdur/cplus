@@ -442,6 +442,9 @@ fn mount_walk(n: *core::Node, host: *u8, slot: usize, ref q: vec::Vec[*core::Nod
     // Asking the FLAG rather than "is there a view already" is what makes this
     // safe to re-mount: a node the walk mounted before also has a view, and
     // that one must still be replaced.
+    // A slot host's children are marked BEFORE any of them is created, so the
+    // backend's `wants_view` sees the mark when the walk reaches each one.
+    core::claim_slots(n);
     let create: fn(*u8, *core::Node) -> *u8 = RENDERER.create;
     let adopted: bool = core::view_is_adopted(n);
     var v: *u8 = 0 as *u8;
@@ -650,7 +653,7 @@ fn fr_reset() {
 fn fr_create(ctx: *u8, n: *core::Node) -> *u8 {
     let kind: u32 = core::kind_of(n);
     let keyed: bool = { (*n).key() } != "";
-    if kind == (0 as u32) && !keyed { return 0 as *u8; }
+    if kind == (0 as u32) && !keyed && !core::fills_slot(n) { return 0 as *u8; }
     // THE WINDOW DECLARATIONS GET NO VIEW, which is what every real backend
     // answers (`wants_view` is false for all three) and what the fake used to
     // get wrong. Backing them here made the conformance test disagree with the
@@ -1519,6 +1522,9 @@ fn insert_child(parent: *core::Node, take child: core::Node, at: usize) -> bool 
         placed = { (*parent).insert_child(child, at: index) }.is_ok();
     }
     if !placed { return false; }
+    // A pane added to a live slot host is as much a slot as one it was built
+    // with.
+    core::claim_slots(parent);
     // Live parent: create the views and put them in the host at the right
     // native slot. Headless (or an unmounted parent) still sets attach flags
     // and rides the M4 queue, exactly like set_content.

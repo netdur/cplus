@@ -2962,6 +2962,21 @@ fn set_item_bounds(items: vec::Vec[ak::SplitViewItem], slot: usize, lo: f64, hi:
     }
 }
 
+// Written only on a change: this runs from `settle_split_inner`, after every
+// layout walk, and an unconditional write would relayout the controller each
+// time (the 68,954-settles shape again).
+fn set_item_collapsed(ctrl: *u8, slot: usize, want: bool) {
+    let items: vec::Vec[ak::SplitViewItem] =
+        ak::SplitViewController::from_raw(ctrl).split_view_items();
+    match items.at_ptr(slot) {
+        option::Option[*ak::SplitViewItem]::Some(it) => {
+            let item: ak::SplitViewItem = ak::SplitViewItem::from_raw({ (*it).raw() });
+            if item.is_collapsed() != want { item.set_collapsed(want); }
+        }
+        option::Option[*ak::SplitViewItem]::None => { }
+    }
+}
+
 fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     let p: *split::SplitProps = props_of(n, split::K_SPLIT) as *split::SplitProps;
     if p.is_null() { return; }
@@ -3193,6 +3208,19 @@ fn settle_split_inner(n: *core::Node) {
     // plain split `v` IS the split view and its panes are all it arranges, so
     // nothing there changes.
     let sv: *u8 = s.as_view().raw();
+    // A CONTROLLER-BACKED SPLIT COLLAPSES THROUGH ITS ITEM. The items carry
+    // `minimumThickness`, which holds a divider write exactly as the delegate's
+    // floor held it on a plain split, and a sidebar is not a pane to squeeze to
+    // nothing anyway: `NSSplitViewItem.collapsed` is how AppKit hides one, and
+    // it is independent of `canCollapse` (the USER's ability to, which stays
+    // off). The divider is left alone while an item is collapsed — there is no
+    // position to assert on a split showing one pane.
+    let ctrl: *u8 = geom::controller_of_split(v);
+    if ctrl.is_not_null() {
+        set_item_collapsed(ctrl, 0 as usize, { (*p).collapsed_leading });
+        set_item_collapsed(ctrl, 1 as usize, { (*p).collapsed_trailing });
+        if { (*p).collapsed_leading } || { (*p).collapsed_trailing } { return; }
+    }
     let panes: u64 = { rt::msg_u64({ rt::msg_id(sv, rt::sel(#str_ptr("arrangedSubviews\0"))) },
                                    rt::sel(#str_ptr("count\0"))) };
     if panes >= (2 as u64) {

@@ -69,6 +69,9 @@ fn wants_view(n: *core::Node) -> bool {
     // as the menu's preview — so without one the menu is built, retained and
     // dropped, and there is not even a rectangle for the press to land on.
     if menus::wants_menu(n) { return true; }
+    // A pane of a slot host (a split) is a native slot whether or not anything
+    // else about it asks for a view — see `core::Data.children_fill_slots`.
+    if core::fills_slot(n) { return true; }
     return { (*n).key() } != "";
 }
 

@@ -1010,6 +1010,12 @@ fn min_coord_imp(self_obj: *u8, cmd: *u8, sv: *u8, proposed: f64, idx: i64) -> f
     if n.is_null() { return proposed; }
     let p: *split::SplitProps = split_props_of(n);
     if p.is_null() { return proposed; }
+    // A COLLAPSE IS NOT A DRAG. `settle_split` writes the collapsed position
+    // through `setPosition:`, and AppKit asks this floor about that write as
+    // it does about a drag — so answering `min_leading` put a collapsed pane
+    // back on screen at its minimum while flex had it at zero. Collapsed, the
+    // divider may go to either end.
+    if { (*p).collapsed_leading } || { (*p).collapsed_trailing } { return proposed; }
     let lo: f64 = split::floor_with_max({ (*p).min_leading }, { (*p).max_trailing },
                                         split_extent_of(sv));
     if lo > proposed { return lo; }
@@ -1031,6 +1037,8 @@ fn max_coord_imp(self_obj: *u8, cmd: *u8, sv: *u8, proposed: f64, idx: i64) -> f
     if n.is_null() { return proposed; }
     let p: *split::SplitProps = split_props_of(n);
     if p.is_null() { return proposed; }
+    // The mirror of the floor's collapse rule above.
+    if { (*p).collapsed_leading } || { (*p).collapsed_trailing } { return proposed; }
     let keep: f64 = { (*p).min_trailing };
     var ceiling: f64 = 0.0f64;      // 0 = none, the shared convention
     if keep > 0.0f64 { ceiling = split_extent_of(sv) - keep; }

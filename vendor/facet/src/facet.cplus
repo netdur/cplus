@@ -84,6 +84,15 @@ struct Data {
     // first — so it overwrote both, and every adopted native widget was
     // replaced by an empty container the instant it was mounted.
     view_adopted: bool,
+    // SLOTS. Some hosts give each direct child a native slot of its own — a
+    // split's two panes are the case that exists — and for those a child that
+    // gets no view is not "a column that costs nothing", it is its children
+    // spilling into the host as extra slots. `children_fill_slots` is the
+    // host's half, set by its constructor; `fills_slot` is the child's, set by
+    // the mount walk on the way down, and a backend's `wants_view` reads it.
+    // Two fields because a node cannot ask who its parent is.
+    children_fill_slots: bool,
+    fills_slot: bool,
     // HOW to build the adopted view, for a caller that has a recipe rather
     // than an object. 0 means "the caller brought the view itself", which is
     // `adopt_native`'s eager form and stays the terminal widget's case.
@@ -268,7 +277,7 @@ fn ensure_data(n: *Node) -> *Data {
     let fresh: Data = Data { key: text::new(), slot: text::new(), tab_symbol: 0u32, tab_title: text::new(), kind: K_NODE, props: 0 as *u8,
                              release: no_release, common: props::CommonProps::new(),
                              view: 0 as *u8, view_release: no_release,
-                             view_adopted: false,
+                             view_adopted: false, children_fill_slots: false, fills_slot: false,
                              native_create: 0 as fn(*u8) -> *u8,
                              native_create_ctx: 0 as *u8,
                              native_measure: 0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size,
@@ -295,7 +304,7 @@ fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
     let d: Data = Data { key: text::from_str(key), slot: text::new(), tab_symbol: 0u32, tab_title: text::new(), kind: kind, props: props_ptr,
                          release: release, common: props::CommonProps::new(),
                          view: 0 as *u8, view_release: no_release,
-                         view_adopted: false,
+                         view_adopted: false, children_fill_slots: false, fills_slot: false,
                          native_create: 0 as fn(*u8) -> *u8,
                          native_create_ctx: 0 as *u8,
                          native_measure: 0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size,
@@ -450,6 +459,44 @@ fn view_is_adopted(n: *Node) -> bool {
     let d: *Data = { (*n).data() };
     if d.is_null() { return false; }
     return { (*d).view_adopted };
+}
+
+// The host's half of the slot rule (see `Data.children_fill_slots`). Called by
+// the constructor of a control whose direct children are native slots.
+fn set_children_fill_slots(n: *Node) {
+    let d: *Data = ensure_data(n);
+    if d.is_null() { return; }
+    { (*d).children_fill_slots = true };
+}
+
+// Does this node fill a native slot of its parent, and so need a view of its
+// own whatever else is true of it? A backend's `wants_view` asks.
+fn fills_slot(n: *Node) -> bool {
+    if n.is_null() { return false; }
+    let d: *Data = { (*n).data() };
+    if d.is_null() { return false; }
+    return { (*d).fills_slot };
+}
+
+// Mark every direct child of a slot host. A no-op on any other node, so the
+// mount paths call it without asking what the parent is.
+fn claim_slots(parent: *Node) {
+    if parent.is_null() { return; }
+    let pd: *Data = { (*parent).data() };
+    if pd.is_null() { return; }
+    if !{ (*pd).children_fill_slots } { return; }
+    var i: usize = 0 as usize;
+    let count: usize = { (*parent).child_count() };
+    while i < count {
+        match child_of(parent, i) {
+            option::Option[*Node]::Some(c) => {
+                let cd: *Data = ensure_data(c);
+                if cd.is_not_null() { { (*cd).fills_slot = true }; }
+            }
+            option::Option[*Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
 }
 
 fn view_of(n: *Node) -> *u8 {

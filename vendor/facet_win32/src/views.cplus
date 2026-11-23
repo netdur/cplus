@@ -77,6 +77,9 @@ fn wants_view(n: *core::Node) -> bool {
     if kind != core::K_NODE { return true; }
     if gestures::has_gestures(n) { return true; }
     if wants_painting(n) { return true; }
+    // A pane of a slot host (a split) is a native slot whether or not anything
+    // else about it asks for a view — see `core::Data.children_fill_slots`.
+    if core::fills_slot(n) { return true; }
     return { (*n).key() } != "";
 }
 

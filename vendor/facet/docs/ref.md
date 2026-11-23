@@ -221,6 +221,19 @@ live drag, so writing `set_position` back from it puts two writers on one
 number: the panes stop at your bound while the divider keeps following the
 cursor, and the drag ends wherever the last write landed.
 
+**A collapse is not bound by the minimum.** `s.collapse(split::Pane::Leading)`
+takes the pane to nothing on screen whatever `min_leading` says, and `expand`
+puts the divider back where it was with the minimum intact — the minimum is a
+limit on a drag, not on a collapse. It is the same call for a
+`PaneRole::Sidebar` pane: the platform hides its sidebar its own way, and a
+window resize still cannot collapse one.
+
+**A pane needs no key.** Each direct child of a `split` is a pane and gets a
+view of its own, so `split { column(key: "side") { … } column { header body } }`
+is two panes. (Elsewhere a bare, unkeyed container costs no view and its
+children pass through to the nearest host; a pane is the exception because the
+split counts its children as panes.)
+
 When a minimum and a maximum contradict each other, the minimum wins. A divider
 pushed past a far bound can be dragged back; one pinned at zero width cannot.
 

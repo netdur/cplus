@@ -15281,6 +15281,256 @@ fn a_settled_split_places_its_panes_inside_the_maximum() {
     }
 }
 
+// ---- a split's panes are SLOTS, and a collapse is a collapse -----------------
+//
+// bugs/closed/facet-split-unkeyed-pane-skips-backing-view.md and
+// bugs/closed/facet-split-collapse-clamped-by-min-and-sidebar-role.md. Both are
+// asserted on NATIVE frames in a real window: the flex tree was right in each
+// case and AppKit was not, which is exactly the disagreement a node-only
+// assertion cannot see.
+
+fn sp_arranged_count(sv: *u8) -> u64 {
+    return { rt::msg_u64({ rt::msg_id(sv, rt::sel(#str_ptr("arrangedSubviews\0"))) },
+                         rt::sel(#str_ptr("count\0"))) };
+}
+
+fn sp_arranged_frame(sv: *u8, at: u64) -> rt::Rect {
+    let v: *u8 = { rt::msg_id_u64({ rt::msg_id(sv, rt::sel(#str_ptr("arrangedSubviews\0"))) },
+                                  rt::sel(#str_ptr("objectAtIndex:\0")), at) };
+    assert v.is_not_null();
+    return ak::View::from_raw(v).frame();
+}
+
+// `keyed_trailing` false is the shape the report hit: a trailing pane that is
+// a bare `column { header body }`.
+fn sp_two_pane_split(keyed_trailing: bool, min_leading: f64,
+                     role: split::PaneRole) -> core::Node {
+    var side: core::Builder = core::Builder::new();
+    side.add(label::label("side", key: "sp:side:label"));
+    var main: core::Builder = core::Builder::new();
+    main.add(label::label("header", key: "sp:header"));
+    main.add(label::label("body", key: "sp:body"));
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::column(side, key: "sp:side"));
+    b.add(ui::column(main, key: if keyed_trailing { "sp:main" } else { "" }));
+    var sp: core::Node = split::split(b, key: "sp:split", position: 260.0f64,
+                                      min_leading: min_leading, min_trailing: 100.0f64,
+                                      role_leading: role);
+    sp.set_grow(1.0f64);
+    var rb: core::Builder = core::Builder::new();
+    rb.add(sp);
+    return core::column(rb, key: "sp:root").align(flex::Align::Stretch);
+}
+
+#[test]
+fn an_unkeyed_split_pane_still_gets_one_backing_view() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = sp_two_pane_split(false, 200.0f64, split::PaneRole::Content);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "sp-unkeyed",
+                                                               width: 900.0f64, height: 500.0f64));
+    assert win.is_not_null();
+    scheduler::tick();
+    let sv: *u8 = view_of_key(rp, "sp:split");
+    assert sv.is_not_null();
+    // TWO panes. The bare column used to pass `header` and `body` straight
+    // through, so the split view arranged three subviews and treated the
+    // header as the second pane.
+    assert sp_arranged_count(sv) == (2 as u64);
+    // ...and the header sits INSIDE the trailing pane, at its top: the pane is
+    // a flipped container, where it used to be the unflipped split view.
+    let header: *u8 = view_of_key(rp, "sp:header");
+    let body: *u8 = view_of_key(rp, "sp:body");
+    assert header.is_not_null();
+    assert body.is_not_null();
+    let pane: *u8 = { rt::msg_id(header, rt::sel(#str_ptr("superview\0"))) };
+    assert pane != sv;
+    assert { rt::msg_id(body, rt::sel(#str_ptr("superview\0"))) } == pane;
+    assert { rt::msg_id(pane, rt::sel(#str_ptr("superview\0"))) } == sv;
+    assert ak::View::from_raw(header).frame().y < ak::View::from_raw(body).frame().y;
+    assert { rt::msg_i8(pane, rt::sel(#str_ptr("isFlipped\0"))) } != (0 as i8);
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// NEGATIVE: the rule is a split PANE's, not every bare container's. One level
+// down, an unkeyed column still costs no view and passes its children through.
+#[test]
+fn a_bare_container_below_a_pane_is_still_viewless() {
+    backend::install();
+    app::reset_default_for_tests();
+    var inner: core::Builder = core::Builder::new();
+    inner.add(label::label("deep", key: "sp:deep"));
+    var main: core::Builder = core::Builder::new();
+    main.add(ui::column(inner));
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::column(core::Builder::new(), key: "sp:side"));
+    b.add(ui::column(main, key: "sp:main"));
+    var sp: core::Node = split::split(b, key: "sp:split");
+    sp.set_grow(1.0f64);
+    var rb: core::Builder = core::Builder::new();
+    rb.add(sp);
+    var root: core::Node = core::column(rb, key: "sp:root").align(flex::Align::Stretch);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "sp-bare",
+                                                               width: 900.0f64, height: 500.0f64));
+    assert win.is_not_null();
+    let deep: *u8 = view_of_key(rp, "sp:deep");
+    assert deep.is_not_null();
+    // The label's superview is the keyed pane itself: nothing in between.
+    assert { rt::msg_id(deep, rt::sel(#str_ptr("superview\0"))) } == view_of_key(rp, "sp:main");
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn collapsing_a_pane_with_a_minimum_takes_it_to_zero_on_screen() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = sp_two_pane_split(true, 200.0f64, split::PaneRole::Content);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "sp-collapse",
+                                                               width: 900.0f64, height: 500.0f64));
+    assert win.is_not_null();
+    scheduler::tick();
+    let sv: *u8 = view_of_key(rp, "sp:split");
+    assert sv.is_not_null();
+    let before: f64 = sp_arranged_frame(sv, 0 as u64).w;
+    assert before > 259.0f64;
+    assert before < 261.0f64;
+
+    let sp: *core::Node = mount::node("sp:split", within: rp);
+    match split::from(sp) {
+        option::Option[split::Split]::Some(s) => {
+            let _c: split::Split = s.collapse(split::Pane::Leading);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    scheduler::tick();
+    // THE NATIVE FRAME, not `is_collapsed()` and not the node's frame: both of
+    // those already said zero while the pane stood on screen at `min_leading`.
+    assert sp_arranged_frame(sv, 0 as u64).w < 0.5f64;
+    assert frame_of_key(rp, "sp:side").w < 0.5f64;
+
+    // ...and it comes back to where it was, minimum intact.
+    match split::from(sp) {
+        option::Option[split::Split]::Some(s) => {
+            let _e: split::Split = s.expand(split::Pane::Leading);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    scheduler::tick();
+    let after: f64 = sp_arranged_frame(sv, 0 as u64).w;
+    assert after > 259.0f64;
+    assert after < 261.0f64;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn collapsing_the_trailing_pane_takes_it_to_zero_on_screen() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = sp_two_pane_split(true, 200.0f64, split::PaneRole::Content);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "sp-collapse-t",
+                                                               width: 900.0f64, height: 500.0f64));
+    assert win.is_not_null();
+    scheduler::tick();
+    let sv: *u8 = view_of_key(rp, "sp:split");
+    let sp: *core::Node = mount::node("sp:split", within: rp);
+    match split::from(sp) {
+        option::Option[split::Split]::Some(s) => {
+            let _c: split::Split = s.collapse(split::Pane::Trailing);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    scheduler::tick();
+    // `min_trailing` is 100; a collapsed trailing pane is not held at it.
+    assert sp_arranged_frame(sv, 1 as u64).w < 0.5f64;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// NEGATIVE: the minimum still binds a pane that is NOT collapsed. The delegate
+// lets a collapse through; it does not stop answering the floor.
+#[test]
+fn the_divider_delegate_lifts_its_bounds_only_while_collapsed() {
+    backend::install();
+    var n: core::Node = split::split(core::Builder::new(), key: "sp",
+                                     min_leading: 200.0f64, min_trailing: 240.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = armed_split(p, 1000.0f64);
+    let d: *u8 = split_delegate_of(v);
+    assert text_input::min_coord_imp(d, 0 as *u8, v, 0.0f64, 0 as i64) > 199.0f64;
+    assert text_input::max_coord_imp(d, 0 as *u8, v, 1000.0f64, 0 as i64) < 761.0f64;
+    match split::from(p) {
+        option::Option[split::Split]::Some(s) => {
+            let c: split::Split = s.collapse(split::Pane::Leading);
+            assert text_input::min_coord_imp(d, 0 as *u8, v, 0.0f64, 0 as i64) < 0.5f64;
+            let e: split::Split = c.expand(split::Pane::Leading);
+            assert text_input::min_coord_imp(d, 0 as *u8, v, 0.0f64, 0 as i64) > 199.0f64;
+            let t: split::Split = e.collapse(split::Pane::Trailing);
+            assert text_input::max_coord_imp(d, 0 as *u8, v, 1000.0f64, 0 as i64) > 999.0f64;
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    views::view_release(v);
+}
+
+#[test]
+fn collapsing_a_sidebar_pane_hides_it_and_expanding_brings_it_back() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = sp_two_pane_split(true, 200.0f64, split::PaneRole::Sidebar);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "sp-sidebar",
+                                                               width: 900.0f64, height: 500.0f64));
+    assert win.is_not_null();
+    scheduler::tick();
+    let v: *u8 = view_of_key(rp, "sp:split");
+    let ctrl: *u8 = geom::controller_of_split(v);
+    assert ctrl.is_not_null();
+    let items: vec::Vec[ak::SplitViewItem] =
+        ak::SplitViewController::from_raw(ctrl).split_view_items();
+    let item: *u8 = match items.at_ptr(0 as usize) {
+        option::Option[*ak::SplitViewItem]::Some(it) => { (*it).raw() },
+        option::Option[*ak::SplitViewItem]::None => 0 as *u8,
+    };
+    assert item.is_not_null();
+    assert { rt::msg_i8(item, rt::sel(#str_ptr("isCollapsed\0"))) } == (0 as i8);
+
+    let sp: *core::Node = mount::node("sp:split", within: rp);
+    match split::from(sp) {
+        option::Option[split::Split]::Some(s) => {
+            let _c: split::Split = s.collapse(split::Pane::Leading);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    scheduler::tick();
+    assert { rt::msg_i8(item, rt::sel(#str_ptr("isCollapsed\0"))) } != (0 as i8);
+    // A window resize still may not collapse it — that flag is separate and
+    // stays off (`a_sidebar_does_not_collapse_from_a_window_resize`).
+    assert ak::SplitViewItem::from_raw(item).can_collapse_from_window_resize() == false;
+
+    match split::from(sp) {
+        option::Option[split::Split]::Some(s) => {
+            let _e: split::Split = s.expand(split::Pane::Leading);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    scheduler::tick();
+    assert { rt::msg_i8(item, rt::sel(#str_ptr("isCollapsed\0"))) } == (0 as i8);
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
 #[test]
 fn the_drag_source_reports_both_ends_of_a_drag() {
     // `can_drag` armed the source and `on_drop` fired at the destination, but
