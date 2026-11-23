@@ -227,6 +227,10 @@ names are MAUI's: `Micro Caption Small Medium Body Subtitle Large Title Header`.
 `font_size:` still works and wins when set; reach for it only for a size no role
 names.
 
+**Never name a platform's fixed-width face.** `font_family: "Menlo"` is one
+platform's font; `font_family: theme::MONOSPACE` is the system's own
+fixed-width face on whichever platform this is.
+
 **`card` draws nothing.** It is a `column` with HIG spacing — 16pt padding, 8pt
 gap — and no fill, corner or shadow; the surface is the two lines above. Put
 children straight in its block: a padded `column` inside a `card` is 32pt of

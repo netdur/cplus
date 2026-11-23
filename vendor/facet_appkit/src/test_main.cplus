@@ -20933,3 +20933,98 @@ fn a_width_told_height_that_declines_alone_falls_back_to_building() {
     assert RHW_BUILDS == (1 as i64);
     views::view_release(v);
 }
+
+// ---- the generic monospace family ---------------------------------------------
+//
+// bugs/closed/facet-no-portable-monospace-font-token.md. `fontWithName:` has no
+// "monospace", so before this the token fell through to the proportional
+// system font and an application hardcoded "Menlo" instead.
+
+fn mono_font_of(n: *core::Node) -> option::Option[ak::Font] {
+    let v: *u8 = views::create(0 as *u8, n);
+    if v.is_null() { return option::Option[ak::Font]::None; }
+    let f: option::Option[ak::Font] = ak::Control::from_raw(v).font();
+    views::view_release(v);
+    return f;
+}
+
+#[test]
+fn the_monospace_family_resolves_to_the_systems_fixed_width_face() {
+    backend::install();
+    match paint::ns_font(12.0f64, vocab::FontWeight::Default, theme::MONOSPACE) {
+        option::Option[ak::Font]::Some(f) => {
+            assert f.is_fixed_pitch();
+            assert f.point_size() == 12.0f64;
+            // THE SYSTEM'S, not a face this file names: whatever
+            // `monospacedSystemFontOfSize:` answers on this machine.
+            let sys: ak::Font = ak::Font::monospaced_system_font_of_size(12.0f64, 0.0f64);
+            assert f.font_name().view() == sys.font_name().view();
+        }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+    // With no size named it is still the mono face, at the system size.
+    match paint::ns_font(0.0f64, vocab::FontWeight::Default, theme::MONOSPACE) {
+        option::Option[ak::Font]::Some(f) => {
+            assert f.is_fixed_pitch();
+            assert f.point_size() == ak::Font::system_font_size();
+        }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+}
+
+// The weight survives, which a hardcoded face name could not promise: the
+// system mono face has the weights the system font has.
+#[test]
+fn the_monospace_family_keeps_the_weight_it_is_asked_for() {
+    backend::install();
+    let regular: ak::Font = match paint::ns_font(13.0f64, vocab::FontWeight::Regular, theme::MONOSPACE) {
+        option::Option[ak::Font]::Some(f) => f,
+        option::Option[ak::Font]::None => ak::Font::system_font_of_size(13.0f64),
+    };
+    let bold: ak::Font = match paint::ns_font(13.0f64, vocab::FontWeight::Bold, theme::MONOSPACE) {
+        option::Option[ak::Font]::Some(f) => f,
+        option::Option[ak::Font]::None => ak::Font::system_font_of_size(13.0f64),
+    };
+    assert regular.is_fixed_pitch();
+    assert bold.is_fixed_pitch();
+    assert regular.font_name().view() != bold.font_name().view();
+}
+
+// Through a real control, which is the path an application takes.
+#[test]
+fn a_label_with_the_monospace_family_is_drawn_in_a_fixed_width_face() {
+    backend::install();
+    var code: core::Node = label::label("let x = 1;", key: "mono:code",
+                                        font_family: theme::MONOSPACE, font_size: 12.0f64,
+                                        font_scales: false);
+    match mono_font_of(#addr_of(code)) {
+        option::Option[ak::Font]::Some(f) => {
+            assert f.is_fixed_pitch();
+            assert f.point_size() == 12.0f64;
+        }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+}
+
+// NEGATIVE: only the token is the request. No family is the proportional
+// system font; a family the machine does not have falls back to it, as it
+// always did; and a real face name is still that face.
+#[test]
+fn only_the_monospace_token_asks_for_the_fixed_width_face() {
+    backend::install();
+    match paint::ns_font(12.0f64, vocab::FontWeight::Default, "") {
+        option::Option[ak::Font]::Some(f) => { assert f.is_fixed_pitch() == false; }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+    match paint::ns_font(12.0f64, vocab::FontWeight::Default, "No Such Face 9000") {
+        option::Option[ak::Font]::Some(f) => { assert f.is_fixed_pitch() == false; }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+    match paint::ns_font(12.0f64, vocab::FontWeight::Default, "Helvetica") {
+        option::Option[ak::Font]::Some(f) => {
+            assert f.is_fixed_pitch() == false;
+            assert f.font_name().view() == "Helvetica";
+        }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+}

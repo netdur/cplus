@@ -370,6 +370,14 @@ fn ns_font(size: f64, weight: vocab::FontWeight, family: str) -> option::Option[
     if !named_size && !named_weight && !named_family { return option::Option[ak::Font]::None; }
     var pt: f64 = size;
     if !named_size { pt = ak::Font::system_font_size(); }
+    // THE GENERIC MONOSPACE FAMILY is a request for the system's fixed-width
+    // face, not a face name: `fontWithName:` has no "monospace" and would fall
+    // through to the proportional system font. It keeps the weight, which a
+    // named face cannot — the system mono face has every weight the system
+    // font does.
+    if theme::is_monospace(family) {
+        return option::some(ak::Font::monospaced_system_font_of_size(pt, ns_weight(weight)));
+    }
     if named_family {
         match ak::Font::font_with_name(family, pt) {
             option::Option[ak::Font]::Some(f) => { return option::some(f); }

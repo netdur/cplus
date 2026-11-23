@@ -806,6 +806,28 @@ cursor setter. The vocabulary is MAUI's `NamedSize`, and like MAUI's
 A type scale on `Theme` (a brand face, or a tighter ramp, stated once) is not
 built yet. Today a role always resolves to the platform's own scale.
 
+### A fixed-width face: `theme::MONOSPACE`
+
+`font_family` takes a face name, and a face name belongs to one platform —
+"Menlo" exists on Apple systems, "Consolas" on Windows. For code, a diff or a
+file path, ask for the generic family instead:
+
+```cplus
+label(source_line, font_family: theme::MONOSPACE, font_size: 12.0f64)
+```
+
+`theme::MONOSPACE` is the reserved name `"monospace"`. A backend resolves it to
+the platform's own fixed-width system face, keeping the size and weight asked
+for.
+
+| Backend | Resolves to | Status |
+|---|---|---|
+| AppKit | `monospacedSystemFontOfSize:weight:` | tested |
+| UIKit | `monospacedSystemFontOfSize:weight:` | built for the simulator, not run |
+| Android | `Typeface.create("monospace", …)` — the platform's own generic family | the platform's documented behaviour; not run |
+| GTK | Pango's generic `monospace` | the platform's documented behaviour; not run |
+| WinUI | — | **not resolved yet**: the name is passed through and falls back to the default face |
+
 ## facet/bands
 
 The app's size-band vocabulary. A **band** is a named box constraint; a node

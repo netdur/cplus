@@ -315,6 +315,11 @@ fn ui_font(size: f64, named: vocab::NamedSize, weight: vocab::FontWeight, family
             pt = ui::Font::system_font_size();
         }
     }
+    // The generic monospace family: the system's fixed-width face, at the
+    // weight asked for. `fontWithName:` has no "monospace".
+    if theme::is_monospace(family) {
+        return option::some(ui::Font::monospaced_system_font_of_size(pt, ui_weight(weight)));
+    }
     if family != "" {
         match ui::Font::font_with_name(family, pt) {
             option::Option[ui::Font]::Some(named_face) => { return option::some(named_face); }

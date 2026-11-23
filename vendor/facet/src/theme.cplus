@@ -152,6 +152,28 @@ fn theme_fallback(token: u32) -> Color {
     return Color::none();
 }
 
+// ---- the generic monospace family ---------------------------------------------
+//
+// `font_family` names a face, and a face name is a platform's: "Menlo" exists
+// on Apple systems and nowhere else, "Consolas" on Windows. An application
+// drawing code, a diff or a file path wants THE PLATFORM'S fixed-width face and
+// had no portable way to ask — it hardcoded one platform's name, or imported
+// that platform's bindings to look the name up at run time
+// (bugs/closed/facet-no-portable-monospace-font-token.md).
+//
+// `MONOSPACE` is that request: one reserved family name every backend resolves
+// to its own system fixed-width face, at the size and weight asked for.
+//
+//     label(code, font_family: theme::MONOSPACE, font_size: 12.0f64)
+//
+// It is the CSS generic family name, on purpose — Pango and Android already
+// resolve the word themselves, so the token costs those backends nothing.
+const MONOSPACE: str = "monospace";
+
+// Is this family the generic monospace request rather than a face name? The
+// one place the spelling is compared, so no backend carries its own copy.
+fn is_monospace(family: str) -> bool { return family == MONOSPACE; }
+
 // A widget's visual style. Rides on every `Node`; each backend's `apply_style`
 // reads it and applies only the set fields. Paint props (fg/bg/corner/border)
 
@@ -461,4 +483,18 @@ fn a_fallback_is_a_platform_token_wherever_the_platform_has_one() {
     assert theme_fallback(112 as u32).token == Color::control_background().token;
     assert theme_fallback(107 as u32).token == Color::under_page_background().token;
     assert theme_fallback(999 as u32).is_set() == false;
+}
+
+// bugs/closed/facet-no-portable-monospace-font-token.md.
+#[test]
+fn the_monospace_family_is_one_reserved_name() {
+    assert MONOSPACE == "monospace";
+    assert is_monospace(MONOSPACE);
+    assert is_monospace("monospace");
+    // NEGATIVE: a face name is not the generic request, whatever it draws
+    // like — and neither is the empty family, which means "the system face".
+    assert is_monospace("Menlo") == false;
+    assert is_monospace("SF Mono") == false;
+    assert is_monospace("Monospace") == false;
+    assert is_monospace("") == false;
 }
