@@ -31,8 +31,8 @@ call to a named function resolves and the graph's answer is COMPLETE —
 which grep's never is:
 
 ```
-cpc query definition <symbol>     where is it
-cpc query references <symbol>     everywhere it is used
+cpc query def <symbol>            where is it
+cpc query refs <symbol>           everywhere it is used
 cpc query callers <symbol>        who calls it
 cpc query symbols <file>          the outline of a file
 cpc query scope-at <file:line:col> what you can type right there

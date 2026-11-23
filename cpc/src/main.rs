@@ -6662,7 +6662,10 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
     let g = cplus_core::graph::CodeGraph::build(&loaded);
     let arg0 = args.first().map(|s| s.as_str());
     let result = match kind.as_str() {
-        "def" => {
+        // `definition` / `references` are the long spellings every AGENTS.md
+        // written before 2026-11-23 documents; they stay accepted so a project
+        // scaffolded then still navigates by its own instructions.
+        "def" | "definition" => {
             let Some(sym) = arg0 else {
                 eprintln!("cpc query def: expected a SYMBOL");
                 return ExitCode::FAILURE;
@@ -6726,7 +6729,7 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
                 }
             };
         }
-        "refs" => {
+        "refs" | "references" => {
             let Some(sym) = arg0 else {
                 eprintln!("cpc query refs: expected a SYMBOL");
                 return ExitCode::FAILURE;
@@ -9903,8 +9906,8 @@ fn run_init(args: &[OsString]) -> ExitCode {
          call to a named function resolves and the graph's answer is COMPLETE —\n\
          which grep's never is:\n\n\
          ```\n\
-         cpc query definition <symbol>     where is it\n\
-         cpc query references <symbol>     everywhere it is used\n\
+         cpc query def <symbol>            where is it\n\
+         cpc query refs <symbol>           everywhere it is used\n\
          cpc query callers <symbol>        who calls it\n\
          cpc query symbols <file>          the outline of a file\n\
          cpc query scope-at <file:line:col> what you can type right there\n\

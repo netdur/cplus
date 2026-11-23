@@ -494,6 +494,84 @@ fn init_scaffolds_a_named_project() {
     );
 }
 
+/// bugs/closed/cpc-agents-md-documents-invalid-query-verbs.md — the page told
+/// every agent to run `cpc query definition`, and the CLI only knew `def`. A
+/// page that names a verb the binary refuses is worse than no page, so each
+/// `cpc query <kind>` line the scaffold writes is run against the scaffold.
+#[test]
+fn every_query_verb_the_agent_page_documents_is_one_cpc_accepts() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .args(["init", "verbs"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let proj = dir.path().join("verbs");
+    let agents = read(&proj.join("AGENTS.md"));
+
+    let mut kinds: Vec<String> = Vec::new();
+    for line in agents.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("cpc query ") {
+            if let Some(kind) = rest.split_whitespace().next() {
+                kinds.push(kind.to_string());
+            }
+        }
+    }
+    assert!(
+        kinds.len() >= 6,
+        "the page should document the query verbs, found only {kinds:?}"
+    );
+    for kind in &kinds {
+        let arg = match kind.as_str() {
+            "symbols" => "src/main.cplus",
+            "scope-at" | "complete" | "type-at" => "src/main.cplus:1:1",
+            _ => "main",
+        };
+        let q = Command::new(cpc())
+            .args(["query", kind, arg])
+            .current_dir(&proj)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&q.stderr);
+        assert!(
+            !err.contains("unknown query kind"),
+            "AGENTS.md documents `cpc query {kind}`, which cpc refuses: {err}"
+        );
+    }
+    // The two the page used to spell long are the short canonical ones now.
+    assert!(kinds.iter().any(|k| k == "def"), "{kinds:?}");
+    assert!(kinds.iter().any(|k| k == "refs"), "{kinds:?}");
+}
+
+/// A page scaffolded before the fix still says `definition` / `references`;
+/// both stay accepted and answer exactly what the short forms answer.
+#[test]
+fn the_long_query_spellings_answer_what_the_short_ones_do() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .args(["init", "longverbs"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let proj = dir.path().join("longverbs");
+    for (long, short) in [("definition", "def"), ("references", "refs")] {
+        let a = Command::new(cpc()).args(["query", long, "main"]).current_dir(&proj).output().unwrap();
+        let b = Command::new(cpc()).args(["query", short, "main"]).current_dir(&proj).output().unwrap();
+        assert!(
+            !String::from_utf8_lossy(&a.stderr).contains("unknown query kind"),
+            "`cpc query {long}` must be accepted"
+        );
+        assert_eq!(a.status.code(), b.status.code(), "{long} vs {short}");
+        assert_eq!(a.stdout, b.stdout, "{long} vs {short}");
+    }
+    // Negative: a near miss is still refused, and the refusal lists the kinds.
+    let bad = Command::new(cpc()).args(["query", "definitions", "main"]).current_dir(&proj).output().unwrap();
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown query kind"));
+}
+
 #[test]
 fn init_refuses_existing_project() {
     let dir = tempfile::tempdir().unwrap();
