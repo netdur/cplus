@@ -79,6 +79,8 @@ import "./web" as webmod;
 import "./dialogs" as dialogs;
 import "facet/navigation" as navigation;
 import "stdlib/box" as box;
+import "stdlib/thread" as thread;
+import "facet/services" as services;
 import "facet/nav_model" as nav_model;
 import "./clipboard" as clipboard;
 import "./recycler" as recycler;import "facet/web" as web_ui;
@@ -20735,4 +20737,56 @@ fn a_themed_raised_wins_and_the_platform_roles_are_untouched() {
     let k: ThRgba = th_resolved(vocab::Color::control_background(), "NSAppearanceNameDarkAqua");
     assert th_step(c, k) < 0.001f64;
     app::reset_default_for_tests();
+}
+
+// ---- CoalescedHop on the real main queue -------------------------------------
+//
+// bugs/closed/facet-services-no-coalesced-run-on-main.md. The headless tests in
+// facet/services pin the gate; this one pins it against libdispatch — a worker
+// thread asking 2,000 times while the main thread is busy elsewhere.
+
+static CQ_HOP: services::CoalescedHop = #zero::[services::CoalescedHop]();
+static CQ_COALESCED_RUNS: i32 = 0;
+static CQ_PLAIN_RUNS: i32 = 0;
+
+fn cq_drain(ctx: *u8) { CQ_COALESCED_RUNS = CQ_COALESCED_RUNS + 1; return; }
+fn cq_plain(ctx: *u8) { CQ_PLAIN_RUNS = CQ_PLAIN_RUNS + 1; return; }
+
+fn cq_reader(take n: i32) -> i32 {
+    var queued: i32 = 0;
+    var i: i32 = 0;
+    while i < n {
+        if CQ_HOP.schedule() { queued = queued + 1; }
+        services::run_on_main(cq_plain);
+        i = i + 1;
+    }
+    return queued;
+}
+
+#[test]
+fn a_worker_burst_reaches_the_main_thread_as_one_coalesced_turn() {
+    backend::install();
+    CQ_COALESCED_RUNS = 0;
+    CQ_PLAIN_RUNS = 0;
+    CQ_HOP = services::CoalescedHop::new(cq_drain);
+    // The main thread does not turn while the reader is posting — it is here,
+    // joining — so every ask after the first finds the hop already waiting.
+    let h = thread::spawn_with::[i32, i32](2000, cq_reader);
+    let queued: i32 = h.join();
+    assert queued == 1;
+    assert CQ_HOP.is_pending();
+    var turns: i32 = 0;
+    while CQ_PLAIN_RUNS < 2000 && turns < 10000 {
+        scheduler::drain_main_once();
+        turns = turns + 1;
+    }
+    // The SAME burst, both ways: 2,000 plain hops ran 2,000 callbacks, and the
+    // coalesced hop ran once.
+    assert CQ_PLAIN_RUNS == 2000;
+    assert CQ_COALESCED_RUNS == 1;
+    assert CQ_HOP.is_pending() == false;
+    // And it is not spent: the next ask is a new turn.
+    assert CQ_HOP.schedule();
+    scheduler::drain_main_once();
+    assert CQ_COALESCED_RUNS == 2;
 }

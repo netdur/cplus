@@ -856,6 +856,12 @@ watcher firing once per file turns a hundred-file build into a hundred queued
 walks unless the surface holds a guard that drops calls while one is up, cleared
 at completion so the next ask re-reads.
 
+**A reader thread that wakes the UI per event wants `services::CoalescedHop`,
+not `run_on_main`.** `run_on_main` queues every call; a stream of 1,800 events
+is 1,800 main-thread callbacks, and the first one drains the channel. Hold one
+`CoalescedHop` in a `static`, call `schedule()` from the reader, and the burst
+is one turn — with one more for anything that lands while it drains.
+
 **HOW THE ANSWER COMES BACK IS THREE SHAPES; PICK ONE.**
 
 | Shape | For | Runs |

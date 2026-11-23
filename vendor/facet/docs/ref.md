@@ -678,12 +678,21 @@ for a complete screen example and the removed-API migration table.
 | `after(seconds, cb, ctx:) -> Cancellable` | one-shot timer |
 | `observe_size(n, cb, ctx:) -> Cancellable` | fire after every resize |
 | `run_on_main(work, ctx)` | hop to the UI thread |
+| `CoalescedHop::new(work, ctx)` + `.schedule()` | hop to the UI thread at most once per turn, however many times it is asked |
 | `spawn_ui(future)` | a task that resumes on the UI thread; it is detached, so it must OWN what it touches (a `ref this` task is E0515) — for a screen's own state after a delay, hold `after`'s `Cancellable` in the screen |
 | `worker_start(input, f)` | work off the UI thread |
 | `run_job(job, then:, ctx:)` | a cancellable unit with a completion |
 
 A `Cancellable` cancels on drop, so holding it is how you keep an observer
 alive.
+
+`run_on_main` queues every call, which is right for a result and wrong for a
+signal. A reader thread that says "there is something to drain" once per event
+should hold a `CoalescedHop`: `schedule()` queues a hop only when none is
+waiting, and answers whether it did. The gate reopens just before `work` runs,
+so an event that arrives mid-drain gets one more turn and nothing is missed.
+`schedule` is safe from any thread. The hop keeps its own address across the
+turn — hold it in a `static`, or in a struct that does not move and outlives it.
 
 `Job` is the interface `run_job` drives: `run(ref this)` OFF the main thread
 writing staging fields only, `apply(ref this)` ON it installing them. A second

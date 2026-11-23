@@ -90,6 +90,72 @@ fn has_main_hop() -> bool {
     return SCHEDULER.run_on_main.is_not_null();
 }
 
+// ---- a coalesced hop: many asks, one turn ------------------------------------
+//
+// `run_on_main` queues every call. That is right for a result — each one is a
+// different thing to deliver — and wrong for a SIGNAL, where every call means
+// the same thing: "there is something to drain". A reader thread that hops once
+// per event during a burst queues one main-thread callback per event, and the
+// first of them empties the channel: 1,800 replayed notifications became 1,800
+// hops, 1,799 of which found nothing to do
+// (bugs/closed/facet-services-no-coalesced-run-on-main.md).
+//
+// `CoalescedHop` is the gate. `schedule()` hops only if no hop is already
+// waiting; the flag clears just BEFORE `work` runs, so an event that arrives
+// while `work` is draining schedules exactly one more turn and nothing is lost.
+//
+//     static FLUSH: services::CoalescedHop = #zero::[services::CoalescedHop]();
+//     FLUSH = services::CoalescedHop::new(drain_channel);   // once, on main
+//     ...
+//     let _q: bool = FLUSH.schedule();                      // from any thread
+//
+// It keeps its own ADDRESS across the hop, as `run_job` keeps a job's: hold it
+// in a `static` or in a struct that does not move and outlives the hop.
+// `schedule` is safe from any thread; `work` always runs on the main thread.
+struct CoalescedHop {
+    _pending: u64,       // 1 while a hop is queued and has not started
+    _work: fn(*u8),
+    opaque _ctx: *u8,
+}
+
+impl CoalescedHop {
+    fn new(work: fn(*u8), ctx: *u8 = 0 as *u8) -> CoalescedHop {
+        return CoalescedHop { _pending: 0 as u64, _work: work, _ctx: ctx };
+    }
+
+    // Ask for a turn. True when THIS call queued the hop, false when one was
+    // already waiting (the ask is covered by it) or when there is nowhere to
+    // hop to. With no backend nothing is left pending, so installing one later
+    // does not find the gate stuck shut.
+    fn schedule(ref this) -> bool {
+        if this._work.is_null() { return false; }
+        if !has_main_hop() { return false; }
+        let p: *u64 = { #addr_of(this._pending) };
+        if atomic::compare_exchange_u64(p, 0 as u64, 1 as u64, atomic::Ordering::AcqRel)
+           != (0 as u64) {
+            return false;
+        }
+        run_on_main(coalesced_hop_tramp, ctx: { #addr_of(this) } as *u8);
+        return true;
+    }
+
+    // Is a hop queued that has not started yet?
+    fn is_pending(ref this) -> bool {
+        let p: *u64 = { #addr_of(this._pending) };
+        return atomic::load_u64(p, atomic::Ordering::Acquire) != (0 as u64);
+    }
+}
+
+// Main thread. The flag opens FIRST: anything scheduled from here on — by
+// another thread mid-drain, or by `work` itself — gets its own turn.
+fn coalesced_hop_tramp(raw: *u8) {
+    if raw.is_null() { return; }
+    let h: *CoalescedHop = raw as *CoalescedHop;
+    atomic::store_u64({ #addr_of((*h)._pending) }, 0 as u64, atomic::Ordering::Release);
+    let work: fn(*u8) = { (*h)._work };
+    if work.is_not_null() { work({ (*h)._ctx }); }
+}
+
 // ---- after: do something LATER, and be able to call it off --------------------
 //
 // `run_on_main` above is the only way to hand work to the UI thread and it has
@@ -1493,4 +1559,168 @@ fn a_worker_result_with_a_closed_receiver_is_reclaimed_on_macos() {
         input_raw: input as usize, f_raw: work as usize, write_fd: fds[1],
     });
     assert WORKER_RESULT_DROPS == 1;
+}
+
+// ---- CoalescedHop -----------------------------------------------------------
+
+// A hop fake that RECORDS: it counts what was queued and keeps the last one,
+// so a test decides when the main thread "turns". The count is atomic because
+// one test schedules from several threads at once.
+static CH_QUEUED: u64 = 0 as u64;
+static CH_WORK: fn(*u8) = #zero::[fn(*u8)]();
+static CH_CTX: usize = 0 as usize;
+static CH_RUNS: i32 = 0;
+static CH_HOP: CoalescedHop = #zero::[CoalescedHop]();
+
+fn ch_record_hop(work: fn(*u8), ctx: *u8) {
+    let _prev: u64 = atomic::fetch_add_u64({ #addr_of(CH_QUEUED) }, 1 as u64,
+                                           atomic::Ordering::AcqRel);
+    CH_WORK = work;
+    CH_CTX = #addr(ctx);
+}
+
+fn ch_turn() {
+    let w: fn(*u8) = CH_WORK;
+    CH_WORK = #zero::[fn(*u8)]();
+    if w.is_not_null() { w(CH_CTX as *u8); }
+}
+
+fn ch_queued() -> u64 {
+    return atomic::load_u64({ #addr_of(CH_QUEUED) }, atomic::Ordering::Acquire);
+}
+
+fn ch_install() {
+    atomic::store_u64({ #addr_of(CH_QUEUED) }, 0 as u64, atomic::Ordering::Release);
+    CH_WORK = #zero::[fn(*u8)]();
+    CH_RUNS = 0;
+    install_scheduler(Scheduler {
+        run_on_main: ch_record_hop,
+        after: 0 as fn(f64, fn(*u8), *u8) -> u64,
+        cancel_after: 0 as fn(u64),
+        observe_size: 0 as fn(*core::Node, fn(*u8), *u8) -> u64,
+        cancel_observe_size: 0 as fn(u64),
+    });
+}
+
+fn ch_drain(ctx: *u8) { CH_RUNS = CH_RUNS + 1; return; }
+
+// The work schedules its own hop again while it runs — an event that arrived
+// mid-drain.
+fn ch_drain_and_reschedule(ctx: *u8) {
+    CH_RUNS = CH_RUNS + 1;
+    if CH_RUNS == 1 { let _q: bool = CH_HOP.schedule(); }
+}
+
+#[test]
+fn a_burst_of_schedules_queues_one_hop() {
+    ch_install();
+    CH_HOP = CoalescedHop::new(ch_drain);
+    // The report's number: 1,800 events, one main-thread turn.
+    assert CH_HOP.schedule();
+    var i: i32 = 1;
+    while i < 1800 {
+        assert CH_HOP.schedule() == false;
+        i = i + 1;
+    }
+    assert ch_queued() == (1 as u64);
+    assert CH_HOP.is_pending();
+    assert CH_RUNS == 0;
+    ch_turn();
+    assert CH_RUNS == 1;
+    assert CH_HOP.is_pending() == false;
+    // The gate is open again: the next burst gets its own single turn.
+    assert CH_HOP.schedule();
+    assert CH_HOP.schedule() == false;
+    assert ch_queued() == (2 as u64);
+    ch_turn();
+    assert CH_RUNS == 2;
+    uninstall_scheduler();
+}
+
+#[test]
+fn a_schedule_during_the_work_gets_exactly_one_more_turn() {
+    ch_install();
+    CH_HOP = CoalescedHop::new(ch_drain_and_reschedule);
+    assert CH_HOP.schedule();
+    ch_turn();
+    // The flag opened before `work` ran, so the ask made inside it queued.
+    assert CH_RUNS == 1;
+    assert ch_queued() == (2 as u64);
+    assert CH_HOP.is_pending();
+    ch_turn();
+    assert CH_RUNS == 2;
+    assert ch_queued() == (2 as u64);
+    assert CH_HOP.is_pending() == false;
+    uninstall_scheduler();
+}
+
+struct ChBound { drained: i32 }
+impl ChBound {
+    fn drain(ref this) { this.drained = this.drained + 1; return; }
+}
+
+// The work is a callback pair like every other, so a bound method fits it.
+#[test]
+fn a_coalesced_hop_runs_a_bound_method_on_its_receiver() {
+    ch_install();
+    var b: ChBound = ChBound { drained: 0 };
+    var h: CoalescedHop = CoalescedHop::new(b.drain);
+    assert h.schedule();
+    assert h.schedule() == false;
+    ch_turn();
+    assert b.drained == 1;
+    uninstall_scheduler();
+}
+
+fn ch_hammer(take n: i32) -> i32 {
+    var won: i32 = 0;
+    var i: i32 = 0;
+    while i < n {
+        if CH_HOP.schedule() { won = won + 1; }
+        i = i + 1;
+    }
+    return won;
+}
+
+// From FOUR threads at once, with the main thread never turning: exactly one
+// of the 40,000 asks wins the gate. A plain bool would let two through.
+#[test]
+fn schedules_from_several_threads_still_queue_one_hop() {
+    ch_install();
+    CH_HOP = CoalescedHop::new(ch_drain);
+    let a = thread::spawn_with::[i32, i32](10000, ch_hammer);
+    let b = thread::spawn_with::[i32, i32](10000, ch_hammer);
+    let c = thread::spawn_with::[i32, i32](10000, ch_hammer);
+    let d = thread::spawn_with::[i32, i32](10000, ch_hammer);
+    let won: i32 = a.join() + b.join() + c.join() + d.join();
+    assert won == 1;
+    assert ch_queued() == (1 as u64);
+    ch_turn();
+    assert CH_RUNS == 1;
+    uninstall_scheduler();
+}
+
+// NEGATIVE: with no backend there is nowhere to hop, and the gate must not be
+// left shut — or a backend installed afterwards would never hear from it.
+#[test]
+fn with_no_backend_a_coalesced_hop_drops_the_ask_and_stays_open() {
+    uninstall_scheduler();
+    var h: CoalescedHop = CoalescedHop::new(ch_drain);
+    assert h.schedule() == false;
+    assert h.is_pending() == false;
+    ch_install();
+    assert h.schedule();
+    assert ch_queued() == (1 as u64);
+    uninstall_scheduler();
+}
+
+// NEGATIVE: a zeroed hop (a `static` nobody initialised yet) has no work. It
+// refuses rather than queueing a call through a null function pointer.
+#[test]
+fn a_zeroed_coalesced_hop_refuses_to_schedule() {
+    ch_install();
+    var z: CoalescedHop = #zero::[CoalescedHop]();
+    assert z.schedule() == false;
+    assert ch_queued() == (0 as u64);
+    uninstall_scheduler();
 }
