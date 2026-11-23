@@ -38,6 +38,7 @@ import "./slice" as slice;
 import "./template" as template;
 import "./time" as time;
 import "./date" as date;
+import "./line_reader" as line_reader;
 import "./process" as process;
 import "./pty" as pty;
 import "./fs" as fs;

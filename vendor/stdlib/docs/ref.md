@@ -34,6 +34,7 @@ Source of truth for edge cases: the header comment and impl in
 | [`netsys`](#netsys) | platform errno / constants (for `net`) |
 | [`env`](#env) | `var`, `argc`, `arg` |
 | [`process`](#process) | `run`, `spawn`, `capture`, `current_id` |
+| [`line_reader`](#line_reader) | `LineReader`, `ByteSource` — newline-delimited reading of a stream |
 | [`platform`](#platform) | `Os`, `Arch`, `Version`, `os` / `arch` / `os_version` / `cpu_count` |
 | [`flags`](#flags) | `Flags` option-set over u64 bits |
 | [`slice`](#slice) | checked sub-views over `T[]` |
@@ -443,6 +444,61 @@ let code: i32 = process::run(["adb", "-s", serial, "push", local, remote]);
 `Child.pid()` is the child's id.
 `current_id()` is this process's own — the one a child sees as its parent.
 On Windows `current_id` works and spawning is not built yet.
+
+A long-lived child that speaks a line protocol (NDJSON, JSON-RPC, LSP, MCP) is
+read through `take_stdout_lines()` / `take_stderr_lines()`, each of which hands
+that pipe to a [`LineReader`](#line_reader):
+
+```cplus
+var lines: line_reader::LineReader = child.take_stdout_lines();
+loop {
+    match lines.read_line() {
+        option::Option::Some(l) => { handle(l); }
+        option::Option::None => { break; }
+    }
+}
+```
+
+The reader owns the pipe from then on and closes it when it drops. `read_line`
+blocks, so this loop belongs on a worker thread. Taking the same stream twice
+gives a second reader whose first read fails.
+
+---
+
+## line_reader
+
+```cplus
+struct ByteSource { read: fn(*u8, usize, *u8) -> isize, close: fn(*u8), ctx: *u8 }
+enum LineError { None, Read, TooLong, NoMemory }
+
+LineReader::new(take src: ByteSource, capacity: usize = 65536, max_line: usize = 0) -> LineReader
+fn read_line(ref this) -> option::Option[str]
+fn error(ref this) -> LineError
+fn at_end(ref this) -> bool
+fn capacity(ref this) -> usize
+```
+
+Splits a byte stream on `'\n'`. Built for a stream that arrives over time — a
+child's stdout — where `fs::File::lines` is for a file already on disk.
+
+- **`read_line` answers a view**, not a copy: a `str` into the reader's buffer,
+  without the newline. It is valid until the next `read_line`, and the compiler
+  holds you to that — calling `read_line` while an earlier line is still in use
+  is E0381. `.to_text()` is the copy.
+- **Each byte is searched once.** A partial line stays buffered and the search
+  resumes where it stopped, so a multi-megabyte line costs its length, not its
+  length times the number of reads it arrived in.
+- **A line longer than the buffer grows the buffer**, doubling. `max_line` caps
+  that: a line reaching it ends the stream with `LineError::TooLong`. Zero is
+  no cap.
+- **None is the end, a failure, or a refusal** — `error()` says which. A stream
+  that ends without a final newline still answers its last line. A stream that
+  fails does not answer the partial line after the last newline.
+- A `'\r'` before the newline is left in the line.
+
+`ByteSource` is where the bytes come from: `read(buf, capacity, ctx)` blocks and
+answers a count, 0 at the end, negative on failure; `close(ctx)` runs when the
+reader drops. Most callers never build one — `process::Child` does.
 
 ---
 

@@ -96,7 +96,8 @@ The judgment — which of these a piece of work wants — is
 | `fs` | `File` · `open_read` `create` `open_append` `read_to_string` `write_string` `append_string` `read_dir` `create_dir` `create_dir_all` `remove_file` `exists` `is_file` `is_dir` `metadata` `size` `mtime`; `File`: `read_to_end` `write_all` `write_str` `lines` `close` |
 | `net` | `TcpStream` / `TcpListener` · `connect_tcp` `listen_tcp` · `read_to_end` `write_all` `shutdown_write` `accept` (IPv4, numeric addresses) |
 | `env` | `var` `has_var` `argc` `arg` |
-| `process` | `Child`, `Output` · `run` `spawn` `capture` · `wait` `output` `write_stdin` `close_stdin` `signal` `interrupt` `terminate` `kill_now` |
+| `process` | `Child`, `Output` · `run` `spawn` `capture` · `wait` `output` `write_stdin` `close_stdin` `take_stdout_lines` `take_stderr_lines` `signal` `interrupt` `terminate` `kill_now` |
+| `line_reader` | `LineReader`, `ByteSource`, `LineError` · `read_line` (a `str` view per line, each byte searched once) `error` `at_end` — for a stream that arrives over time; `File.lines` is for a file |
 | `pty` | `PtyChild` · `spawn` `read` `write` `resize` `wait` and the same signal set |
 | `time` | `now()` (epoch seconds) · `now_millis()` |
 | `date` | `DateTime`, `Civil` · `now` `today` `yesterday` `from_unix` `to_unix` `diff_seconds` `parse_iso8601` `format_iso8601` `format_date` |

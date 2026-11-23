@@ -38,6 +38,7 @@
 import "./option" as option;
 import "./text" as text;
 import "./vec" as vec;
+import "./line_reader" as line_reader;
 
 extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
 extern fn strlen(s: *u8) -> usize;
@@ -114,12 +115,33 @@ fn run(argv: str[], cwd: str = "") -> i32 {
 // UNREACHABLE IN PRACTICE, because nothing here hands out a Child — but written
 // out rather than omitted, because the point of this file is that the surface
 // matches. Each answers what the Darwin body answers for a dead child.
+// Spawning is not built on Windows, so there is never a pipe to read: the
+// line readers answer a stream that is already over. The verbs exist so code
+// written against `Child` compiles here unchanged.
+fn _no_bytes(buf: *u8, cap: usize, ctx: *u8) -> isize { return 0 as isize; }
+
+fn _ended_source() -> line_reader::ByteSource {
+    return line_reader::ByteSource { read: _no_bytes, close: line_reader::no_close,
+                                     ctx: 0 as *u8 };
+}
+
 impl Child {
     fn pid(this) -> i32 { return this._pid; }
     fn stdout_fd(this) -> i32 { return this._stdout; }
     fn stderr_fd(this) -> i32 { return this._stderr; }
     fn take_stdout_fd(ref this) -> i32 { let fd: i32 = this._stdout; this._stdout = -1 as i32; return fd; }
     fn take_stderr_fd(ref this) -> i32 { let fd: i32 = this._stderr; this._stderr = -1 as i32; return fd; }
+
+    fn take_stdout_lines(ref this, capacity: usize = 65536 as usize,
+                         max_line: usize = 0 as usize) -> line_reader::LineReader {
+        this._stdout = -1 as i32;
+        return line_reader::LineReader::new(_ended_source(), capacity: capacity, max_line: max_line);
+    }
+    fn take_stderr_lines(ref this, capacity: usize = 65536 as usize,
+                         max_line: usize = 0 as usize) -> line_reader::LineReader {
+        this._stderr = -1 as i32;
+        return line_reader::LineReader::new(_ended_source(), capacity: capacity, max_line: max_line);
+    }
 
     fn signal(ref this, sig: i32) -> bool { return false; }
     fn interrupt(ref this) -> bool { return false; }

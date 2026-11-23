@@ -94,6 +94,7 @@ Cross-module use inside stdlib is normal (`vec` imports `option`, `status`,
 | `netsys` | Platform constants/errno for `net` (auto-overridden per OS) |
 | `env` | env vars and argv |
 | `process` | run a child on this terminal, or spawn one with pipes, from an argv (no shell); this process's own id |
+| `line_reader` | a child's stdout (or any byte source) one line at a time, as views, without re-scanning |
 | `base64` | base64 and base64url, strict decoding |
 | `url` | take a URL apart — views, not copies; routing reads `segment`, not `path` |
 | `crypto` | SHA-2, HMAC, CSPRNG — over the platform's own (macOS today) |

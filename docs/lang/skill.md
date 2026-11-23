@@ -1028,7 +1028,8 @@ Before implementing anything below the level of your actual task, check here.
 `string_map` (owns its `Text` keys — `HashMap` needs Copy keys) · `string_set` ·
 `slice` · `flags` (option-set over u64 bits) · `text` · `str` · `cow` · `fs`
 (`exists`/`is_file`/`is_dir`/`metadata`) ·
-`net` (TCP, numeric IPv4) · `env` · `process` (`run`/`spawn`/`capture`/signal) · `pty` ·
+`net` (TCP, numeric IPv4) · `env` · `process` (`run`/`spawn`/`capture`/signal) ·
+`line_reader` (a child's stdout a line at a time — `child.take_stdout_lines()`) · `pty` ·
 `thread` · `atomic` · `mutex` · `channel` (typed MPMC) · `box` / `arc` / `rc`
 (+ `Weak` via `downgrade`) · `future` / `executor` / `reactor` / `time` ·
 `iterator` (`gen fn` + `filter`/`prefix`/`map`) · `math` (scalar methods

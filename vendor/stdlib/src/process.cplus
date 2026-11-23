@@ -14,6 +14,7 @@ import "./text" as text;
 import "./option" as option;
 import "./vec" as vec;
 import "./status" as status;
+import "./line_reader" as line_reader;
 
 extern fn pipe(fds: *i32) -> i32;
 extern fn close(fd: i32) -> i32;
@@ -316,6 +317,34 @@ fn _start(argv: vec::Vec[text::Text], cwd: str, piped: bool) -> option::Option[C
     });
 }
 
+// ---- a pipe end as a `line_reader::ByteSource` ------------------------------
+//
+// The fd rides in the context pointer. A read interrupted by a signal is
+// retried here, so the reader above never sees EINTR as a failure.
+fn _fd_of(ctx: *u8) -> i32 { return (#addr(ctx) as i64) as i32; }
+
+fn _fd_read(buf: *u8, cap: usize, ctx: *u8) -> isize {
+    let fd: i32 = _fd_of(ctx);
+    if fd < (0 as i32) { return -1 as isize; }
+    loop {
+        let n: isize = { read(fd, buf, cap) };
+        if n < (0 as isize) && { *(__error()) } == e_intr() { continue; }
+        return n;
+    }
+}
+
+fn _fd_close(ctx: *u8) {
+    let fd: i32 = _fd_of(ctx);
+    if fd >= (0 as i32) { let _c: i32 = { close(fd) }; }
+}
+
+fn _fd_source(fd: i32) -> line_reader::ByteSource {
+    // -1 (a stream already taken) must stay negative through the pointer, so
+    // it is widened signed before it becomes an address.
+    return line_reader::ByteSource { read: _fd_read, close: _fd_close,
+                                     ctx: ((fd as i64) as usize) as *u8 };
+}
+
 impl Child {
     fn pid(this) -> i32 { return this._pid; }
     fn stdout_fd(this) -> i32 { return this._stdout; }
@@ -325,6 +354,33 @@ impl Child {
     // closes it on drop — the caller owns it from here.
     fn take_stdout_fd(ref this) -> i32 { let fd: i32 = this._stdout; this._stdout = -1 as i32; return fd; }
     fn take_stderr_fd(ref this) -> i32 { let fd: i32 = this._stderr; this._stderr = -1 as i32; return fd; }
+
+    // THE STREAMS AS LINES. Hands the read end to a `LineReader`, which owns it
+    // from here — it closes the pipe when it drops, and this Child no longer
+    // does. This is the door for a long-lived child speaking a line protocol
+    // (NDJSON, JSON-RPC, LSP, MCP): no `extern fn read`, no framer of your own.
+    //
+    //     var lines: line_reader::LineReader = child.take_stdout_lines();
+    //     loop {
+    //         match lines.read_line() {
+    //             option::Option::Some(l) => { handle(l); }     // a view; copy to keep
+    //             option::Option::None => { break; }             // the child closed it
+    //         }
+    //     }
+    //
+    // `read_line` BLOCKS until a line arrives or the child closes the stream,
+    // so it belongs on a worker thread. Taking a stream twice gives a reader
+    // that fails on its first read rather than one that steals the first's fd.
+    fn take_stdout_lines(ref this, capacity: usize = 65536 as usize,
+                         max_line: usize = 0 as usize) -> line_reader::LineReader {
+        return line_reader::LineReader::new(_fd_source(this.take_stdout_fd()),
+                                            capacity: capacity, max_line: max_line);
+    }
+    fn take_stderr_lines(ref this, capacity: usize = 65536 as usize,
+                         max_line: usize = 0 as usize) -> line_reader::LineReader {
+        return line_reader::LineReader::new(_fd_source(this.take_stderr_fd()),
+                                            capacity: capacity, max_line: max_line);
+    }
 
     // Send a signal to the child. `interrupt` is Ctrl-C; `terminate` asks it to
     // exit; `kill` cannot be refused. False if there is no live child.
@@ -478,4 +534,148 @@ fn writing_stdin_after_the_child_exits_reports_a_broken_pipe() {
     assert c.wait() == (0 as i32);
     assert c.write_stdin("after exit") == (-1 as isize);
     c.close_stdin();
+}
+
+// ---- a child's stdout as lines ----------------------------------------------
+//
+// bugs/closed/stdlib-io-missing-buffered-line-reader.md. Real children, real
+// pipes: the unit half of the reader is in line_reader.cplus.
+
+fn sh(script: str) -> option::Option[Child] {
+    var argv = vec::new::[text::Text]();
+    let _a: status::Status = argv.append(text::from_str("/bin/sh"));
+    let _b: status::Status = argv.append(text::from_str("-c"));
+    let _c: status::Status = argv.append(text::from_str(script));
+    return spawn(argv);
+}
+
+fn line_is(ref r: line_reader::LineReader, want: str) -> bool {
+    return match r.read_line() {
+        option::Option[str]::Some(l) => l == want,
+        option::Option[str]::None => false,
+    };
+}
+
+fn no_more_lines(ref r: line_reader::LineReader) -> bool {
+    return match r.read_line() {
+        option::Option[str]::Some(_) => false,
+        option::Option[str]::None => true,
+    };
+}
+
+#[test]
+fn a_childs_stdout_is_read_a_line_at_a_time() {
+    guard let option::Option[Child]::Some(child) =
+        sh("printf 'first\\nsecond\\n\\nlast without a newline'") else { assert false; return; };
+    var c = child;
+    c.close_stdin();
+    {
+        var lines: line_reader::LineReader = c.take_stdout_lines();
+        assert line_is(lines, "first");
+        assert line_is(lines, "second");
+        assert line_is(lines, "");
+        assert line_is(lines, "last without a newline");
+        assert no_more_lines(lines);
+        assert lines.at_end();
+    }
+    // The reader owned the pipe; the Child no longer has it to close.
+    assert c.stdout_fd() == (-1 as i32);
+    assert c.wait() == (0 as i32);
+}
+
+#[test]
+fn a_hundred_thousand_lines_arrive_in_order() {
+    // Far more than one pipe buffer, written as fast as the child can: lines
+    // straddle every read boundary there is.
+    guard let option::Option[Child]::Some(child) = sh("seq 1 100000") else { assert false; return; };
+    var c = child;
+    c.close_stdin();
+    var count: i64 = 0 as i64;
+    var sum: i64 = 0 as i64;
+    var in_order: bool = true;
+    {
+        var lines: line_reader::LineReader = c.take_stdout_lines();
+        loop {
+            match lines.read_line() {
+                option::Option[str]::Some(l) => {
+                    count = count + (1 as i64);
+                    match l.to_i64() {
+                        option::Option[i64]::Some(v) => {
+                            if v != count { in_order = false; }
+                            sum = sum + v;
+                        }
+                        option::Option[i64]::None => { in_order = false; }
+                    }
+                }
+                option::Option[str]::None => { break; }
+            }
+        }
+    }
+    assert count == (100000 as i64);
+    assert in_order;
+    assert sum == (5000050000 as i64);
+    assert c.wait() == (0 as i32);
+}
+
+#[test]
+fn a_three_megabyte_line_from_a_child_arrives_whole() {
+    // The report's shape: one line far larger than the buffer, then a short
+    // one, through a real 64 KiB pipe.
+    guard let option::Option[Child]::Some(child) =
+        sh("head -c 3000000 /dev/zero | tr '\\0' 'x'; echo; echo tail") else { assert false; return; };
+    var c = child;
+    c.close_stdin();
+    {
+        var lines: line_reader::LineReader = c.take_stdout_lines();
+        match lines.read_line() {
+            option::Option[str]::Some(l) => {
+                assert l.count() == (3000000 as usize);
+                assert l.has_prefix("xxxxxxxx");
+                assert l.has_suffix("xxxxxxxx");
+            }
+            option::Option[str]::None => { assert false; }
+        }
+        assert line_is(lines, "tail");
+        assert no_more_lines(lines);
+    }
+    assert c.wait() == (0 as i32);
+}
+
+#[test]
+fn stderr_is_read_as_lines_on_its_own_reader() {
+    guard let option::Option[Child]::Some(child) =
+        sh("echo out; echo err-one 1>&2; echo err-two 1>&2") else { assert false; return; };
+    var c = child;
+    c.close_stdin();
+    {
+        var out: line_reader::LineReader = c.take_stdout_lines();
+        var err: line_reader::LineReader = c.take_stderr_lines();
+        assert line_is(out, "out");
+        assert line_is(err, "err-one");
+        assert line_is(err, "err-two");
+        assert no_more_lines(out);
+        assert no_more_lines(err);
+    }
+    assert c.wait() == (0 as i32);
+}
+
+// NEGATIVE: a stream can be taken once. The second reader does not share the
+// first one's pipe — it fails on its first read and says why.
+#[test]
+fn taking_a_stream_twice_gives_a_reader_that_fails() {
+    guard let option::Option[Child]::Some(child) = sh("echo once") else { assert false; return; };
+    var c = child;
+    c.close_stdin();
+    {
+        var first: line_reader::LineReader = c.take_stdout_lines();
+        var second: line_reader::LineReader = c.take_stdout_lines();
+        assert no_more_lines(second);
+        assert match second.error() { line_reader::LineError::Read => true, _ => false };
+        assert second.at_end() == false;
+        // The first is untouched by the attempt.
+        assert line_is(first, "once");
+        assert no_more_lines(first);
+        assert match first.error() { line_reader::LineError::None => true, _ => false };
+    }
+    assert c.wait() == (0 as i32);
 }

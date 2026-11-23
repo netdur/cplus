@@ -32193,3 +32193,105 @@ fn a_view_returned_from_a_temporary_argument_rejected_e0513() {
         assert!(all.contains("E0513"), "{name}: expected E0513, got: {all}");
     }
 }
+
+/// bugs/closed/stdlib-io-missing-buffered-line-reader.md — reading a child's
+/// stdout a line at a time needs no `extern fn`, no raw pointer and no framer
+/// in the application: the whole program below is the safe tier. And the view
+/// `read_line` answers cannot outlive the next `read_line` — the buffer may
+/// have moved — which is a compile error (E0381), not a rule in a comment.
+#[cfg(unix)]
+#[test]
+fn a_childs_stdout_is_read_by_lines_from_safe_code_and_a_stale_line_is_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"lines\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    symlink_dir(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    let prelude = "import \"stdlib/option\" as option;\n\
+                   import \"stdlib/text\" as text;\n\
+                   import \"stdlib/vec\" as vec;\n\
+                   import \"stdlib/status\" as status;\n\
+                   import \"stdlib/process\" as process;\n\
+                   import \"stdlib/line_reader\" as line_reader;\n\
+                   fn child() -> option::Option[process::Child] {\n\
+                   \x20   var argv = vec::new::[text::Text]();\n\
+                   \x20   let _a: status::Status = argv.append(text::from_str(\"/bin/sh\"));\n\
+                   \x20   let _b: status::Status = argv.append(text::from_str(\"-c\"));\n\
+                   \x20   let _c: status::Status = argv.append(text::from_str(\"echo 12; echo 30; printf 0\"));\n\
+                   \x20   return process::spawn(argv);\n\
+                   }\n";
+
+    // The program: sum the numbers the child prints, one per line. 12 + 30 + 0,
+    // plus one per line read, is the exit code.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        format!(
+            "{prelude}\
+             fn main() -> i32 {{\n\
+             \x20   guard let option::Option[process::Child]::Some(ch) = child() else {{ return 100; }};\n\
+             \x20   var c = ch;\n\
+             \x20   c.close_stdin();\n\
+             \x20   var lines: line_reader::LineReader = c.take_stdout_lines();\n\
+             \x20   var total: i32 = 0;\n\
+             \x20   loop {{\n\
+             \x20       match lines.read_line() {{\n\
+             \x20           option::Option::Some(l) => {{\n\
+             \x20               match l.to_i64() {{\n\
+             \x20                   option::Option::Some(v) => {{ total = total + (v as i32) + 1; }}\n\
+             \x20                   option::Option::None => {{ return 101; }}\n\
+             \x20               }}\n\
+             \x20           }}\n\
+             \x20           option::Option::None => {{ break; }}\n\
+             \x20       }}\n\
+             \x20   }}\n\
+             \x20   return total;\n\
+             }}\n"
+        ),
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("cpc build");
+    assert!(
+        out.status.success(),
+        "the line-reading program must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/lines")).status().expect("run");
+    assert_eq!(run.code(), Some(45), "three lines, 12 + 30 + 0, plus one per line");
+
+    // NEGATIVE: a line kept across the next `read_line`.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        format!(
+            "{prelude}\
+             fn main() -> i32 {{\n\
+             \x20   guard let option::Option[process::Child]::Some(ch) = child() else {{ return 100; }};\n\
+             \x20   var c = ch;\n\
+             \x20   var lines: line_reader::LineReader = c.take_stdout_lines();\n\
+             \x20   let first: option::Option[str] = lines.read_line();\n\
+             \x20   let second: option::Option[str] = lines.read_line();\n\
+             \x20   match first {{\n\
+             \x20       option::Option::Some(l) => {{ return l.count() as i32; }}\n\
+             \x20       option::Option::None => {{ return 0; }}\n\
+             \x20   }}\n\
+             }}\n"
+        ),
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("cpc build");
+    assert!(!out.status.success(), "a stale line view must not build");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("E0381"), "expected E0381, got: {text}");
+}

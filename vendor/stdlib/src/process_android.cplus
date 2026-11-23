@@ -29,6 +29,7 @@ import "./text" as text;
 import "./option" as option;
 import "./vec" as vec;
 import "./status" as status;
+import "./line_reader" as line_reader;
 
 extern fn pipe2(fds: *i32, flags: i32) -> i32;
 extern fn close(fd: i32) -> i32;
@@ -348,6 +349,34 @@ fn _start(argv: vec::Vec[text::Text], cwd: str, piped: bool) -> option::Option[C
     });
 }
 
+// ---- a pipe end as a `line_reader::ByteSource` ------------------------------
+//
+// The fd rides in the context pointer. A read interrupted by a signal is
+// retried here, so the reader above never sees EINTR as a failure.
+fn _fd_of(ctx: *u8) -> i32 { return (#addr(ctx) as i64) as i32; }
+
+fn _fd_read(buf: *u8, cap: usize, ctx: *u8) -> isize {
+    let fd: i32 = _fd_of(ctx);
+    if fd < (0 as i32) { return -1 as isize; }
+    loop {
+        let n: isize = { read(fd, buf, cap) };
+        if n < (0 as isize) && errno_value() == e_intr() { continue; }
+        return n;
+    }
+}
+
+fn _fd_close(ctx: *u8) {
+    let fd: i32 = _fd_of(ctx);
+    if fd >= (0 as i32) { let _c: i32 = { close(fd) }; }
+}
+
+fn _fd_source(fd: i32) -> line_reader::ByteSource {
+    // -1 (a stream already taken) must stay negative through the pointer, so
+    // it is widened signed before it becomes an address.
+    return line_reader::ByteSource { read: _fd_read, close: _fd_close,
+                                     ctx: ((fd as i64) as usize) as *u8 };
+}
+
 impl Child {
     fn pid(this) -> i32 { return this._pid; }
     fn stdout_fd(this) -> i32 { return this._stdout; }
@@ -355,6 +384,33 @@ impl Child {
 
     fn take_stdout_fd(ref this) -> i32 { let fd: i32 = this._stdout; this._stdout = -1 as i32; return fd; }
     fn take_stderr_fd(ref this) -> i32 { let fd: i32 = this._stderr; this._stderr = -1 as i32; return fd; }
+
+    // THE STREAMS AS LINES. Hands the read end to a `LineReader`, which owns it
+    // from here — it closes the pipe when it drops, and this Child no longer
+    // does. This is the door for a long-lived child speaking a line protocol
+    // (NDJSON, JSON-RPC, LSP, MCP): no `extern fn read`, no framer of your own.
+    //
+    //     var lines: line_reader::LineReader = child.take_stdout_lines();
+    //     loop {
+    //         match lines.read_line() {
+    //             option::Option::Some(l) => { handle(l); }     // a view; copy to keep
+    //             option::Option::None => { break; }             // the child closed it
+    //         }
+    //     }
+    //
+    // `read_line` BLOCKS until a line arrives or the child closes the stream,
+    // so it belongs on a worker thread. Taking a stream twice gives a reader
+    // that fails on its first read rather than one that steals the first's fd.
+    fn take_stdout_lines(ref this, capacity: usize = 65536 as usize,
+                         max_line: usize = 0 as usize) -> line_reader::LineReader {
+        return line_reader::LineReader::new(_fd_source(this.take_stdout_fd()),
+                                            capacity: capacity, max_line: max_line);
+    }
+    fn take_stderr_lines(ref this, capacity: usize = 65536 as usize,
+                         max_line: usize = 0 as usize) -> line_reader::LineReader {
+        return line_reader::LineReader::new(_fd_source(this.take_stderr_fd()),
+                                            capacity: capacity, max_line: max_line);
+    }
 
     fn signal(ref this, sig: i32) -> bool {
         if this._pid <= (0 as i32) { return false; }

@@ -1,0 +1,443 @@
+// stdlib/line_reader.cplus — newline-delimited reading over any byte source.
+//
+// The reader for a STREAM that never ends on its own schedule: a child's stdout
+// speaking NDJSON, JSON-RPC, LSP or MCP. `fs::File::lines` reads a file that is
+// already whole; this reads what has arrived so far and blocks for the rest.
+//
+// Three things it exists to get right, each of which an application that
+// hand-rolls a framer gets wrong at least once:
+//
+//   EVERY BYTE IS SEARCHED ONCE. A partial line stays in the buffer across
+//   reads, and the search resumes where it stopped. Re-scanning from the start
+//   of the line on every read is quadratic in the line's length — one framer
+//   doing that turned three 2.4–4.6 MB lines into ~2.7 billion loop iterations
+//   (bugs/closed/stdlib-io-missing-buffered-line-reader.md).
+//
+//   A LINE MAY BE LONGER THAN THE BUFFER. The buffer doubles until the line
+//   fits, or until `max_line` says the peer is not sending lines at all.
+//
+//   A LINE IS A VIEW, NOT A COPY. `read_line` answers a `str` into the buffer,
+//   valid until the next `read_line`; `.to_text()` is the copy, and you spell
+//   it when you want one.
+//
+// The bytes come from a `ByteSource` — a read function, a close function and
+// the context both take — so this module needs no file descriptor and no
+// platform call of its own. `process::Child::take_stdout_lines()` is the door
+// most callers want.
+
+import "./option" as option;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memchr(s: *u8, c: i32, n: usize) -> *u8;
+extern fn memmove(dest: *u8, src: *u8, n: usize) -> *u8;
+
+// Where the bytes come from. `read(buf, capacity, ctx)` fills up to `capacity`
+// bytes and answers how many: 0 is the end of the stream, a negative number is
+// a failure, and it BLOCKS until one of the three is true. `close(ctx)` runs
+// once, when the reader drops.
+struct ByteSource {
+    read: fn(*u8, usize, *u8) -> isize,
+    close: fn(*u8),
+    opaque ctx: *u8,
+}
+
+fn no_close(ctx: *u8) { return; }
+
+// Why a reader stopped, when it was not the end of the stream.
+enum LineError {
+    None,
+    // The source's `read` answered a negative count.
+    Read,
+    // A line reached `max_line` bytes with no newline in it.
+    TooLong,
+    // The buffer could not be allocated, or could not grow.
+    NoMemory,
+}
+
+const DEFAULT_CAPACITY: usize = 65536;
+
+struct LineReader {
+    _buf: *u8,
+    _cap: usize,
+    _start: usize,     // first byte of the line being assembled
+    _scan: usize,      // first byte not yet searched for '\n'; _start <= _scan <= _end
+    _end: usize,       // one past the last byte read
+    _src: ByteSource,
+    _max_line: usize,  // 0 = no limit
+    _eof: bool,
+    _error: LineError,
+    _searched: u64,    // bytes handed to memchr, ever — what the linearity tests read
+}
+
+impl LineReader {
+    // `capacity` is the first buffer and the size of each read; 64 KiB is a
+    // pipe's worth. `max_line` caps how far the buffer may grow for one line —
+    // 0 is no cap, which is right for a peer you trust and wrong for one you
+    // do not.
+    fn new(take src: ByteSource, capacity: usize = DEFAULT_CAPACITY,
+           max_line: usize = 0 as usize) -> LineReader {
+        var cap: usize = capacity;
+        if cap < (16 as usize) { cap = 16 as usize; }
+        if max_line > (0 as usize) && cap > max_line { cap = max_line; }
+        let b: *u8 = { malloc(cap) };
+        return LineReader {
+            _buf: b,
+            _cap: if b.is_null() { 0 as usize } else { cap },
+            _start: 0 as usize,
+            _scan: 0 as usize,
+            _end: 0 as usize,
+            _src: src,
+            _max_line: max_line,
+            _eof: false,
+            _error: if b.is_null() { LineError::NoMemory } else { LineError::None },
+            _searched: 0 as u64,
+        };
+    }
+
+    // The next line, WITHOUT its trailing '\n', or None when there are no more.
+    //
+    // The view points into this reader's buffer and is good until the next
+    // `read_line` — copy it with `.to_text()` to keep it longer. A '\r' before
+    // the newline is left in place: this splits on '\n' and decides nothing
+    // else about the bytes.
+    //
+    // The last line of a stream that ends WITHOUT a newline is still a line.
+    // A stream that FAILS is different: the bytes after the last newline are
+    // dropped, never answered as a line with a piece of it missing.
+    //
+    // None means the end, a failure or a refused line — `error()` says which.
+    fn read_line(ref this) -> option::Option[str] {
+        loop {
+            match this._error {
+                LineError::None => { }
+                _ => { return option::Option[str]::None; }
+            }
+            // Search only what has not been searched.
+            if this._scan < this._end {
+                let n: usize = this._end -% this._scan;
+                let hit: *u8 = { memchr(this._buf + this._scan, 10 as i32, n) };
+                if hit.is_not_null() {
+                    let at: usize = #addr(hit) -% #addr(this._buf);
+                    this._searched = this._searched +% (((at -% this._scan) +% (1 as usize)) as u64);
+                    let line: str = { #str_from_raw_parts(this._buf + this._start, at -% this._start) };
+                    this._start = at +% (1 as usize);
+                    this._scan = this._start;
+                    return option::Option[str]::Some(line);
+                }
+                this._searched = this._searched +% (n as u64);
+                this._scan = this._end;
+            }
+            if this._eof {
+                if this._start < this._end {
+                    let tail: str = { #str_from_raw_parts(this._buf + this._start,
+                                                          this._end -% this._start) };
+                    this._start = this._end;
+                    this._scan = this._end;
+                    return option::Option[str]::Some(tail);
+                }
+                return option::Option[str]::None;
+            }
+            if !this._make_room() { return option::Option[str]::None; }
+            let read: fn(*u8, usize, *u8) -> isize = this._src.read;
+            let got: isize = read(this._buf + this._end, this._cap -% this._end, this._src.ctx);
+            if got < (0 as isize) {
+                this._error = LineError::Read;
+            } else if got == (0 as isize) {
+                this._eof = true;
+            } else {
+                this._end = this._end +% (got as usize);
+            }
+        }
+    }
+
+    // Space for at least one more byte after `_end`. Slides the partial line to
+    // the front first — that is free space already paid for — and only grows
+    // when the line itself fills the buffer.
+    fn _make_room(ref this) -> bool {
+        if this._start > (0 as usize) {
+            let live: usize = this._end -% this._start;
+            if live > (0 as usize) {
+                let _m: *u8 = { memmove(this._buf, this._buf + this._start, live) };
+            }
+            this._scan = this._scan -% this._start;
+            this._end = live;
+            this._start = 0 as usize;
+        }
+        if this._end < this._cap { return true; }
+        if this._max_line > (0 as usize) && this._cap >= this._max_line {
+            this._error = LineError::TooLong;
+            return false;
+        }
+        var want: usize = this._cap *% (2 as usize);
+        if want <= this._cap {                         // overflowed
+            this._error = LineError::NoMemory;
+            return false;
+        }
+        if this._max_line > (0 as usize) && want > this._max_line { want = this._max_line; }
+        let bigger: *u8 = { malloc(want) };
+        if bigger.is_null() {
+            this._error = LineError::NoMemory;
+            return false;
+        }
+        let _c: *u8 = { memmove(bigger, this._buf, this._end) };
+        free(this._buf);
+        this._buf = bigger;
+        this._cap = want;
+        return true;
+    }
+
+    // Why `read_line` answered None, when it was not simply the end.
+    fn error(ref this) -> LineError { return this._error; }
+
+    // True once the source has reported its end. Lines already buffered may
+    // still be waiting — `read_line` answering None is the end of the lines.
+    fn at_end(ref this) -> bool { return this._eof; }
+
+    // How large the buffer has grown. The longest line seen fits in it.
+    fn capacity(ref this) -> usize { return this._cap; }
+
+    fn drop(ref this) {
+        free(this._buf);
+        let close: fn(*u8) = this._src.close;
+        if close.is_not_null() { close(this._src.ctx); }
+    }
+}
+
+// ---- tests ------------------------------------------------------------------
+
+// A source that hands out a fixed byte string in chunks of a chosen size, so a
+// test decides exactly where the read boundaries fall.
+struct FakeBytes {
+    opaque data: *u8,
+    len: usize,
+    pos: usize,
+    chunk: usize,
+    fail_at: usize,     // answer -1 once `pos` reaches this; usize::MAX-ish = never
+    reads: i32,
+    closed: i32,
+}
+
+fn fake_of(s: str, chunk: usize) -> FakeBytes {
+    return FakeBytes { data: #str_ptr(s), len: s.count(), pos: 0 as usize, chunk: chunk,
+                       fail_at: 0 as usize -% (1 as usize), reads: 0, closed: 0 };
+}
+
+fn fake_read(buf: *u8, cap: usize, ctx: *u8) -> isize {
+    let f: *FakeBytes = ctx as *FakeBytes;
+    { (*f).reads = { (*f).reads } + 1 };
+    if { (*f).pos } >= { (*f).fail_at } { return -1 as isize; }
+    var n: usize = { (*f).len } -% { (*f).pos };
+    if n > { (*f).chunk } { n = { (*f).chunk }; }
+    if n > cap { n = cap; }
+    if n == (0 as usize) { return 0 as isize; }
+    let _m: *u8 = { memmove(buf, { (*f).data } + { (*f).pos }, n) };
+    { (*f).pos = { (*f).pos } +% n };
+    return n as isize;
+}
+
+fn fake_close(ctx: *u8) {
+    let f: *FakeBytes = ctx as *FakeBytes;
+    { (*f).closed = { (*f).closed } + 1 };
+}
+
+fn fake_source(f: *FakeBytes) -> ByteSource {
+    return ByteSource { read: fake_read, close: fake_close, ctx: f as *u8 };
+}
+
+// Read the next line and compare it, in one step — the view is used before the
+// reader is touched again, which is the contract.
+fn next_is(ref r: LineReader, want: str) -> bool {
+    return match r.read_line() {
+        option::Option[str]::Some(l) => l == want,
+        option::Option[str]::None => false,
+    };
+}
+
+fn next_is_none(ref r: LineReader) -> bool {
+    return match r.read_line() {
+        option::Option[str]::Some(_) => false,
+        option::Option[str]::None => true,
+    };
+}
+
+fn is_err_none(e: LineError) -> bool { return match e { LineError::None => true, _ => false }; }
+fn is_err_read(e: LineError) -> bool { return match e { LineError::Read => true, _ => false }; }
+fn is_err_too_long(e: LineError) -> bool { return match e { LineError::TooLong => true, _ => false }; }
+
+#[test]
+fn lines_come_out_whole_whatever_the_read_boundaries_are() {
+    // The same stream at six chunk sizes: one byte at a time, boundaries that
+    // fall mid-line and exactly on a newline, and the whole thing at once.
+    let text: str = "alpha\nbe\n\ngamma delta\nlast";
+    var sizes: [usize; 6] = [1 as usize, 2 as usize, 3 as usize, 6 as usize, 9 as usize, 4096 as usize];
+    for i in 0..6usize {
+        var f: FakeBytes = fake_of(text, sizes[i]);
+        var r: LineReader = LineReader::new(fake_source(#addr_of(f)));
+        assert next_is(r, "alpha");
+        assert next_is(r, "be");
+        assert next_is(r, "");                 // an empty line is a line
+        assert next_is(r, "gamma delta");
+        assert next_is(r, "last");             // no trailing newline: still a line
+        assert next_is_none(r);
+        assert next_is_none(r);                // and it stays the end
+        assert is_err_none(r.error());
+        assert r.at_end();
+    }
+}
+
+#[test]
+fn a_stream_ending_in_a_newline_has_no_empty_last_line() {
+    var f: FakeBytes = fake_of("one\ntwo\n", 3 as usize);
+    var r: LineReader = LineReader::new(fake_source(#addr_of(f)));
+    assert next_is(r, "one");
+    assert next_is(r, "two");
+    assert next_is_none(r);
+}
+
+#[test]
+fn an_empty_stream_has_no_lines() {
+    var f: FakeBytes = fake_of("", 8 as usize);
+    var r: LineReader = LineReader::new(fake_source(#addr_of(f)));
+    assert next_is_none(r);
+    assert is_err_none(r.error());
+}
+
+#[test]
+fn a_line_longer_than_the_buffer_grows_it_and_arrives_whole() {
+    // A 16-byte buffer and a 200-byte line: the buffer has to double four
+    // times, with a short line either side to prove the cursors survive it.
+    var big: [u8; 256] = [120 as u8; 256];          // 'x'
+    big[0] = 97 as u8; big[1] = 10 as u8;           // "a\n"
+    big[202] = 10 as u8;                            // 200 x's, then '\n'
+    big[203] = 98 as u8; big[204] = 10 as u8;       // "b\n"
+    let all: str = { #str_from_raw_parts(#addr_of(big) as *u8, 205 as usize) };
+    var f: FakeBytes = fake_of(all, 7 as usize);
+    var r: LineReader = LineReader::new(fake_source(#addr_of(f)), capacity: 16 as usize);
+    assert next_is(r, "a");
+    match r.read_line() {
+        option::Option[str]::Some(l) => {
+            assert l.count() == (200 as usize);
+            assert l.has_prefix("xxxx");
+            assert l.has_suffix("xxxx");
+            assert l.contains("a") == false;       // neither neighbour leaked in
+            assert l.contains("b") == false;
+        }
+        option::Option[str]::None => { assert false; }
+    }
+    assert r.capacity() >= (200 as usize);
+    assert next_is(r, "b");
+    assert next_is_none(r);
+}
+
+// THE REGRESSION THIS MODULE EXISTS FOR. One megabyte line delivered 8 KiB at a
+// time: 128 reads. A framer that re-scans from the start of the line on each
+// read searches 1 + 2 + ... + 128 chunks = ~66 MB; searching each byte once is
+// 1 MB. Asserted as a count of bytes handed to memchr, not as a time.
+#[test]
+fn a_long_line_is_searched_once_not_once_per_read() {
+    let size: usize = 1048576;
+    let buf: *u8 = { malloc(size +% (1 as usize)) };
+    assert buf.is_not_null();
+    var i: usize = 0 as usize;
+    while i < size { buf[i] = 120 as u8; i = i +% (1 as usize); }
+    buf[size] = 10 as u8;
+    let all: str = { #str_from_raw_parts(buf, size +% (1 as usize)) };
+    var f: FakeBytes = fake_of(all, 8192 as usize);
+    {
+        var r: LineReader = LineReader::new(fake_source(#addr_of(f)));
+        match r.read_line() {
+            option::Option[str]::Some(l) => { assert l.count() == size; }
+            option::Option[str]::None => { assert false; }
+        }
+        assert f.reads >= 128;
+        // Every byte once, the newline included. Exactly — there is no slack
+        // to allow for, and a re-scan would be dozens of times this.
+        assert r._searched == ((size +% (1 as usize)) as u64);
+        assert next_is_none(r);
+    }
+    free(buf);
+}
+
+#[test]
+fn many_short_lines_are_each_searched_once_too() {
+    // 2,000 lines of "0123456789" through a small buffer, so the partial line
+    // is slid to the front hundreds of times.
+    let n: usize = 2000;
+    let size: usize = n *% (11 as usize);
+    let buf: *u8 = { malloc(size) };
+    assert buf.is_not_null();
+    var i: usize = 0 as usize;
+    while i < size {
+        let col: usize = i % (11 as usize);
+        buf[i] = if col == (10 as usize) { 10 as u8 } else { (48 as usize +% col) as u8 };
+        i = i +% (1 as usize);
+    }
+    let all: str = { #str_from_raw_parts(buf, size) };
+    var f: FakeBytes = fake_of(all, 37 as usize);
+    {
+        var r: LineReader = LineReader::new(fake_source(#addr_of(f)), capacity: 64 as usize);
+        var seen: usize = 0 as usize;
+        loop {
+            match r.read_line() {
+                option::Option[str]::Some(l) => {
+                    assert l == "0123456789";
+                    seen = seen +% (1 as usize);
+                }
+                option::Option[str]::None => { break; }
+            }
+        }
+        assert seen == n;
+        assert r._searched == (size as u64);
+        assert r.capacity() == (64 as usize);      // never needed to grow
+    }
+    free(buf);
+}
+
+#[test]
+fn dropping_the_reader_closes_its_source_once() {
+    var f: FakeBytes = fake_of("x\n", 8 as usize);
+    {
+        var r: LineReader = LineReader::new(fake_source(#addr_of(f)));
+        assert next_is(r, "x");
+        assert f.closed == 0;
+    }
+    assert f.closed == 1;
+}
+
+// NEGATIVE: a line that never ends is refused at `max_line`, not buffered
+// until the process runs out of memory.
+#[test]
+fn a_line_past_max_line_is_refused() {
+    var big: [u8; 128] = [120 as u8; 128];
+    let all: str = { #str_from_raw_parts(#addr_of(big) as *u8, 128 as usize) };
+    var f: FakeBytes = fake_of(all, 16 as usize);
+    var r: LineReader = LineReader::new(fake_source(#addr_of(f)), capacity: 16 as usize,
+                                        max_line: 64 as usize);
+    assert next_is_none(r);
+    assert is_err_too_long(r.error());
+    assert r.capacity() == (64 as usize);          // grew to the cap and no further
+    assert next_is_none(r);                        // the stream is over
+    // A line that FITS under the same cap is fine.
+    var g: FakeBytes = fake_of("short\nalso short\n", 16 as usize);
+    var ok: LineReader = LineReader::new(fake_source(#addr_of(g)), capacity: 16 as usize,
+                                         max_line: 64 as usize);
+    assert next_is(ok, "short");
+    assert next_is(ok, "also short");
+    assert is_err_none(ok.error());
+}
+
+// NEGATIVE: a source that fails mid-line. The complete lines before it arrive;
+// the half line after the last newline does NOT — a line with a piece missing
+// is worse than no line.
+#[test]
+fn a_read_failure_ends_the_stream_without_a_partial_line() {
+    var f: FakeBytes = fake_of("whole\nhalf a li", 4 as usize);
+    f.fail_at = 12 as usize;
+    var r: LineReader = LineReader::new(fake_source(#addr_of(f)));
+    assert next_is(r, "whole");
+    assert next_is_none(r);
+    assert is_err_read(r.error());
+    assert r.at_end() == false;                    // it failed; it did not end
+    assert next_is_none(r);
+}
