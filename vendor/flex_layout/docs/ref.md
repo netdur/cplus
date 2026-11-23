@@ -246,7 +246,7 @@ Line naming matches CSS `[sidebar] 200px`:
 |---|---|
 | Builder | `Builder::new` / `add(take)` / `finish` |
 | Containers | `row` / `column` / `box` / `zstack` |
-| Flexible space | `spacer()` — an empty box that absorbs leftover main-axis space |
+| Flexible space | `spacer()` — an empty box that absorbs leftover main-axis space; `spacer().width(n)` in a row (`.height(n)` in a column) is a fixed gap |
 | Fluent | `width`, `height`, `width_percent`, `height_percent`, `min_width`, `min_height`, `max_width`, `max_height`, `ratio`, `grow`, `shrink`, `basis`, `basis_percent`, `flex`, `fill`, `padding`, `padding_edge`, `margin`, `margin_edge`, `position_edge`, `absolute`, `gap`, `justify`, `align`, `align_self`, `align_content`, `center`, `wrap`, `hide`, `show`, `hide_up_to`, `show_up_to`, `hide_from`, `show_from` |
 | HIG containers | `vstack` / `hstack` / `screen` / `card` |
 | HIG modifiers | `.tappable()` / `.readable_width()` / `.sidebar_width(preferred:)` / `.card_padding()` / `.screen_margins()` / `.std_gap()` |
@@ -258,7 +258,9 @@ child within the box with `set_position`.
 
 `spacer()` is `flex_grow: 1, flex_shrink: 1, flex_basis: 0`. Between two items
 it pushes them apart; leading, it pushes the item to the end; two of them split
-the free space evenly.
+the free space evenly. Given a size along its parent's axis it is a fixed gap of
+that size instead — `spacer().width(72.0)` in a row is 72 wide and takes none of
+the leftover — while a size across the axis leaves it flexible.
 
 Usage rules and examples: [guide.md](guide.md) (`@flex` DSL and HIG).
 

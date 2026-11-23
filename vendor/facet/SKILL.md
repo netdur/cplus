@@ -200,6 +200,11 @@ belonged inline. If you are writing `set_grow`/`set_align`/`set_padding` inside
 left after each item's content, so labels of different lengths come out
 different widths: plausible, slightly ragged, and silent.
 
+**A fixed gap is a sized `spacer`.** `spacer()` takes the leftover along its
+parent's axis; `spacer().width(72.0f64)` in a row (`.height(…)` in a column) is
+72 points and takes none of it. Do not reach for an empty `column { }` to make
+room.
+
 **facet adds** `.gesture(on_click: …)` (`facet/gestures`) and the appearance
 setters on the node (`set_background_color`, `set_corner_radius`, `set_shown`,
 `set_input_transparent`, …). A `ref this` setter is a modifier line too, so

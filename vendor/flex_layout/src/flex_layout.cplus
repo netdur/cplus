@@ -211,6 +211,13 @@ struct Style {
     gap_column: StyleLength,    // horizontal gap (between columns / row-direction items)
 
     aspect_ratio: f64,  // width / height; undefined() when unset
+
+    // Set by `spacer()`. A spacer is flexible on whichever axis its parent runs
+    // — until that axis is given an explicit size, and then it HOLDS the size:
+    // `spacer().width(72.0)` in a row is 72 wide, not 72 plus the leftover.
+    // The parent's direction is only known at layout, so the fact travels here
+    // and the flex pass reads it beside grow / shrink / basis.
+    flexible_space: bool,
 }
 
 impl Style {
@@ -253,6 +260,7 @@ impl Style {
             gap_row: StyleLength::points(0.0),
             gap_column: StyleLength::points(0.0),
             aspect_ratio: undefined(),
+            flexible_space: false,
         };
     }
 }
@@ -1389,16 +1397,24 @@ impl Node {
             // Flex base size on the main axis: explicit basis, else explicit main
             // dimension, else the child's intrinsic main extent.
             var base: f64 = 0.0;
-            if cs.flex_basis.is_defined() {
-                base = f_max(0.0, cs.flex_basis.resolve(main_inner));
+            let main_dim: StyleLength = if row { cs.width } else { cs.height };
+            let main_resolved: f64 = resolve_border_box(main_dim, cs, row, main_inner, node_w);
+            // A spacer that was told its size on THIS axis is a fixed gap: the
+            // size is its base and it neither grows nor shrinks. Sized only on
+            // the cross axis it is still a spacer here.
+            let held: bool = cs.flexible_space && is_defined(main_resolved);
+            if held {
+                base = f_max(0.0, main_resolved);
             } else {
-                let main_dim: StyleLength = if row { cs.width } else { cs.height };
-                let resolved: f64 = resolve_border_box(main_dim, cs, row, main_inner, node_w);
-                base = if is_defined(resolved) { f_max(0.0, resolved) } else { if row { isz.width } else { isz.height } };
+                if cs.flex_basis.is_defined() {
+                    base = f_max(0.0, cs.flex_basis.resolve(main_inner));
+                } else {
+                    base = if is_defined(main_resolved) { f_max(0.0, main_resolved) } else { if row { isz.width } else { isz.height } };
+                }
             }
             let _ = bases.append(base);
-            let _ = grows.append(cs.flex_grow);
-            let _ = shrinks.append(cs.flex_shrink);
+            let _ = grows.append(if held { 0.0 } else { cs.flex_grow });
+            let _ = shrinks.append(if held { 0.0 } else { cs.flex_shrink });
             let _ = flow.append(in_flow);
 
             // Cross size: explicit if set, else the child's intrinsic cross extent
@@ -2457,7 +2473,8 @@ fn style_eq(a: Style, b: Style) -> bool {
         && sl_eq(a.border_start, b.border_start) && sl_eq(a.border_end, b.border_end)
         && sl_eq(a.position_start, b.position_start) && sl_eq(a.position_end, b.position_end)
         && sl_eq(a.gap_row, b.gap_row) && sl_eq(a.gap_column, b.gap_column)
-        && bits_eq(a.aspect_ratio, b.aspect_ratio);
+        && bits_eq(a.aspect_ratio, b.aspect_ratio)
+        && a.flexible_space == b.flexible_space;
 }
 fn layout_eq(a: Frame, b: Frame) -> bool {
     return bits_eq(a.left, b.left) && bits_eq(a.top, b.top) && bits_eq(a.width, b.width) && bits_eq(a.height, b.height);
@@ -2819,11 +2836,18 @@ fn card(take b: Builder) -> Node {
 //
 //     row { box().width(40.0)  spacer()  box().width(40.0) }
 //
+// Give it a size along the parent's axis and it is a FIXED gap of that size:
+//
+//     row { spacer().width(72.0)  title  spacer()  buttons }
+//
+// A size across the axis (`.height` in a row) leaves it flexible along it.
+//
 fn spacer() -> Node {
     var n: Node = Node::new();
     n.style.flex_grow = 1.0;
     n.style.flex_shrink = 1.0;
     n.style.flex_basis = StyleLength::points(0.0);
+    n.style.flexible_space = true;
     return n;
 }
 
@@ -5228,6 +5252,80 @@ fn test_spacer_splits_free_space_evenly() {
     var root: Node = row(b);
     root.calculate_layout(width: 120.0, height: 40.0);
     assert approx(must(root.child_frame(1)).left, 50.0);
+}
+
+// bugs/closed/facet-spacer-ignores-explicit-size.md — `spacer().width(72.0)`
+// kept `flex_grow: 1` over `flex_basis: 0`, so the 72 was never read and the
+// node took the whole leftover (a 660pt hole in a window header).
+#[test]
+fn test_spacer_with_a_main_axis_size_holds_it() {
+    var b: Builder = Builder::new();
+    b.add(spacer().width(72.0));
+    b.add(box().width(40.0).height(20.0));
+    var root: Node = row(b);
+    root.calculate_layout(width: 800.0, height: 40.0);
+    assert approx(must(root.child_frame(0)).width, 72.0);
+    assert approx(must(root.child_frame(1)).left, 72.0);
+}
+
+#[test]
+fn test_sized_spacer_leaves_the_leftover_to_a_plain_one() {
+    var b: Builder = Builder::new();
+    b.add(spacer().width(72.0));
+    b.add(box().width(40.0).height(20.0));
+    b.add(spacer());
+    b.add(box().width(40.0).height(20.0));
+    var root: Node = row(b);
+    root.calculate_layout(width: 800.0, height: 40.0);
+    assert approx(must(root.child_frame(0)).width, 72.0);
+    assert approx(must(root.child_frame(2)).width, 648.0);
+    assert approx(must(root.child_frame(3)).left, 760.0);
+}
+
+#[test]
+fn test_sized_spacer_does_not_shrink_when_the_row_is_short() {
+    var b: Builder = Builder::new();
+    b.add(spacer().width(72.0));
+    b.add(box().width(100.0).height(20.0).shrink(1.0));
+    var root: Node = row(b);
+    root.calculate_layout(width: 120.0, height: 40.0);
+    assert approx(must(root.child_frame(0)).width, 72.0);
+    assert approx(must(root.child_frame(1)).width, 48.0);
+}
+
+#[test]
+fn test_spacer_sized_on_the_column_axis_holds_it_there() {
+    var b: Builder = Builder::new();
+    b.add(spacer().height(30.0));
+    b.add(box().width(40.0).height(20.0));
+    var root: Node = column(b);
+    root.calculate_layout(width: 200.0, height: 400.0);
+    assert approx(must(root.child_frame(0)).height, 30.0);
+    assert approx(must(root.child_frame(1)).top, 30.0);
+}
+
+// Negative: a size ACROSS the axis is not a size along it. In a row, `.height`
+// says how tall the gap is and it still takes the leftover width.
+#[test]
+fn test_spacer_sized_across_the_axis_stays_flexible() {
+    var b: Builder = Builder::new();
+    b.add(spacer().height(10.0));
+    b.add(box().width(40.0).height(20.0));
+    var root: Node = row(b);
+    root.calculate_layout(width: 200.0, height: 40.0);
+    assert approx(must(root.child_frame(0)).width, 160.0);
+    assert approx(must(root.child_frame(1)).left, 160.0);
+}
+
+// Negative: the rule is the spacer's, not every growing node's. An ordinary
+// box with grow and a width still grows from that width, as flexbox says.
+#[test]
+fn test_a_growing_box_with_a_width_still_grows() {
+    var b: Builder = Builder::new();
+    b.add(box().width(72.0).height(20.0).grow(1.0));
+    var root: Node = row(b);
+    root.calculate_layout(width: 200.0, height: 40.0);
+    assert approx(must(root.child_frame(0)).width, 200.0);
 }
 
 #[test]
