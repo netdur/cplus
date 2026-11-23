@@ -23,6 +23,18 @@ enum Option[T] {
 // Generic constructor for `Some` — symmetric with `Result::ok`. The
 // `None` variant is constructed directly as `Option[T]::None` with the
 // turbofish (sema can't infer T from a payload-less variant).
+// An `Option` of something that can be copied can be copied. A payload-carrying
+// enum derives nothing, so this one is written out — and it is what lets a
+// struct with an `Option[Text]` field derive `Clone` with an empty impl.
+impl Option[T: Clone]: Clone {
+    fn clone(this) -> Option[T] {
+        return match this {
+            Option::Some(v) => Option[T]::Some(v.clone()),
+            Option::None => Option[T]::None,
+        };
+    }
+}
+
 fn some[T](take v: T) -> Option[T] {
     return Option[T]::Some(v);
 }
@@ -54,4 +66,16 @@ fn option_none() {
         Option[i32]::Some(x) => { assert false; }
         Option[i32]::None => { assert true; }
     }
+}
+
+#[test]
+fn an_option_of_a_clonable_value_clones() {
+    let a: Option[i32] = Option[i32]::Some(4);
+    let b: Option[i32] = a.clone();
+    assert match b { Option::Some(v) => v == 4, Option::None => false };
+    let n: Option[i32] = Option[i32]::None;
+    let m: Option[i32] = n.clone();
+    assert match m { Option::Some(_) => false, Option::None => true };
+    // The original is still there to be read: `clone` borrows.
+    assert match a { Option::Some(v) => v == 4, Option::None => false };
 }

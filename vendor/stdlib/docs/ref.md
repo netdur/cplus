@@ -78,6 +78,10 @@ fn some[T](take v: T) -> Option[T]
 
 `some` moves `v` into `Some`. Construct `None` as `Option[T]::None`.
 
+`Option[T]` is `Clone` when `T` is: `o.clone()` copies the payload. That is the
+only method it has — presence is still read with `match`, `if let` or
+`guard let`.
+
 ---
 
 ## result
@@ -151,6 +155,8 @@ fn collect[T](take source: iterator::Iterator[T]) -> Vec[T]
 | `reserve` / `shrink_to_fit` | capacity (`Status`) |
 | `append` / `insert` / `set` | add/replace (`Status`) |
 | `remove` / `remove_last` / `swap_remove` | take element out (`Option[T]`) |
+| `replace(value, at:)` | swap an element in place and get the old one back (`Option[T]`), O(1) |
+| `clone()` | a deep copy — exists when `T: Clone` |
 | `remove_all` / `truncate` | clear / shorten |
 | `at` | `Option[T]` when `T: Copy` |
 | `at_ptr` | `Option[*T]` in-place |

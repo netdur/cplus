@@ -84,8 +84,6 @@ impl ObsVec[T] {
 
     fn count(ref this) -> usize { return this._v.count(); }
 
-    fn at(ref this, index: usize) -> option::Option[T] { return this._v.at(index); }
-
     fn at_ptr(ref this, index: usize) -> option::Option[*T] { return this._v.at_ptr(index); }
 
     fn is_empty(ref this) -> bool { return this._v.count() == (0 as usize); }
@@ -185,6 +183,17 @@ impl ObsVec[T] {
     fn note_reload(ref this) {
         this.changed.emit(Change::reload());
     }
+}
+
+// THE BY-VALUE READ, for elements that can be read by value. `Vec::at` hands
+// back a COPY, which is only sound for a `Copy` element — so this forward
+// carries the same bound. It used to sit in the unbounded block below, where
+// an `ObsVec[Text]` could call it and get a second owner of the row's `Text`
+// (the compiler now warns about that call, W0010; see bugs/cpc-an-unbounded-
+// generic-body-may-call-a-bounded-impl-method.md). A row that owns something
+// is read in place, through `at_ptr`.
+impl ObsVec[T: Copy] {
+    fn at(ref this, index: usize) -> option::Option[T] { return this._v.at(index); }
 }
 
 // ───────────────────────────── tests ─────────────────────────────

@@ -796,26 +796,14 @@ struct Search {
 
 // THE INSTALL IS A COPY, NOT A MOVE. `Search` owns heap fields so it has a
 // destructor, and moving an owning field out of a Drop type is E0509 — the
-// destructor would free it twice. `Vec` has no `clone` either, so the swap
-// every author writes first (`this.hits = this.staged;`) does not compile.
-// Copy the elements through a pointer; this is what facet's own resource does.
-fn take_rows(src: *vec::Vec[i64]) -> vec::Vec[i64] {
-    var out: vec::Vec[i64] = vec::new::[i64]();
-    var i: usize = 0 as usize;
-    while i < { (*src).count() } {
-        match { (*src).at(i) } {
-            option::Option[i64]::Some(v) => { let _a: status::Status = out.append(v); }
-            option::Option[i64]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return out;
-}
+// destructor would free it twice. So the swap every author writes first
+// (`this.hits = this.staged;`) does not compile; `.clone()` is the copy, and a
+// `Vec` has one whenever its elements do.
 
 impl Search: services::Job {
     fn run(ref this) { this.staged = grep_the_disk(this.query.view()); return; }   // OFF main
     fn apply(ref this) {                                                          // ON main
-        this.hits = take_rows({ #addr_of(this.staged) });
+        this.hits = this.staged.clone();
         this.generation = this.generation + (1 as i64);
         return;
     }

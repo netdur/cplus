@@ -408,18 +408,6 @@ impl Text {
         return status::Status::Ok;
     }
 
-    // Owned deep copy. If the allocation fails the copy is empty (best effort);
-    // the `t._cap >= this._len` guard keeps the memcpy from writing through the
-    // null buffer that `with_capacity` hands back on failure.
-    fn clone(this) -> Text {
-        var t: Text = with_capacity(this._len);
-        if this._len != (0 as usize) && t._cap >= this._len {
-            { memcpy(t._ptr, this._ptr, this._len); }
-            t._len = this._len;
-        }
-        return t;
-    }
-
     // `clone` under the name generic call sites reach for. `str` answers
     // `.to_text()` and a `Text` errored E0324 on the same spelling, so code
     // written against a str-or-Text value had to know which it held — the
@@ -800,6 +788,24 @@ fn _consume_text(take t: Text) -> Text {
 fn _huge() -> str {
     let one: str = "x";
     return { #str_from_raw_parts(#str_ptr(one), (1 as usize) << (62 as usize)) };
+}
+
+// `Text: Clone`, as an INTERFACE impl and not only a method. The method was
+// always there; the interface is what makes `Text` answer a `T: Clone` bound —
+// so a `Vec[Text]` or an `Option[Text]` clones, and a struct holding either
+// derives `Clone` with an empty impl.
+impl Text: Clone {
+    // Owned deep copy. If the allocation fails the copy is empty (best effort);
+    // the `t._cap >= this._len` guard keeps the memcpy from writing through the
+    // null buffer that `with_capacity` hands back on failure.
+    fn clone(this) -> Text {
+        var t: Text = with_capacity(this._len);
+        if this._len != (0 as usize) && t._cap >= this._len {
+            { memcpy(t._ptr, this._ptr, this._len); }
+            t._len = this._len;
+        }
+        return t;
+    }
 }
 
 #[test]
@@ -1627,4 +1633,85 @@ fn intern_distinct_strings_get_distinct_bytes() {
 fn intern_empty_is_empty() {
     let e: str = intern("");
     assert e.is_empty();
+}
+
+// ---- Text: Clone, and what it unlocks ---------------------------------------
+//
+// bugs/closed/cplus-vec-no-in-place-enum-mutation-or-clone.md. `Text` answering
+// the `Clone` BOUND is what lets a `Vec[Text]` and an `Option[Text]` clone, and
+// a struct holding them derive `Clone` with an empty impl.
+
+struct CloneHolder {
+    title: Text,
+    words: vec::Vec[Text],
+    ids: vec::Vec[i32],
+    note: option::Option[Text],
+}
+impl CloneHolder: Clone {}
+
+fn clone_dup[T: Clone](v: T) -> T { return v.clone(); }
+
+fn word_at(v: vec::Vec[Text], i: usize) -> str {
+    return match v.at_ptr(i) {
+        option::Option[*Text]::Some(p) => { (*p).view() },
+        option::Option[*Text]::None => "",
+    };
+}
+
+#[test]
+fn a_vec_of_text_clones_deep() {
+    var a: vec::Vec[Text] = vec::new::[Text]();
+    let _x: status::Status = a.append(from_str("one"));
+    let _y: status::Status = a.append(from_str("two"));
+    var b: vec::Vec[Text] = a.clone();
+    assert b.count() == (2 as usize);
+    assert word_at(b, 0 as usize) == "one";
+    assert word_at(b, 1 as usize) == "two";
+    let _s: status::Status = b.set(from_str("changed"), at: 0 as usize);
+    let _z: status::Status = a.append(from_str("three"));
+    assert word_at(a, 0 as usize) == "one";
+    assert word_at(b, 0 as usize) == "changed";
+    assert a.count() == (3 as usize);
+    assert b.count() == (2 as usize);
+}
+
+#[test]
+fn text_satisfies_a_clone_bound() {
+    let t: Text = from_str("bound");
+    let u: Text = clone_dup::[Text](t);
+    assert u.view() == "bound";
+    assert t.view() == "bound";
+}
+
+#[test]
+fn a_struct_holding_a_vec_and_an_option_of_text_derives_clone() {
+    var words: vec::Vec[Text] = vec::new::[Text]();
+    let _x: status::Status = words.append(from_str("w"));
+    var ids: vec::Vec[i32] = vec::new::[i32]();
+    let _y: status::Status = ids.append(5);
+    var h: CloneHolder = CloneHolder {
+        title: from_str("t"),
+        words: words,
+        ids: ids,
+        note: option::Option[Text]::Some(from_str("n")),
+    };
+    let c: CloneHolder = h.clone();
+    // The copy is its own: growing the original does not grow it.
+    let _z: status::Status = h.words.append(from_str("later"));
+    assert h.words.count() == (2 as usize);
+    assert c.words.count() == (1 as usize);
+    assert word_at(c.words, 0 as usize) == "w";
+    assert c.ids.count() == (1 as usize);
+    assert c.title.view() == "t";
+    assert match c.note { option::Option::Some(t) => t.view() == "n", option::Option::None => false };
+}
+
+#[test]
+fn an_option_of_text_clones_and_none_stays_none() {
+    let a: option::Option[Text] = option::Option[Text]::Some(from_str("opt"));
+    let b: option::Option[Text] = a.clone();
+    assert match b { option::Option::Some(t) => t.view() == "opt", option::Option::None => false };
+    let n: option::Option[Text] = option::Option[Text]::None;
+    let m: option::Option[Text] = n.clone();
+    assert match m { option::Option::Some(_) => false, option::Option::None => true };
 }
