@@ -129,8 +129,15 @@ impl Home: component::Component {
             column {
                 label("Tasks", key: "title", font_size: 24.0, font_weight: vocab::FontWeight::Bold)
                 row {
+                    // GROW AND SHRINK. With grow alone the field kept the full
+                    // row width it measured at and pushed "Add" off the right
+                    // edge of the window — where `click` still reached it by
+                    // id, so every check in agent_check.py passed while a
+                    // person could not see the button. Found by the first
+                    // image the agent surface's `screenshot` verb returned.
                     text_field("", key: "new_title", placeholder: "New task", on_submit: this.on_add)
                         .grow(1.0)
+                        .shrink(1.0)
                     button("Add", key: "add", on_click: this.on_add)
                 }
                     .gap(8.0)
