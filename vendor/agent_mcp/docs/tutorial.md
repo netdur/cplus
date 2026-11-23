@@ -58,6 +58,7 @@ let resp: text::Text = mcp::handle_request(
 | `describe_ui` | `{ "mode": "exposed" \| "full", "prefix": "…" }` | array of nodes |
 | `click` | `{ "id": "…" }` | `{ "outcome": "…" }` |
 | `hit_test` | `{ "id": "…" }` | what a pointer at its centre would reach |
+| `screenshot` | `{ "window": "…" }` (optional) | a PNG of that window as drawn, gated nodes blacked out |
 | `set_caret` | `{ "id", "start", "end" }` | outcome |
 | `read_text` | `{ "id": "…" }` | the node's text |
 | `read_runs` | `{ "id": "…" }` | the styled runs as drawn |

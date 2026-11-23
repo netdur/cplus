@@ -9852,15 +9852,21 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20    -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}}'\n\
          ```\n\n\
          `tools/list` names every verb, and the startup line says how many\n\
-         there are. The core eleven are `describe_ui`, `click`, `set_text`,\n\
+         there are. The core twelve are `describe_ui`, `click`, `set_text`,\n\
          `hit_test`, `set_caret`, `read_text`, `read_runs`, `invoke_menu`,\n\
-         `scroll_to`, `poll_event` and `activity`. Fourteen more see the whole\n\
+         `scroll_to`, `screenshot`, `poll_event` and `activity`. Fourteen more\n\
+         see the whole\n\
          tree rather than just what is exposed, and can write any property on\n\
          it: `describe_tree`, `inspect`, `set`, `set_many`, `reset`, `nudge`,\n\
          `insert`, `remove`, `reparent`, `undo`, `highlight`,\n\
          `clear_highlight`, `vocabulary` and `journal`. They come with the\n\
          surface — there is nothing extra for the app to call. Ask\n\
          `vocabulary` what a property takes before you `set` one.\n\n\
+         `screenshot` is how you LOOK: a PNG of one window as it is drawn.\n\
+         Every frame can be right and the screen wrong — unreadable contrast,\n\
+         a control pushed off the edge that `click` still reaches by id — so\n\
+         look before you say a screen works. Nodes whose content is gated come\n\
+         back as black rectangles; that is the privacy rule, not a bug.\n\n\
          `activity` is the record of what has been DONE through the surface —\n\
          useful when a person is supervising you, and when you want to check\n\
          what you already tried.\n\n\

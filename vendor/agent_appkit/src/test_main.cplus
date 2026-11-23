@@ -15,6 +15,7 @@ import "agent_core/surface" as surface;
 import "agent_core/auth" as auth;
 import "agent_core/backend" as mcpb;
 import "stdlib/vec" as vec;
+import "stdlib/io" as io;
 import "stdlib/status" as status;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
@@ -3494,3 +3495,212 @@ fn a_control_inside_a_hidden_screen_refuses_actions() {
     app::reset_default_for_tests();
 }
 
+
+// ---- screenshot: pixels, with every gated node blacked out ---------------------
+//
+// bugs/closed/facet-agent-no-screenshot-verb.md. The rule is `mcpb::Screenshot`'s:
+// a verb that returns pixels blacks out every non-Open node. So the tests read
+// the PNG back and look at the PIXELS — a `redacted` count that says three
+// while the card number is legible in the image would pass a test that only
+// read the count.
+
+struct ShotPixel { r: f64, g: f64, b: f64 }
+
+// One coloured field: a text field that draws a solid background, so what is at
+// its centre is a known colour unless something painted over it.
+fn shot_field(content: ak::View, x: f64, y: f64, red: f64, green: f64, blue: f64,
+              id: str) -> *u8 {
+    let f = ak::TextField::new_with_frame(rt::Rect { x: x, y: y, w: 80.0, h: 30.0 });
+    f.as_control().set_string_value("4111 1111");
+    f.set_draws_background(true);
+    f.set_background_color(ak::Color::color_with_red(red, green, blue, 1.0f64));
+    rt::msg_void_i8(f.as_view().raw(), rt::sel(#str_ptr("setBezeled:\0")), 0 as i8);
+    content.add_subview(f.as_view());
+    agent::set_agent_id(f.as_view().raw(), id);
+    return f.as_view().raw();
+}
+
+// The colour at the centre of an 80x30 field whose frame origin is (x, y) in a
+// NON-flipped content view `height` points tall, read out of the PNG.
+fn shot_pixel_at(shot: *mcpb::Screenshot, x: f64, y: f64, height: f64) -> ShotPixel {
+    var none: ShotPixel = ShotPixel { r: -1.0f64, g: -1.0f64, b: -1.0f64 };
+    let n: usize = { (*shot).png.count() };
+    if n == (0 as usize) { return none; }
+    let data: *u8 = rt::msg_id_id_u64(rt::get_class(#str_ptr("NSData\0")),
+        rt::sel(#str_ptr("dataWithBytes:length:\0")),
+        { #slice_ptr((*shot).png.as_slice()) }, n as u64);
+    let rep: *u8 = rt::msg_id_id(rt::msg_id(rt::get_class(#str_ptr("NSBitmapImageRep\0")),
+                                            rt::sel(#str_ptr("alloc\0"))),
+                                 rt::sel(#str_ptr("initWithData:\0")), data);
+    if rep.is_null() { return none; }
+    let scale: f64 = { (*shot).scale };
+    // PNG rows run top-down; the view's y runs bottom-up.
+    let px: i64 = ((x + 40.0f64) * scale) as i64;
+    let py: i64 = ((height - (y + 15.0f64)) * scale) as i64;
+    match ak::BitmapImageRep::from_raw(rep).color_at_x(px, py) {
+        option::Option[ak::Color]::Some(c) => {
+            match c.color_using_color_space(ak::ColorSpace::s_r_g_b_color_space()) {
+                option::Option[ak::Color]::Some(s) => {
+                    none = ShotPixel { r: s.red_component(), g: s.green_component(), b: s.blue_component() };
+                }
+                option::Option[ak::Color]::None => { }
+            }
+        }
+        option::Option[ak::Color]::None => { }
+    }
+    rt::release(rep);
+    return none;
+}
+
+fn shot_is_black(p: ShotPixel) -> bool { return p.r >= 0.0f64 && p.r < 0.05f64 && p.g < 0.05f64 && p.b < 0.05f64; }
+
+// Four fields, one per standing: Open (red), Protected (blue), Private
+// (yellow), and one inside an Excluded panel (green).
+fn shot_fixture(root: *core::Node) -> ak::Window {
+    app::reset_default_for_tests();
+    let win = fixture_window(200.0, 120.0);
+    let content = content_of(win);
+    let open_v: *u8 = shot_field(content, 10.0, 70.0, 1.0, 0.0, 0.0, "shot:open");
+    let prot_v: *u8 = shot_field(content, 110.0, 70.0, 0.0, 0.0, 1.0, "shot:card");
+    agent::set_agent_policy(prot_v, identity::policy_protected());
+    let priv_v: *u8 = shot_field(content, 10.0, 10.0, 1.0, 1.0, 0.0, "shot:cvc");
+    agent::set_agent_policy(priv_v, identity::policy_private());
+    let excl_v: *u8 = shot_field(content, 110.0, 10.0, 0.0, 1.0, 0.0, "shot:hidden");
+    agent::set_agent_policy(excl_v, identity::policy_exclude());
+    { *root = core::column(core::Builder::new(), key: "shot:root") };
+    core::set_view(root, content.raw(), noop_release);
+    let _a: status::Status = { (*root).add_child(keyed("shot:open", open_v)) };
+    let _b: status::Status = { (*root).add_child(keyed("shot:card", prot_v)) };
+    let _c: status::Status = { (*root).add_child(keyed("shot:cvc", priv_v)) };
+    let _d: status::Status = { (*root).add_child(keyed("shot:hidden", excl_v)) };
+    mount_tree(root, win.raw());
+    return win;
+}
+
+#[test]
+fn a_screenshot_is_a_png_of_the_window_with_every_gated_node_blacked_out() {
+    var root: core::Node = core::column(core::Builder::new(), key: "tmp");
+    let win = shot_fixture(#addr_of(root));
+    var s: agent::Surface = agent::open(win.raw());
+    var shot: mcpb::Screenshot = s.screenshot(auth::operator(), "");
+    assert match shot.outcome { surface::Outcome::Allowed => true, _ => false };
+    assert shot.supported;
+    // A PNG: the eight-byte signature, and more than a header's worth of it.
+    assert shot.png.count() > (100 as usize);
+    assert match shot.png.at(0 as usize) { option::Option[u8]::Some(b) => b == (0x89 as u8), option::Option[u8]::None => false };
+    assert match shot.png.at(1 as usize) { option::Option[u8]::Some(b) => b == (0x50 as u8), option::Option[u8]::None => false };
+    assert match shot.png.at(2 as usize) { option::Option[u8]::Some(b) => b == (0x4E as u8), option::Option[u8]::None => false };
+    assert match shot.png.at(3 as usize) { option::Option[u8]::Some(b) => b == (0x47 as u8), option::Option[u8]::None => false };
+    assert shot.width == 200.0f64;
+    assert shot.height == 120.0f64;
+    assert shot.scale >= 1.0f64;
+
+    // THE OPEN FIELD IS DRAWN: red, where it is.
+    let open_px: ShotPixel = shot_pixel_at(#addr_of(shot), 10.0f64, 70.0f64, 120.0f64);
+    assert open_px.r > 0.8f64;
+    assert open_px.g < 0.3f64;
+    assert open_px.b < 0.3f64;
+    // THE THREE GATED ONES ARE NOT: black, where blue, yellow and green were.
+    assert shot_is_black(shot_pixel_at(#addr_of(shot), 110.0f64, 70.0f64, 120.0f64));
+    assert shot_is_black(shot_pixel_at(#addr_of(shot), 10.0f64, 10.0f64, 120.0f64));
+    assert shot_is_black(shot_pixel_at(#addr_of(shot), 110.0f64, 10.0f64, 120.0f64));
+    assert shot.redacted == (3 as usize);
+    app::reset_default_for_tests();
+}
+
+// THE GRANT DOES NOT BUY THE PIXELS BACK. A grant that may READ a protected
+// node's text still gets a black box: the redaction is the image's, not the
+// caller's — a picture cannot be narrowed to the one field a grant covers.
+#[test]
+fn a_wider_grant_does_not_unredact_a_screenshot() {
+    var root: core::Node = core::column(core::Builder::new(), key: "tmp");
+    let win = shot_fixture(#addr_of(root));
+    var s: agent::Surface = agent::open(win.raw());
+    var wide: auth::Grant = auth::protected_operator();
+    wide = auth::with_capability(wide, auth::cap_read_private());
+    wide = auth::with_capability(wide, auth::cap_act_private());
+    var shot: mcpb::Screenshot = s.screenshot(wide, "");
+    assert match shot.outcome { surface::Outcome::Allowed => true, _ => false };
+    assert shot.redacted == (3 as usize);
+    assert shot_is_black(shot_pixel_at(#addr_of(shot), 110.0f64, 70.0f64, 120.0f64));
+    assert shot_is_black(shot_pixel_at(#addr_of(shot), 10.0f64, 10.0f64, 120.0f64));
+    app::reset_default_for_tests();
+}
+
+// NEGATIVE, three ways: a grant that cannot read gets no image; a window id
+// that names no window gets no image; and a node id that is not a window is
+// not a way to ask for one.
+#[test]
+fn a_screenshot_is_refused_without_read_or_without_a_window() {
+    var root: core::Node = core::column(core::Builder::new(), key: "tmp");
+    let win = shot_fixture(#addr_of(root));
+    var s: agent::Surface = agent::open(win.raw());
+    let blind: auth::Grant = auth::without_capability(auth::operator(), auth::cap_read());
+    let a: mcpb::Screenshot = s.screenshot(blind, "");
+    assert match a.outcome { surface::Outcome::NeedsGrant => true, _ => false };
+    assert a.png.count() == (0 as usize);
+    let b: mcpb::Screenshot = s.screenshot(auth::operator(), "no-such-window");
+    assert match b.outcome { surface::Outcome::NotFound => true, _ => false };
+    assert b.png.count() == (0 as usize);
+    let c: mcpb::Screenshot = s.screenshot(auth::operator(), "shot:open");
+    assert match c.outcome { surface::Outcome::NotFound => true, _ => false };
+    assert c.png.count() == (0 as usize);
+    app::reset_default_for_tests();
+}
+
+// A window with nothing gated in it reports ZERO redactions, and the count is
+// not just "how many nodes there were".
+#[test]
+fn a_screenshot_of_an_ungated_window_redacts_nothing() {
+    app::reset_default_for_tests();
+    let win = fixture_window(200.0, 120.0);
+    let content = content_of(win);
+    let v: *u8 = shot_field(content, 10.0, 70.0, 1.0, 0.0, 0.0, "plain:one");
+    var root: core::Node = core::column(core::Builder::new(), key: "plain:root");
+    core::set_view(#addr_of(root), content.raw(), noop_release);
+    let _a: status::Status = root.add_child(keyed("plain:one", v));
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    var shot: mcpb::Screenshot = s.screenshot(auth::reader(), "");
+    assert match shot.outcome { surface::Outcome::Allowed => true, _ => false };
+    assert shot.redacted == (0 as usize);
+    let px: ShotPixel = shot_pixel_at(#addr_of(shot), 10.0f64, 70.0f64, 120.0f64);
+    assert px.r > 0.8f64;
+    app::reset_default_for_tests();
+}
+
+// THE WINDOW'S OWN BACKGROUND IS IN THE PICTURE. A content view does not draw
+// it, so the first real capture came out transparent: a dark-mode window was
+// one dark text field on white, with every label around it white on nothing.
+// The empty area between the fields has to be the window's colour.
+#[test]
+fn a_screenshot_starts_from_the_windows_background_not_from_transparent() {
+    app::reset_default_for_tests();
+    let win = fixture_window(200.0, 120.0);
+    // A background no control in the fixture has: magenta.
+    rt::msg_void_id(win.raw(), rt::sel(#str_ptr("setBackgroundColor:\0")),
+                    ak::Color::color_with_red(1.0f64, 0.0f64, 1.0f64, 1.0f64).raw());
+    let content = content_of(win);
+    let v: *u8 = shot_field(content, 10.0, 70.0, 1.0, 0.0, 0.0, "bg:one");
+    var root: core::Node = core::column(core::Builder::new(), key: "bg:root");
+    core::set_view(#addr_of(root), content.raw(), noop_release);
+    let _a: status::Status = root.add_child(keyed("bg:one", v));
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    var shot: mcpb::Screenshot = s.screenshot(auth::reader(), "");
+    assert match shot.outcome { surface::Outcome::Allowed => true, _ => false };
+    // An EMPTY part of the window — the field-sized patch at (110, 10), where
+    // this fixture puts nothing — is the window's magenta.
+    let empty: ShotPixel = shot_pixel_at(#addr_of(shot), 110.0f64, 10.0f64, 120.0f64);
+    // Magenta, as the bitmap's colour space renders it: measured
+    // (0.94, 0.35, 0.98) for a device (1, 0, 1). What matters is that it is
+    // the window's colour and not white, which is what transparent reads as.
+    assert empty.r > 0.8f64;
+    assert empty.b > 0.8f64;
+    assert empty.g < 0.5f64;
+    // ...and the field is still drawn over it.
+    let field: ShotPixel = shot_pixel_at(#addr_of(shot), 10.0f64, 70.0f64, 120.0f64);
+    assert field.r > 0.8f64;
+    assert field.b < 0.3f64;
+    app::reset_default_for_tests();
+}

@@ -42,6 +42,7 @@
 import "facet/application" as app;
 import "agent_appkit/agent_appkit" as agent_appkit;
 import "agent_core/events" as events;
+import "agent_core/backend" as mcp_backend_core;
 import "agent_core/auth" as auth;
 import "agent_core/identity" as identity;
 import "facet/vocabulary" as vocab;
@@ -70,11 +71,17 @@ fn enable() {
         serve_once: serve_once,
         pin_policy: pin_policy,
     });
+    // `screenshot` is the one verb that is installed rather than carried in
+    // the backend's vtable (see `agent_core/backend::Screenshot`). AppKit can
+    // answer it; a platform whose agent backend cannot leaves it uninstalled
+    // and the verb answers `supported: false` there.
+    agent_appkit::install_screenshot();
 }
 
 // Back to the portable no-op: an app that stops serving has no surface, and
 // the runtime's hooks answer nothing rather than reaching a dead one.
 fn disable() {
+    mcp_backend_core::set_screenshot_fn(0 as fn(*u8, auth::Grant, str) -> mcp_backend_core::Screenshot);
     app::install_agent(app::AgentHooks {
         attach_window: 0 as fn(*u8),
         serve_once: 0 as fn(str),
@@ -370,6 +377,19 @@ fn enable_fills_the_install_struct_and_disable_empties_it() {
     // window exists; the surface opens empty rather than refusing.
     app::agent_attach(0 as *u8);
     disable();
+}
+
+// bugs/closed/facet-agent-no-screenshot-verb.md — enabling the agent is what
+// makes `screenshot` answerable on this platform, and disabling takes it away
+// with the rest of the surface.
+#[test]
+fn enable_installs_the_screenshot_capturer_and_disable_removes_it() {
+    disable();
+    assert mcp_backend_core::has_screenshot() == false;
+    enable();
+    assert mcp_backend_core::has_screenshot();
+    disable();
+    assert mcp_backend_core::has_screenshot() == false;
 }
 
 #[test]

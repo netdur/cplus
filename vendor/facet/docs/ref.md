@@ -1060,7 +1060,10 @@ turn one on.
 `facet_agent` is documented in its own `docs/` — tutorial, guide and reference.
 
 The surface answers `describe_ui` (the live tree, addressed by key) and drives
-controls through the same path a mouse takes.
+controls through the same path a mouse takes. `screenshot` answers what a
+window LOOKS like — a PNG, with every node whose content is gated
+(`vocab::Agent::Protected` / `Private`, or excluded) blacked out. On macOS
+today; other backends answer `supported: false`.
 
 `in_app()` opens the attached surface directly for an embedded assistant. It
 takes nothing and returns an `agent_inapp::Session`; no Unix socket or MCP

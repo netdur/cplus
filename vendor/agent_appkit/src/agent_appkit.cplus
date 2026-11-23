@@ -1847,6 +1847,171 @@ fn describe(window: *u8, grant: auth::Grant) -> vec::Vec[AppKitNode] {
     return s.describe(grant);
 }
 
+// ---- screenshot ---------------------------------------------------------------
+//
+// THE WINDOW AS DRAWN, with every gated node blacked out. See `mcpb::Screenshot`
+// for the rule; this is the AppKit half.
+//
+// `cacheDisplayInRect:toBitmapImageRep:` asks the content view to DRAW ITSELF
+// into a bitmap. It is in-process: no window server capture, so no Screen
+// Recording permission and nothing of any other application in the picture —
+// which is also why it cannot show the title bar, only the content.
+
+// NSBitmapImageFileTypePNG.
+const SHOT_PNG: u64 = 4u64;
+
+fn shot_is_view(obj: *u8) -> bool {
+    if is_null(obj) { return false; }
+    return responds_to(obj, #str_ptr("convertRect:toView:\0"));
+}
+
+impl Surface {
+    // The window node `window` names, or the first window when it names none.
+    // None when the id is not a window, or there is no window at all.
+    fn shot_window_node(this, window: str) -> option::Option[usize] {
+        if window != "" {
+            match this.reg.lookup(window) {
+                option::Option[usize]::Some(n) => {
+                    if identity::role_eq(this.reg.role_of(n), identity::Role::Window) {
+                        return option::Option[usize]::Some(n);
+                    }
+                    return option::Option[usize]::None;
+                }
+                option::Option::None => { return option::Option[usize]::None; }
+            }
+        }
+        var i: usize = 1 as usize;
+        let n: usize = this.reg.count();
+        while i < n {
+            if identity::role_eq(this.reg.role_of(i), identity::Role::Window) {
+                return option::Option[usize]::Some(i);
+            }
+            i = i +% (1 as usize);
+        }
+        return option::Option[usize]::None;
+    }
+
+    fn screenshot(this, grant: auth::Grant, window: str) -> mcpb::Screenshot {
+        if !grant.has(auth::cap_read()) {
+            return mcpb::screenshot_refused(surface::Outcome::NeedsGrant, true);
+        }
+        guard let option::Option[usize]::Some(wnode) = this.shot_window_node(window) else {
+            return mcpb::screenshot_refused(surface::Outcome::NotFound, true);
+        };
+        let win: *u8 = this.view_of(wnode);
+        if is_null(win) || !responds_to(win, #str_ptr("contentView\0")) {
+            return mcpb::screenshot_refused(surface::Outcome::Stale, true);
+        }
+        let content: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("contentView\0"))) };
+        if is_null(content) { return mcpb::screenshot_refused(surface::Outcome::Stale, true); }
+        let bounds: rt::Rect = { rt::msg_rect(content, rt::sel(#str_ptr("bounds\0"))) };
+        if bounds.w < 1.0f64 || bounds.h < 1.0f64 {
+            return mcpb::screenshot_refused(surface::Outcome::Stale, true);
+        }
+        let rep: *u8 = { rt::msg_id_rect(content,
+            rt::sel(#str_ptr("bitmapImageRepForCachingDisplayInRect:\0")), bounds) };
+        if is_null(rep) { return mcpb::screenshot_refused(surface::Outcome::Stale, true); }
+        let gctx_cls: *u8 = rt::get_class(#str_ptr("NSGraphicsContext\0"));
+        let gctx: *u8 = { rt::msg_id_id(gctx_cls,
+            rt::sel(#str_ptr("graphicsContextWithBitmapImageRep:\0")), rep) };
+        if is_null(gctx) {
+            // Cannot draw the black boxes -> there is no image to give.
+            return mcpb::screenshot_refused(surface::Outcome::Stale, true);
+        }
+        let path_cls: *u8 = rt::get_class(#str_ptr("NSBezierPath\0"));
+        // THE WINDOW'S BACKGROUND FIRST. A content view does not draw it — the
+        // window does — so the bitmap starts TRANSPARENT, and a dark-mode
+        // window came out as light text on nothing: the first real capture
+        // showed one dark text field on white and none of the labels around
+        // it (they were there, white on transparent). The picture has to start
+        // from what is behind the content, in the window's own appearance so a
+        // dynamic colour resolves to the dark or light it is drawn in.
+        { rt::msg_void(gctx_cls, rt::sel(#str_ptr("saveGraphicsState\0"))) };
+        { rt::msg_void_id(gctx_cls, rt::sel(#str_ptr("setCurrentContext:\0")), gctx) };
+        let bg: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("backgroundColor\0"))) };
+        if !is_null(bg) {
+            let prev_ap: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSAppearance\0")),
+                                            rt::sel(#str_ptr("currentAppearance\0"))) };
+            let win_ap: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("effectiveAppearance\0"))) };
+            if !is_null(win_ap) {
+                { rt::msg_void_id(rt::get_class(#str_ptr("NSAppearance\0")),
+                                  rt::sel(#str_ptr("setCurrentAppearance:\0")), win_ap) };
+            }
+            { rt::msg_void(bg, rt::sel(#str_ptr("set\0"))) };
+            { rt::msg_void_rect(path_cls, rt::sel(#str_ptr("fillRect:\0")),
+                                rt::Rect { x: 0.0f64, y: 0.0f64, w: bounds.w, h: bounds.h }) };
+            { rt::msg_void_id(rt::get_class(#str_ptr("NSAppearance\0")),
+                              rt::sel(#str_ptr("setCurrentAppearance:\0")), prev_ap) };
+        }
+        { rt::msg_void(gctx, rt::sel(#str_ptr("flushGraphics\0"))) };
+        { rt::msg_void(gctx_cls, rt::sel(#str_ptr("restoreGraphicsState\0"))) };
+
+        { rt::msg_void_rect_id(content, rt::sel(#str_ptr("cacheDisplayInRect:toBitmapImageRep:\0")),
+                               bounds, rep) };
+
+        // THE REDACTION, before a single byte is encoded. Drawn INTO the bitmap,
+        // so there is no version of the image without it.
+        { rt::msg_void(gctx_cls, rt::sel(#str_ptr("saveGraphicsState\0"))) };
+        { rt::msg_void_id(gctx_cls, rt::sel(#str_ptr("setCurrentContext:\0")), gctx) };
+        { rt::msg_void(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")),
+                                  rt::sel(#str_ptr("blackColor\0"))),
+                       rt::sel(#str_ptr("set\0"))) };
+        // The bitmap's context is NOT flipped: its origin is the bottom-left,
+        // whatever the view's is. A rect in a flipped content view's own
+        // coordinates is turned over before it is filled.
+        let flipped: bool = { rt::msg_i8(content, rt::sel(#str_ptr("isFlipped\0"))) } != (0 as i8);
+        var redacted: usize = 0 as usize;
+        var i: usize = 1 as usize;
+        let n: usize = this.reg.count();
+        while i < n {
+            let gated: bool = this.reg.tier_of(i) != identity::tier_open()
+                || this.reg.in_excluded_subtree(i);
+            if gated {
+                let v: *u8 = this.view_of(i);
+                // A VIEW IN THIS WINDOW. A window node has no rect of its own
+                // to black out, and a view in another window is not in the
+                // picture. A PART (a cell, a tab) blacks out its whole view:
+                // too much rather than too little.
+                if shot_is_view(v)
+                    && { rt::msg_id(v, rt::sel(#str_ptr("window\0"))) } == win {
+                    let own: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
+                    var r: rt::Rect = { msg_rect_rect_id(v,
+                        rt::sel(#str_ptr("convertRect:toView:\0")), own, content) };
+                    if flipped { r = rt::Rect { x: r.x, y: bounds.h - (r.y + r.h), w: r.w, h: r.h }; }
+                    { rt::msg_void_rect(path_cls, rt::sel(#str_ptr("fillRect:\0")), r) };
+                    redacted = redacted +% (1 as usize);
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        { rt::msg_void(gctx, rt::sel(#str_ptr("flushGraphics\0"))) };
+        { rt::msg_void(gctx_cls, rt::sel(#str_ptr("restoreGraphicsState\0"))) };
+
+        let data: *u8 = { rt::msg_id_u64_id(rep,
+            rt::sel(#str_ptr("representationUsingType:properties:\0")), SHOT_PNG,
+            rt::msg_id(rt::get_class(#str_ptr("NSDictionary\0")),
+                       rt::sel(#str_ptr("dictionary\0")))) };
+        if is_null(data) { return mcpb::screenshot_refused(surface::Outcome::Stale, true); }
+        let len: u64 = { rt::msg_u64(data, rt::sel(#str_ptr("length\0"))) };
+        let bytes: *u8 = { rt::msg_id(data, rt::sel(#str_ptr("bytes\0"))) };
+        var png: vec::Vec[u8] = vec::new::[u8]();
+        if len == (0 as u64) || is_null(bytes)
+            || !png.extend_from_raw(bytes, len as usize).is_ok() {
+            return mcpb::screenshot_refused(surface::Outcome::Stale, true);
+        }
+        let px_w: i64 = { rt::msg_i64(rep, rt::sel(#str_ptr("pixelsWide\0"))) };
+        return mcpb::Screenshot {
+            outcome: surface::Outcome::Allowed,
+            supported: true,
+            png: png,
+            width: bounds.w,
+            height: bounds.h,
+            scale: (px_w as f64) / bounds.w,
+            redacted: redacted,
+        };
+    }
+}
+
 impl Surface {
     // Balance the per-view retains taken by `open`/`walk` (index 0 is the
     // synthetic app root, mapped to null — skipped).
@@ -3128,6 +3293,7 @@ struct McpRequest {
     id: text::Text, value: text::Text, base: u64, at: u64, length: u64,
     opaque nodes: *vec::Vec[mcpb::UiNode], outcome: surface::Outcome,
     opaque hit: *surface::HitTest, opaque runs: *surface::Runs,
+    opaque shot: *mcpb::Screenshot,
 }
 fn cplus_agent_request(receiver: *u8, cmd: *u8, boxed: *u8) {
     let c: *McpRequest = rt::msg_id(boxed, rt::sel(#str_ptr("pointerValue\0"))) as *McpRequest;
@@ -3141,6 +3307,7 @@ fn cplus_agent_request(receiver: *u8, cmd: *u8, boxed: *u8) {
     else if (*c).verb == 5 { let out = (*c).hit; (*out) = mcp_hit_test_now(p, grant, (*c).id.view()); }
     else if (*c).verb == 6 { (*c).outcome = mcp_set_caret_now(p, grant, (*c).id.view(), (*c).at, (*c).length); }
     else if (*c).verb == 7 { let out = (*c).runs; (*out) = mcp_read_runs_now(p, grant, (*c).id.view()); }
+    else if (*c).verb == 8 { let out = (*c).shot; (*out) = mcp_screenshot_now(p, grant, (*c).id.view()); }
 }
 #[keeps(nothing)]
 fn invoke_request(c: *McpRequest) {
@@ -3188,6 +3355,24 @@ fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
     var out = surface::runs_refused(surface::Outcome::NotFound, true); c.runs = #addr_of(out);
     invoke_request(#addr_of(c)); return out;
 }
+
+// `screenshot` is not a vtable slot (see `mcpb::Screenshot`): it is installed.
+// Hops to the main thread like every other verb — it draws the window.
+fn mcp_screenshot(p: *u8, grant: auth::Grant, window: str) -> mcpb::Screenshot {
+    var c = #zero::[McpRequest](); c.surface_ptr = p; c.grant = grant; c.verb = 8;
+    c.id = text::from_str(window);
+    var out = mcpb::screenshot_refused(surface::Outcome::NotFound, true); c.shot = #addr_of(out);
+    invoke_request(#addr_of(c)); return out;
+}
+
+fn mcp_screenshot_now(p: *u8, grant: auth::Grant, window: str) -> mcpb::Screenshot {
+    refresh_surface(p);
+    let s: *Surface = { p as *Surface };
+    return (*s).screenshot(grant, window);
+}
+
+// Make `screenshot` answerable for surfaces this backend serves. Idempotent.
+fn install_screenshot() { mcpb::set_screenshot_fn(mcp_screenshot); return; }
 
 fn mcp_backend() -> mcpb::Backend {
     return mcpb::Backend {

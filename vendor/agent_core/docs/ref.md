@@ -215,6 +215,26 @@ struct Backend {
 
 ---
 
+### `Screenshot`
+
+```cplus
+struct Screenshot { outcome, supported, png: Vec[u8], width, height, scale, redacted }
+
+fn set_screenshot_fn(f: fn(*u8, auth::Grant, str) -> Screenshot)
+fn has_screenshot() -> bool
+fn screenshot(surf: *u8, grant: auth::Grant, window: str) -> Screenshot
+```
+
+The one verb that returns pixels, and the one that is an installed function
+rather than a `Backend` slot: a backend that can capture calls
+`set_screenshot_fn`, and one that cannot is left untouched and answers
+`supported: false`. `screenshot` refuses a grant without `cap_read`
+(`NeedsGrant`) before the backend is reached.
+
+A backend that implements it **blacks out every node whose effective tier is
+not Open and every node in an excluded subtree**, whatever the grant — the rule
+written above `Backend` in `backend.cplus`.
+
 ## `agent_core` root
 
 ```cplus

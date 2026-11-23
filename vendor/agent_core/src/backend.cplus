@@ -248,6 +248,67 @@ struct Backend {
     text_version: fn(*u8, auth::Grant, str) -> option::Option[u64],
 }
 
+// ---- screenshot: the one verb that returns PIXELS ------------------------------
+//
+// What the window looks like — the thing no geometry check answers. A dark-mode
+// contrast collapse, a wallpaper bleeding through a translucent bar, a stray
+// focus ring: every frame and every `native_frame` is right and the screen is
+// wrong (bugs/closed/facet-agent-no-screenshot-verb.md).
+//
+// IT IS HELD TO THE RULE WRITTEN ABOVE `Backend`, which predates it: a verb
+// that returns pixels blacks out every non-Open node's frame. A screenshot is
+// the first read that can carry a card number without reading a string, and no
+// per-node authorization check sees it happen — so the redaction is not the
+// caller's to ask for and not the grant's to waive. Every node whose effective
+// tier is not Open, and every node in an excluded subtree, is a black rectangle
+// in the image, whatever capability asked.
+//
+// NOT A VTABLE SLOT, deliberately. A slot would put a line in every backend's
+// `Backend { ... }` literal, including the ones that cannot capture anything; a
+// hook leaves them untouched, and a backend that has not installed one answers
+// `supported: false` — the honest answer, rather than a plausible empty image.
+//
+// It is an INSPECTION. It takes no point, synthesizes no event and changes
+// nothing — the same standing `hit_test` has.
+struct Screenshot {
+    outcome: surface::Outcome,
+    // False when this backend cannot capture at all. Distinct from a refusal.
+    supported: bool,
+    // The image, PNG-encoded. Empty unless `outcome` is Allowed.
+    png: vec::Vec[u8],
+    // The captured area in POINTS, and how many pixels a point is — so a caller
+    // can map a node's frame from `describe_ui` onto the image.
+    width: f64,
+    height: f64,
+    scale: f64,
+    // How many frames were blacked out. Zero is a claim that nothing gated was
+    // on screen, which is why it is reported rather than left to be assumed.
+    redacted: usize,
+}
+
+fn screenshot_refused(o: surface::Outcome, supported: bool) -> Screenshot {
+    return Screenshot { outcome: o, supported: supported, png: vec::new::[u8](),
+                        width: 0.0f64, height: 0.0f64, scale: 0.0f64, redacted: 0 as usize };
+}
+
+// `(surface, grant, window)`. `window` is a window node's id from
+// `describe_ui`; "" is the first window the app has open.
+static SCREENSHOT_FN: fn(*u8, auth::Grant, str) -> Screenshot = #zero::[fn(*u8, auth::Grant, str) -> Screenshot]();
+
+fn set_screenshot_fn(f: fn(*u8, auth::Grant, str) -> Screenshot) { SCREENSHOT_FN = f; return; }
+
+fn has_screenshot() -> bool { return SCREENSHOT_FN.is_not_null(); }
+
+// Capture, through whatever backend installed itself. Needs `cap_read` — it is
+// a read of what is on screen — and nothing more: the tiers are answered by the
+// redaction, not by the grant.
+fn screenshot(surf: *u8, grant: auth::Grant, window: str) -> Screenshot {
+    let f: fn(*u8, auth::Grant, str) -> Screenshot = SCREENSHOT_FN;
+    if f.is_null() { return screenshot_refused(surface::Outcome::NotFound, false); }
+    if !grant.has(auth::cap_read()) { return screenshot_refused(surface::Outcome::NeedsGrant, true); }
+    return f(surf, grant, window);
+}
+
 fn probe_node(id: str, hidden: bool, parent: option::Option[usize]) -> UiNode {
     return UiNode {
         id: text::from_str(id), role: identity::Role::Group, class_name: text::new(),
@@ -282,4 +343,63 @@ fn a_hidden_ancestor_hides_every_descendant_and_no_sibling() {
     assert hidden_at(v, 3 as usize);
     assert !hidden_at(v, 4 as usize);
     assert !hidden_at(v, 5 as usize);
+}
+
+// ---- screenshot: the hook, before any backend ---------------------------------
+//
+// bugs/closed/facet-agent-no-screenshot-verb.md.
+
+static SHOT_PROBE_CALLS: i32 = 0;
+
+fn shot_probe(surf: *u8, grant: auth::Grant, window: str) -> Screenshot {
+    SHOT_PROBE_CALLS = SHOT_PROBE_CALLS + 1;
+    var s: Screenshot = screenshot_refused(surface::Outcome::Allowed, true);
+    s.redacted = window.count();
+    return s;
+}
+
+fn shot_allowed(s: Screenshot) -> bool {
+    return match s.outcome { surface::Outcome::Allowed => true, _ => false };
+}
+
+#[test]
+fn a_screenshot_with_no_backend_installed_is_unsupported() {
+    set_screenshot_fn(#zero::[fn(*u8, auth::Grant, str) -> Screenshot]());
+    assert has_screenshot() == false;
+    let s: Screenshot = screenshot(0 as *u8, auth::operator(), "");
+    assert s.supported == false;
+    assert shot_allowed(s) == false;
+    assert s.png.count() == (0 as usize);
+}
+
+#[test]
+fn an_installed_capturer_is_reached_with_the_window_it_was_asked_for() {
+    set_screenshot_fn(shot_probe);
+    SHOT_PROBE_CALLS = 0;
+    assert has_screenshot();
+    let s: Screenshot = screenshot(0 as *u8, auth::reader(), "main");
+    assert SHOT_PROBE_CALLS == 1;
+    assert shot_allowed(s);
+    assert s.supported;
+    assert s.redacted == (4 as usize);
+    set_screenshot_fn(#zero::[fn(*u8, auth::Grant, str) -> Screenshot]());
+}
+
+// NEGATIVE: it is a READ. A grant with no `cap_read` is refused here, in the
+// one door every caller comes through, and the backend is never asked — an
+// act-only grant must not be able to see what it is acting on.
+#[test]
+fn a_grant_that_cannot_read_never_reaches_the_capturer() {
+    set_screenshot_fn(shot_probe);
+    SHOT_PROBE_CALLS = 0;
+    let act_only: auth::Grant = auth::without_capability(auth::operator(), auth::cap_read());
+    let s: Screenshot = screenshot(0 as *u8, act_only, "main");
+    assert SHOT_PROBE_CALLS == 0;
+    assert match s.outcome { surface::Outcome::NeedsGrant => true, _ => false };
+    assert s.supported;
+    assert s.png.count() == (0 as usize);
+    let none: Screenshot = screenshot(0 as *u8, auth::nothing(), "main");
+    assert SHOT_PROBE_CALLS == 0;
+    assert shot_allowed(none) == false;
+    set_screenshot_fn(#zero::[fn(*u8, auth::Grant, str) -> Screenshot]());
 }

@@ -1202,6 +1202,12 @@ Two rules about believing your own work:
   responder chain *on purpose* — so it can drive a control the pointer could
   never get to, and says nothing about whether a hand could. Drive the app to a
   state and measure that. For "can this be pressed", ask a person.
+- **A frame that is right is not a screen that is right.** Every geometry check
+  can pass on a window nobody can read: text the colour of its background, a
+  button pushed off the edge that `click` still reaches by id. `screenshot` on
+  the agent surface is how that is checked — look at the picture before saying
+  a screen works. It cannot show what the window server composites (a blur, a
+  translucent bar's bleed-through); for those, ask a person.
 - **Typing is not `set_text`.** They land on different halves of the backend, so
   a screen driven only through the socket does not test what typing does.
 - **A write onto the live tree is a claim until you count it.** A call that did

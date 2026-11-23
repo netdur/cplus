@@ -31,7 +31,7 @@ fn dispatch(
 ```
 
 One already-parsed request. External consent first. Methods:
-`describe_ui`, `click`, `hit_test`, `set_caret`, `read_text`, `read_runs`,
+`describe_ui`, `click`, `hit_test`, `screenshot`, `set_caret`, `read_text`, `read_runs`,
 `invoke_menu`, `scroll_to`, `set_text`, `poll_event`, `activity`.
 
 ### `handle_request`
@@ -277,6 +277,7 @@ cancellation also stops a client stalled partway through a request or response.
 | `describe_ui` | `mode`, `prefix` | `describe_exposed`, or `describe` for `mode: "full"` |
 | `click` | `id` | `click` |
 | `hit_test` | `id` | `hit_test` |
+| `screenshot` | `window` (optional) | `backend::screenshot` — an installed capturer, not a vtable slot |
 | `set_caret` | `id`, `start`, `end` | `set_caret` |
 | `read_text` | `id` | `describe` (the node's own text, under its tier) |
 | `read_runs` | `id` | `read_runs` |
@@ -285,6 +286,43 @@ cancellation also stops a client stalled partway through a request or response.
 | `set_text` | `id`, `value`, `base_version` | `set_text` |
 | `poll_event` | — | `sub.poll()` |
 | `activity` | — | none — this module's own record |
+
+### `screenshot`
+
+A PNG of one window's content as it is drawn. `window` is the id of a window
+node from `describe_ui`; omitted, it is the first window the app has open. A
+node id that is not a window is `not_found` — the verb is addressed by window,
+never by a node's rectangle or a point.
+
+```json
+{ "outcome": "allowed", "supported": true, "mime": "image/png",
+  "width": 420, "height": 560, "scale": 2, "redacted": 0, "data": "<base64>" }
+```
+
+`width` and `height` are in points and `scale` is pixels per point, so a frame
+from `describe_ui` maps onto the image. Through `tools/call` the result is an
+MCP **image** content block (`type: "image"`, `mimeType: "image/png"`) followed
+by a text block carrying the numbers — which is what lets a model look at it.
+
+**Every node whose content is gated is a black rectangle.** Protected, Private,
+or inside an excluded subtree: its frame is filled before the image is encoded,
+and `redacted` says how many were. No capability unredacts it — a grant that
+may read a protected field's TEXT still gets a black box — because a picture
+cannot be narrowed to the fields a grant covers. It needs `cap_read` and
+nothing more.
+
+It is an inspection: no point, no event, nothing changes.
+
+`supported: false` means this platform's backend has installed no capturer.
+Today only `agent_appkit` does.
+
+**What the AppKit capture is and is not.** The content view is asked to draw
+itself into a bitmap, in-process, over the window's own background colour. So:
+no Screen Recording permission and nothing of any other application in it —
+and, for the same reason, **nothing the window server composites**: the title
+bar, and materials (vibrancy, glass, wallpaper showing through a translucent
+bar) are not in the picture. It shows layout, colour, contrast, text and
+focus rings; it does not show a blur.
 
 `activity` answers what the surface has been asked to DO: every `click`,
 `set_text`, `set_caret`, `invoke_menu`, `scroll_to` and `navigate`, in order,
