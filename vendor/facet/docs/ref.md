@@ -740,6 +740,14 @@ Two tiers. Tier 1 is a platform token (`Color::text()`, `Color::accent()`,
 `Color::surface()`) that an application fills with `set_theme`; an unfilled
 role falls through to a platform token.
 
+An unthemed app still gets a visible card: `raised` has no platform token
+behind it, so its fallback is an opaque light/dark pair one step off the floor
+— a shade down from a white window, a shade up from a dark one. (It used to
+share `content`'s fallback, and a `raised` card on a `content` body was
+invisible until the app installed a theme.) `surface` and `content` stay the
+platform's window and control backgrounds, which some systems resolve to the
+same colour.
+
 `Color::adaptive(light:, dark:)` carries both sides; the backend picks by the
 current appearance.
 

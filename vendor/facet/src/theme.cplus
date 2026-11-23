@@ -123,7 +123,21 @@ fn theme_fallback(token: u32) -> Color {
         return Color::text();
     }
     if token == (105 as u32) { return Color::window_background(); }
-    if token == (106 as u32) { return Color::control_background(); }
+    // `raised` — a card, a bubble, a floating panel — and the one surface role
+    // with NO platform token behind it. It used to share `control_background`
+    // with `content`, so a raised card on a content body was the body's own
+    // colour; and on macOS 26 the window background resolves to that colour
+    // too (measured: surface = content = raised = white, 0.118 in dark), so it
+    // vanished on the floor as well.
+    //
+    // An opaque adaptive pair, because a card floats over what scrolls beneath
+    // it and a translucent fill would show it through. The values are the
+    // system's own grouped-background step: a shade down from a white floor,
+    // a shade up from a dark one.
+    if token == (106 as u32) {
+        return Color::adaptive(light: Color::rgba(0.949f64, 0.949f64, 0.969f64, 1.0f64),
+                               dark: Color::rgba(0.173f64, 0.173f64, 0.180f64, 1.0f64));
+    }
     if token == (107 as u32) { return Color::under_page_background(); }
     if token == (108 as u32) { return Color::separator(); }
     if token == (109 as u32) { return Color::system_green(); }
@@ -356,7 +370,9 @@ fn theme_defaults_chain_to_platform_tokens() {
     assert theme_fallback(100 as u32).token == Color::accent().token;
     assert theme_fallback(104 as u32).token == Color::text().token;
     assert theme_fallback(105 as u32).token == Color::window_background().token;
-    assert theme_fallback(106 as u32).token == Color::control_background().token;
+    // `raised` is the one surface role with no platform token: an adaptive
+    // pair of its own (see `the_unthemed_surface_roles_do_not_share_a_fallback`).
+    assert theme_fallback(106 as u32).token == (254 as u32);
     assert theme_fallback(107 as u32).token == Color::under_page_background().token;
     assert theme_fallback(108 as u32).token == Color::separator().token;
     assert theme_fallback(109 as u32).token == Color::system_green().token;
@@ -414,4 +430,35 @@ fn set_theme_stores_roles_and_fires_the_hook() {
     // Reset for other tests: hook cleared, palette back to defaults.
     set_theme_changed_fn(0 as fn());
     set_theme(Theme::new());
+}
+
+// bugs/closed/facet-theme-default-raised-equals-content.md — two roles sharing
+// one fallback are one role to an unthemed app.
+#[test]
+fn the_unthemed_surface_roles_do_not_share_a_fallback() {
+    let surface: Color = theme_fallback(105 as u32);
+    let raised: Color = theme_fallback(106 as u32);
+    let sunken: Color = theme_fallback(107 as u32);
+    let content: Color = theme_fallback(112 as u32);
+    assert raised.token != content.token;
+    assert raised.token != surface.token;
+    assert raised.token != sunken.token;
+    assert surface.token != content.token;
+    assert sunken.token != content.token;
+    // `raised` is an adaptive PAIR — both sides opaque, and the two sides
+    // different, or it is one colour that is wrong in one appearance.
+    assert raised.token == (254 as u32);
+    assert raised.a == 1.0f64;
+    assert raised.a2 == 1.0f64;
+    assert raised.r != raised.r2;
+}
+
+// NEGATIVE: a fallback is only a fallback. An unknown token still answers
+// none, and the platform-backed roles still answer their platform token.
+#[test]
+fn a_fallback_is_a_platform_token_wherever_the_platform_has_one() {
+    assert theme_fallback(105 as u32).token == Color::window_background().token;
+    assert theme_fallback(112 as u32).token == Color::control_background().token;
+    assert theme_fallback(107 as u32).token == Color::under_page_background().token;
+    assert theme_fallback(999 as u32).is_set() == false;
 }
