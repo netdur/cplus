@@ -2099,8 +2099,46 @@ impl Node {
             // Leaf: measure callback supplies content, else the box is just padding.
             if this._has_measure && (!have_w || !have_h) {
                 let mf: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size = this._measure;
-                let s: Size = mf(this._node_ctx, sub_or_undef(avail_w, pad_w), MeasureMode::AtMost,
-                                 sub_or_undef(avail_h, pad_h), MeasureMode::AtMost);
+                // THE LEAF IS MEASURED IN ITS OWN BOX, not in its parent's.
+                //
+                // A leaf that states one dimension is asked for the other, and
+                // the other depends on the one it stated: a wrapping text 320
+                // wide is as tall as it is AT 320. This passed the space the
+                // parent offered regardless, so a label with `.width(320)` in
+                // a 900-wide column was measured at 900 — two lines — and then
+                // laid out 320 wide and two lines tall, with the rest of its
+                // text cut off. The container path below already used its own
+                // size (`inner_avail_w`); the leaf path did not.
+                //
+                // A stated size is `Exactly`. An unstated one is still
+                // `AtMost` the offer, narrowed by a `max_width` / `max_height`
+                // when there is one — a cap is as much the leaf's own box as
+                // an explicit size is.
+                var mw: f64 = sub_or_undef(avail_w, pad_w);
+                var mwm: MeasureMode = MeasureMode::AtMost;
+                if have_w {
+                    mw = f_max(0.0, w - pad_w);
+                    mwm = MeasureMode::Exactly;
+                } else {
+                    let cap_w: f64 = this.style.max_width.resolve(avail_w);
+                    if is_defined(cap_w) {
+                        let inner_cap: f64 = f_max(0.0, cap_w - pad_w);
+                        if is_undefined(mw) || inner_cap < mw { mw = inner_cap; }
+                    }
+                }
+                var mh: f64 = sub_or_undef(avail_h, pad_h);
+                var mhm: MeasureMode = MeasureMode::AtMost;
+                if have_h {
+                    mh = f_max(0.0, h - pad_h);
+                    mhm = MeasureMode::Exactly;
+                } else {
+                    let cap_h: f64 = this.style.max_height.resolve(avail_h);
+                    if is_defined(cap_h) {
+                        let inner_cap_h: f64 = f_max(0.0, cap_h - pad_h);
+                        if is_undefined(mh) || inner_cap_h < mh { mh = inner_cap_h; }
+                    }
+                }
+                let s: Size = mf(this._node_ctx, mw, mwm, mh, mhm);
                 if !have_w { w = s.width + pad_w; }
                 if !have_h { h = s.height + pad_h; }
             } else {
@@ -3554,6 +3592,116 @@ fn test_measure_leaf_intrinsic_when_parent_auto() {
     root.add_child(m);
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
     assert approx(root.frame().height, 24.0);
+}
+
+// A measure that WRAPS: 600 points of text at 20 points a line, so the height
+// is a function of the width it is offered. What a label is.
+fn measure_wrapping_600(ctx: *u8, w: f64, wm: MeasureMode, h: f64, hm: MeasureMode) -> Size {
+    var box_w: f64 = w;
+    if is_undefined(box_w) || box_w <= 0.0 { box_w = 600.0; }
+    if box_w > 600.0 { box_w = 600.0; }
+    var lines: f64 = 1.0;
+    var fits: f64 = box_w;
+    while fits < 600.0 { lines = lines + 1.0; fits = fits + box_w; }
+    return Size { width: box_w, height: lines * 20.0 };
+}
+
+// bugs/closed/flex-a-measured-leaf-with-an-explicit-width-is-measured-at-its-parents.md
+// — a label with `.width(320)` in a wide column was measured at the column's
+// width, then laid out at its own: right width, wrong height, text cut off.
+#[test]
+fn test_a_measured_leaf_with_an_explicit_width_is_measured_at_that_width() {
+    var root: Node = Node::new();                  // column
+    root.set_width(pts(900.0));
+    root.set_align_items(Align::FlexStart);
+    var m: Node = Node::new();
+    m.set_measure(measure_wrapping_600);
+    m.set_width(pts(200.0));
+    root.add_child(m);
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    let f: Frame = must(root.child_frame(0));
+    assert approx(f.width, 200.0);
+    // 600 of text in 200: three lines. Measured at the parent's 900 it was one.
+    assert approx(f.height, 60.0);
+    assert approx(root.frame().height, 60.0);
+}
+
+#[test]
+fn test_a_measured_leaf_with_an_explicit_width_in_a_row_gets_its_own_height() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_width(pts(900.0));
+    root.set_align_items(Align::FlexStart);
+    var m: Node = Node::new();
+    m.set_measure(measure_wrapping_600);
+    m.set_width(pts(150.0));
+    root.add_child(m);
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    let f: Frame = must(root.child_frame(0));
+    assert approx(f.width, 150.0);
+    assert approx(f.height, 80.0);                 // four lines of 150
+}
+
+// The padding comes off the box the text is set in, as it does for a
+// container: 240 wide with 20 a side is 200 of text.
+#[test]
+fn test_a_measured_leaf_is_measured_inside_its_own_padding() {
+    var root: Node = Node::new();
+    root.set_width(pts(900.0));
+    root.set_align_items(Align::FlexStart);
+    var m: Node = Node::new();
+    m.set_measure(measure_wrapping_600);
+    m.set_width(pts(240.0));
+    m.set_padding(Edge::All, pts(20.0));
+    root.add_child(m);
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    let f: Frame = must(root.child_frame(0));
+    assert approx(f.width, 240.0);
+    assert approx(f.height, 60.0 + 40.0);          // three lines + top and bottom padding
+}
+
+// A CAP is the leaf's own box too: `max_width` with no width.
+#[test]
+fn test_a_measured_leaf_with_a_max_width_is_measured_within_it() {
+    var root: Node = Node::new();
+    root.set_width(pts(900.0));
+    root.set_align_items(Align::FlexStart);
+    var m: Node = Node::new();
+    m.set_measure(measure_wrapping_600);
+    m.set_max_width(pts(300.0));
+    root.add_child(m);
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    let f: Frame = must(root.child_frame(0));
+    assert approx(f.width, 300.0);
+    assert approx(f.height, 40.0);                 // two lines of 300
+}
+
+// NEGATIVE: a leaf that states nothing is still offered the parent's space,
+// exactly as before — and one that states BOTH is not measured at all.
+#[test]
+fn test_an_unsized_measured_leaf_is_still_offered_the_parents_space() {
+    var root: Node = Node::new();
+    root.set_width(pts(300.0));
+    root.set_align_items(Align::FlexStart);
+    var m: Node = Node::new();
+    m.set_measure(measure_wrapping_600);
+    root.add_child(m);
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    let f: Frame = must(root.child_frame(0));
+    assert approx(f.width, 300.0);
+    assert approx(f.height, 40.0);
+    var both: Node = Node::new();
+    both.set_width(pts(500.0));
+    both.set_align_items(Align::FlexStart);
+    var fixed: Node = Node::new();
+    fixed.set_measure(measure_wrapping_600);
+    fixed.set_width(pts(100.0));
+    fixed.set_height(pts(33.0));
+    both.add_child(fixed);
+    both.calculate_layout(undefined(), undefined(), Direction::LTR);
+    let g: Frame = must(both.child_frame(0));
+    assert approx(g.width, 100.0);
+    assert approx(g.height, 33.0);
 }
 
 #[test]

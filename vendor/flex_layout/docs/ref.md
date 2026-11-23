@@ -252,6 +252,11 @@ Line naming matches CSS `[sidebar] 200px`:
 | HIG modifiers | `.tappable()` / `.readable_width()` / `.sidebar_width(preferred:)` / `.card_padding()` / `.screen_margins()` / `.std_gap()` |
 | HIG constants | `HIG_SPACE_2XS/XS/S/SM/M/L/XL/2XL` (2/4/8/12/16/20/32/48), `HIG_TAP_MIN` (44), `HIG_READABLE_WIDTH` (680), `HIG_SIDEBAR_MIN/MAX` (200/320) |
 
+A leaf with a measure callback is measured **in its own box**: at its own width
+when it states one (or within its `max_width`), and only otherwise in the space
+its parent offers. A wrapping label told `.width(320.0)` is therefore as tall
+as its text is at 320.
+
 `zstack` takes its children out of flow, so they share the container's origin
 and the container sizes from its own style rather than from their sum. Place a
 child within the box with `set_position`.
