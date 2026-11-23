@@ -718,6 +718,21 @@ fn synthesize_generic_typed_impls(
         // same two maps with an `.expect("instantiation present (just
         // iterated)")` — a fossil of an earlier shape.
         let info_mangled: String = mangled_from_info;
+        // A BOUNDED BLOCK IS NOT THIS INSTANCE'S unless the instance meets the
+        // bound. `impl Vec[T: Clone]` on `Vec[*u8]`: sema refuses any call
+        // into it, so nothing needs the body — and the body cannot be emitted,
+        // because it calls a method the element does not have. See
+        // `MonoInfo::unmet_impl_bounds`.
+        let entitled = b.target_generic_params.iter().enumerate().all(|(idx, gp)| {
+            gp.bounds.iter().all(|bound| {
+                !mono
+                    .unmet_impl_bounds
+                    .contains(&(info_mangled.clone(), idx, bound.name.clone()))
+            })
+        });
+        if !entitled {
+            continue;
+        }
         // Subst: impl-level T → concrete Ty; "Self" → Path(mangled)
         // handled separately by inserting Self into subst with the
         // concrete struct's Ty rendered by type_name_of.

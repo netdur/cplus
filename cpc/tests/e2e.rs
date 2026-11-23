@@ -32295,3 +32295,507 @@ fn a_childs_stdout_is_read_by_lines_from_safe_code_and_a_stale_line_is_rejected(
     );
     assert!(text.contains("E0381"), "expected E0381, got: {text}");
 }
+
+// ---- conditional interface impls, and the bounded-impl emission they exposed ----
+//
+// bugs/closed/cplus-vec-no-in-place-enum-mutation-or-clone.md and
+// bugs/closed/cpc-emits-a-bounded-impl-body-for-an-instantiation-that-fails-the-bound.md.
+
+/// Compile a single import-free file and answer `(succeeded, stdout+stderr)`.
+fn try_compile_src(name: &str, src: &str) -> (bool, String) {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src_path = dir.join(format!("{name}.cplus"));
+    std::fs::write(&src_path, src).expect("write source");
+    let out = Command::new(cpc)
+        .arg(&src_path)
+        .arg("-o")
+        .arg(dir.join(name))
+        .output()
+        .expect("invoke cpc");
+    (
+        out.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+/// THE CRASH. `impl Bag[T: Clone]` is for the `Bag`s whose element is `Clone`,
+/// but monomorphize synthesized the block for every instantiation — so the
+/// body's `item.clone()` was emitted for `Bag[*u8]`, where there is no `clone`
+/// to dispatch to, and codegen panicked with "sema validated" on a method
+/// nobody had called. Nothing here calls `copy_item`.
+#[test]
+fn a_bounded_impl_body_is_not_emitted_for_an_instantiation_that_fails_the_bound() {
+    let out = compile_and_run_src(
+        "unentitled",
+        "struct Bag[T] { item: T }\n\
+         impl Bag[T: Clone] {\n\
+         \x20   fn copy_item(this) -> T { return this.item.clone(); }\n\
+         }\n\
+         fn main() -> i32 {\n\
+         \x20   let a: Bag[*u8] = Bag[*u8] { item: 0 as *u8 };\n\
+         \x20   if a.item.is_null() { return 7; }\n\
+         \x20   return 1;\n\
+         }\n",
+    );
+    assert_eq!(out.status.code(), Some(7));
+}
+
+/// ...and the instantiation that DOES meet the bound still gets the method,
+/// in the same program as one that does not.
+#[test]
+fn a_bounded_impl_body_is_still_emitted_for_an_instantiation_that_meets_the_bound() {
+    let out = compile_and_run_src(
+        "entitled",
+        "struct Bag[T] { item: T }\n\
+         impl Bag[T: Clone] {\n\
+         \x20   fn copy_item(this) -> T { return this.item.clone(); }\n\
+         }\n\
+         fn main() -> i32 {\n\
+         \x20   let p: Bag[*u8] = Bag[*u8] { item: 0 as *u8 };\n\
+         \x20   let a: Bag[i32] = Bag[i32] { item: 41 };\n\
+         \x20   if !p.item.is_null() { return 1; }\n\
+         \x20   return a.copy_item() + 1;\n\
+         }\n",
+    );
+    assert_eq!(out.status.code(), Some(42));
+}
+
+/// NEGATIVE: skipping the body did not open the door — CALLING the method on
+/// an instantiation that fails the bound is still E0502, from sema.
+#[test]
+fn calling_a_bounded_impl_method_on_an_unentitled_instantiation_is_still_e0502() {
+    let (ok, text) = try_compile_src(
+        "unentitled_call",
+        "struct Bag[T] { item: T }\n\
+         impl Bag[T: Clone] {\n\
+         \x20   fn copy_item(this) -> T { return this.item.clone(); }\n\
+         }\n\
+         fn main() -> i32 {\n\
+         \x20   let a: Bag[*u8] = Bag[*u8] { item: 0 as *u8 };\n\
+         \x20   let _b: *u8 = a.copy_item();\n\
+         \x20   return 0;\n\
+         }\n",
+    );
+    assert!(!ok, "must not compile: {text}");
+    assert!(text.contains("E0502"), "expected E0502, got: {text}");
+    assert!(!text.contains("internal error"), "a diagnostic, not a crash: {text}");
+}
+
+const COND_IMPL_PRELUDE: &str = "\
+struct Owned { v: i32 }\n\
+impl Owned { fn drop(ref this) { } }\n\
+impl Owned: Clone { fn clone(this) -> Owned { return Owned { v: this.v + 1 }; } }\n\
+struct Plain { v: i32 }\n\
+impl Plain { fn drop(ref this) { } }\n\
+struct Bag[T] { item: T }\n\
+impl Bag[T: Clone]: Clone {\n\
+\x20   fn clone(this) -> Bag[T] { return Bag[T] { item: this.item.clone() }; }\n\
+}\n\
+fn dup[T: Clone](v: T) -> T { return v.clone(); }\n";
+
+/// `impl Bag[T: Clone]: Clone { ... }` — an interface impl on a GENERIC type,
+/// conditional on its parameter. `Bag[Owned]` satisfies `Clone` because
+/// `Owned` does, so it passes a `T: Clone` bound; and the condition recurses,
+/// so `Bag[Bag[Owned]]` does too. Each `clone` adds one, which is how the
+/// test knows the element's own `clone` ran at every level.
+#[test]
+fn a_conditional_interface_impl_makes_an_instantiation_satisfy_the_bound() {
+    let out = compile_and_run_src(
+        "condimpl",
+        &format!(
+            "{COND_IMPL_PRELUDE}\
+             fn main() -> i32 {{\n\
+             \x20   let a: Bag[Owned] = Bag[Owned] {{ item: Owned {{ v: 10 }} }};\n\
+             \x20   let b: Bag[Owned] = dup::[Bag[Owned]](a);\n\
+             \x20   let nested: Bag[Bag[Owned]] = Bag[Bag[Owned]] {{ item: Bag[Owned] {{ item: Owned {{ v: 20 }} }} }};\n\
+             \x20   let n2: Bag[Bag[Owned]] = dup::[Bag[Bag[Owned]]](nested);\n\
+             \x20   let c: Bag[i32] = Bag[i32] {{ item: 5 }};\n\
+             \x20   let d: Bag[i32] = dup::[Bag[i32]](c);\n\
+             \x20   return b.item.v + n2.item.item.v + d.item;\n\
+             }}\n"
+        ),
+    );
+    // 11 + 21 + 5.
+    assert_eq!(out.status.code(), Some(37));
+}
+
+/// NEGATIVE: the impl is CONDITIONAL. `Bag[Plain]` — an element with no
+/// `Clone` — does not satisfy the bound, at a generic function or at the
+/// method itself.
+#[test]
+fn a_conditional_interface_impl_does_not_cover_an_argument_that_fails_its_bound() {
+    let (ok, text) = try_compile_src(
+        "condimpl_bad",
+        &format!(
+            "{COND_IMPL_PRELUDE}\
+             fn main() -> i32 {{\n\
+             \x20   let a: Bag[Plain] = Bag[Plain] {{ item: Plain {{ v: 1 }} }};\n\
+             \x20   let b: Bag[Plain] = dup::[Bag[Plain]](a);\n\
+             \x20   return b.item.v;\n\
+             }}\n"
+        ),
+    );
+    assert!(!ok, "must not compile: {text}");
+    assert!(text.contains("E0502"), "expected E0502, got: {text}");
+
+    let (ok, text) = try_compile_src(
+        "condimpl_bad_call",
+        &format!(
+            "{COND_IMPL_PRELUDE}\
+             fn main() -> i32 {{\n\
+             \x20   let a: Bag[Plain] = Bag[Plain] {{ item: Plain {{ v: 1 }} }};\n\
+             \x20   let b: Bag[Plain] = a.clone();\n\
+             \x20   return b.item.v;\n\
+             }}\n"
+        ),
+    );
+    assert!(!ok, "must not compile: {text}");
+    assert!(text.contains("E0502"), "expected E0502, got: {text}");
+}
+
+/// An ENUM may carry an interface impl. A payload-carrying enum derives
+/// nothing, and until now could not declare an impl either, so it could
+/// satisfy no bound at all — a `Vec` of one could not be cloned. And a struct
+/// with such a field now derives `Clone` through the enum's own `clone`.
+#[test]
+fn an_enum_interface_impl_satisfies_the_bound_and_feeds_a_derive() {
+    let out = compile_and_run_src(
+        "enumimpl",
+        "struct Owned { v: i32 }\n\
+         impl Owned { fn drop(ref this) { } }\n\
+         impl Owned: Clone { fn clone(this) -> Owned { return Owned { v: this.v }; } }\n\
+         enum Block { Text(Owned), Pair(Owned, i32), Empty }\n\
+         impl Block: Clone {\n\
+         \x20   fn clone(this) -> Block {\n\
+         \x20       return match this {\n\
+         \x20           Block::Text(o) => Block::Text(o.clone()),\n\
+         \x20           Block::Pair(o, n) => Block::Pair(o.clone(), n + 1),\n\
+         \x20           Block::Empty => Block::Empty,\n\
+         \x20       };\n\
+         \x20   }\n\
+         }\n\
+         struct Holder { b: Block, id: i32 }\n\
+         impl Holder: Clone {}\n\
+         fn dup[T: Clone](v: T) -> T { return v.clone(); }\n\
+         fn value(b: Block) -> i32 {\n\
+         \x20   return match b { Block::Text(o) => o.v, Block::Pair(o, n) => o.v + n, Block::Empty => 0 };\n\
+         }\n\
+         fn main() -> i32 {\n\
+         \x20   let a: Block = Block::Pair(Owned { v: 10 }, 5);\n\
+         \x20   let b: Block = dup::[Block](a);\n\
+         \x20   let h: Holder = Holder { b: Block::Text(Owned { v: 20 }), id: 3 };\n\
+         \x20   let h2: Holder = h.clone();\n\
+         \x20   return value(b) + value(h2.b) + h2.id;\n\
+         }\n",
+    );
+    // (10 + 6) + 20 + 3.
+    assert_eq!(out.status.code(), Some(39));
+}
+
+/// NEGATIVE: the two new impl targets are still CHECKED. A missing interface
+/// method is E0503, a method the interface does not declare is E0504, and a
+/// second impl of the same interface is E0506 — on an enum and on a generic
+/// type alike.
+#[test]
+fn enum_and_generic_interface_impls_are_checked_for_coverage_and_duplicates() {
+    let iface = "interface Named { fn name(this) -> i32; fn rank(this) -> i32; }\n";
+    let cases: [(&str, &str, &str); 6] = [
+        (
+            "enum_missing",
+            "enum E { A(i32), B }\n\
+             impl E: Named { fn name(this) -> i32 { return 1; } }\n",
+            "E0503",
+        ),
+        (
+            "enum_extra",
+            "enum E { A(i32), B }\n\
+             impl E: Named {\n\
+             \x20   fn name(this) -> i32 { return 1; }\n\
+             \x20   fn rank(this) -> i32 { return 2; }\n\
+             \x20   fn other(this) -> i32 { return 3; }\n\
+             }\n",
+            "E0504",
+        ),
+        (
+            "enum_duplicate",
+            "enum E { A(i32), B }\n\
+             impl E: Named { fn name(this) -> i32 { return 1; } fn rank(this) -> i32 { return 2; } }\n\
+             impl E: Named { fn name(this) -> i32 { return 1; } fn rank(this) -> i32 { return 2; } }\n",
+            "E0506",
+        ),
+        (
+            "generic_duplicate",
+            "struct G[T] { item: T }\n\
+             impl G[T]: Named { fn name(this) -> i32 { return 1; } fn rank(this) -> i32 { return 2; } }\n\
+             impl G[T]: Named { fn name(this) -> i32 { return 1; } fn rank(this) -> i32 { return 2; } }\n",
+            "E0506",
+        ),
+        (
+            "generic_missing",
+            "struct G[T] { item: T }\n\
+             impl G[T]: Named { fn name(this) -> i32 { return 1; } }\n",
+            "E0503",
+        ),
+        (
+            "generic_extra",
+            "struct G[T] { item: T }\n\
+             impl G[T]: Named {\n\
+             \x20   fn name(this) -> i32 { return 1; }\n\
+             \x20   fn rank(this) -> i32 { return 2; }\n\
+             \x20   fn other(this) -> i32 { return 3; }\n\
+             }\n",
+            "E0504",
+        ),
+    ];
+    for (name, body, code) in cases {
+        let (ok, text) = try_compile_src(
+            name,
+            &format!("{iface}{body}fn main() -> i32 {{ return 0; }}\n"),
+        );
+        assert!(!ok, "{name} must not compile: {text}");
+        assert!(text.contains(code), "{name}: expected {code}, got: {text}");
+        assert!(!text.contains("internal error"), "{name}: a diagnostic, not a crash: {text}");
+    }
+}
+
+/// A USER interface, not only a blessed one: the conditional impl is a general
+/// rule about `impl Generic[T: B]: Iface`, with the bound itself user-declared.
+#[test]
+fn a_conditional_impl_of_a_user_interface_is_conditional_on_a_user_bound() {
+    let prelude = "interface Weigh { fn weight(this) -> i32; }\n\
+                   struct Stone { g: i32 }\n\
+                   impl Stone: Weigh { fn weight(this) -> i32 { return this.g; } }\n\
+                   struct Feather { n: i32 }\n\
+                   struct Crate[T] { a: T, b: T }\n\
+                   impl Crate[T: Weigh]: Weigh {\n\
+                   \x20   fn weight(this) -> i32 { return this.a.weight() + this.b.weight(); }\n\
+                   }\n\
+                   fn total[T: Weigh](x: T) -> i32 { return x.weight(); }\n";
+    let out = compile_and_run_src(
+        "userbound",
+        &format!(
+            "{prelude}\
+             fn main() -> i32 {{\n\
+             \x20   let c: Crate[Stone] = Crate[Stone] {{ a: Stone {{ g: 30 }}, b: Stone {{ g: 12 }} }};\n\
+             \x20   return total::[Crate[Stone]](c);\n\
+             }}\n"
+        ),
+    );
+    assert_eq!(out.status.code(), Some(42));
+
+    let (ok, text) = try_compile_src(
+        "userbound_bad",
+        &format!(
+            "{prelude}\
+             fn main() -> i32 {{\n\
+             \x20   let c: Crate[Feather] = Crate[Feather] {{ a: Feather {{ n: 1 }}, b: Feather {{ n: 2 }} }};\n\
+             \x20   return total::[Crate[Feather]](c);\n\
+             }}\n"
+        ),
+    );
+    assert!(!ok, "must not compile: {text}");
+    assert!(text.contains("E0502"), "expected E0502, got: {text}");
+}
+
+// ---- a generic body states the bounds it relies on ---------------------------
+//
+// bugs/cpc-an-unbounded-generic-body-may-call-a-bounded-impl-method.md.
+
+const BOUNDED_GET_PRELUDE: &str = "\
+static DROPS: i32 = 0;\n\
+struct Owned { v: i32 }\n\
+impl Owned { fn drop(ref this) { DROPS = DROPS + 1; } }\n\
+struct Bag[T] { item: T }\n\
+impl Bag[T: Copy] {\n\
+\x20   fn get(this) -> T { return this.item; }\n\
+}\n";
+
+/// THE HOLE. `Bag[T: Copy]::get` bit-copies its item, which is sound only for
+/// a `Copy` element. Called from an UNBOUNDED generic body it was accepted in
+/// silence — the template has no concrete `T` to check, and the body is never
+/// checked again — so `Wrap[Owned]::get` handed out a second owner: one value,
+/// two drops, in code with no raw pointer.
+///
+/// It is W0010 at the call now, naming the bound the enclosing impl has to
+/// state. A WARNING and not E0502 for one reason, recorded at the diagnostic:
+/// the facet in the per-user store has this shape, and an error would stop
+/// every store-resolved project building. This test pins BOTH halves — that
+/// the call is flagged, and that the program underneath still double-drops,
+/// which is what has to be true for the day it becomes an error.
+#[test]
+fn an_unbounded_generic_body_calling_a_bounded_impl_method_warns_w0010() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("unbounded_body.cplus");
+    std::fs::write(
+        &src,
+        format!(
+            "{BOUNDED_GET_PRELUDE}\
+             struct Wrap[T] {{ b: Bag[T] }}\n\
+             impl Wrap[T] {{\n\
+             \x20   fn get(this) -> T {{ return this.b.get(); }}\n\
+             }}\n\
+             fn take_out[T](b: Bag[T]) -> T {{ return b.get(); }}\n\
+             fn run() {{\n\
+             \x20   let w: Wrap[Owned] = Wrap[Owned] {{ b: Bag[Owned] {{ item: Owned {{ v: 7 }} }} }};\n\
+             \x20   let second: Owned = w.get();\n\
+             }}\n\
+             fn main() -> i32 {{ run(); return DROPS; }}\n"
+        ),
+    )
+    .unwrap();
+    let bin = dir.join("unbounded_body");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "a warning does not fail the build: {text}");
+    // Both sites: the method body and the free generic function.
+    assert_eq!(text.matches("W0010").count(), 2, "two calls, two warnings: {text}");
+    assert!(text.contains("`T: Copy`"), "the message names the bound to add: {text}");
+    // The defect the warning is about, still measurable: ONE value, TWO drops.
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(2), "the unsound program drops its one value twice");
+}
+
+/// The fix an author makes: state the bound. Then the body is sound for every
+/// `T` it can be instantiated at, the `Copy` case still works, and the
+/// non-`Copy` instantiation is refused where it is USED — which is the check
+/// that always existed.
+#[test]
+fn a_generic_body_that_states_the_bound_may_call_the_bounded_method() {
+    let prelude = format!(
+        "{BOUNDED_GET_PRELUDE}\
+         struct Wrap[T] {{ b: Bag[T] }}\n\
+         impl Wrap[T: Copy] {{\n\
+         \x20   fn get(this) -> T {{ return this.b.get(); }}\n\
+         }}\n\
+         fn take_out[T: Copy](b: Bag[T]) -> T {{ return b.get(); }}\n"
+    );
+    let out = compile_and_run_src(
+        "bounded_body",
+        &format!(
+            "{prelude}\
+             fn main() -> i32 {{\n\
+             \x20   let w: Wrap[i32] = Wrap[i32] {{ b: Bag[i32] {{ item: 40 }} }};\n\
+             \x20   let b: Bag[i32] = Bag[i32] {{ item: 2 }};\n\
+             \x20   return w.get() + take_out::[i32](b);\n\
+             }}\n"
+        ),
+    );
+    assert_eq!(out.status.code(), Some(42));
+
+    let (ok, text) = try_compile_src(
+        "bounded_body_bad_use",
+        &format!(
+            "{prelude}\
+             fn main() -> i32 {{\n\
+             \x20   let w: Wrap[Owned] = Wrap[Owned] {{ b: Bag[Owned] {{ item: Owned {{ v: 7 }} }} }};\n\
+             \x20   let second: Owned = w.get();\n\
+             \x20   return 0;\n\
+             }}\n"
+        ),
+    );
+    assert!(!ok, "must not compile: {text}");
+    assert!(text.contains("E0502"), "expected E0502, got: {text}");
+}
+
+/// The bound must be on the parameter the call is made WITH. An inner
+/// parameter answers for itself: the impl's `T: Copy` does not vouch for a
+/// different, unbounded `U`.
+#[test]
+fn the_bound_must_be_on_the_parameter_the_call_is_made_with() {
+    let (ok, text) = try_compile_src(
+        "wrong_param",
+        &format!(
+            "{BOUNDED_GET_PRELUDE}\
+             struct Pair[T] {{ a: T }}\n\
+             impl Pair[T: Copy] {{\n\
+             \x20   fn other[U](this, b: Bag[U]) -> U {{ return b.get(); }}\n\
+             }}\n\
+             fn main() -> i32 {{ return 0; }}\n"
+        ),
+    );
+    assert!(ok, "a warning does not fail the build: {text}");
+    assert!(text.contains("W0010"), "expected W0010, got: {text}");
+    assert!(text.contains("`U: Copy`"), "it is `U` that lacks the bound: {text}");
+}
+
+/// NEGATIVE: a body that states the bound is not warned about, and neither is
+/// a call whose argument is concrete.
+#[test]
+fn a_bounded_body_and_a_concrete_call_raise_no_w0010() {
+    let (ok, text) = try_compile_src(
+        "no_warning",
+        &format!(
+            "{BOUNDED_GET_PRELUDE}\
+             struct Wrap[T] {{ b: Bag[T] }}\n\
+             impl Wrap[T: Copy] {{\n\
+             \x20   fn get(this) -> T {{ return this.b.get(); }}\n\
+             }}\n\
+             fn main() -> i32 {{\n\
+             \x20   let b: Bag[i32] = Bag[i32] {{ item: 3 }};\n\
+             \x20   return b.get() - 3;\n\
+             }}\n"
+        ),
+    );
+    assert!(ok, "must compile: {text}");
+    assert!(!text.contains("W0010"), "nothing here relies on an unstated bound: {text}");
+}
+
+// ---- a label on a `str` method, reached from a `Text` -------------------------
+//
+// bugs/closed/cpc-a-labelled-str-method-on-a-text-receiver-is-e1002-when-the-name-is-shared.md.
+
+/// `t.prefix(count: 3)` on a `Text` is `str::prefix` through the coercion, and
+/// its labels belong to `str`'s parameter list. While no other type declared a
+/// `prefix`, lowering settled the labels itself and nobody noticed that sema
+/// could not: the moment another type in the build had a method of that name
+/// (webkit's generated `fn prefix(this)` was the one that did it), the call
+/// was E1002, "no known parameter list".
+#[test]
+fn a_labelled_str_method_on_a_text_receiver_survives_a_same_named_method_elsewhere() {
+    let (ok, out) = build_and_run_stdlib_project(
+        "textlabel",
+        "import \"stdlib/text\" as text;\n\
+         struct Other { v: i32 }\n\
+         impl Other { fn prefix(this) -> i32 { return this.v; } }\n\
+         fn main() -> i32 {\n\
+         \x20   let t: text::Text = text::from_str(\"hello\");\n\
+         \x20   let o: Other = Other { v: 5 };\n\
+         \x20   if t.prefix(count: 3 as usize) != \"hel\" { return 1; }\n\
+         \x20   if t.suffix(count: 2 as usize) != \"lo\" { return 2; }\n\
+         \x20   if o.prefix() != 5 { return 3; }\n\
+         \x20   return 0;\n\
+         }\n",
+    );
+    assert!(ok, "must build and exit 0: {out}");
+}
+
+/// NEGATIVE: the labels are CHECKED against `str`'s list, not waved through.
+/// A label `str::prefix` does not have is still an error, and it is the
+/// specific one rather than E1002's "no parameter list".
+#[test]
+fn a_wrong_label_on_a_str_method_reached_from_text_is_still_an_error() {
+    let (ok, out) = try_build_stdlib_project(
+        "textlabel_bad",
+        "import \"stdlib/text\" as text;\n\
+         struct Other { v: i32 }\n\
+         impl Other { fn prefix(this) -> i32 { return this.v; } }\n\
+         fn main() -> i32 {\n\
+         \x20   let t: text::Text = text::from_str(\"hello\");\n\
+         \x20   if t.prefix(length: 3 as usize) != \"hel\" { return 1; }\n\
+         \x20   return 0;\n\
+         }\n",
+    );
+    assert!(!ok, "a wrong label must not build: {out}");
+    assert!(!out.contains("E1002"), "the specific error, not `no parameter list`: {out}");
+    assert!(out.contains("error["), "{out}");
+}

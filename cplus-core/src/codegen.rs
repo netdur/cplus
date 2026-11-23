@@ -18681,7 +18681,10 @@ impl<'a> FnState<'a> {
             return Some((v, ret));
         }
         let Ty::Struct(id) = recv_ty else {
-            unreachable!("sema validated")
+            unreachable!(
+                "sema validated: method `{}` on a receiver of type {:?} has no codegen dispatch",
+                name.name, recv_ty
+            )
         };
         let struct_name = self.types.struct_defs[id.0 as usize].name.clone();
         // Struct-of-callbacks: `recv.field(args)` where `field` is a
@@ -18724,7 +18727,10 @@ impl<'a> FnState<'a> {
                     args,
                 );
             }
-            unreachable!("sema validated")
+            unreachable!(
+                "sema validated: struct `{}` has no method or fn-pointer field `{}` (call at {:?})",
+                struct_name, name.name, name.span
+            )
         };
         let rcv = info.receiver.expect("sema validated instance call");
         // v0.0.26: an owned Drop *rvalue* receiver borrowed by a `this`/`ref this`

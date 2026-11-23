@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **203 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **154** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **204 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **155** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -422,16 +422,16 @@ fn main() -> i32 { let p: P = P {}; return p.missing(); }
 
 <sub>repro: checked · cplus-core/src/sema.rs:7379 · test cplus-core/src/sema.rs:no_such_method_e0324</sub>
 
-### E0325 · `impl` on an unknown or non-struct type
+### E0325 · `impl` on an unknown type
 
-An `impl` names a target that is not a declared struct or (non-generic) enum in scope.
+An `impl` names a target that is not a declared struct or enum in scope. An inherent `impl T { ... }` and an interface impl `impl T: Interface { ... }` both take a struct or an enum, generic or not; a generic target names its parameters (`impl Vec[T: Clone]: Clone { ... }`), and the interface then holds for exactly the instantiations whose arguments meet those bounds.
 
 ```cplus
 impl Foo { fn f(this) {} }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** The target must be a declared struct or enum in scope.
+**Fix.** Name a declared struct or enum. For a generic type, write its parameters on the target.
 
 <sub>repro: checked · cplus-core/src/sema.rs:2440 · test cplus-core/src/sema.rs:impl_on_unknown_type_e0325</sub>
 
@@ -722,7 +722,7 @@ fn main() -> i32 { return 0; }
 
 ### E0920 · Field not derivable for this interface
 
-An empty `impl Type: Interface {}` asked the compiler to derive a memberwise implementation, but one of the struct's fields has a shape the derived method cannot handle: an enum with payload variants (no generated `match` in v1), an array / slice / tuple field, a pointer field where the interface needs `hash` or `cmp` or a text form, or — for `ToText` — a build with no `#[lang("string")]` type.
+An empty `impl Type: Interface {}` asked the compiler to derive a memberwise implementation, but one of the struct's fields has a shape the derived method cannot handle: an enum with payload variants (no generated `match` in v1 — except for `Clone`, which clones such a field through the enum's own `clone`), an array / slice / tuple field, a pointer field where the interface needs `hash` or `cmp` or a text form, or — for `ToText` — a build with no `#[lang("string")]` type.
 
 ```cplus
 enum E { A, B(i32) }
@@ -732,7 +732,7 @@ fn main() -> i32 { return 0; }
 // -> [E0920] cannot derive `Eq` for `P`: field `e` — its enum type has payload variants; write `eq` manually
 ```
 
-**Fix.** Write the named method by hand for this type, or change the field to a derivable shape. For payload enums the usual fix is a hand-written method that `match`es on the variants.
+**Fix.** Write the named method by hand for this type, or change the field to a derivable shape. For payload enums the usual fix is a hand-written method that `match`es on the variants; for `Clone`, write `impl E: Clone { fn clone(this) -> E { ... } }` on the enum and the struct's empty `impl S: Clone {}` then derives.
 
 <sub>repro: checked · cplus-core/src/lower.rs:expand_derives · test cplus-core/src/lower.rs:derive_payload_enum_field_rejected_e0920</sub>
 
@@ -2950,6 +2950,26 @@ fn main() -> i32 {
 **Fix.** Handle it — `let s: status::Status = v.append(x); if !s.is_ok() { return s; }` — or, when failure is acceptable (typically out-of-memory and the program's answer is "die later"), discard it on purpose: `let _ = v.append(x);`. A function that builds and returns a new value should check each append and return an empty value on the first failure (error-handling.md §2).
 
 <sub>repro: scenario · cplus-core/src/sema.rs:warn_if_status_discarded · test cpc/tests/e2e.rs:a_discarded_status_warns_w0009_and_a_deliberate_discard_does_not</sub>
+
+### W0010 · A generic body relies on a bound it does not state
+
+Inside a generic `impl` or `fn`, a method is called that belongs to a BOUNDED impl block (`impl Bag[T: Copy] { fn get ... }`) and the type argument is the enclosing type parameter itself, which does not carry that bound. A generic body is checked once, against the template, so nothing re-checks this call when the body is instantiated: `Wrap[Owned]::get` then runs `Bag[Owned]::get`, a bit-copy of a value with a destructor, and the value is dropped twice. It is a warning rather than E0502 only until released packages that have this shape are republished.
+
+```cplus
+struct Bag[T] { item: T }
+impl Bag[T: Copy] {
+    fn get(this) -> T { return this.item; }
+}
+struct Wrap[T] { b: Bag[T] }
+impl Wrap[T] {
+    fn get(this) -> T { return this.b.get(); }   // W0010: `T` is unbounded here
+}
+fn main() -> i32 { return 0; }
+```
+
+**Fix.** State the bound on the enclosing `impl` or `fn` — `impl Wrap[T: Copy]`, `fn take_out[T: Copy]`. The body is then sound for every type it can be instantiated at, and a use at a type that fails the bound is refused where it is written (E0502). If only one method needs the bound, move that method into its own bounded `impl` block.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_impl_block_bounds_at_call · test cpc/tests/e2e.rs:an_unbounded_generic_body_calling_a_bounded_impl_method_warns_w0010</sub>
 
 ### W0824 · Handler parameter cannot receive a bound method
 
