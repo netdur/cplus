@@ -1,0 +1,349 @@
+// text_metrics — how big a string is, without building anything. HAND-WRITTEN.
+//
+// The one number a list of wrapped rows needs and facet could not give: how
+// tall THIS text is at THIS width in THIS font. `relist`'s `row_height_at`
+// exists because building and realising a row to learn its height is the
+// expensive half of a resize (~300us a row), and the application answering it
+// had no way to measure — so it guessed (`width / 7.8` characters a line, which
+// is wrong for a heading, for CJK, for code) or it imported one platform's
+// bindings and called that platform's typesetter itself
+// (bugs/closed/facet-no-cross-platform-text-metrics.md).
+//
+//     fn row_height_at(ref this, index: usize, width: f64) -> f64 {
+//         let body: str = this.rows_text(index);
+//         return text_metrics::measure_height(body, width - 32.0f64,
+//                                             font_size: 13.0f64) + 24.0f64;
+//     }
+//
+// THE BACKEND MEASURES. Each one installs a function that asks its own
+// typesetter, through the same path its `label` is measured by — so the answer
+// here and the label on screen are one measurement, not two that agree on a
+// good day. The parameters are a label's own: say the font the way the label
+// says it and the numbers match.
+//
+// WITH NO BACKEND there is an ESTIMATE, and it is exactly that: fixed advances,
+// greedy word wrap, no kerning, no fallback fonts. It exists so a headless test
+// gets a stable, monotone number — longer text is taller, a narrower box is
+// taller — not so anything is laid out by it. `is_measured()` says which one
+// answered.
+//
+// MAIN THREAD ONLY when a backend is installed: it reaches the platform's text
+// system. Measure before a job goes off-main, or in `apply`.
+
+import "stdlib/option" as option;
+import "./vocabulary" as vocab;
+
+// What the text is set in. The fields are `label`'s, with `label`'s defaults —
+// except `line_break`, which here defaults to `WordWrap`: the question this
+// module answers is "how tall when wrapped", and a label's own default
+// (`TailTruncation`) is one line whatever the width.
+//
+// `font_family` is a VIEW valid for the duration of the call, which is all a
+// measurement needs.
+struct Style {
+    font_size: f64,
+    named_size: vocab::NamedSize,
+    font_weight: vocab::FontWeight,
+    font_family: str,
+    font_scales: bool,
+    is_italic: bool,
+    line_height: f64,
+    character_spacing: f64,
+    line_break: vocab::LineBreak,
+    max_lines: i64,
+}
+
+// The backend's measurer: `(text, width, style) -> size`. `width <= 0` is "no
+// limit" — one line per paragraph, as wide as it runs.
+static MEASURE_FN: fn(str, f64, *Style) -> vocab::Size = #zero::[fn(str, f64, *Style) -> vocab::Size]();
+
+fn set_measure_fn(f: fn(str, f64, *Style) -> vocab::Size) { MEASURE_FN = f; return; }
+
+// Did a backend answer, or would `measure` fall back to the estimate? For a
+// test that must not mistake one for the other.
+fn is_measured() -> bool { return MEASURE_FN.is_not_null(); }
+
+// The size of `text` set in this font, wrapped to `width`. `width` at or below
+// zero means unbounded. The height is whole lines; the width is the widest
+// line, never more than `width` when one was given.
+fn measure(
+    text: str,
+    width: f64 = 0.0f64,
+    font_size: f64 = 0.0f64,
+    named_size: vocab::NamedSize = vocab::NamedSize::Default,
+    font_weight: vocab::FontWeight = vocab::FontWeight::Default,
+    font_family: str = "",
+    font_scales: bool = true,
+    is_italic: bool = false,
+    line_height: f64 = 0.0f64,
+    character_spacing: f64 = 0.0f64,
+    line_break: vocab::LineBreak = vocab::LineBreak::WordWrap,
+    max_lines: i64 = 0 as i64,
+) -> vocab::Size {
+    var st: Style = Style {
+        font_size: font_size,
+        named_size: named_size,
+        font_weight: font_weight,
+        font_family: font_family,
+        font_scales: font_scales,
+        is_italic: is_italic,
+        line_height: line_height,
+        character_spacing: character_spacing,
+        line_break: line_break,
+        max_lines: max_lines,
+    };
+    let f: fn(str, f64, *Style) -> vocab::Size = MEASURE_FN;
+    if f.is_not_null() { return f(text, width, #addr_of(st)); }
+    return estimate(text, width, #addr_of(st));
+}
+
+// The height alone — what a `row_height_at` wants.
+fn measure_height(
+    text: str,
+    width: f64,
+    font_size: f64 = 0.0f64,
+    named_size: vocab::NamedSize = vocab::NamedSize::Default,
+    font_weight: vocab::FontWeight = vocab::FontWeight::Default,
+    font_family: str = "",
+    font_scales: bool = true,
+    is_italic: bool = false,
+    line_height: f64 = 0.0f64,
+    character_spacing: f64 = 0.0f64,
+    line_break: vocab::LineBreak = vocab::LineBreak::WordWrap,
+    max_lines: i64 = 0 as i64,
+) -> f64 {
+    let s: vocab::Size = measure(text, width: width, font_size: font_size, named_size: named_size,
+                                 font_weight: font_weight, font_family: font_family,
+                                 font_scales: font_scales, is_italic: is_italic,
+                                 line_height: line_height, character_spacing: character_spacing,
+                                 line_break: line_break, max_lines: max_lines);
+    return s.height;
+}
+
+// The width of `text` on ONE line — a badge, a table column, a tab.
+fn measure_width(
+    text: str,
+    font_size: f64 = 0.0f64,
+    named_size: vocab::NamedSize = vocab::NamedSize::Default,
+    font_weight: vocab::FontWeight = vocab::FontWeight::Default,
+    font_family: str = "",
+    font_scales: bool = true,
+    is_italic: bool = false,
+    character_spacing: f64 = 0.0f64,
+) -> f64 {
+    let s: vocab::Size = measure(text, width: 0.0f64, font_size: font_size, named_size: named_size,
+                                 font_weight: font_weight, font_family: font_family,
+                                 font_scales: font_scales, is_italic: is_italic,
+                                 character_spacing: character_spacing,
+                                 line_break: vocab::LineBreak::NoWrap);
+    return s.width;
+}
+
+// The height of one line in this font — the step a wrapped text's height
+// moves in.
+fn line_height(
+    font_size: f64 = 0.0f64,
+    named_size: vocab::NamedSize = vocab::NamedSize::Default,
+    font_weight: vocab::FontWeight = vocab::FontWeight::Default,
+    font_family: str = "",
+    font_scales: bool = true,
+    line_height: f64 = 0.0f64,
+) -> f64 {
+    let s: vocab::Size = measure("Ag", width: 0.0f64, font_size: font_size, named_size: named_size,
+                                 font_weight: font_weight, font_family: font_family,
+                                 font_scales: font_scales, line_height: line_height,
+                                 line_break: vocab::LineBreak::NoWrap);
+    return s.height;
+}
+
+// ---- the estimate ------------------------------------------------------------
+//
+// The no-backend answer. Public, so a backend that has not installed a
+// measurer answers the same thing a headless run does.
+
+// The point size a style resolves to with no platform to ask: the explicit
+// size, else a named role on a fixed ramp, else 13.
+fn estimate_point_size(st: *Style) -> f64 {
+    if { (*st).font_size } > 0.0f64 { return { (*st).font_size }; }
+    return match { (*st).named_size } {
+        vocab::NamedSize::Default => 13.0f64,
+        vocab::NamedSize::Micro => 10.0f64,
+        vocab::NamedSize::Caption => 11.0f64,
+        vocab::NamedSize::Small => 12.0f64,
+        vocab::NamedSize::Medium => 13.0f64,
+        vocab::NamedSize::Body => 13.0f64,
+        vocab::NamedSize::Subtitle => 15.0f64,
+        vocab::NamedSize::Large => 17.0f64,
+        vocab::NamedSize::Title => 22.0f64,
+        vocab::NamedSize::Header => 26.0f64,
+    };
+}
+
+fn _wraps(b: vocab::LineBreak) -> bool {
+    return match b {
+        vocab::LineBreak::WordWrap => true,
+        vocab::LineBreak::CharacterWrap => true,
+        _ => false,
+    };
+}
+
+fn _is_wide(byte: u8) -> bool { return byte >= (0xE0 as u8); }
+fn _is_continuation(byte: u8) -> bool { return byte >= (0x80 as u8) && byte < (0xC0 as u8); }
+
+// One line at a time. Every character advances 0.6 em — 1.0 em for one whose
+// UTF-8 encoding is three bytes or more, which is where CJK and emoji live — a
+// line is 1.25 em tall, and a word that does not fit starts the next line.
+fn estimate(text: str, width: f64, st: *Style) -> vocab::Size {
+    let pt: f64 = estimate_point_size(st);
+    let spacing: f64 = { (*st).character_spacing };
+    let narrow: f64 = pt * 0.6f64 + spacing;
+    let wide: f64 = pt * 1.0f64 + spacing;
+    var line_h: f64 = pt * 1.25f64;
+    if { (*st).line_height } > 0.0f64 { line_h = line_h * { (*st).line_height }; }
+    let bounded: bool = width > 0.0f64 && _wraps({ (*st).line_break });
+
+    var lines: i64 = 1 as i64;
+    var widest: f64 = 0.0f64;
+    var line_w: f64 = 0.0f64;       // the line so far, up to and including the last space
+    var word_w: f64 = 0.0f64;       // the word being read
+    let n: usize = text.count();
+    let p: *u8 = #str_ptr(text);
+    var i: usize = 0 as usize;
+    while i < n {
+        let b: u8 = p[i];
+        i = i +% (1 as usize);
+        if _is_continuation(b) { continue; }
+        if b == (10 as u8) {
+            line_w = line_w + word_w;
+            if line_w > widest { widest = line_w; }
+            lines = lines + (1 as i64);
+            line_w = 0.0f64;
+            word_w = 0.0f64;
+            continue;
+        }
+        let adv: f64 = if _is_wide(b) { wide } else { narrow };
+        if b == (32 as u8) {
+            line_w = line_w + word_w + adv;
+            word_w = 0.0f64;
+            continue;
+        }
+        word_w = word_w + adv;
+        if bounded && (line_w + word_w) > width {
+            if line_w > 0.0f64 {
+                // The word moves down whole.
+                if line_w > widest { widest = line_w; }
+                lines = lines + (1 as i64);
+                line_w = 0.0f64;
+            } else if word_w > width && word_w > adv {
+                // One word wider than the box: it breaks where it must.
+                if (word_w - adv) > widest { widest = word_w - adv; }
+                lines = lines + (1 as i64);
+                word_w = adv;
+            }
+        }
+    }
+    line_w = line_w + word_w;
+    if line_w > widest { widest = line_w; }
+    if { (*st).max_lines } > (0 as i64) && lines > { (*st).max_lines } { lines = { (*st).max_lines }; }
+    if width > 0.0f64 && widest > width { widest = width; }
+    return vocab::Size { width: widest, height: (lines as f64) * line_h };
+}
+
+// ---- tests -------------------------------------------------------------------
+//
+// The estimate only — the measured path is each backend's, tested there
+// against a real label.
+
+#[test]
+fn with_no_backend_the_estimate_answers_and_says_so() {
+    set_measure_fn(#zero::[fn(str, f64, *Style) -> vocab::Size]());
+    assert is_measured() == false;
+    let one: vocab::Size = measure("hello", font_size: 10.0f64);
+    // Five characters at 0.6 em of 10pt, one line of 1.25 em.
+    assert one.width == 30.0f64;
+    assert one.height == 12.5f64;
+}
+
+#[test]
+fn a_narrower_box_makes_the_estimate_taller_never_shorter() {
+    set_measure_fn(#zero::[fn(str, f64, *Style) -> vocab::Size]());
+    let text: str = "the quick brown fox jumps over the lazy dog and keeps going";
+    var last: f64 = 0.0f64;
+    var w: f64 = 600.0f64;
+    while w >= 40.0f64 {
+        let h: f64 = measure_height(text, w, font_size: 10.0f64);
+        assert h >= last;
+        last = h;
+        w = w - 40.0f64;
+    }
+    // ...and it did wrap: far more than one line by the end.
+    assert last > 12.5f64 * 4.0f64;
+    // Unbounded is one line whatever the length.
+    assert measure_height(text, 0.0f64, font_size: 10.0f64) == 12.5f64;
+}
+
+#[test]
+fn the_estimate_wraps_at_words_and_counts_explicit_newlines() {
+    set_measure_fn(#zero::[fn(str, f64, *Style) -> vocab::Size]());
+    // "aaaa bbbb cccc" at 10pt: each word is 24 wide, a space 6. In 60 only
+    // "aaaa bbbb" (54) fits, so "cccc" goes down: two lines.
+    assert measure_height("aaaa bbbb cccc", 60.0f64, font_size: 10.0f64) == 25.0f64;
+    // In 100 it is one line.
+    assert measure_height("aaaa bbbb cccc", 100.0f64, font_size: 10.0f64) == 12.5f64;
+    // A newline is a line break whatever the width.
+    assert measure_height("a\nb\nc", 0.0f64, font_size: 10.0f64) == 37.5f64;
+    // A single word wider than the box is broken, not left hanging out of it.
+    let long: vocab::Size = measure("aaaaaaaaaaaaaaaaaaaa", width: 60.0f64, font_size: 10.0f64);
+    assert long.height == 25.0f64;
+    assert long.width <= 60.0f64;
+}
+
+#[test]
+fn the_font_changes_the_estimate() {
+    set_measure_fn(#zero::[fn(str, f64, *Style) -> vocab::Size]());
+    let small: vocab::Size = measure("heading", font_size: 10.0f64);
+    let big: vocab::Size = measure("heading", font_size: 20.0f64);
+    assert big.width == small.width * 2.0f64;
+    assert big.height == small.height * 2.0f64;
+    // A named role resolves without a platform too.
+    assert measure_height("x", 0.0f64, named_size: vocab::NamedSize::Header)
+         > measure_height("x", 0.0f64, named_size: vocab::NamedSize::Caption);
+    // A wide character takes more room than a narrow one.
+    assert measure_width("日本語", font_size: 10.0f64) > measure_width("abc", font_size: 10.0f64);
+    // `line_height` is a multiplier on the line.
+    assert measure_height("x", 0.0f64, font_size: 10.0f64, line_height: 2.0f64) == 25.0f64;
+    assert line_height(font_size: 10.0f64) == 12.5f64;
+}
+
+// NEGATIVE: the edges. Empty text is still one line tall (an empty row has a
+// height) and no wider than nothing; `max_lines` caps the count; a truncating
+// line break does not wrap however narrow the box.
+#[test]
+fn the_estimate_at_its_edges() {
+    set_measure_fn(#zero::[fn(str, f64, *Style) -> vocab::Size]());
+    let empty: vocab::Size = measure("", width: 100.0f64, font_size: 10.0f64);
+    assert empty.width == 0.0f64;
+    assert empty.height == 12.5f64;
+    let text: str = "one two three four five six seven eight nine ten";
+    assert measure_height(text, 40.0f64, font_size: 10.0f64, max_lines: 2 as i64) == 25.0f64;
+    assert measure_height(text, 40.0f64, font_size: 10.0f64,
+                          line_break: vocab::LineBreak::TailTruncation) == 12.5f64;
+}
+
+fn _fixed_measure(text: str, width: f64, st: *Style) -> vocab::Size {
+    return vocab::Size { width: width, height: { (*st).font_size } * 3.0f64 };
+}
+
+// A backend's measurer replaces the estimate entirely, and is handed the style
+// as the caller stated it.
+#[test]
+fn an_installed_measurer_answers_instead_of_the_estimate() {
+    set_measure_fn(_fixed_measure);
+    assert is_measured();
+    let s: vocab::Size = measure("anything", width: 77.0f64, font_size: 11.0f64);
+    assert s.width == 77.0f64;
+    assert s.height == 33.0f64;
+    assert measure_height("anything", 50.0f64, font_size: 4.0f64) == 12.0f64;
+    set_measure_fn(#zero::[fn(str, f64, *Style) -> vocab::Size]());
+    assert is_measured() == false;
+}

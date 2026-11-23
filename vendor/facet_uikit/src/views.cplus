@@ -17,6 +17,9 @@ import "stdlib/vec" as vec;
 import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
+import "stdlib/box" as box;
+import "facet/text_metrics" as text_metrics;
+import "facet/label" as label;
 import "facet/props" as props;
 import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
@@ -273,6 +276,63 @@ fn has_intrinsic_size(kind: u32) -> bool {
 
 #[link_name = "objc_msgSend"]
 extern fn msg_size_size(recv: *u8, sel: *u8, s: rt::Size) -> rt::Size;
+
+// ---- text_metrics: a string measured the way a label is ------------------------
+//
+// The UIKit half of facet/text_metrics, and the same construction as AppKit's:
+// ONE probe label, never mounted, written with the asked-for text and font
+// through this backend's own label apply and measured through `measure_view` —
+// so the number an application states a row's height from is the number the
+// row's label is laid out at. See facet_appkit/src/views.cplus for the long
+// form of why.
+static TM_NODE: *core::Node = 0 as *core::Node;
+static TM_VIEW: *u8 = 0 as *u8;
+static TM_DEFAULT_FONT: *u8 = 0 as *u8;
+
+fn text_metrics_probe() -> bool {
+    if TM_NODE != (0 as *core::Node) && TM_VIEW != (0 as *u8) { return true; }
+    match box::new::[core::Node](label::label("", key: "")) {
+        option::Option[box::Box[core::Node]]::Some(b) => { TM_NODE = b.into_raw() as *core::Node; }
+        option::Option[box::Box[core::Node]]::None => { return false; }
+    }
+    TM_VIEW = create(0 as *u8, TM_NODE);
+    if TM_VIEW == (0 as *u8) { return false; }
+    // The font a label is born with, so a style that names none gets it back
+    // rather than the previous measurement's.
+    TM_DEFAULT_FONT = rt::retain({ rt::msg_id(TM_VIEW, rt::sel(#str_ptr("font\0"))) });
+    return true;
+}
+
+fn measure_text(text: str, width: f64, st: *text_metrics::Style) -> vocab::Size {
+    if st == (0 as *text_metrics::Style) { return vocab::Size::zero(); }
+    if !text_metrics_probe() { return text_metrics::estimate(text, width, st); }
+    let p: *props::LabelProps = controls::props_of(TM_NODE, props::K_LABEL) as *props::LabelProps;
+    if p == (0 as *props::LabelProps) { return text_metrics::estimate(text, width, st); }
+    { (*p).text = text.to_text() };
+    { (*p).font_size = { (*st).font_size } };
+    { (*p).named_size = { (*st).named_size } };
+    { (*p).font_weight = { (*st).font_weight } };
+    { (*p).font_family = { (*st).font_family }.to_text() };
+    { (*p).font_scales = { (*st).font_scales } };
+    { (*p).is_italic = { (*st).is_italic } };
+    { (*p).line_height = { (*st).line_height } };
+    { (*p).character_spacing = { (*st).character_spacing } };
+    { (*p).line_break = { (*st).line_break } };
+    { (*p).max_lines = { (*st).max_lines } };
+    if TM_DEFAULT_FONT != (0 as *u8) {
+        { rt::msg_void_id(TM_VIEW, rt::sel(#str_ptr("setFont:\0")), TM_DEFAULT_FONT) };
+    }
+    configure(TM_VIEW, TM_NODE,
+              label::P_TEXT | label::P_FONT_SIZE | label::P_NAMED_SIZE | label::P_FONT_WEIGHT
+              | label::P_FONT_FAMILY | label::P_FONT_SCALES | label::P_IS_ITALIC
+              | label::P_LINE_HEIGHT | label::P_CHARACTER_SPACING | label::P_LINE_BREAK
+              | label::P_MAX_LINES);
+    let s: flex::Size = measure_view(TM_VIEW, width, flex::MeasureMode::AtMost,
+                                     0.0f64, flex::MeasureMode::Undefined);
+    var w: f64 = s.width;
+    if width > 0.0f64 && w > width { w = width; }
+    return vocab::Size { width: w, height: s.height };
+}
 
 // The measure flex calls. `ctx` is the backing view, put there by `create`.
 //

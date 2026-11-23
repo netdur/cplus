@@ -828,6 +828,46 @@ for.
 | GTK | Pango's generic `monospace` | the platform's documented behaviour; not run |
 | WinUI | — | **not resolved yet**: the name is passed through and falls back to the default face |
 
+## facet/text_metrics
+
+How big a string is, without building anything — the number a `row_height_at`
+needs for a row of wrapped text.
+
+| | |
+|---|---|
+| `measure(text, width:, font_size:, …) -> vocab::Size` | the size of `text` wrapped to `width` (≤ 0 = unbounded) |
+| `measure_height(text, width, …) -> f64` | the height alone |
+| `measure_width(text, …) -> f64` | the width on one line |
+| `line_height(font_size:, …) -> f64` | one line in this font |
+| `is_measured() -> bool` | did a backend answer, or the estimate |
+
+The font parameters are a label's own — `font_size`, `named_size`,
+`font_weight`, `font_family`, `font_scales`, `is_italic`, `line_height`,
+`character_spacing`, `max_lines` — with a label's defaults. Say the font the way
+the label says it and the two agree. `line_break` defaults to `WordWrap` here
+(a label's own default, `TailTruncation`, is one line at any width).
+
+```cplus
+fn row_height_at(ref this, index: usize, width: f64) -> f64 {
+    return text_metrics::measure_height(this.body_of(index), width - 32.0f64,
+                                        font_size: 13.0f64) + 24.0f64;
+}
+```
+
+**The backend measures, through its own label.** On AppKit and UIKit one probe
+label, never mounted, is written with the text and font and measured by the
+function every label on screen is measured by — so the answer is the height the
+label is laid out at, not a second typesetter's opinion of it. No view is
+created per call: about 35µs a measurement on AppKit, against ~300µs to realise
+a row.
+
+**With no backend there is an estimate** — fixed advances, greedy word wrap —
+and `is_measured()` is false. It is stable and monotone, which is what a
+headless test needs, and it is not what anything should be laid out by.
+Android, GTK and WinUI do not install a measurer yet and answer the estimate.
+
+Main thread only when a backend is installed.
+
 ## facet/bands
 
 The app's size-band vocabulary. A **band** is a named box constraint; a node

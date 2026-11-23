@@ -79,8 +79,10 @@ import "./web" as webmod;
 import "./dialogs" as dialogs;
 import "facet/navigation" as navigation;
 import "stdlib/box" as box;
+import "stdlib/time" as time;
 import "stdlib/thread" as thread;
 import "facet/services" as services;
+import "facet/text_metrics" as text_metrics;
 import "facet/nav_model" as nav_model;
 import "./clipboard" as clipboard;
 import "./recycler" as recycler;import "facet/web" as web_ui;
@@ -21027,4 +21029,202 @@ fn only_the_monospace_token_asks_for_the_fixed_width_face() {
         }
         option::Option[ak::Font]::None => { assert false; }
     }
+}
+
+// ---- text_metrics: the measurement and the label are one number ----------------
+//
+// bugs/closed/facet-no-cross-platform-text-metrics.md. An application measures
+// a string to state a row's height, and the row then holds a label. If the two
+// disagree by a line the row clips or gaps — so the test is agreement with a
+// REAL label, laid out in a real window at the same width, not a number
+// written down here.
+
+struct TmCase {
+    text: str,
+    width: f64,
+    font_size: f64,
+    named: vocab::NamedSize,
+    weight: vocab::FontWeight,
+    family: str,
+}
+
+fn tm_case(text: str, width: f64, font_size: f64 = 0.0f64,
+           named: vocab::NamedSize = vocab::NamedSize::Default,
+           weight: vocab::FontWeight = vocab::FontWeight::Default,
+           family: str = "") -> TmCase {
+    return TmCase { text: text, width: width, font_size: font_size, named: named,
+                    weight: weight, family: family };
+}
+
+const TM_PARA: str = "The quick brown fox jumps over the lazy dog, then turns round and does it again because one pass was never going to be enough to fill three lines of a narrow column.";
+const TM_CJK: str = "日本語のテキストは単語の間に空白がないので、折り返しの位置が英語とはまったく違う場所になります。";
+const TM_CODE: str = "fn main() -> i32 { let total: i64 = h1.join() +% h2.join(); return total as i32; }";
+
+fn tm_measured(c: TmCase) -> f64 {
+    return text_metrics::measure_height(c.text, c.width, font_size: c.font_size,
+                                        named_size: c.named, font_weight: c.weight,
+                                        font_family: c.family, font_scales: false);
+}
+
+// The same text as a real label in a real window, at the same width.
+fn tm_laid_out(c: TmCase) -> f64 {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label(c.text, key: "tm:label", font_size: c.font_size, named_size: c.named,
+                       font_weight: c.weight, font_family: c.family, font_scales: false,
+                       line_break: vocab::LineBreak::WordWrap)
+              .width(c.width).shrink(0.0f64));
+    var root: core::Node = core::column(b, key: "tm:root").align(flex::Align::FlexStart);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "tm", width: 900.0f64,
+                                                               height: 700.0f64));
+    assert win.is_not_null();
+    scheduler::tick();
+    let h: f64 = frame_of_key(rp, "tm:label").h;
+    window::close_window(win);
+    return h;
+}
+
+fn tm_abs(v: f64) -> f64 { if v < 0.0f64 { return 0.0f64 - v; } return v; }
+
+#[test]
+fn a_measured_height_is_the_height_a_label_is_laid_out_at() {
+    backend::install();
+    app::reset_default_for_tests();
+    assert text_metrics::is_measured();
+    var cases: vec::Vec[TmCase] = vec::new::[TmCase]();
+    // Plain text across three widths: one line, a few, many.
+    let _a: status::Status = cases.append(tm_case(TM_PARA, 700.0f64));
+    let _b: status::Status = cases.append(tm_case(TM_PARA, 320.0f64));
+    let _c: status::Status = cases.append(tm_case(TM_PARA, 140.0f64));
+    // The cases a characters-per-line guess gets wrong: a heading, a bold
+    // face, a fixed-width face, text with no spaces to break at, hard breaks.
+    let _d: status::Status = cases.append(tm_case(TM_PARA, 320.0f64, named: vocab::NamedSize::Title));
+    let _e: status::Status = cases.append(tm_case(TM_PARA, 320.0f64, font_size: 11.0f64,
+                                                  weight: vocab::FontWeight::Bold));
+    let _f: status::Status = cases.append(tm_case(TM_CODE, 260.0f64, font_size: 12.0f64,
+                                                  family: theme::MONOSPACE));
+    let _g: status::Status = cases.append(tm_case(TM_CJK, 240.0f64, font_size: 14.0f64));
+    let _h: status::Status = cases.append(tm_case("one\ntwo\nthree", 400.0f64));
+    let _i: status::Status = cases.append(tm_case("short", 400.0f64));
+    var i: usize = 0 as usize;
+    while i < cases.count() {
+        match cases.at(i) {
+            option::Option[TmCase]::Some(c) => {
+                let measured: f64 = tm_measured(c);
+                let real: f64 = tm_laid_out(c);
+                assert measured > 0.0f64;
+                // Half a point: the two come from one code path, and the only
+                // room between them is the layout pass snapping to the pixel
+                // grid.
+                assert tm_abs(measured - real) < 0.5f64;
+            }
+            option::Option[TmCase]::None => { assert false; }
+        }
+        i = i +% (1 as usize);
+    }
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn measuring_text_answers_what_the_typesetter_does_not_a_guess() {
+    backend::install();
+    // Narrower is taller, and by WHOLE lines.
+    let line: f64 = text_metrics::line_height(font_size: 13.0f64, font_scales: false);
+    assert line > 10.0f64;
+    let wide: f64 = text_metrics::measure_height(TM_PARA, 700.0f64, font_size: 13.0f64, font_scales: false);
+    let narrow: f64 = text_metrics::measure_height(TM_PARA, 140.0f64, font_size: 13.0f64, font_scales: false);
+    assert narrow > wide * 3.0f64;
+    let lines: f64 = narrow / line;
+    assert tm_abs(lines - ((lines + 0.5f64) as i64) as f64) < 0.05f64;
+    // A heading is taller than body text at the same width — the thing a fixed
+    // characters-per-line constant cannot know.
+    assert text_metrics::measure_height(TM_PARA, 320.0f64, named_size: vocab::NamedSize::Title, font_scales: false)
+         > text_metrics::measure_height(TM_PARA, 320.0f64, font_size: 13.0f64, font_scales: false);
+    // A single-line width is the run's own, and a fixed-width face is wider
+    // per character than the proportional one for this string.
+    let prop_w: f64 = text_metrics::measure_width("iiiiiiiiii", font_size: 13.0f64, font_scales: false);
+    let mono_w: f64 = text_metrics::measure_width("iiiiiiiiii", font_size: 13.0f64,
+                                                  font_family: theme::MONOSPACE, font_scales: false);
+    assert prop_w > 0.0f64;
+    assert mono_w > prop_w * 1.5f64;
+    // Unbounded is one line.
+    assert tm_abs(text_metrics::measure_height(TM_PARA, 0.0f64, font_size: 13.0f64, font_scales: false) - line) < 0.5f64;
+}
+
+// The point of having it: a thousand measurements build NOTHING. No row is
+// realised, no view is created — one probe label answers them all — and a
+// bounded measure does not leak its width into the unbounded one after it.
+#[test]
+fn a_thousand_measurements_create_no_views_and_do_not_bleed_into_each_other() {
+    backend::install();
+    let before: i64 = views::text_measures();
+    let one_line: f64 = text_metrics::measure_height(TM_PARA, 0.0f64, font_size: 13.0f64, font_scales: false);
+    recycler::reset_measure_realises();
+    var i: i32 = 0;
+    var sum: f64 = 0.0f64;
+    while i < 1000 {
+        let w: f64 = 120.0f64 + ((i % 50) as f64) * 10.0f64;
+        sum = sum + text_metrics::measure_height(TM_PARA, w, font_size: 13.0f64, font_scales: false);
+        i = i + 1;
+    }
+    assert sum > 0.0f64;
+    assert views::text_measures() - before == (1001 as i64);
+    assert recycler::measure_realises() == (0 as i64);
+    // After a thousand bounded measures, unbounded is still one line.
+    assert tm_abs(text_metrics::measure_height(TM_PARA, 0.0f64, font_size: 13.0f64, font_scales: false) - one_line) < 0.01f64;
+}
+
+// NEGATIVE: with the backend gone the answer is the estimate again, and says
+// so — a headless run must not believe it measured.
+#[test]
+fn without_the_backend_text_metrics_falls_back_to_the_estimate() {
+    backend::install();
+    assert text_metrics::is_measured();
+    backend::uninstall();
+    assert text_metrics::is_measured() == false;
+    assert text_metrics::measure_height("hello", 0.0f64, font_size: 10.0f64) == 12.5f64;
+    backend::install();
+    assert text_metrics::is_measured();
+}
+
+// bugs/closed/flex-a-measured-leaf-with-an-explicit-width-is-measured-at-its-parents.md,
+// seen from a real label. The text-metrics agreement test above found it: a
+// wrapping label told `.width(320)` in a 900-wide column was 320 wide and only
+// as tall as it would be at 900 — the lines past the second were not drawn.
+#[test]
+fn a_wrapping_label_with_an_explicit_width_is_as_tall_as_its_text_at_that_width() {
+    backend::install();
+    app::reset_default_for_tests();
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label(TM_PARA, key: "ew:sized", font_scales: false,
+                       line_break: vocab::LineBreak::WordWrap).width(320.0f64).shrink(0.0f64));
+    var boxed: core::Builder = core::Builder::new();
+    boxed.add(label::label(TM_PARA, key: "ew:boxed", font_scales: false,
+                           line_break: vocab::LineBreak::WordWrap));
+    b.add(core::column(boxed, key: "ew:box").width(320.0f64).shrink(0.0f64));
+    b.add(label::label(TM_PARA, key: "ew:capped", font_scales: false,
+                       line_break: vocab::LineBreak::WordWrap).max_width(320.0f64));
+    var root: core::Node = core::column(b, key: "ew:root").align(flex::Align::FlexStart);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "ew", width: 900.0f64,
+                                                               height: 700.0f64));
+    assert win.is_not_null();
+    scheduler::tick();
+    let sized: rt::Rect = frame_of_key(rp, "ew:sized");
+    let boxed_f: rt::Rect = frame_of_key(rp, "ew:boxed");
+    let capped: rt::Rect = frame_of_key(rp, "ew:capped");
+    assert sized.w == 320.0f64;
+    // The same text in a 320-wide BOX was always right; the label that states
+    // the 320 itself now agrees with it, and so does one capped at 320.
+    assert boxed_f.h > 40.0f64;
+    assert sized.h == boxed_f.h;
+    assert capped.h == boxed_f.h;
+    assert capped.w <= 320.0f64;
+    // NEGATIVE: none of them is as short as the text is at the window's width.
+    let wide: f64 = text_metrics::measure_height(TM_PARA, 900.0f64, font_scales: false);
+    assert sized.h > wide;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
 }

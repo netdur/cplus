@@ -616,6 +616,10 @@ Five things about lists that compile wrong:
    bubble), measure the string — with the same font the label will draw and at
    the width the row is really laid out at (a table keeps an inset for itself;
    measuring at the wider number clips the last line off every row).
+   `text_metrics::measure_height(text, width, font_size: …)` is that
+   measurement — the backend's own label, asked without building a row. Do not
+   guess characters per line, and do not import a platform's bindings to call
+   its typesetter.
    `set_row_height_at(fn(index, width, ctx) -> f64)` is `set_row_height_of`
    handed that width: the row's own, inset and columns already taken off. Use
    it for anything that wraps. Do not `find` your own list inside the height
@@ -1222,7 +1226,8 @@ cpc query callers facet.src.mount::set_content
 
 Modules: `elements` (every constructor) · `facet` (Node) · `component` ·
 `mount` · `screen` · `nav` · `resource` · `gestures` · `vocabulary` (colors,
-enums, spans) · `theme` · `services` · plus one module per control
+enums, spans) · `theme` · `services` · `text_metrics` (a string's size, without
+building a row) · plus one module per control
 (`label`, `button`, `text_field`, `list`, `table`, `tree`, `collection`,
 `popup`, `scroll`, `split`, `toggle`, `slider`, `web`, `canvas`, …).
 

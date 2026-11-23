@@ -19,6 +19,9 @@ import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "stdlib/box" as box;
+import "facet/text_metrics" as text_metrics;
+import "facet/label" as label;
 import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "objc/runtime" as rt;
@@ -379,6 +382,88 @@ fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     if (w > 0.0f64) == false { w = fallback_extent(avail_w, 100.0f64); }
     if (h > 0.0f64) == false { h = fallback_extent(avail_h, 20.0f64); }
     return flex::Size { width: w, height: h };
+}
+
+// ---- text_metrics: a string measured the way a label is ------------------------
+//
+// facet/text_metrics asks "how big is this text at this width in this font".
+// The answer has to be the one a `label` would give — an application uses it
+// to state a row's height, and the row then holds a label — so it is not a
+// second typesetting path with its own idea of line boxes. It is a LABEL:
+// one probe node and one probe NSTextField, never mounted, written with the
+// asked-for text and font through `apply_label` and measured through
+// `measure_view`, the same two functions every label on screen goes through.
+// The two numbers cannot drift because there is one of them.
+//
+// The probe is made once and kept. That is the whole cost difference from
+// "realise a row": no view is created per call, and nothing is inserted,
+// laid out or drawn.
+static TM_NODE: *core::Node = 0 as *core::Node;
+static TM_VIEW: *u8 = 0 as *u8;
+static TM_CALLS: i64 = 0 as i64;
+static TM_DEFAULT_FONT: *u8 = 0 as *u8;
+
+// How many measurements the backend has answered — for a suite that wants to
+// see that a count of rows is a count of measures and not of realises.
+fn text_measures() -> i64 { return TM_CALLS; }
+
+fn text_metrics_probe() -> bool {
+    if TM_NODE.is_not_null() && TM_VIEW.is_not_null() { return true; }
+    match box::new::[core::Node](label::label("", key: "")) {
+        option::Option[box::Box[core::Node]]::Some(b) => { TM_NODE = b.into_raw() as *core::Node; }
+        option::Option[box::Box[core::Node]]::None => { return false; }
+    }
+    TM_VIEW = create(0 as *u8, TM_NODE);
+    if TM_VIEW.is_null() { return false; }
+    // THE FONT A LABEL IS BORN WITH, kept. A style that names no size, weight
+    // or family asks for "the label's own font", and `apply_label` answers
+    // that by leaving the font alone — right for a label, which has only ever
+    // had one, and wrong for a probe that was just measuring 14pt bold: it
+    // would keep it. Measured: "short" came back 17 tall after a 14pt case and
+    // 16 on its own. So the probe is put back to this before every measure.
+    TM_DEFAULT_FONT = rt::retain({ rt::msg_id(TM_VIEW, rt::sel(#str_ptr("font\0"))) });
+    return true;
+}
+
+fn measure_text(text: str, width: f64, st: *text_metrics::Style) -> vocab::Size {
+    if st.is_null() { return vocab::Size::zero(); }
+    if !text_metrics_probe() { return text_metrics::estimate(text, width, st); }
+    let p: *props::LabelProps = controls::props_of(TM_NODE, props::K_LABEL) as *props::LabelProps;
+    if p.is_null() { return text_metrics::estimate(text, width, st); }
+    TM_CALLS = TM_CALLS + (1 as i64);
+    // Written straight into the props, not through the cursor's setters: a
+    // setter raises a dirty bit and asks the scheduler for a sync, and this
+    // node is not in any tree to be synced.
+    { (*p).text = text.to_text() };
+    { (*p).font_size = { (*st).font_size } };
+    { (*p).named_size = { (*st).named_size } };
+    { (*p).font_weight = { (*st).font_weight } };
+    { (*p).font_family = { (*st).font_family }.to_text() };
+    { (*p).font_scales = { (*st).font_scales } };
+    { (*p).is_italic = { (*st).is_italic } };
+    { (*p).line_height = { (*st).line_height } };
+    { (*p).character_spacing = { (*st).character_spacing } };
+    { (*p).line_break = { (*st).line_break } };
+    { (*p).max_lines = { (*st).max_lines } };
+    if TM_DEFAULT_FONT.is_not_null() {
+        { rt::msg_void_id(TM_VIEW, rt::sel(#str_ptr("setFont:\0")), TM_DEFAULT_FONT) };
+    }
+    configure(TM_VIEW, TM_NODE,
+              label::P_TEXT | label::P_FONT_SIZE | label::P_NAMED_SIZE | label::P_FONT_WEIGHT
+              | label::P_FONT_FAMILY | label::P_FONT_SCALES | label::P_IS_ITALIC
+              | label::P_LINE_HEIGHT | label::P_CHARACTER_SPACING | label::P_LINE_BREAK
+              | label::P_MAX_LINES);
+    // `measure_view` sets `preferredMaxLayoutWidth` only for a bounded width,
+    // so an unbounded measure after a bounded one would inherit the old box.
+    // Said here, both ways, every time.
+    var box_w: f64 = width;
+    if (box_w > 0.0f64) == false { box_w = 0.0f64; }
+    { rt::msg_void_f64(TM_VIEW, rt::sel(#str_ptr("setPreferredMaxLayoutWidth:\0")), box_w) };
+    let s: rt::Size = msg_size(TM_VIEW, rt::sel(#str_ptr("fittingSize\0")));
+    var w: f64 = s.w;
+    // A line that does not wrap reports its full run; the box is still the box.
+    if box_w > 0.0f64 && w > box_w { w = box_w; }
+    return vocab::Size { width: w, height: s.h };
 }
 
 // The measure for a view that DRAWS ITS OWN CONTENT — `page_dots` places
