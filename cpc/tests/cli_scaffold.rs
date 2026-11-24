@@ -544,10 +544,11 @@ fn every_query_verb_the_agent_page_documents_is_one_cpc_accepts() {
     assert!(kinds.iter().any(|k| k == "refs"), "{kinds:?}");
 }
 
-/// A page scaffolded before the fix still says `definition` / `references`;
-/// both stay accepted and answer exactly what the short forms answer.
+/// ONE NAME PER VERB. The long spellings the old page used (`definition`,
+/// `references`) are not aliases: they are refused, and the refusal lists the
+/// real kinds, which is what tells a reader of a stale page what to type.
 #[test]
-fn the_long_query_spellings_answer_what_the_short_ones_do() {
+fn the_long_query_spellings_are_refused_and_the_refusal_names_the_real_ones() {
     let dir = tempfile::tempdir().unwrap();
     let out = Command::new(cpc())
         .args(["init", "longverbs"])
@@ -556,20 +557,18 @@ fn the_long_query_spellings_answer_what_the_short_ones_do() {
         .unwrap();
     assert!(out.status.success());
     let proj = dir.path().join("longverbs");
-    for (long, short) in [("definition", "def"), ("references", "refs")] {
+    for long in ["definition", "references"] {
         let a = Command::new(cpc()).args(["query", long, "main"]).current_dir(&proj).output().unwrap();
-        let b = Command::new(cpc()).args(["query", short, "main"]).current_dir(&proj).output().unwrap();
-        assert!(
-            !String::from_utf8_lossy(&a.stderr).contains("unknown query kind"),
-            "`cpc query {long}` must be accepted"
-        );
-        assert_eq!(a.status.code(), b.status.code(), "{long} vs {short}");
-        assert_eq!(a.stdout, b.stdout, "{long} vs {short}");
+        assert!(!a.status.success(), "`cpc query {long}` must be refused");
+        let err = String::from_utf8_lossy(&a.stderr);
+        assert!(err.contains("unknown query kind"), "{err}");
+        assert!(err.contains("def |") && err.contains("refs |"), "the refusal lists the kinds: {err}");
     }
-    // Negative: a near miss is still refused, and the refusal lists the kinds.
-    let bad = Command::new(cpc()).args(["query", "definitions", "main"]).current_dir(&proj).output().unwrap();
-    assert!(!bad.status.success());
-    assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown query kind"));
+    // The short forms are the verbs.
+    for short in ["def", "refs"] {
+        let b = Command::new(cpc()).args(["query", short, "main"]).current_dir(&proj).output().unwrap();
+        assert!(!String::from_utf8_lossy(&b.stderr).contains("unknown query kind"));
+    }
 }
 
 #[test]

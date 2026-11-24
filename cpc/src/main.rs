@@ -6662,10 +6662,7 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
     let g = cplus_core::graph::CodeGraph::build(&loaded);
     let arg0 = args.first().map(|s| s.as_str());
     let result = match kind.as_str() {
-        // `definition` / `references` are the long spellings every AGENTS.md
-        // written before 2026-11-23 documents; they stay accepted so a project
-        // scaffolded then still navigates by its own instructions.
-        "def" | "definition" => {
+        "def" => {
             let Some(sym) = arg0 else {
                 eprintln!("cpc query def: expected a SYMBOL");
                 return ExitCode::FAILURE;
@@ -6729,7 +6726,7 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
                 }
             };
         }
-        "refs" | "references" => {
+        "refs" => {
             let Some(sym) = arg0 else {
                 eprintln!("cpc query refs: expected a SYMBOL");
                 return ExitCode::FAILURE;
