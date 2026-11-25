@@ -391,7 +391,11 @@ impl App {
         return App { _p: p };
     }
 
-    fn quit(this) -> bool { return windows::quit(this._p); }
+    fn quit(this) -> bool { return quit_running(this._p); }
+
+    // Bring the application to the front from a background trigger — a global
+    // hotkey, a status item, a notification. See `application::activate`.
+    fn activate(this) -> bool { return app::activate(); }
 
     fn name(this) -> str { return app::instance_name(this._p); }
 
@@ -535,9 +539,27 @@ impl App {
 // So no teardown is duplicated here, and nothing needs a fired-once guard: this
 // function ends a quit by starting the only one there is.
 fn app_should_terminate(_ctx: *u8) -> i8 {
-    if !app::has_current() || app::window_count() == (0 as usize) { return 1 as i8; }
-    let _quit = windows::quit(app::current());
+    if !app::has_current() { return 1 as i8; }
+    // No window, but something else (a status item) is keeping the loop: the
+    // quit still goes through the ordinary unwind, so `on_quit` runs.
+    if app::window_count() == (0 as usize) {
+        if !host::loop_is_held() { return 1 as i8; }
+        let _quit = quit_running(app::current());
+        return 0 as i8;
+    }
+    let _quit = quit_running(app::current());
     return 0 as i8;
+}
+
+// Quit, and END THE LOOP even when something is holding it. Closing the last
+// window normally stops the loop; a status item suspends that rule so the
+// application outlives its windows — and a quit is the one event that must not
+// be suspended with it, or Quit would close every window and leave the icon.
+fn quit_running(owner: *app::Application) -> bool {
+    let held: bool = host::loop_is_held();
+    let ok: bool = windows::quit(owner);
+    if ok && held { host::stop_loop(); }
+    return ok;
 }
 
 // ---- app context -------------------------------------------------------------

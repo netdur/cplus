@@ -1136,6 +1136,17 @@ activates an existing name/key instance or creates one. `find_window` retrieves
 without activating. A window handle exposes `activate`, `close`, and `nav`.
 Closing ends the instance; a stale handle cannot address its replacement.
 
+A window that is summoned and dismissed is HIDDEN, not closed: `w.hide()` keeps
+the instance and its state, `w.activate()` brings it back. A launcher bar is
+`Chrome::new(bar: Bar::Custom, floating: true, panel: true)`. The application
+outside its windows has two modules: `facet/status_item` (an icon with a menu
+in the menu bar; it keeps the app running with no window open) and
+`facet/hotkey` (a system-wide chord; the returned handle is the registration,
+so keep it in a field). Both belong on a value that outlives every screen, set
+up in `app.on_launch`. From a background trigger call
+`runtime::app().activate()` before showing an ordinary window. Details and
+tables: [docs/ref.md](docs/ref.md); a working app: `examples/quick_ask`.
+
 Navigation belongs to that window:
 
 ```cplus

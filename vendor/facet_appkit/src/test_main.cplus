@@ -85,7 +85,13 @@ import "facet/services" as services;
 import "facet/text_metrics" as text_metrics;
 import "facet/nav_model" as nav_model;
 import "./clipboard" as clipboard;
-import "./recycler" as recycler;import "facet/web" as web_ui;
+import "./recycler" as recycler;
+import "facet/hotkey" as hotkey;
+import "facet/status_item" as status_item;
+import "facet/window" as app_window;
+import "./hotkey" as hotkey_appkit;
+import "./status_item" as status_item_appkit;
+import "facet/web" as web_ui;
 import "facet/hybrid_web" as hybrid_ui;
 import "facet/hybrid_page" as hybrid_page;
 import "./drawing" as drawing;
@@ -21416,4 +21422,473 @@ fn an_unmounted_relist_answers_zero_metrics() {
         }
         option::Option[relist::Relist]::None => { assert false; }
     }
+}
+
+// ==== auxiliary windows: panel, floating, shown, show/hide ====================
+
+fn aux_chrome(shown: bool = true) -> screen::Chrome {
+    return screen::Chrome::new(title: "Quick Ask", width: 520.0f64, height: 72.0f64,
+                               bar: screen::Bar::Custom, floating: true, panel: true,
+                               shown: shown);
+}
+
+fn aux_class_name(win: *u8) -> text::Text {
+    let cls: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("className\0"))) };
+    return bridge::to_text(cls);
+}
+
+// A PANEL IS A DIFFERENT CLASS, not a flag on a window: AppKit ignores the
+// non-activating style on a plain NSWindow, so asserting the mask alone would
+// pass on a window that still dragged its application forward.
+#[test]
+fn a_panel_chrome_opens_a_floating_non_activating_nspanel() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = empty_keyed_column();
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, aux_chrome());
+    assert win.is_not_null();
+    assert aux_class_name(win).view() == "NSPanel";
+    assert window::is_panel(win);
+    let w: ak::Window = ak::Window::from_raw(win);
+    assert w.level() == window::floating_window_level();
+    assert (w.collection_behavior() & window::panel_collection_behavior())
+        == window::panel_collection_behavior();
+    // It would hide itself the moment it appeared: its application is not the
+    // active one while a panel is up.
+    assert { rt::msg_i8(win, rt::sel(#str_ptr("hidesOnDeactivate\0"))) } == (0 as i8);
+    assert { rt::msg_i8(win, rt::sel(#str_ptr("canBecomeKeyWindow\0"))) } != (0 as i8);
+    assert w.is_visible();
+    // The tree is mounted in it exactly as in any other window.
+    assert core::is_attached(rp);
+    assert app::window_native(rp) == win;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// NEGATIVE: an ordinary Chrome is still an ordinary NSWindow at the normal
+// level — the three new statements default to nothing.
+#[test]
+fn an_ordinary_chrome_is_still_a_normal_level_nswindow() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = empty_keyed_column();
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "plain",
+        width: 300.0f64, height: 200.0f64));
+    assert aux_class_name(win).view() == "NSWindow";
+    assert window::is_panel(win) == false;
+    assert ak::Window::from_raw(win).level() == (0 as i64);
+    assert ak::Window::from_raw(win).is_visible();
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// FLOATING WITHOUT PANEL is its own thing: an always-on-top ordinary window.
+#[test]
+fn a_floating_chrome_alone_raises_the_level_and_keeps_the_class() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = empty_keyed_column();
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "pip",
+        width: 300.0f64, height: 200.0f64, floating: true));
+    assert aux_class_name(win).view() == "NSWindow";
+    assert ak::Window::from_raw(win).level() == window::floating_window_level();
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// `shown: false` opens it BUILT and off screen; hide/show move it on and off
+// without closing it; activate brings a hidden one up with the keyboard.
+#[test]
+fn a_window_opened_hidden_is_mounted_and_show_hide_do_not_close_it() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = empty_keyed_column();
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, aux_chrome(shown: false));
+    assert win.is_not_null();
+    assert ak::Window::from_raw(win).is_visible() == false;
+    assert core::is_attached(rp);
+    assert core::view_of(rp).is_not_null();
+    match app_window::primary() {
+        option::Option[app_window::Window]::Some(w) => {
+            assert w.is_visible() == false;
+            assert w.show();
+            assert w.is_visible();
+            assert ak::Window::from_raw(win).is_visible();
+            assert w.hide();
+            assert w.is_visible() == false;
+            // Hidden, not closed: still the app's window, tree still mounted.
+            assert w.is_live();
+            assert app::window_count() == (1 as usize);
+            assert core::is_attached(rp);
+            assert w.hide();                       // idempotent
+            assert w.show();
+            assert w.is_visible();
+        }
+        option::Option[app_window::Window]::None => { assert false; }
+    }
+    // The activate seam takes a hidden window to the front.
+    window::wh_set_visible(rp, false);
+    assert ak::Window::from_raw(win).is_visible() == false;
+    window::activate_window(win);
+    assert ak::Window::from_raw(win).is_visible();
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// The display holding the pointer, in the coordinates `frame` answers in — and
+// a panel opens inside it, centred across and above the middle.
+#[test]
+fn a_panel_opens_on_the_active_screen_above_centre() {
+    backend::install();
+    app::reset_default_for_tests();
+    let s: vocab::Rect = app_window::active_screen_frame();
+    assert s.width > 0.0f64;
+    assert s.height > 0.0f64;
+    var root: core::Node = empty_keyed_column();
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, aux_chrome());
+    let f: rt::Rect = ak::Window::from_raw(win).frame();
+    let centre_x: f64 = f.x + f.w / 2.0f64;
+    let want_x: f64 = s.x + s.width / 2.0f64;
+    assert centre_x > want_x - 1.0f64 && centre_x < want_x + 1.0f64;
+    // Above the middle (AppKit's y grows upward), and wholly on that display.
+    assert f.y + f.h / 2.0f64 > s.y + s.height / 2.0f64;
+    assert f.y >= s.y && f.y + f.h <= s.y + s.height;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// NEGATIVE: with no backend the screen is zero and the application cannot be
+// brought forward; with one, both answer.
+#[test]
+fn the_application_activates_only_through_an_installed_backend() {
+    backend::uninstall();
+    assert app::activate() == false;
+    assert app_window::active_screen_frame().width == 0.0f64;
+    backend::install();
+    assert app::activate();
+    backend::uninstall();
+}
+
+// ==== global hotkeys ===========================================================
+
+static HK_PRESSES: i32 = 0;
+static HK_CTX_SEEN: *u8 = 0 as *u8;
+fn hk_pressed(ctx: *u8) { HK_PRESSES = HK_PRESSES + 1; HK_CTX_SEEN = ctx; return; }
+
+fn hk_ok(take r: result::Result[services::Cancellable, hotkey::Refusal]) -> services::Cancellable {
+    return match r {
+        result::Result[services::Cancellable, hotkey::Refusal]::Ok(h) => h,
+        result::Result[services::Cancellable, hotkey::Refusal]::Err(_why) => services::Cancellable::none(),
+    };
+}
+fn hk_why(r: result::Result[services::Cancellable, hotkey::Refusal]) -> hotkey::Refusal {
+    return match r {
+        result::Result[services::Cancellable, hotkey::Refusal]::Ok(_h) => hotkey::Refusal::Failed,
+        result::Result[services::Cancellable, hotkey::Refusal]::Err(why) => why,
+    };
+}
+
+// The whole round trip against the real Carbon registry: the system accepts
+// the chord, the id it hands back runs OUR handler with OUR context, and
+// cancelling gives the chord back — proved by registering it a second time.
+#[test]
+fn a_registered_chord_reaches_its_handler_and_cancel_returns_it() {
+    backend::install();
+    HK_PRESSES = 0;
+    let before: usize = hotkey_appkit::registered_count();
+    var h: services::Cancellable = hk_ok(hotkey::register("f11", hk_pressed, 41 as *u8,
+        cmd: true, ctrl: true, alt: true, shift: true));
+    assert h.pending();
+    assert hotkey_appkit::registered_count() == before + (1 as usize);
+    // Carbon's event carries the id; `fire` is everything after decoding it.
+    assert hotkey_appkit::fire(hotkey_appkit::NEXT_ID);
+    assert HK_PRESSES == 1;
+    assert HK_CTX_SEEN == (41 as *u8);
+    h.cancel();
+    assert hotkey_appkit::registered_count() == before;
+    // A cancelled registration no longer fires...
+    assert hotkey_appkit::fire(hotkey_appkit::NEXT_ID) == false;
+    assert HK_PRESSES == 1;
+    // ...and the chord is free again.
+    var again: services::Cancellable = hk_ok(hotkey::register("f11", hk_pressed,
+        cmd: true, ctrl: true, alt: true, shift: true));
+    assert again.pending();
+    again.cancel();
+    backend::uninstall();
+}
+
+// NEGATIVE: the same chord twice is refused BY THE SYSTEM, with the reason.
+#[test]
+fn a_chord_already_registered_is_refused_as_in_use() {
+    backend::install();
+    var first: services::Cancellable = hk_ok(hotkey::register("f12", hk_pressed,
+        cmd: true, ctrl: true, alt: true, shift: true));
+    assert first.pending();
+    assert hk_why(hotkey::register("f12", hk_pressed, cmd: true, ctrl: true, alt: true,
+                                   shift: true)) == hotkey::Refusal::AlreadyInUse;
+    // The refused attempt left no row behind.
+    let n: usize = hotkey_appkit::registered_count();
+    first.cancel();
+    assert hotkey_appkit::registered_count() == n - (1 as usize);
+    backend::uninstall();
+}
+
+// Every key in facet's vocabulary has a position on the keyboard, and nothing
+// outside it does — the table and `hotkey::is_known_key` agree.
+#[test]
+fn every_key_in_the_vocabulary_has_a_key_code() {
+    let keys: str = "abcdefghijklmnopqrstuvwxyz0123456789-=[];',./\\`";
+    var i: usize = 0 as usize;
+    while i < keys.count() {
+        let k: str = match keys.slice(i, i + (1 as usize)) {
+            option::Option[str]::Some(one) => one,
+            option::Option[str]::None => "",
+        };
+        assert hotkey::is_known_key(k);
+        assert hotkey_appkit::key_code(k) != hotkey_appkit::no_key_code();
+        i = i + (1 as usize);
+    }
+    assert hotkey_appkit::key_code("space") == 49u32;
+    assert hotkey_appkit::key_code("return") == 36u32;
+    assert hotkey_appkit::key_code("escape") == 53u32;
+    assert hotkey_appkit::key_code("f1") == 122u32;
+    assert hotkey_appkit::key_code("up") == 126u32;
+    assert hotkey_appkit::key_code("a") == 0u32;
+    assert hotkey_appkit::key_code("Space") == hotkey_appkit::no_key_code();
+    assert hotkey_appkit::key_code("f13") == hotkey_appkit::no_key_code();
+    // Carbon's bits, not NSEvent's.
+    assert hotkey_appkit::carbon_modifiers(hotkey::MOD_ALT) == 0x0800u32;
+    assert hotkey_appkit::carbon_modifiers(hotkey::MOD_CMD | hotkey::MOD_SHIFT) == 0x0300u32;
+    assert hotkey_appkit::carbon_modifiers(hotkey::MOD_CTRL) == 0x1000u32;
+}
+
+// ==== the status item ==========================================================
+
+static SI_CLICKS: i32 = 0;
+static SI_COMMANDS: i32 = 0;
+static SI_CTX_SEEN: *u8 = 0 as *u8;
+static SI_ENABLED: bool = true;
+fn si_clicked(ctx: *u8) { SI_CLICKS = SI_CLICKS + 1; SI_CTX_SEEN = ctx; return; }
+fn si_command(sender: *u8, ctx: *u8) { SI_COMMANDS = SI_COMMANDS + 1; SI_CTX_SEEN = ctx; return; }
+fn si_is_enabled(ctx: *u8) -> bool { return SI_ENABLED; }
+
+fn si_button_title(id: u64) -> text::Text {
+    let b: *u8 = status_item_appkit::button_of(id);
+    if b.is_null() { return text::new(); }
+    return bridge::to_text({ rt::msg_id(b, rt::sel(#str_ptr("title\0"))) });
+}
+
+fn si_menu(id: u64) -> *u8 {
+    let item: *u8 = status_item_appkit::native_item(id);
+    if item.is_null() { return 0 as *u8; }
+    return { rt::msg_id(item, rt::sel(#str_ptr("menu\0"))) };
+}
+
+fn si_item_title(menu: *u8, at: i64) -> text::Text {
+    let it: *u8 = { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), at) };
+    if it.is_null() { return text::new(); }
+    return bridge::to_text({ rt::msg_id(it, rt::sel(#str_ptr("title\0"))) });
+}
+
+// An item is a real NSStatusItem with a template image and its title beside
+// it, and it leaves the menu bar when removed.
+#[test]
+fn a_status_item_is_in_the_status_bar_with_its_icon_and_title() {
+    backend::install();
+    let before: usize = status_item_appkit::live_count();
+    var it: status_item::StatusItem = status_item::StatusItem::new(
+        symbol: icons::home, title: "3", tooltip: "Desk");
+    assert it.is_live();
+    assert status_item_appkit::live_count() == before + (1 as usize);
+    let id: u64 = status_item_appkit::NEXT_ID;
+    let b: *u8 = status_item_appkit::button_of(id);
+    assert b.is_not_null();
+    assert si_button_title(id).view() == "3";
+    let img: *u8 = { rt::msg_id(b, rt::sel(#str_ptr("image\0"))) };
+    assert img.is_not_null();
+    // Template, so the bar colours it for light, dark and highlighted.
+    assert { rt::msg_i8(img, rt::sel(#str_ptr("isTemplate\0"))) } != (0 as i8);
+    assert { rt::msg_u64(b, rt::sel(#str_ptr("imagePosition\0"))) } == (2 as u64);
+    assert bridge::to_text({ rt::msg_id(b, rt::sel(#str_ptr("toolTip\0"))) }).view() == "Desk";
+    // Live updates land on the same button.
+    it.set_title("12");
+    assert si_button_title(id).view() == "12";
+    it.set_title("");
+    assert si_button_title(id).view() == "";
+    // The platform's own glyph replaces the bundled one, still as a template.
+    it.set_system_symbol("bolt.fill");
+    let sys: *u8 = { rt::msg_id(b, rt::sel(#str_ptr("image\0"))) };
+    assert sys.is_not_null();
+    assert sys != img;
+    assert { rt::msg_i8(sys, rt::sel(#str_ptr("isTemplate\0"))) } != (0 as i8);
+    it.set_visible(false);
+    assert { rt::msg_i8(status_item_appkit::native_item(id), rt::sel(#str_ptr("isVisible\0"))) } == (0 as i8);
+    it.set_visible(true);
+    assert { rt::msg_i8(status_item_appkit::native_item(id), rt::sel(#str_ptr("isVisible\0"))) } != (0 as i8);
+    it.remove();
+    assert it.is_live() == false;
+    assert status_item_appkit::live_count() == before;
+    assert status_item_appkit::native_item(id).is_null();
+    backend::uninstall();
+}
+
+// The menu is the application menu's own type: commands run with their
+// context, a group becomes a submenu, `is_enabled` is asked as it opens, and a
+// token action keeps its selector.
+#[test]
+fn a_status_menu_is_built_from_an_app_menu_and_its_commands_run() {
+    backend::install();
+    SI_COMMANDS = 0;
+    SI_ENABLED = true;
+    var it: status_item::StatusItem = status_item::StatusItem::new(title: "Desk");
+    let id: u64 = status_item_appkit::NEXT_ID;
+    assert si_menu(id).is_null();
+    var m: screen::AppMenu = screen::app_menu("");
+    m.add_command("", "Quick Ask", on_click: si_command, ctx: 7 as *u8,
+                  is_enabled: si_is_enabled);
+    m.add_separator("");
+    m.add_command("Runs", "First run", on_click: si_command, ctx: 8 as *u8);
+    m.add_command("Runs", "Second run", on_click: si_command, ctx: 9 as *u8);
+    m.add_item("", "Quit", "q", screen::menu_action_quit());
+    it.set_menu(m);
+    let menu: *u8 = si_menu(id);
+    assert menu.is_not_null();
+    // Quick Ask, separator, Runs (a submenu, where it was first mentioned), Quit.
+    assert { rt::msg_i64(menu, rt::sel(#str_ptr("numberOfItems\0"))) } == (4 as i64);
+    assert si_item_title(menu, 0 as i64).view() == "Quick Ask";
+    assert si_item_title(menu, 2 as i64).view() == "Runs";
+    assert si_item_title(menu, 3 as i64).view() == "Quit";
+    let sep: *u8 = { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), 1 as i64) };
+    assert { rt::msg_i8(sep, rt::sel(#str_ptr("isSeparatorItem\0"))) } != (0 as i8);
+    let runs: *u8 = { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), 2 as i64) };
+    let sub: *u8 = { rt::msg_id(runs, rt::sel(#str_ptr("submenu\0"))) };
+    assert sub.is_not_null();
+    assert { rt::msg_i64(sub, rt::sel(#str_ptr("numberOfItems\0"))) } == (2 as i64);
+    assert si_item_title(sub, 1 as i64).view() == "Second run";
+    // A command runs with ITS context.
+    { rt::msg_void_i64(menu, rt::sel(#str_ptr("performActionForItemAtIndex:\0")), 0 as i64) };
+    assert SI_COMMANDS == 1;
+    assert SI_CTX_SEEN == (7 as *u8);
+    { rt::msg_void_i64(sub, rt::sel(#str_ptr("performActionForItemAtIndex:\0")), 1 as i64) };
+    assert SI_COMMANDS == 2;
+    assert SI_CTX_SEEN == (9 as *u8);
+    // Quit names the platform's own verb, for the responder chain to answer.
+    let quit: *u8 = { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), 3 as i64) };
+    assert { rt::msg_id(quit, rt::sel(#str_ptr("action\0"))) } == rt::sel(#str_ptr("terminate:\0"));
+    // NEGATIVE: an item that says it is disabled does not run.
+    SI_ENABLED = false;
+    { rt::msg_void(menu, rt::sel(#str_ptr("update\0"))) };
+    { rt::msg_void_i64(menu, rt::sel(#str_ptr("performActionForItemAtIndex:\0")), 0 as i64) };
+    assert SI_COMMANDS == 2;
+    SI_ENABLED = true;
+    // Replacing the menu replaces it whole; clearing removes it.
+    var m2: screen::AppMenu = screen::app_menu("");
+    m2.add_command("", "Only", on_click: si_command);
+    it.set_menu(m2);
+    assert { rt::msg_i64(si_menu(id), rt::sel(#str_ptr("numberOfItems\0"))) } == (1 as i64);
+    it.clear_menu();
+    assert si_menu(id).is_null();
+    it.remove();
+    backend::uninstall();
+}
+
+// With no menu a click runs the handler, the LATEST handler, and a removed
+// item's stale target finds nothing to run.
+#[test]
+fn a_status_item_click_runs_the_current_handler_when_there_is_no_menu() {
+    backend::install();
+    SI_CLICKS = 0;
+    var it: status_item::StatusItem = status_item::StatusItem::new(title: "Desk");
+    let id: u64 = status_item_appkit::NEXT_ID;
+    it.on_click(si_clicked, 5 as *u8);
+    let b: *u8 = status_item_appkit::button_of(id);
+    assert b.is_not_null();
+    { rt::msg_void_id(b, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert SI_CLICKS == 1;
+    assert SI_CTX_SEEN == (5 as *u8);
+    it.on_click(si_clicked, 6 as *u8);
+    { rt::msg_void_id(b, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert SI_CLICKS == 2;
+    assert SI_CTX_SEEN == (6 as *u8);
+    it.remove();
+    // The row is gone, so the trampoline has nothing to call.
+    status_item_appkit::click_trampoline(0 as *u8, id as *u8);
+    assert SI_CLICKS == 2;
+    backend::uninstall();
+}
+
+// An item keeps the application present after its last window closes, and
+// stops doing so when it is removed.
+#[test]
+fn a_status_item_holds_the_loop_and_lets_go_when_removed() {
+    backend::install();
+    assert window::loop_is_held() == false;
+    var a: status_item::StatusItem = status_item::StatusItem::new(title: "a");
+    var b: status_item::StatusItem = status_item::StatusItem::new(title: "b");
+    assert window::loop_is_held();
+    a.remove();
+    assert window::loop_is_held();
+    a.remove();                                    // idempotent: one hold, one release
+    assert window::loop_is_held();
+    b.remove();
+    assert window::loop_is_held() == false;
+    backend::uninstall();
+}
+
+// THE RULE THE HOLD SUSPENDS. Closing the last window ends the loop — unless a
+// status item is live, in which case it ends when the item goes instead.
+#[test]
+fn the_loop_hold_rule_as_arithmetic() {
+    // Last window closed: ends the loop unless something holds it.
+    assert window::ends_loop_at_last_close(0 as i64);
+    assert window::ends_loop_at_last_close(1 as i64) == false;
+    // Last hold released: ends it only with no window left AND only if a
+    // close was actually survived — an item removed before any window opened
+    // must not stop a loop that has not started.
+    assert window::ends_loop_at_last_release(0 as i64, 0 as i64, true);
+    assert window::ends_loop_at_last_release(1 as i64, 0 as i64, true) == false;
+    assert window::ends_loop_at_last_release(0 as i64, 1 as i64, true) == false;
+    assert window::ends_loop_at_last_release(0 as i64, 0 as i64, false) == false;
+}
+
+// The same rule through the real windows. It needs a process with no other
+// facet window open — earlier tests in a full run leave some — so it states
+// that precondition and stands down when it does not hold; the arithmetic
+// above is what always runs.
+#[test]
+fn closing_the_last_window_ends_the_loop_only_when_nothing_holds_it() {
+    if window::open_window_count() != (0 as i64) { return; }
+    backend::install();
+    app::reset_default_for_tests();
+    // Unheld: the close is the end.
+    var plain: core::Node = empty_keyed_column();
+    let w1: *u8 = window::open_window(#addr_of(plain), screen::Chrome::new(title: "one",
+        width: 300.0f64, height: 200.0f64));
+    let s0: i64 = window::stop_request_count();
+    window::close_window(w1);
+    assert window::stop_request_count() == s0 + (1 as i64);
+    app::reset_default_for_tests();
+    // Held: the same close ends nothing...
+    var it: status_item::StatusItem = status_item::StatusItem::new(title: "held");
+    var again: core::Node = empty_keyed_column();
+    let w2: *u8 = window::open_window(#addr_of(again), screen::Chrome::new(title: "two",
+        width: 300.0f64, height: 200.0f64));
+    let s1: i64 = window::stop_request_count();
+    window::close_window(w2);
+    assert window::stop_request_count() == s1;
+    // ...and the item leaving, with no window left, does.
+    it.remove();
+    assert window::stop_request_count() == s1 + (1 as i64);
+    backend::uninstall();
+    app::reset_default_for_tests();
 }

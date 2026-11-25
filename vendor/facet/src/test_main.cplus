@@ -12,6 +12,9 @@ import "./navigation" as navigation;
 import "./props" as props;
 import "./vocabulary" as vocab;
 import "./text_metrics" as text_metrics;
+import "./hotkey" as hotkey;
+import "./status_item" as status_item;
+import "./web_driver" as web_driver;
 // Every module the generator emits, so the gate compiles the whole contract
 // and not only the corner of it a test happens to reach.
 import "./bordered" as bordered;

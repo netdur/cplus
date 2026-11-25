@@ -1,0 +1,217 @@
+// facet_appkit hotkey — `facet/hotkey` on Carbon's hot-key registry.
+//
+// CARBON, AND NOT AN NSEvent GLOBAL MONITOR. `RegisterEventHotKey` is the one
+// macOS API that hands an application a chord system-wide with no permission
+// prompt: a global monitor (`addGlobalMonitorForEventsMatchingMask:`) and a
+// CGEventTap both need the person to grant Accessibility access first, and a
+// monitor only OBSERVES — the keystroke still reaches whatever was in front.
+// A registered hot key is consumed.
+//
+// The handler is installed once on the application's event target and stays;
+// each registration is one row here, found again by the id Carbon hands back
+// with the event. Carbon delivers on the main thread through the same loop
+// NSApplication runs, so the callback is already where facet wants it.
+
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/vec" as vec;
+import "facet/hotkey" as core_hotkey;
+
+#[repr(C)]
+struct EventTypeSpec { class: u32, kind: u32 }
+
+#[repr(C)]
+struct EventHotKeyID { signature: u32, id: u32 }
+
+extern fn GetApplicationEventTarget() -> *u8;
+extern fn InstallEventHandler(target: *u8, handler: fn(*u8, *u8, *u8) -> i32,
+                              count: usize, types: *EventTypeSpec, user: *u8,
+                              out_ref: **u8) -> i32;
+extern fn RegisterEventHotKey(code: u32, modifiers: u32, id: EventHotKeyID, target: *u8,
+                              options: u32, out_ref: **u8) -> i32;
+extern fn UnregisterEventHotKey(hot_key: *u8) -> i32;
+extern fn GetEventParameter(event: *u8, name: u32, kind: u32, out_kind: *u32,
+                            size: usize, out_size: *usize, out: *u8) -> i32;
+
+const EVENT_CLASS_KEYBOARD: u32 = 0x6B657962u32;    // 'keyb'
+const EVENT_HOT_KEY_PRESSED: u32 = 5u32;
+const PARAM_DIRECT_OBJECT: u32 = 0x2D2D2D2Du32;     // '----'
+const TYPE_HOT_KEY_ID: u32 = 0x686B6964u32;         // 'hkid'
+const SIGNATURE: u32 = 0x66637468u32;               // 'fcth'
+const ERR_HOT_KEY_EXISTS: i32 = -9878;              // eventHotKeyExistsErr
+
+// Carbon's modifier bits (Events.h), not NSEvent's.
+const CARBON_CMD: u32 = 0x0100u32;
+const CARBON_SHIFT: u32 = 0x0200u32;
+const CARBON_OPTION: u32 = 0x0800u32;
+const CARBON_CONTROL: u32 = 0x1000u32;
+
+fn carbon_modifiers(bits: u32) -> u32 {
+    var m: u32 = 0u32;
+    if (bits & core_hotkey::MOD_CMD) != 0u32 { m = m | CARBON_CMD; }
+    if (bits & core_hotkey::MOD_CTRL) != 0u32 { m = m | CARBON_CONTROL; }
+    if (bits & core_hotkey::MOD_ALT) != 0u32 { m = m | CARBON_OPTION; }
+    if (bits & core_hotkey::MOD_SHIFT) != 0u32 { m = m | CARBON_SHIFT; }
+    return m;
+}
+
+// The virtual key code (`kVK_*`) for a key in facet's vocabulary. These name
+// POSITIONS on the keyboard, which is what a hot key registers; 0xFFFF is "not
+// a key", because 0 is `a`.
+fn no_key_code() -> u32 { return 0xFFFFu32; }
+
+fn key_code(key: str) -> u32 {
+    if key == "a" { return 0u32; }   if key == "s" { return 1u32; }
+    if key == "d" { return 2u32; }   if key == "f" { return 3u32; }
+    if key == "h" { return 4u32; }   if key == "g" { return 5u32; }
+    if key == "z" { return 6u32; }   if key == "x" { return 7u32; }
+    if key == "c" { return 8u32; }   if key == "v" { return 9u32; }
+    if key == "b" { return 11u32; }  if key == "q" { return 12u32; }
+    if key == "w" { return 13u32; }  if key == "e" { return 14u32; }
+    if key == "r" { return 15u32; }  if key == "y" { return 16u32; }
+    if key == "t" { return 17u32; }  if key == "1" { return 18u32; }
+    if key == "2" { return 19u32; }  if key == "3" { return 20u32; }
+    if key == "4" { return 21u32; }  if key == "6" { return 22u32; }
+    if key == "5" { return 23u32; }  if key == "=" { return 24u32; }
+    if key == "9" { return 25u32; }  if key == "7" { return 26u32; }
+    if key == "-" { return 27u32; }  if key == "8" { return 28u32; }
+    if key == "0" { return 29u32; }  if key == "]" { return 30u32; }
+    if key == "o" { return 31u32; }  if key == "u" { return 32u32; }
+    if key == "[" { return 33u32; }  if key == "i" { return 34u32; }
+    if key == "p" { return 35u32; }  if key == "return" { return 36u32; }
+    if key == "l" { return 37u32; }  if key == "j" { return 38u32; }
+    if key == "'" { return 39u32; }  if key == "k" { return 40u32; }
+    if key == ";" { return 41u32; }  if key == "\\" { return 42u32; }
+    if key == "," { return 43u32; }  if key == "/" { return 44u32; }
+    if key == "n" { return 45u32; }  if key == "m" { return 46u32; }
+    if key == "." { return 47u32; }  if key == "tab" { return 48u32; }
+    if key == "space" { return 49u32; }  if key == "`" { return 50u32; }
+    if key == "delete" { return 51u32; } if key == "escape" { return 53u32; }
+    if key == "f1" { return 122u32; }  if key == "f2" { return 120u32; }
+    if key == "f3" { return 99u32; }   if key == "f4" { return 118u32; }
+    if key == "f5" { return 96u32; }   if key == "f6" { return 97u32; }
+    if key == "f7" { return 98u32; }   if key == "f8" { return 100u32; }
+    if key == "f9" { return 101u32; }  if key == "f10" { return 109u32; }
+    if key == "f11" { return 103u32; } if key == "f12" { return 111u32; }
+    if key == "left" { return 123u32; }  if key == "right" { return 124u32; }
+    if key == "down" { return 125u32; }  if key == "up" { return 126u32; }
+    return no_key_code();
+}
+
+struct Entry {
+    id: u32,
+    opaque hot_key: *u8,          // EventHotKeyRef
+    on_press: fn(*u8),
+    opaque ctx: *u8,
+}
+
+static ENTRIES: vec::Vec[Entry] = #zero::[vec::Vec[Entry]]();
+static NEXT_ID: u32 = 0u32;
+static HANDLER_READY: bool = false;
+
+fn registered_count() -> usize {
+    let es: *vec::Vec[Entry] = #addr_of(ENTRIES);
+    return { (*es).count() };
+}
+
+// Run the registration `id` names. Split from the Carbon handler so a test can
+// press a chord without a keyboard: everything past decoding the event is here.
+fn fire(id: u32) -> bool {
+    let es: *vec::Vec[Entry] = #addr_of(ENTRIES);
+    var i: usize = 0 as usize;
+    while i < { (*es).count() } {
+        match { (*es).at_ptr(i) } {
+            option::Option[*Entry]::Some(e) => {
+                if { (*e).id } == id {
+                    // Read both before the call: the handler may unregister
+                    // itself, which moves this row.
+                    let f: fn(*u8) = { (*e).on_press };
+                    let c: *u8 = { (*e).ctx };
+                    if f.is_not_null() { f(c); }
+                    return true;
+                }
+            }
+            option::Option[*Entry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+fn on_hot_key(call: *u8, event: *u8, user: *u8) -> i32 {
+    var id: EventHotKeyID = EventHotKeyID { signature: 0u32, id: 0u32 };
+    let got: i32 = { GetEventParameter(event, PARAM_DIRECT_OBJECT, TYPE_HOT_KEY_ID,
+                                       0 as *u32, 8 as usize, 0 as *usize,
+                                       #addr_of(id) as *u8) };
+    if got != 0 { return got; }
+    if id.signature != SIGNATURE { return -9874; }      // eventNotHandledErr
+    let _ran: bool = fire(id.id);
+    return 0;
+}
+
+fn ensure_handler() -> bool {
+    if HANDLER_READY { return true; }
+    var spec: EventTypeSpec = EventTypeSpec { class: EVENT_CLASS_KEYBOARD, kind: EVENT_HOT_KEY_PRESSED };
+    let st: i32 = { InstallEventHandler(GetApplicationEventTarget(), on_hot_key,
+                                        1 as usize, #addr_of(spec), 0 as *u8, 0 as **u8) };
+    if st != 0 { return false; }
+    HANDLER_READY = true;
+    return true;
+}
+
+fn register(key: str, mods: u32, on_press: fn(*u8), ctx: *u8) -> result::Result[u64, core_hotkey::Refusal] {
+    let code: u32 = key_code(key);
+    if code == no_key_code() {
+        return result::Result[u64, core_hotkey::Refusal]::Err(core_hotkey::Refusal::UnknownKey);
+    }
+    if !ensure_handler() {
+        return result::Result[u64, core_hotkey::Refusal]::Err(core_hotkey::Refusal::Failed);
+    }
+    NEXT_ID = NEXT_ID +% 1u32;
+    if NEXT_ID == 0u32 { NEXT_ID = 1u32; }
+    let id: u32 = NEXT_ID;
+    var hot_key: *u8 = 0 as *u8;
+    let st: i32 = { RegisterEventHotKey(code, carbon_modifiers(mods),
+                                        EventHotKeyID { signature: SIGNATURE, id: id },
+                                        GetApplicationEventTarget(), 0u32,
+                                        #addr_of(hot_key)) };
+    if st == ERR_HOT_KEY_EXISTS {
+        return result::Result[u64, core_hotkey::Refusal]::Err(core_hotkey::Refusal::AlreadyInUse);
+    }
+    if st != 0 || hot_key.is_null() {
+        return result::Result[u64, core_hotkey::Refusal]::Err(core_hotkey::Refusal::Failed);
+    }
+    let es: *vec::Vec[Entry] = #addr_of(ENTRIES);
+    if !{ (*es).append(Entry { id: id, hot_key: hot_key, on_press: on_press, ctx: ctx }) }.is_ok() {
+        let _u: i32 = { UnregisterEventHotKey(hot_key) };
+        return result::Result[u64, core_hotkey::Refusal]::Err(core_hotkey::Refusal::Failed);
+    }
+    return result::Result[u64, core_hotkey::Refusal]::Ok(id as u64);
+}
+
+fn unregister(id: u64) {
+    let es: *vec::Vec[Entry] = #addr_of(ENTRIES);
+    var i: usize = 0 as usize;
+    while i < { (*es).count() } {
+        var hit: bool = false;
+        match { (*es).at_ptr(i) } {
+            option::Option[*Entry]::Some(e) => {
+                if ({ (*e).id } as u64) == id {
+                    let _u: i32 = { UnregisterEventHotKey({ (*e).hot_key }) };
+                    hit = true;
+                }
+            }
+            option::Option[*Entry]::None => { }
+        }
+        if hit {
+            let _gone: option::Option[Entry] = { (*es).remove(i) };
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn host() -> core_hotkey::Host {
+    return core_hotkey::Host { register: register, unregister: unregister };
+}

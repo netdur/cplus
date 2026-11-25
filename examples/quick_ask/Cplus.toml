@@ -1,0 +1,23 @@
+[package]
+name    = "quick_ask"
+version = "0.0.1"
+edition = "2026"
+app_id  = "dev.cplus.quickask"
+
+[macos]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib        = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+
+# facet's AppKit backend and its closure.
+[macos.dependencies]
+facet_appkit = "*"
+appkit       = "*"
+objc         = "*"
+quartzcore   = "*"
+webkit       = "*"

@@ -68,13 +68,61 @@ fn wants_full_size_content(bar: Bar) -> bool {
     };
 }
 
-fn shell_style_mask(bar: Bar) -> u64 {
+fn shell_style_mask(bar: Bar, panel: bool = false) -> u64 {
     var style: u64 = ak::window_style_mask_titled
         | ak::window_style_mask_closable
         | ak::window_style_mask_miniaturizable
         | ak::window_style_mask_resizable;
     if wants_full_size_content(bar) { style = style | ak::window_style_mask_full_size_content_view; }
+    // Only an NSPanel may carry this bit: it is what lets the panel take the
+    // keyboard while another application stays the active one.
+    if panel { style = style | ak::window_style_mask_nonactivating_panel; }
     return style;
+}
+
+// ---- floating and panel windows ------------------------------------------------
+// `Chrome.floating` is a window LEVEL. `Chrome.panel` is a different CLASS:
+// AppKit only honours the non-activating style on an NSPanel, and it is that
+// style — not the level — which lets a quick-entry bar take keys over another
+// application's full-screen window without the Space switching underneath it.
+
+fn floating_window_level() -> i64 { return 3 as i64; }    // NSFloatingWindowLevel
+
+// NSWindowCollectionBehaviorCanJoinAllSpaces | FullScreenAuxiliary: on every
+// desktop, and allowed onto a full-screen application's Space.
+fn panel_collection_behavior() -> u64 { return (1 as u64) | (256 as u64); }
+
+fn is_panel(win: *u8) -> bool {
+    if win.is_null() { return false; }
+    let mask: u64 = { rt::msg_u64(win, rt::sel(#str_ptr("styleMask\0"))) };
+    return (mask & ak::window_style_mask_nonactivating_panel) != (0 as u64);
+}
+
+// The shell, as the class its Chrome asks for. Both arrive at +1 beyond the
+// handle this returns, which is the count `make_shell_window` documents.
+fn alloc_shell_window(rect: rt::Rect, style: u64, panel: bool) -> ak::Window {
+    if !panel {
+        let win = ak::Window::new(rect, style, ak::BackingStoreType::NSBackingStoreBuffered, false);
+        let _r: *u8 = rt::retain(win.raw());
+        return win;
+    }
+    let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSPanel\0")), rt::sel(#str_ptr("alloc\0"))) };
+    let raw: *u8 = { rt::msg_id_rect_u64_i64_i8(alloced,
+        rt::sel(#str_ptr("initWithContentRect:styleMask:backing:defer:\0")),
+        rect, style, 2 as i64, 0 as i8) };       // NSBackingStoreBuffered
+    // `from_raw` retains, which is the +1 the other arm takes by hand.
+    let win: ak::Window = ak::Window::from_raw(raw);
+    // An NSWindow frees itself when closed and an NSPanel does not; one
+    // lifetime for both, or a closed panel is a leaked one.
+    { rt::msg_void_i8(raw, rt::sel(#str_ptr("setReleasedWhenClosed:\0")), 1 as i8) };
+    // A panel hides when its application deactivates, and this one's
+    // application is not active while it is up — it would vanish as it
+    // appeared. Dismissing on focus loss is `Window::on_inactive` + `hide()`.
+    win.set_hides_on_deactivate(false);
+    // It must take keys whenever it is shown, not only when a field asks.
+    { rt::msg_void_i8(raw, rt::sel(#str_ptr("setBecomesKeyOnlyIfNeeded:\0")), 0 as i8) };
+    win.set_collection_behavior(panel_collection_behavior());
+    return win;
 }
 
 // Hide one traffic light if the style mask has it at all; None means the mask
@@ -90,13 +138,10 @@ fn hide_window_button(win: ak::Window, b: ak::WindowButton) {
 // front.
 fn make_shell_window(take chrome: Chrome) -> ak::Window {
     let c: Chrome = chrome;
-    let win = ak::Window::new(
+    let win: ak::Window = alloc_shell_window(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: c.width, h: c.height },
-        shell_style_mask(c.bar),
-        ak::BackingStoreType::NSBackingStoreBuffered,
-        false,
-    );
-    let _r: *u8 = rt::retain(win.raw());
+        shell_style_mask(c.bar, panel: c.panel), c.panel);
+    if c.floating { win.set_level(floating_window_level()); }
     win.set_title(c.title());
     match c.bar {
         screen::Bar::Native => { }
@@ -226,6 +271,7 @@ fn appkit_will_close(user: *u8, notif: *u8) {
     OPEN_WINDOWS = OPEN_WINDOWS -% (1 as i64);
     if OPEN_WINDOWS <= (0 as i64) {
         OPEN_WINDOWS = 0 as i64;
+        if !ends_loop_at_last_close(LOOP_HOLDS) { LOOP_WAS_HELD_PAST_A_CLOSE = true; return; }
         stop_loop();
     }
 }
@@ -326,6 +372,8 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     let height: f64 = c.height;
     // Read BEFORE `make_shell_window` takes the Chrome by value.
     let wants_zoom: bool = c.zoomable;
+    let panel: bool = c.panel;
+    let shown: bool = c.shown;
     let zoom_lo: f64 = c.min_zoom;
     let zoom_hi: f64 = c.max_zoom;
     let application: ak::Application = ak::Application::shared_application();
@@ -439,9 +487,18 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // because an accessory sits below the toolbar when both are present.
     install_titlebar_accessories(win, root);
 
-    win.center();
-    win.make_key_and_order_front(0 as *u8);
-    application.activate_ignoring_other_apps(true);
+    // WHERE IT OPENS. An auxiliary panel is summoned by someone working on a
+    // particular display, and `center` alone answers the display of the
+    // application's key window.
+    if panel { centre_on_active_screen(win); } else { win.center(); }
+    // `shown: false` opens it mounted and off screen, for `show()` or
+    // `activate()` to bring up later. A PANEL takes the keyboard without the
+    // application coming forward — that is what it is for — so the application
+    // is activated for an ordinary window only.
+    if shown {
+        win.make_key_and_order_front(0 as *u8);
+        if !panel { application.activate_ignoring_other_apps(true); }
+    }
     // windowDidResize does not fire on first display, so lay out once here or
     // the content stays frozen at its mount-time size.
     scheduler::layout_window(root);
@@ -650,7 +707,13 @@ fn run_loop() {
 // `NSApplication.stop` only takes effect when the loop next finishes an event,
 // so a stop from inside a callout (a run_on_main step, an agent's click) needs
 // a nudge to wake it. Posting a no-op app-defined event is that nudge.
+// How many times the loop has been asked to stop. For the tests: "closing the
+// last window did not end the application" is otherwise unobservable.
+static STOP_REQUESTS: i64 = 0 as i64;
+fn stop_request_count() -> i64 { return STOP_REQUESTS; }
+
 fn stop_loop() {
+    STOP_REQUESTS = STOP_REQUESTS +% (1 as i64);
     let application: ak::Application = ak::Application::shared_application();
     application.stop(0 as *u8);
     nudge_loop(application);
@@ -1437,9 +1500,96 @@ extern fn msg_void_rect_v(recv: *u8, sel: *u8, r: rt::Rect);
 // front and deaf.
 fn activate_window(win: *u8) {
     if win.is_null() { return; }
-    ak::Application::shared_application().activate_ignoring_other_apps(true);
+    // A panel is the exception, and the reason panels exist: activating the
+    // application would pull its other windows forward and, from another
+    // application's full-screen Space, switch Spaces under the person.
+    if !is_panel(win) {
+        ak::Application::shared_application().activate_ignoring_other_apps(true);
+    }
     { rt::msg_void_id(win, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), 0 as *u8) };
 }
+
+// `application::activate()`: the application itself, in front of whatever was.
+fn activate_application() {
+    ak::Application::shared_application().activate_ignoring_other_apps(true);
+}
+
+// ---- which display ---------------------------------------------------------------
+// The one holding the POINTER. `mainScreen` answers the display of the key
+// window, which for a background application is somebody else's window or
+// nothing — and a summoned bar that appears on the display the person is not
+// looking at reads as not having appeared.
+fn active_screen_frame() -> vocab::Rect {
+    let at: rt::Point = ak::Event::mouse_location();
+    let all: vec::Vec[ak::Screen] = ak::Screen::screens();
+    var i: usize = 0 as usize;
+    while i < all.count() {
+        match all.at(i) {
+            option::Option[ak::Screen]::Some(s) => {
+                let f: rt::Rect = s.frame();
+                if at.x >= f.x && at.x < f.x + f.w && at.y >= f.y && at.y < f.y + f.h {
+                    let v: rt::Rect = s.visible_frame();
+                    return vocab::Rect { x: v.x, y: v.y, width: v.w, height: v.h };
+                }
+            }
+            option::Option[ak::Screen]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    match ak::Screen::main_screen() {
+        option::Option[ak::Screen]::Some(s) => {
+            let v: rt::Rect = s.visible_frame();
+            return vocab::Rect { x: v.x, y: v.y, width: v.w, height: v.h };
+        }
+        option::Option[ak::Screen]::None => { }
+    }
+    return vocab::Rect::zero();
+}
+
+// Horizontally centred and a little above the middle, which is where every
+// launcher bar sits: the eye rests above centre, and results grow downward.
+fn centre_on_active_screen(win: ak::Window) {
+    let s: vocab::Rect = active_screen_frame();
+    if s.width <= 0.0f64 || s.height <= 0.0f64 { win.center(); return; }
+    let f: rt::Rect = win.frame();
+    let x: f64 = s.x + (s.width - f.w) / 2.0f64;
+    let y: f64 = s.y + (s.height - f.h) * 0.62f64;
+    win.set_frame_origin(rt::Point { x: x, y: y });
+}
+
+// ---- holding the loop --------------------------------------------------------------
+// The loop stops when the last window closes — unless something that is NOT a
+// window is keeping the application present. A status item is: an application
+// in the menu bar has not gone anywhere because its window was closed.
+static LOOP_HOLDS: i64 = 0 as i64;
+
+fn hold_loop() { LOOP_HOLDS = LOOP_HOLDS +% (1 as i64); return; }
+
+// The last hold going with no window left is the application having nothing
+// on screen at all, so the loop stops as it would have at the last close.
+fn release_loop() {
+    if LOOP_HOLDS <= (0 as i64) { return; }
+    LOOP_HOLDS = LOOP_HOLDS -% (1 as i64);
+    if ends_loop_at_last_release(LOOP_HOLDS, OPEN_WINDOWS, LOOP_WAS_HELD_PAST_A_CLOSE) {
+        LOOP_WAS_HELD_PAST_A_CLOSE = false;
+        stop_loop();
+    }
+}
+
+// The two decisions, as arithmetic, so they can be tested without depending on
+// how many windows the rest of a process happens to have open.
+fn ends_loop_at_last_close(holds: i64) -> bool { return holds <= (0 as i64); }
+
+fn ends_loop_at_last_release(holds_left: i64, open_windows: i64, held_past_a_close: bool) -> bool {
+    return holds_left == (0 as i64) && open_windows <= (0 as i64) && held_past_a_close;
+}
+
+fn loop_is_held() -> bool { return LOOP_HOLDS > (0 as i64); }
+
+// Set when a last-window close was survived because of a hold. Without it,
+// removing a status item BEFORE any window ever opened would stop a loop that
+// had not started.
+static LOOP_WAS_HELD_PAST_A_CLOSE: bool = false;
 
 fn set_badge_label(label: str) {
     let app_raw: *u8 = ak::Application::shared_application().raw();
@@ -1467,6 +1617,26 @@ fn wh_set_frame(root: *core::Node, r: vocab::Rect) { dialogs::set_window_frame_o
 fn wh_is_active(root: *core::Node) -> bool { return is_active(root); }
 fn wh_density(root: *core::Node) -> f64 { return density_of(root); }
 fn wh_close(root: *core::Node) { close_window_of(root); return; }
+
+// OFF SCREEN IS NOT CLOSED. `orderOut:` leaves the window, its delegate and
+// the mounted tree exactly as they were. Showing orders it front WITHOUT key:
+// taking the keyboard is `activate`, a separate decision.
+fn wh_set_visible(root: *core::Node, visible: bool) {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return; }
+    if visible {
+        { rt::msg_void_id(w, rt::sel(#str_ptr("orderFront:\0")), 0 as *u8) };
+    } else {
+        { rt::msg_void_id(w, rt::sel(#str_ptr("orderOut:\0")), 0 as *u8) };
+    }
+    return;
+}
+
+fn wh_is_visible(root: *core::Node) -> bool {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return false; }
+    return { rt::msg_i8(w, rt::sel(#str_ptr("isVisible\0"))) } != (0 as i8);
+}
 
 fn wh_title(root: *core::Node) -> text::Text {
     let w: *u8 = app::window_native(root);
@@ -1523,5 +1693,8 @@ fn window_host() -> app_window::WindowHost {
     h.observe_active = wh_observe_active;
     h.observe_inactive = wh_observe_inactive;
     h.observe_density = wh_observe_density;
+    h.set_visible = wh_set_visible;
+    h.is_visible = wh_is_visible;
+    h.active_screen = active_screen_frame;
     return h;
 }

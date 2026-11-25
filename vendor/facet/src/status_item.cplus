@@ -1,0 +1,301 @@
+// status_item — an icon in the system's status area. HAND-WRITTEN.
+//
+// The menu bar extra on a Mac, the notification-area ("tray") icon on Windows,
+// a StatusNotifier item on a Linux desktop that has one. The ledger has no row:
+// MAUI ships none. facet declares it because an application that keeps working
+// with no window open — an assistant, a sync client — has nowhere else to be.
+//
+//     struct Shell { tray: status_item::StatusItem }
+//
+//     this.tray = status_item::StatusItem::new(symbol: icons::bolt, tooltip: "Desk");
+//     var m: screen::AppMenu = screen::app_menu("");
+//     m.add_command("", "Quick Ask", on_click: this.on_quick_ask);
+//     m.add_separator("");
+//     m.add_item("", "Quit", "q", screen::menu_action_quit());
+//     this.tray.set_menu(m);
+//     this.tray.set_title("3");                 // a count beside the icon
+//
+// THE MENU IS THE APPLICATION MENU'S OWN TYPE. `screen::AppMenu` already says
+// title, shortcut, separator, a click with its context, and the two answers
+// asked as the menu opens (`is_enabled`, `title_of`) — so an item reflects live
+// state without the menu being rebuilt. An item's `menu` group names a SUBMENU
+// here; the empty group is the top level.
+//
+// The item is the registration. It is removed when `remove()` is called or
+// when the value drops, so it is a FIELD on whatever lives as long as the
+// application does.
+//
+// A click opens the menu when there is one. With no menu, `on_click` runs —
+// for an application that opens a window or a panel directly.
+//
+// Each backend installs a `Host`; with none every verb is inert and `is_live`
+// answers false.
+
+import "./screen" as screen;
+
+struct Host {
+    // A new, visible, empty item: a non-zero id, or zero when the platform
+    // refused.
+    create: fn() -> u64,
+    remove: fn(u64),
+    // The bundled icon font's codepoint (`facet/icons`). Zero clears it.
+    set_symbol: fn(u64, u32),
+    // The platform's own glyph set, by its own name. Empty clears it.
+    set_system_symbol: fn(u64, str),
+    set_title: fn(u64, str),
+    set_tooltip: fn(u64, str),
+    set_visible: fn(u64, bool),
+    // The backend builds its native menu from this before returning; it keeps
+    // no pointer into it. Null removes the menu.
+    set_menu: fn(u64, *screen::AppMenu),
+    set_click: fn(u64, fn(*u8), *u8),
+}
+
+static HOST: Host = #zero::[Host]();
+
+fn install(h: Host) { HOST = h; return; }
+fn uninstall() { HOST = #zero::[Host](); return; }
+fn is_installed() -> bool {
+    let f: fn() -> u64 = HOST.create;
+    return f.is_not_null();
+}
+
+struct StatusItem {
+    _id: u64,          // 0 = nothing in the status area
+}
+
+impl StatusItem {
+    // The inert item, for a field that a later `new` fills.
+    fn none() -> StatusItem { return StatusItem { _id: 0 as u64 }; }
+
+    // Put an item in the status area. `symbol` is a `facet/icons` codepoint and
+    // is the portable choice; `system_symbol` names the platform's own glyph
+    // ("bolt.fill" on a Mac) and wins when both are given. An item with neither
+    // shows its title alone.
+    fn new(symbol: u32 = 0u32, system_symbol: str = "", title: str = "",
+           tooltip: str = "") -> StatusItem {
+        let make: fn() -> u64 = HOST.create;
+        if make.is_null() { return StatusItem::none(); }
+        let it: StatusItem = StatusItem { _id: make() };
+        if it._id == (0 as u64) { return it; }
+        if symbol != 0u32 { it.set_symbol(symbol); }
+        if system_symbol != "" { it.set_system_symbol(system_symbol); }
+        if title != "" { it.set_title(title); }
+        if tooltip != "" { it.set_tooltip(tooltip); }
+        return it;
+    }
+
+    // Is there an item in the status area behind this value?
+    fn is_live(this) -> bool { return this._id != (0 as u64); }
+
+    fn set_symbol(this, codepoint: u32) {
+        let f: fn(u64, u32) = HOST.set_symbol;
+        if f.is_null() || this._id == (0 as u64) { return; }
+        f(this._id, codepoint);
+    }
+
+    fn set_system_symbol(this, name: str) {
+        let f: fn(u64, str) = HOST.set_system_symbol;
+        if f.is_null() || this._id == (0 as u64) { return; }
+        f(this._id, name);
+    }
+
+    // Short text beside the icon: a count, a state. Empty removes it.
+    fn set_title(this, title: str) {
+        let f: fn(u64, str) = HOST.set_title;
+        if f.is_null() || this._id == (0 as u64) { return; }
+        f(this._id, title);
+    }
+
+    fn set_tooltip(this, tooltip: str) {
+        let f: fn(u64, str) = HOST.set_tooltip;
+        if f.is_null() || this._id == (0 as u64) { return; }
+        f(this._id, tooltip);
+    }
+
+    // Hidden is still registered: the menu, the handler and the icon are kept,
+    // and `set_visible(true)` puts the same item back.
+    fn set_visible(this, visible: bool) {
+        let f: fn(u64, bool) = HOST.set_visible;
+        if f.is_null() || this._id == (0 as u64) { return; }
+        f(this._id, visible);
+    }
+
+    // The menu a click opens. Call it again to replace the menu; the two
+    // open-time answers (`is_enabled`, `title_of`) cover state that changes
+    // without the shape changing.
+    fn set_menu(this, take menu: screen::AppMenu) {
+        let f: fn(u64, *screen::AppMenu) = HOST.set_menu;
+        if f.is_null() || this._id == (0 as u64) { return; }
+        var m: screen::AppMenu = menu;
+        f(this._id, #addr_of(m));
+    }
+
+    // Back to no menu, so a click reaches `on_click`.
+    fn clear_menu(this) {
+        let f: fn(u64, *screen::AppMenu) = HOST.set_menu;
+        if f.is_null() || this._id == (0 as u64) { return; }
+        f(this._id, 0 as *screen::AppMenu);
+    }
+
+    // What a click does when there is no menu. The context is borrowed: its
+    // owner must outlive the item.
+    fn on_click(this, on_click: fn(*u8), on_click_ctx: *u8 = 0 as *u8) {
+        let f: fn(u64, fn(*u8), *u8) = HOST.set_click;
+        if f.is_null() || this._id == (0 as u64) { return; }
+        f(this._id, on_click, on_click_ctx);
+    }
+
+    // Take it out of the status area. Idempotent.
+    fn remove(ref this) {
+        if this._id == (0 as u64) { return; }
+        let f: fn(u64) = HOST.remove;
+        if f.is_not_null() { f(this._id); }
+        this._id = 0 as u64;
+    }
+
+    fn drop(ref this) {
+        this.remove();
+    }
+}
+
+// ---- tests ---------------------------------------------------------------------
+
+static ST_NEXT: u64 = 0 as u64;
+static ST_REMOVED: u64 = 0 as u64;
+static ST_SYMBOL: u32 = 0u32;
+static ST_TITLE_LEN: usize = 0 as usize;
+static ST_SYSTEM_LEN: usize = 0 as usize;
+static ST_TIP_LEN: usize = 0 as usize;
+static ST_VISIBLE: bool = true;
+static ST_MENU_ITEMS: usize = 0 as usize;
+static ST_MENU_CLEARED: bool = false;
+static ST_CLICK: fn(*u8) = #zero::[fn(*u8)]();
+static ST_CLICK_CTX: *u8 = 0 as *u8;
+static ST_CLICKS: i32 = 0;
+
+fn st_create() -> u64 { ST_NEXT = ST_NEXT + (1 as u64); return ST_NEXT; }
+fn st_refuse() -> u64 { return 0 as u64; }
+fn st_remove(id: u64) { ST_REMOVED = id; return; }
+fn st_symbol(id: u64, cp: u32) { ST_SYMBOL = cp; return; }
+fn st_system(id: u64, name: str) { ST_SYSTEM_LEN = name.count(); return; }
+fn st_title(id: u64, t: str) { ST_TITLE_LEN = t.count(); return; }
+fn st_tip(id: u64, t: str) { ST_TIP_LEN = t.count(); return; }
+fn st_visible(id: u64, v: bool) { ST_VISIBLE = v; return; }
+fn st_menu(id: u64, m: *screen::AppMenu) {
+    if m.is_null() { ST_MENU_CLEARED = true; ST_MENU_ITEMS = 0 as usize; return; }
+    ST_MENU_CLEARED = false;
+    ST_MENU_ITEMS = { (*m).items.count() };
+    return;
+}
+fn st_click(id: u64, cb: fn(*u8), ctx: *u8) { ST_CLICK = cb; ST_CLICK_CTX = ctx; return; }
+fn st_clicked(ctx: *u8) { ST_CLICKS = ST_CLICKS + 1; return; }
+
+fn st_host() -> Host {
+    return Host {
+        create: st_create, remove: st_remove, set_symbol: st_symbol,
+        set_system_symbol: st_system, set_title: st_title, set_tooltip: st_tip,
+        set_visible: st_visible, set_menu: st_menu, set_click: st_click,
+    };
+}
+
+fn st_install() {
+    ST_NEXT = 0 as u64;
+    ST_REMOVED = 0 as u64;
+    ST_SYMBOL = 0u32;
+    ST_TITLE_LEN = 0 as usize;
+    ST_SYSTEM_LEN = 0 as usize;
+    ST_TIP_LEN = 0 as usize;
+    ST_VISIBLE = true;
+    ST_MENU_ITEMS = 0 as usize;
+    ST_MENU_CLEARED = false;
+    ST_CLICKS = 0;
+    install(st_host());
+}
+
+#[test]
+fn a_status_item_with_no_backend_is_inert_not_a_trap() {
+    uninstall();
+    var it: StatusItem = StatusItem::new(symbol: 0xE9B2u32, title: "3");
+    assert it.is_live() == false;
+    it.set_title("4");
+    it.set_visible(false);
+    it.set_menu(screen::app_menu(""));
+    it.clear_menu();
+    it.on_click(st_clicked);
+    it.remove();
+    assert is_installed() == false;
+}
+
+#[test]
+fn new_states_only_what_it_was_given() {
+    st_install();
+    var bare: StatusItem = StatusItem::new(title: "Desk");
+    assert bare.is_live();
+    assert ST_SYMBOL == 0u32;
+    assert ST_SYSTEM_LEN == (0 as usize);
+    assert ST_TITLE_LEN == (4 as usize);
+    assert ST_TIP_LEN == (0 as usize);
+    var full: StatusItem = StatusItem::new(symbol: 0xE9B2u32, system_symbol: "bolt.fill",
+                                           tooltip: "Desk420");
+    assert ST_SYMBOL == 0xE9B2u32;
+    assert ST_SYSTEM_LEN == (9 as usize);
+    assert ST_TIP_LEN == (7 as usize);
+    bare.remove();
+    full.remove();
+    uninstall();
+}
+
+#[test]
+fn the_menu_reaches_the_backend_whole_and_clears() {
+    st_install();
+    var it: StatusItem = StatusItem::new(title: "Desk");
+    var m: screen::AppMenu = screen::app_menu("");
+    m.add_command("", "Quick Ask", on_click: screen::null_click_fn());
+    m.add_separator("");
+    m.add_item("", "Quit", "q", screen::menu_action_quit());
+    it.set_menu(m);
+    assert ST_MENU_ITEMS == (3 as usize);
+    it.clear_menu();
+    assert ST_MENU_CLEARED;
+    it.on_click(st_clicked);
+    let f: fn(*u8) = ST_CLICK;
+    f(ST_CLICK_CTX);
+    assert ST_CLICKS == 1;
+    it.set_visible(false);
+    assert ST_VISIBLE == false;
+    it.remove();
+    uninstall();
+}
+
+#[test]
+fn remove_is_idempotent_and_a_dropped_item_is_removed() {
+    st_install();
+    var it: StatusItem = StatusItem::new(title: "a");
+    assert ST_REMOVED == (0 as u64);
+    it.remove();
+    assert ST_REMOVED == (1 as u64);
+    assert it.is_live() == false;
+    ST_REMOVED = 0 as u64;
+    it.remove();
+    assert ST_REMOVED == (0 as u64);
+    if true {
+        let _scoped: StatusItem = StatusItem::new(title: "b");
+    }
+    assert ST_REMOVED == (2 as u64);
+    uninstall();
+}
+
+#[test]
+fn a_platform_that_refuses_gives_a_dead_item() {
+    st_install();
+    var h: Host = st_host();
+    h.create = st_refuse;
+    install(h);
+    var it: StatusItem = StatusItem::new(title: "a");
+    assert it.is_live() == false;
+    ST_TITLE_LEN = 0 as usize;
+    it.set_title("abc");
+    assert ST_TITLE_LEN == (0 as usize);
+    uninstall();
+}

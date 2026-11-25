@@ -152,6 +152,22 @@ fn agent_pin(view: *u8, a: vocab::Agent) {
 static ACTIVATE_FN: fn(*u8) = #zero::[fn(*u8)]();
 fn set_activate_fn(f: fn(*u8)) { ACTIVATE_FN = f; return; }
 
+// Bring the APPLICATION to the front, from a trigger that arrived while it
+// was in the background: a global hotkey, a status item click, a notification.
+// `Window::activate` fronts one window; this is the step before it when the
+// application itself is behind another one.
+static ACTIVATE_APP_FN: fn() = #zero::[fn()]();
+fn set_activate_app_fn(f: fn()) { ACTIVATE_APP_FN = f; return; }
+
+// False when the backend has no such step (a phone has one application in
+// front by definition) or none is installed.
+fn activate() -> bool {
+    let f: fn() = ACTIVATE_APP_FN;
+    if f.is_null() { return false; }
+    f();
+    return true;
+}
+
 static BADGE_FN: fn(str) = #zero::[fn(str)]();
 fn set_badge_fn(f: fn(str)) { BADGE_FN = f; return; }
 
@@ -932,6 +948,20 @@ fn activate_is_inert_without_a_backend_and_off_the_list() {
     assert activate_window("main") == false;      // no backend seam
     assert activate_window("nowhere") == false;
     reset_default_for_tests();
+}
+
+static AT_ACTIVATIONS: i32 = 0;
+fn at_activate_app() { AT_ACTIVATIONS = AT_ACTIVATIONS + 1; return; }
+
+#[test]
+fn activating_the_application_is_false_until_a_backend_can() {
+    set_activate_app_fn(0 as fn());
+    assert activate() == false;
+    AT_ACTIVATIONS = 0;
+    set_activate_app_fn(at_activate_app);
+    assert activate();
+    assert AT_ACTIVATIONS == 1;
+    set_activate_app_fn(0 as fn());
 }
 
 // ---- what C+ knows at compile time --------------------------------------------

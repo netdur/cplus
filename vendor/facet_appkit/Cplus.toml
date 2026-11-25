@@ -17,6 +17,7 @@ edition = "2026"
 #   component::install_sender_readers(SenderReaders)
 #   application::install_agent(AgentHooks)
 #   theme::set_is_dark_fn / theme::set_theme_changed_fn
+#   web_driver::install(Driver) / hotkey::install(Host) / status_item::install(Host)
 # A hook family appearing outside those is drift by definition.
 
 # The test root doubles as the leak harness (`leaks --atExit`).
@@ -55,3 +56,8 @@ facet       = "*"
 # source mode compiles that import too (E0852 is a manifest line, not a bug).
 events      = "*"
 webkit      = "*"
+
+# Carbon, for ONE thing: `RegisterEventHotKey` (src/hotkey.cplus). It is the
+# only permission-free system-wide hot key macOS has.
+[link]
+frameworks = ["Carbon"]

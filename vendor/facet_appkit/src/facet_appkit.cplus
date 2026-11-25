@@ -48,6 +48,10 @@ import "./app_events_appkit" as app_events_appkit;
 import "./dialogs" as dialogs;
 import "facet/navigation" as navigation;
 import "facet/web_driver" as web_driver;
+import "facet/hotkey" as hotkey;
+import "facet/status_item" as status_item;
+import "./hotkey" as hotkey_appkit;
+import "./status_item" as status_item_appkit;
 import "./web" as web;
 
 type Node = flex::Node;
@@ -100,6 +104,9 @@ fn install() {
     // answers the neutral zero on a Mac — the seam exists and nothing fills it.
     app_window::install_host(window::window_host());
     app::set_activate_fn(window::activate_window);
+    app::set_activate_app_fn(window::activate_application);
+    hotkey::install(hotkey_appkit::host());
+    status_item::install(status_item_appkit::host());
     app::set_badge_fn(window::set_badge_label);
     theme::set_theme_changed_fn(theme_changed);
     scheduler::install_sync_tick();
@@ -119,6 +126,9 @@ fn installed() -> bool { return INSTALLED; }
 fn uninstall() {
     app_window::uninstall_host();
     app::set_activate_fn(0 as fn(*u8));
+    app::set_activate_app_fn(0 as fn());
+    hotkey::uninstall();
+    status_item::uninstall();
     app::set_badge_fn(0 as fn(str));
     mount::uninstall();
     services::uninstall_scheduler();

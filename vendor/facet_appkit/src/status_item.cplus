@@ -1,0 +1,284 @@
+// facet_appkit status_item — `facet/status_item` as an NSStatusItem.
+//
+// One row per item, found by the id facet holds. The NSStatusItem is retained
+// here and released on remove: the status bar does not keep it, so an item
+// nobody holds simply leaves the menu bar.
+//
+// An item HOLDS THE LOOP (`window::hold_loop`). The desktop convention this
+// backend follows is that the loop ends when the last window closes, and an
+// application with an icon in the menu bar is exactly the one that must not:
+// closing its window is not leaving.
+
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "facet/screen" as screen;
+import "facet/status_item" as core_item;
+import "objc/bridge" as bridge;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+import "./window" as window;
+import "./controls" as controls;
+
+struct Entry {
+    id: u64,
+    opaque item: *u8,             // NSStatusItem, +1
+    on_click: fn(*u8),
+    opaque ctx: *u8,
+}
+
+static ENTRIES: vec::Vec[Entry] = #zero::[vec::Vec[Entry]]();
+static NEXT_ID: u64 = 0 as u64;
+static PIN_KEY: u8 = 0;
+fn pin_key() -> *u8 { return { #addr_of(PIN_KEY) }; }
+
+// The glyph's side in points. The menu bar is 24pt tall and Apple's own
+// extras draw at 16–18.
+fn glyph_side() -> f64 { return 18.0f64; }
+
+fn entry_of(id: u64) -> option::Option[*Entry] {
+    if id == (0 as u64) { return option::Option[*Entry]::None; }
+    let es: *vec::Vec[Entry] = #addr_of(ENTRIES);
+    var i: usize = 0 as usize;
+    while i < { (*es).count() } {
+        match { (*es).at_ptr(i) } {
+            option::Option[*Entry]::Some(e) => {
+                if { (*e).id } == id { return option::Option[*Entry]::Some(e); }
+            }
+            option::Option[*Entry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[*Entry]::None;
+}
+
+fn live_count() -> usize {
+    let es: *vec::Vec[Entry] = #addr_of(ENTRIES);
+    return { (*es).count() };
+}
+
+// The NSStatusItem behind an id, for the tests and for nothing else.
+fn native_item(id: u64) -> *u8 {
+    return match entry_of(id) {
+        option::Option[*Entry]::Some(e) => { (*e).item },
+        option::Option[*Entry]::None => 0 as *u8,
+    };
+}
+
+fn button_of(id: u64) -> *u8 {
+    let item: *u8 = native_item(id);
+    if item.is_null() { return 0 as *u8; }
+    return { rt::msg_id(item, rt::sel(#str_ptr("button\0"))) };
+}
+
+fn status_bar() -> *u8 {
+    return { rt::msg_id(rt::get_class(#str_ptr("NSStatusBar\0")),
+                        rt::sel(#str_ptr("systemStatusBar\0"))) };
+}
+
+fn create() -> u64 {
+    let bar: *u8 = status_bar();
+    if bar.is_null() { return 0 as u64; }
+    // NSVariableStatusItemLength: as wide as its image and title.
+    let item: *u8 = { rt::msg_id_f64(bar, rt::sel(#str_ptr("statusItemWithLength:\0")), -1.0f64) };
+    if item.is_null() { return 0 as u64; }
+    let _r: *u8 = rt::retain(item);
+    NEXT_ID = NEXT_ID + (1 as u64);
+    let id: u64 = NEXT_ID;
+    let es: *vec::Vec[Entry] = #addr_of(ENTRIES);
+    if !{ (*es).append(Entry { id: id, item: item, on_click: #zero::[fn(*u8)](), ctx: 0 as *u8 }) }.is_ok() {
+        { rt::msg_void_id(bar, rt::sel(#str_ptr("removeStatusItem:\0")), item) };
+        rt::release(item);
+        return 0 as u64;
+    }
+    window::hold_loop();
+    return id;
+}
+
+fn remove(id: u64) {
+    let es: *vec::Vec[Entry] = #addr_of(ENTRIES);
+    var i: usize = 0 as usize;
+    while i < { (*es).count() } {
+        var item: *u8 = 0 as *u8;
+        match { (*es).at_ptr(i) } {
+            option::Option[*Entry]::Some(e) => {
+                if { (*e).id } == id { item = { (*e).item }; }
+            }
+            option::Option[*Entry]::None => { }
+        }
+        if item.is_not_null() {
+            let _gone: option::Option[Entry] = { (*es).remove(i) };
+            { rt::msg_void_id(status_bar(), rt::sel(#str_ptr("removeStatusItem:\0")), item) };
+            rt::release(item);
+            window::release_loop();
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Image beside title when there are both; AppKit's default puts a title OVER
+// the image's space.
+fn settle_image_position(button: *u8) {
+    let img: *u8 = { rt::msg_id(button, rt::sel(#str_ptr("image\0"))) };
+    // NSImageLeft = 2, NSImageOnly = 1, NSNoImage = 0
+    var pos: u64 = 0 as u64;
+    if img.is_not_null() { pos = 2 as u64; }
+    { rt::msg_void_u64(button, rt::sel(#str_ptr("setImagePosition:\0")), pos) };
+}
+
+fn set_image(id: u64, img: *u8) {
+    let button: *u8 = button_of(id);
+    if button.is_null() { return; }
+    { rt::msg_void_id(button, rt::sel(#str_ptr("setImage:\0")), img) };
+    settle_image_position(button);
+}
+
+// A TEMPLATE image in both cases: the menu bar draws it in its own colour,
+// which is what makes one icon right on a light bar, a dark bar, and inverted
+// while its menu is open.
+fn set_symbol(id: u64, codepoint: u32) {
+    if codepoint == 0u32 { set_image(id, 0 as *u8); return; }
+    match controls::bundled_glyph_image(codepoint, glyph_side()) {
+        option::Option[ak::Image]::Some(img) => { set_image(id, img.raw()); }
+        option::Option[ak::Image]::None => { }
+    }
+}
+
+fn set_system_symbol(id: u64, name: str) {
+    if name == "" { set_image(id, 0 as *u8); return; }
+    match controls::symbol_image(name, name) {
+        option::Option[ak::Image]::Some(img) => {
+            img.set_template(true);
+            set_image(id, img.raw());
+        }
+        option::Option[ak::Image]::None => { }
+    }
+}
+
+fn set_title(id: u64, title: str) {
+    let button: *u8 = button_of(id);
+    if button.is_null() { return; }
+    { rt::msg_void_id(button, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title)) };
+    settle_image_position(button);
+}
+
+fn set_tooltip(id: u64, tooltip: str) {
+    let button: *u8 = button_of(id);
+    if button.is_null() { return; }
+    let ns: *u8 = if tooltip == "" { 0 as *u8 } else { bridge::nsstring(tooltip) };
+    { rt::msg_void_id(button, rt::sel(#str_ptr("setToolTip:\0")), ns) };
+}
+
+fn set_visible(id: u64, visible: bool) {
+    let item: *u8 = native_item(id);
+    if item.is_null() { return; }
+    { rt::msg_void_i8(item, rt::sel(#str_ptr("setVisible:\0")), visible as i8) };
+}
+
+// ---- the menu ------------------------------------------------------------------
+// Built from `screen::AppMenu` by the SAME item builder the application menu
+// uses (`window::new_menu_item`), so a click, a token action, `is_enabled` and
+// `title_of` behave identically in both places. The one difference is the
+// group: the application menu turns a group into a top-level menu, and here a
+// group is a submenu — the empty group being the status menu itself.
+fn build_menu(m: *screen::AppMenu) -> *u8 {
+    let top: *u8 = window::new_menu("");
+    if top.is_null() { return 0 as *u8; }
+    let subs: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    let n: usize = { (*m).items.count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*m).items.at_ptr(i) } {
+            option::Option[*screen::MenuItem]::Some(it) => {
+                let item: *u8 = window::new_menu_item(it);
+                if item.is_not_null() {
+                    let group: str = { (*it).menu.view() };
+                    var into: *u8 = top;
+                    if group != "" && subs.is_not_null() { into = submenu_named(top, subs, group); }
+                    if into.is_not_null() {
+                        { rt::msg_void_id(into, rt::sel(#str_ptr("addItem:\0")), item) };
+                    }
+                }
+            }
+            option::Option[*screen::MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if subs.is_not_null() { rt::release(subs); }
+    return top;
+}
+
+// The submenu `group` names, made — with the parent item that opens it — on
+// first mention, so submenus appear in the order the application wrote them.
+fn submenu_named(top: *u8, subs: *u8, group: str) -> *u8 {
+    let key: *u8 = bridge::nsstring(group);
+    let existing: *u8 = { rt::msg_id_id(subs, rt::sel(#str_ptr("objectForKey:\0")), key) };
+    if existing.is_not_null() { return existing; }
+    let made: *u8 = window::new_menu(group);
+    if made.is_null() { return 0 as *u8; }
+    let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMenuItem\0")), rt::sel(#str_ptr("alloc\0"))) };
+    let parent: *u8 = { rt::msg_id_id_id_id(alloced,
+        rt::sel(#str_ptr("initWithTitle:action:keyEquivalent:\0")),
+        key, 0 as *u8, bridge::nsstring("")) };
+    if parent.is_null() { return 0 as *u8; }
+    { rt::msg_void_id(parent, rt::sel(#str_ptr("setSubmenu:\0")), made) };
+    { rt::msg_void_id(top, rt::sel(#str_ptr("addItem:\0")), parent) };
+    { rt::msg_void_id_id(subs, rt::sel(#str_ptr("setObject:forKey:\0")), made, key) };
+    return made;
+}
+
+fn set_menu(id: u64, m: *screen::AppMenu) {
+    let item: *u8 = native_item(id);
+    if item.is_null() { return; }
+    if m.is_null() {
+        { rt::msg_void_id(item, rt::sel(#str_ptr("setMenu:\0")), 0 as *u8) };
+        return;
+    }
+    { rt::msg_void_id(item, rt::sel(#str_ptr("setMenu:\0")), build_menu(m)) };
+}
+
+// ---- the click -----------------------------------------------------------------
+// Reached only when the item has no menu: AppKit opens a status item's menu
+// itself and never sends the button's action while one is set.
+fn click_trampoline(sender: *u8, user: *u8) {
+    let id: u64 = #addr(user) as u64;
+    match entry_of(id) {
+        option::Option[*Entry]::Some(e) => {
+            let f: fn(*u8) = { (*e).on_click };
+            let c: *u8 = { (*e).ctx };
+            if f.is_not_null() { f(c); }
+        }
+        option::Option[*Entry]::None => { }
+    }
+}
+
+fn set_click(id: u64, on_click: fn(*u8), ctx: *u8) {
+    match entry_of(id) {
+        option::Option[*Entry]::Some(e) => {
+            { (*e).on_click = on_click };
+            { (*e).ctx = ctx };
+        }
+        option::Option[*Entry]::None => { return; }
+    }
+    let button: *u8 = button_of(id);
+    if button.is_null() { return; }
+    // The id rides as the target's context, NOT the application's ctx: the row
+    // is looked up at click time, so a handler replaced later is the one that
+    // runs and a removed item's click finds nothing.
+    let t: *u8 = akx::action_ctx_target(click_trampoline, id as *u8);
+    synth::retain_associated(button, pin_key(), t);
+    { rt::msg_void_id(button, rt::sel(#str_ptr("setTarget:\0")), t) };
+    { rt::msg_void_id(button, rt::sel(#str_ptr("setAction:\0")), akx::action_ctx_sel()) };
+}
+
+fn host() -> core_item::Host {
+    return core_item::Host {
+        create: create, remove: remove, set_symbol: set_symbol,
+        set_system_symbol: set_system_symbol, set_title: set_title,
+        set_tooltip: set_tooltip, set_visible: set_visible, set_menu: set_menu,
+        set_click: set_click,
+    };
+}

@@ -252,6 +252,10 @@ impl App {
 
     fn quit(this) -> bool { return windows::quit(this._p); }
 
+    // Bring the application to the front from a background trigger. False on
+    // a backend with no such step. See `application::activate`.
+    fn activate(this) -> bool { return app::activate(); }
+
     fn name(this) -> str { return app::instance_name(this._p); }
 
     fn menu(this, build: fn() -> AppMenu) { { (*this._p).menu_fn = build as *u8 }; return; }

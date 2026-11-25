@@ -629,7 +629,8 @@ that needs an agent to choose a file has to offer a path some other way.
 ## facet/window and facet/nav
 
 `window::Window` is a handle to one instance. It exposes `name()`, `key()`,
-`is_live()`, `activate()`, `close()`, `request_close()`, `root()`, and `nav()`.
+`is_live()`, `activate()`, `show()`, `hide()`, `is_visible()`, `close()`,
+`request_close()`, `root()`, and `nav()`.
 Closing one registered window leaves handles to other registered windows live.
 A closed handle cannot address a replacement instance with the same name/key.
 
@@ -670,6 +671,124 @@ screen. `screen::find(navigator, key)`, `screen::top(navigator, into:)`, and
 There is no global content-navigation destination. `nav::pop` / `set_pop_fn`
 remain only for the native Android Back adapter. See [navigation.md](navigation.md)
 for a complete screen example and the removed-API migration table.
+
+### Hiding, floating and panel windows
+
+`hide()` takes a window off screen without closing it: the tree stays mounted
+and the instance keeps its state, so bringing it back costs nothing. `show()`
+puts it back in front without the keyboard; `activate()` puts it back with the
+keyboard. `is_visible()` answers whether it is on screen. All three return or
+answer `false` on a backend without the seam.
+
+Three `screen::Chrome` fields describe a window that is not an ordinary one:
+
+| `Chrome::new(...)` | Meaning |
+|---|---|
+| `floating: true` | stays above the ordinary windows of every application |
+| `panel: true` | an auxiliary window: takes the keyboard without bringing the application's other windows forward, and appears on the desktop in front, another application's full-screen one included |
+| `shown: false` | opens mounted and off screen, waiting for `show()` or `activate()` |
+
+A launcher-style bar is all of them with `Bar::Custom`:
+
+```cplus
+app.window("ask", ask_boxed, chrome: screen::Chrome::new(
+    title: "Quick Ask", width: 620.0f64, height: 64.0f64,
+    min_width: 620.0f64, min_height: 64.0f64, max_width: 620.0f64, max_height: 64.0f64,
+    bar: screen::Bar::Custom, floating: true, panel: true));
+```
+
+Equal minimum and maximum sizes are how a window says it does not resize. A
+panel opens on the display holding the pointer, centred and a little above the
+middle. To place a window yourself, `window::active_screen_frame()` answers
+that display's usable area in the coordinates `Window::frame()` uses.
+
+Dismissing is the application's decision, made from parts that already exist:
+`w.on_inactive(this.on_blur)` for a click elsewhere, and a `.gesture(on_key:)`
+handler that reads `gestures::key_escape()`. Both end in `w.hide()`.
+
+`application::activate()` (also `runtime::app().activate()`) brings the
+APPLICATION to the front. Use it before showing an ordinary window from a
+trigger that arrived in the background. A panel does not need it.
+
+AppKit implements all of this (`NSPanel`, `NSFloatingWindowLevel`). The other
+backends ignore the three fields and answer `false`; see netdur/cplus#29 and
+netdur/cplus#30.
+
+## facet/hotkey
+
+A chord the system delivers to the application wherever the person is. A menu
+shortcut (`MenuItem` `key:`) fires only while the application is in front.
+
+```cplus
+this.summon = match hotkey::register("space", this.on_summon, alt: true) {
+    result::Result[services::Cancellable, hotkey::Refusal]::Ok(h) => h,
+    result::Result[services::Cancellable, hotkey::Refusal]::Err(why) =>
+        services::Cancellable::none(),
+};
+```
+
+`register(key, on_press, cmd:, ctrl:, alt:, shift:)` returns
+`Result[services::Cancellable, hotkey::Refusal]`. The handle is the
+registration: keep it in a field, and cancel it (or let it drop) to give the
+chord back. Rebinding is cancelling one and registering another. The handler
+is `fn(ref this)` as a bound method and runs on the UI thread.
+
+| `Refusal` | When |
+|---|---|
+| `Unsupported` | no backend seam, or a platform with no global shortcuts |
+| `UnknownKey` | `key` is not in the vocabulary below |
+| `NeedsModifier` | no `cmd`, `ctrl` or `alt`, and the key is not a function key |
+| `AlreadyInUse` | the system refused because the chord is registered |
+| `Failed` | the system refused without a reason |
+
+Keys name positions on a US layout: `"a"`–`"z"`, `"0"`–`"9"`, `"space"`,
+`"return"`, `"tab"`, `"escape"`, `"delete"`, `"left"`, `"right"`, `"up"`,
+`"down"`, `"f1"`–`"f12"`, and ``- = [ ] ; ' , . / \ ` ``. Names are lower case.
+
+On macOS `AlreadyInUse` is reported for a chord this application registered
+twice. macOS does not report a chord another application holds; the
+registration succeeds and whichever registered first receives the key.
+Registration needs no permission prompt. AppKit is the only backend so far.
+
+## facet/status_item
+
+An icon in the system's status area: the menu bar on a Mac.
+
+```cplus
+this.tray = status_item::StatusItem::new(symbol: icons::bolt, tooltip: "Desk");
+var m: screen::AppMenu = screen::app_menu("");
+m.add_command("", "Quick Ask", on_click: this.on_quick_ask);
+m.add_command("Runs", "Nightly build", on_click: this.on_open_run);   // a submenu
+m.add_separator("");
+m.add_item("", "Quit", "q", screen::menu_action_quit());
+this.tray.set_menu(m);
+this.tray.set_title("3");
+```
+
+| Method | Meaning |
+|---|---|
+| `StatusItem::new(symbol:, system_symbol:, title:, tooltip:)` | put an item in the status area; `symbol` is a `facet/icons` codepoint, `system_symbol` the platform's own glyph name |
+| `set_symbol(cp)` / `set_system_symbol(name)` | change the icon |
+| `set_title(text)` | short text beside the icon; empty removes it |
+| `set_tooltip(text)` / `set_visible(bool)` | |
+| `set_menu(menu)` / `clear_menu()` | the menu a click opens |
+| `on_click(handler)` | what a click does when there is no menu |
+| `remove()` | take it out of the status area; also happens when the value drops |
+| `is_live()` | whether the platform gave it an item |
+
+The menu is `screen::AppMenu`, the application menu's type, so `is_enabled`
+and `title_of` are answered as the menu opens and items reflect live state
+without a rebuild. An item's group names a submenu; the empty group is the top
+level. Call `set_menu` again to change the menu's shape.
+
+Keep the item in a field of something that lives as long as the application,
+not on a screen: a screen goes when its window closes. While an item is live
+the application keeps running after its last window closes. `app.quit()` and
+the Quit menu action still end it.
+
+AppKit is the only backend so far; elsewhere `is_live()` is `false` and every
+method does nothing. [examples/quick_ask](../../../examples/quick_ask/src/main.cplus)
+uses the item, a hotkey and a panel together.
 
 ## facet/services
 

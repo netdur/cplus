@@ -52,8 +52,9 @@ loop, while iOS enters UIKit's loop. Configure an app's theme in its `on_launch`
 hook, after that app becomes current. Use `on_quit` for desktop shutdown;
 mobile persistence must not depend on a process-exit callback.
 
-Window title, dimensions, bar style, and zoom settings belong to the
-`chrome:` argument on registration. `Screen` has no `chrome()` method.
+Window title, dimensions, bar style, zoom settings, and whether the window
+floats, is a panel, or opens hidden belong to the `chrome:` argument on
+registration (see "Hiding, floating and panel windows" in [ref.md](ref.md)). `Screen` has no `chrome()` method.
 The `Chrome` and `Bar` types remain in `facet/screen`.
 
 ## Access the running app from a screen
@@ -112,6 +113,11 @@ Opening requires that app to be running.
 `find_window(name, key: "")` retrieves an existing instance without creating
 or activating it. The handle offers `activate()`, `close()`, `is_live()`,
 `root()`, and `nav()`, as well as native window readers and setters.
+
+`hide()` takes an instance off screen and keeps it: its screen, state and
+history are untouched, and `show()` or `activate()` brings the same instance
+back. Use it for a window that is summoned and dismissed repeatedly. Closing
+is for a window that is finished.
 
 Closing disposes that instance and its history. Reopening its name/key creates
 a fresh instance. A stale handle stays stale; it cannot target the replacement.

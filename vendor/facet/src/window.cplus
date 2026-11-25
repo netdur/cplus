@@ -46,6 +46,12 @@ struct WindowHost {
     observe_active: fn(*flex::Node, fn(*u8), *u8) -> services::Cancellable,
     observe_inactive: fn(*flex::Node, fn(*u8), *u8) -> services::Cancellable,
     observe_density: fn(*flex::Node, fn(*u8), *u8) -> services::Cancellable,
+    // On screen or off it, with the tree left mounted either way.
+    set_visible: fn(*flex::Node, bool),
+    is_visible: fn(*flex::Node) -> bool,
+    // The usable area of the display the person is working on, in the same
+    // coordinates `frame` answers in.
+    active_screen: fn() -> vocab::Rect,
 }
 
 static HOST: WindowHost = #zero::[WindowHost]();
@@ -184,6 +190,37 @@ impl Window {
         return app::activate_window(app::window_key_of(this._root));
     }
 
+    // Take the window off screen WITHOUT closing it: the tree stays mounted,
+    // its state and history stay, and `show()` or `activate()` brings the same
+    // instance back. False when there is no backend seam or the cursor is
+    // stale.
+    fn hide(this) -> bool {
+        let f: fn(*flex::Node, bool) = HOST.set_visible;
+        if f.is_null() { return false; }
+        if !this.is_live() { return false; }
+        f(this._root, false);
+        return true;
+    }
+
+    // Put it back on screen, in front, WITHOUT taking the keyboard. Use
+    // `activate()` when the person is about to type into it.
+    fn show(this) -> bool {
+        let f: fn(*flex::Node, bool) = HOST.set_visible;
+        if f.is_null() { return false; }
+        if !this.is_live() { return false; }
+        f(this._root, true);
+        return true;
+    }
+
+    // Is it on screen? A miniaturised or hidden window answers false. True
+    // with no backend seam is wrong, so that answers false too.
+    fn is_visible(this) -> bool {
+        let f: fn(*flex::Node) -> bool = HOST.is_visible;
+        if f.is_null() { return false; }
+        if !this.is_live() { return false; }
+        return f(this._root);
+    }
+
     // Install an optional policy on THIS registered instance. The context is
     // borrowed: its owner must remain alive until the window closes. A null
     // callback clears it. No Screen implementation is required to opt in.
@@ -274,6 +311,20 @@ impl Window {
         if !this.is_live() { return services::Cancellable::none(); }
         return arm(this._root, cb, ctx);
     }
+}
+
+// The usable area of the display the person is working on — the one holding
+// the pointer — in the coordinates `Window::frame` answers in. For placing a
+// summoned window on the screen the person is looking at:
+//
+//     let s = window::active_screen_frame();
+//     w.set_frame(vocab::Rect { x: s.x + (s.width - 640.0) / 2.0, ... });
+//
+// Zero with no backend seam.
+fn active_screen_frame() -> vocab::Rect {
+    let f: fn() -> vocab::Rect = HOST.active_screen;
+    if f.is_null() { return vocab::Rect::zero(); }
+    return f();
 }
 
 // ---- finding ------------------------------------------------------------------
@@ -386,6 +437,12 @@ fn wt_observe(w: *flex::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
     return services::Cancellable::of(42 as u64, wt_cancel);
 }
 fn wt_cancel(id: u64) { WT_CANCELLED = id; return; }
+static WT_VISIBLE: bool = true;
+fn wt_set_visible(w: *flex::Node, v: bool) { WT_VISIBLE = v; return; }
+fn wt_is_visible(w: *flex::Node) -> bool { return WT_VISIBLE; }
+fn wt_active_screen() -> vocab::Rect {
+    return vocab::Rect::of(0.0f64, 25.0f64, 1440.0f64, 875.0f64);
+}
 
 fn wt_install() {
     var h: WindowHost = empty_host();
@@ -395,6 +452,9 @@ fn wt_install() {
     h.close = wt_close;
     h.request_close = wt_request_close;
     h.observe_resize = wt_observe;
+    h.set_visible = wt_set_visible;
+    h.is_visible = wt_is_visible;
+    h.active_screen = wt_active_screen;
     install_host(h);
     app::set_activate_fn(wt_activate);
 }
@@ -493,10 +553,59 @@ fn a_cursor_to_a_closed_window_is_inert_not_a_trap() {
             assert w.request_close() == false;
             assert w.activate() == false;
             assert w.frame().width == 0.0f64;
+            assert w.hide() == false;
+            assert w.show() == false;
+            assert w.is_visible() == false;
         }
         option::Option[Window]::None => { assert false; }
     }
     assert WT_CLOSES == 1;
+    wt_clear();
+}
+
+#[test]
+fn a_hidden_window_stays_open_and_comes_back() {
+    // Hiding is not closing: the instance, its key and its tree stay, which is
+    // what lets a summoned window reappear with its state intact.
+    wt_clear();
+    wt_install();
+    WT_VISIBLE = true;
+    WT_CLOSES = 0;
+    var bar: flex::Node = flex::box();
+    let _o: bool = app::open_window(#addr_of(bar), key: "quick_ask");
+    app::set_window_native(#addr_of(bar), 77 as *u8);
+    match find("quick_ask") {
+        option::Option[Window]::Some(w) => {
+            assert w.is_visible();
+            assert w.hide();
+            assert w.is_visible() == false;
+            assert w.is_live();
+            assert w.key() == "quick_ask";
+            assert w.show();
+            assert w.is_visible();
+        }
+        option::Option[Window]::None => { assert false; }
+    }
+    assert WT_CLOSES == 0;
+    assert count() == (1 as usize);
+    assert active_screen_frame().width == 1440.0f64;
+    wt_clear();
+}
+
+#[test]
+fn show_hide_and_the_screen_are_neutral_with_no_backend() {
+    wt_clear();
+    var bar: flex::Node = flex::box();
+    let _o: bool = app::open_window(#addr_of(bar), key: "quick_ask");
+    match find("quick_ask") {
+        option::Option[Window]::Some(w) => {
+            assert w.hide() == false;
+            assert w.show() == false;
+            assert w.is_visible() == false;
+        }
+        option::Option[Window]::None => { assert false; }
+    }
+    assert active_screen_frame().width == 0.0f64;
     wt_clear();
 }
 

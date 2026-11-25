@@ -311,6 +311,21 @@ struct Chrome {
     zoomable: bool,
     min_zoom: f64,
     max_zoom: f64,
+    // Stays above the ordinary windows of every application (an inspector, a
+    // picture-in-picture view). The ledger has no row: MAUI leaves it to each
+    // platform's presenter (`OverlappedPresenter.IsAlwaysOnTop` on Windows).
+    floating: bool,
+    // An AUXILIARY window: a launcher bar, a quick-entry prompt. It takes the
+    // keyboard WITHOUT bringing the application's other windows forward, it
+    // appears on whichever desktop is in front (over another application's
+    // full-screen window too), and it is not the application's main window.
+    // Pair it with `Bar::Custom` for a bar-less look and `floating: true` to
+    // stay on top.
+    panel: bool,
+    // False opens the window OFF screen: built, mounted, and waiting for
+    // `Window::show()` / `activate()`. For a window that must appear the
+    // instant it is summoned.
+    shown: bool,
 }
 
 impl Chrome {
@@ -344,6 +359,9 @@ impl Chrome {
         zoomable: bool = false,
         min_zoom: f64 = 1.0f64,
         max_zoom: f64 = 4.0f64,
+        floating: bool = false,
+        panel: bool = false,
+        shown: bool = true,
     ) -> Chrome {
         // THE INITIAL SIZE IS CLAMPED INTO [min, max]. No backend does it:
         // AppKit, GTK and Win32 all open the window at exactly `width` x
@@ -377,6 +395,9 @@ impl Chrome {
             zoomable: zoomable,
             min_zoom: min_zoom,
             max_zoom: max_zoom,
+            floating: floating,
+            panel: panel,
+            shown: shown,
         };
     }
 
@@ -385,7 +406,8 @@ impl Chrome {
             width: this.width, height: this.height, min_width: this.min_width,
             min_height: this.min_height, bar: this.bar, maximizable: this.maximizable,
             minimizable: this.minimizable, max_width: this.max_width, max_height: this.max_height,
-            zoomable: this.zoomable, min_zoom: this.min_zoom, max_zoom: this.max_zoom);
+            zoomable: this.zoomable, min_zoom: this.min_zoom, max_zoom: this.max_zoom,
+            floating: this.floating, panel: this.panel, shown: this.shown);
     }
     fn title(this) -> str { return this.title_text.view(); }
     fn subtitle(this) -> str { return this.subtitle_text.view(); }
@@ -1072,4 +1094,22 @@ fn all(owner: *app::Application) -> vec::Vec[Cursor] {
         i = i +% (1 as usize);
     }
     return out;
+}
+
+#[test]
+fn a_window_is_ordinary_unless_its_chrome_says_otherwise() {
+    // The three auxiliary-window statements default to an ordinary, shown
+    // window, and `copy` — what every opening window is made from — keeps them.
+    let d: Chrome = Chrome::new();
+    assert d.floating == false;
+    assert d.panel == false;
+    assert d.shown;
+    let bar: Chrome = Chrome::new(title: "Quick Ask", width: 640.0f64, height: 64.0f64,
+                                  bar: Bar::Custom, floating: true, panel: true, shown: false);
+    let c: Chrome = bar.copy();
+    assert c.floating;
+    assert c.panel;
+    assert c.shown == false;
+    assert c.width == 640.0f64;
+    assert c.height == 64.0f64;
 }

@@ -1,0 +1,271 @@
+// quick_ask — an application that lives in the menu bar.
+//
+// Three things a launcher or an assistant needs and an ordinary windowed app
+// does not, each one a facet module:
+//
+//   facet/status_item   an icon in the menu bar, with a menu and a count
+//   facet/hotkey        a chord the SYSTEM delivers, wherever the person is
+//   screen::Chrome      `panel: true, floating: true` — a bar that takes the
+//                       keyboard over another application without pulling this
+//                       one's windows forward
+//
+// Try it: press ⌃⌥Space from any application. Type, press Return. Press the
+// chord again, or Escape, or click elsewhere, and the bar goes away. Close the
+// main window — the icon stays, and so does the application. Quit from the
+// icon's menu.
+
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/text_field" as text_field;
+import "facet/screen" as screen;
+import "facet/nav" as nav;
+import "facet/services" as services;
+import "facet/gestures" as gestures;
+import "facet/window" as window;
+import "facet/hotkey" as hotkey;
+import "facet/status_item" as status_item;
+import "facet/icons" as icons;
+import "facet/vocabulary" as vocab;
+import "facet_runtime/runtime" as runtime;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "events/events" as events;
+
+// ── Shell: what outlives every window ────────────────────────────────────────
+// The icon and the chord are the APPLICATION's, not a screen's: a screen goes
+// when its window closes, and these are the way back in afterwards. So they
+// are fields of a value `main` owns for the whole run.
+
+struct Shell {
+    tray: status_item::StatusItem,
+    summon: services::Cancellable,
+    // The bar says "asked" on the bus; the shell is who counts. Neither knows
+    // the other.
+    heard: events::Subscription,
+    asked: i64,
+}
+
+impl Shell {
+    fn new() -> Shell {
+        return Shell {
+            tray: status_item::StatusItem::none(),
+            summon: services::Cancellable::none(),
+            heard: events::Subscription::none(),
+            asked: 0,
+        };
+    }
+
+    // After the app is current, before its first window.
+    fn on_launch(ref this) {
+        this.heard = events::on(ASKED, this.on_asked);
+        this.tray = status_item::StatusItem::new(symbol: icons::bolt, tooltip: "Quick Ask");
+        var m: screen::AppMenu = screen::app_menu("");
+        m.add_command("", "Quick Ask  ⌃⌥Space", on_click: this.on_menu_ask);
+        m.add_command("", "Show Window", on_click: this.on_menu_show);
+        m.add_separator("");
+        m.add_item("", "Quit Quick Ask", "q", screen::menu_action_quit());
+        this.tray.set_menu(m);
+
+        // Held in a field: the handle IS the registration, and dropping it
+        // gives the chord back.
+        this.summon = match hotkey::register("space", this.toggle_bar, ctrl: true, alt: true) {
+            result::Result[services::Cancellable, hotkey::Refusal]::Ok(h) => h,
+            result::Result[services::Cancellable, hotkey::Refusal]::Err(why) => {
+                this.tray.set_tooltip(refusal_text(why));
+                services::Cancellable::none()
+            }
+        };
+    }
+
+    fn on_menu_ask(ref this, sender: *u8) { this.toggle_bar(); }
+
+    fn on_menu_show(ref this, sender: *u8) {
+        // From the menu bar the application is in the background: bring IT
+        // forward, then the window.
+        let _front: bool = runtime::app().activate();
+        let _w = runtime::app().open_window("main");
+    }
+
+    // The chord and the menu item both land here. Up and focused → put it
+    // away; anything else → bring it up on the display the pointer is on.
+    fn toggle_bar(ref this) {
+        match runtime::app().find_window("ask") {
+            option::Option[window::Window]::Some(w) => {
+                if w.is_visible() && w.is_active() { let _h: bool = w.hide(); return; }
+                place_bar(w);
+                let _a: bool = w.activate();
+            }
+            option::Option[window::Window]::None => {
+                // First summon: the panel opens itself on the active display.
+                let _w = runtime::app().open_window("ask");
+            }
+        }
+    }
+
+    // The bar reported a question; the count goes beside the icon.
+    fn on_asked(ref this, name: str) {
+        this.asked = this.asked + 1;
+        this.tray.set_title("${this.asked}");
+    }
+}
+
+const ASKED: str = "quick_ask.asked";
+
+fn refusal_text(why: hotkey::Refusal) -> str {
+    return match why {
+        hotkey::Refusal::AlreadyInUse => "Quick Ask — ⌃⌥Space is taken by another application",
+        hotkey::Refusal::Unsupported => "Quick Ask — no global shortcut on this platform",
+        _other => "Quick Ask — the shortcut could not be registered",
+    };
+}
+
+// Upper-centre of the display the pointer is on. `frame` and the screen's
+// frame are in the same coordinates, so this is plain arithmetic.
+fn place_bar(w: window::Window) {
+    let s: vocab::Rect = window::active_screen_frame();
+    if s.width <= 0.0f64 { return; }
+    let f: vocab::Rect = w.frame();
+    w.set_frame(vocab::Rect {
+        x: s.x + (s.width - f.width) / 2.0f64,
+        y: s.y + (s.height - f.height) * 0.62f64,
+        width: f.width, height: f.height,
+    });
+}
+
+// ── Home: the ordinary window ────────────────────────────────────────────────
+
+struct Home { context: nav::Context }
+
+impl Home: component::Component {
+    fn build(ref this) -> core::Node {
+        return @ui {
+            column {
+                label("Quick Ask", key: "title", font_size: 22.0f64)
+                label("Press ⌃⌥Space from any application.", key: "hint")
+                label("Nothing asked yet.", key: "last")
+                label("Close this window: the menu bar icon stays.", key: "note")
+                label("Quit from the icon's menu.", key: "note2")
+            }.padding(24.0f64).gap(10.0f64)
+        };
+    }
+}
+impl Home: component::Lifecycle { }
+impl Home: screen::Screen {
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+}
+fn home_boxed() -> screen::ScreenBox {
+    return screen::screen_box(Home { context: nav::Context::none() });
+}
+
+// ── Ask: the bar ─────────────────────────────────────────────────────────────
+
+struct Ask {
+    context: nav::Context,
+    // Dismiss-on-focus-loss. Held so it stops with the screen.
+    blur: services::Cancellable,
+}
+
+impl Ask {
+    fn put_away(ref this) {
+        match runtime::app().find_window("ask") {
+            option::Option[window::Window]::Some(w) => { let _h: bool = w.hide(); }
+            option::Option[window::Window]::None => { }
+        }
+    }
+
+    fn on_submit(ref this, sender: *u8) {
+        guard let option::Option[text_field::TextField]::Some(f) =
+            text_field::find("question", within: this.context.root()) else { return; };
+        let asked: text::Text = text::from_str(f.text().trim());
+        if asked.view().is_empty() { return; }
+        // Tell the main window, if it is open. It is another window, reached
+        // through the app — nothing is shared between the two screens.
+        match runtime::app().find_window("main") {
+            option::Option[window::Window]::Some(w) => {
+                match label::find("last", within: w.root()) {
+                    option::Option[label::Label]::Some(l) => {
+                        let _l: label::Label = l.set_text("Last asked: ${asked.view()}");
+                    }
+                    option::Option[label::Label]::None => { }
+                }
+            }
+            option::Option[window::Window]::None => { }
+        }
+        events::emit(ASKED);
+        let _f: text_field::TextField = f.set_text("");
+        this.put_away();
+    }
+
+    // Escape puts the bar away; every other key is the field's.
+    fn on_key(ref this, event: *u8) -> bool {
+        if gestures::key_named(event) != gestures::key_escape() { return false; }
+        this.put_away();
+        return true;
+    }
+
+    fn on_blur(ref this) { this.put_away(); }
+}
+
+impl Ask: component::Component {
+    fn build(ref this) -> core::Node {
+        return @ui {
+            row {
+                text_field("", key: "question", placeholder: "Ask anything…",
+                           font_size: 20.0f64, bordered: false,
+                           on_submit: this.on_submit)
+                    .gesture(on_key: this.on_key)
+                    .grow(1.0f64)
+            }.padding(16.0f64).align(flex::Align::Center)
+        };
+    }
+}
+impl Ask: component::Lifecycle { }
+impl Ask: screen::Screen {
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+    fn on_navigation(ref this, state: nav::State) {
+        // The window exists by now, so its focus loss can be observed.
+        if this.blur.pending() { return; }
+        match runtime::app().find_window("ask") {
+            option::Option[window::Window]::Some(w) => {
+                this.blur = w.on_inactive(this.on_blur);
+                match text_field::find("question", within: this.context.root()) {
+                    option::Option[text_field::TextField]::Some(f) => {
+                        let _f: text_field::TextField = f.focus();
+                    }
+                    option::Option[text_field::TextField]::None => { }
+                }
+            }
+            option::Option[window::Window]::None => { }
+        }
+    }
+}
+
+fn ask_boxed() -> screen::ScreenBox {
+    return screen::screen_box(Ask {
+        context: nav::Context::none(), blur: services::Cancellable::none(),
+    });
+}
+
+fn main() -> i32 {
+    var shell: Shell = Shell::new();
+    let app: runtime::App = runtime::App::new("Quick Ask");
+    app.on_launch(shell.on_launch);
+    let _main = app.window("main", home_boxed,
+        chrome: screen::Chrome::new(title: "Quick Ask", width: 460.0f64, height: 220.0f64));
+    // The bar: no titlebar of its own, above other windows, and a panel — it
+    // takes the keyboard without this application coming forward.
+    let _ask = app.window("ask", ask_boxed,
+        chrome: screen::Chrome::new(title: "Quick Ask", width: 620.0f64, height: 64.0f64,
+            min_width: 620.0f64, min_height: 64.0f64, max_width: 620.0f64, max_height: 64.0f64,
+            bar: screen::Bar::Custom, maximizable: false, minimizable: false,
+            floating: true, panel: true));
+    match app.run("main") {
+        status::Status::Ok => { return 0; }
+        _other => { return 1; }
+    }
+}

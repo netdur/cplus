@@ -1,0 +1,250 @@
+// hotkey — a system-wide key combination. HAND-WRITTEN.
+//
+// The ledger has no row: MAUI's keyboard accelerators are menu shortcuts, and a
+// menu shortcut fires only while the application is in front. This is the other
+// thing — a chord the SYSTEM delivers to the application wherever the person
+// is, which is how a launcher or a quick-entry bar is summoned.
+//
+//     this.summon = match hotkey::register("space", this.on_summon, alt: true) {
+//         result::Result[services::Cancellable, hotkey::Refusal]::Ok(h) => h,
+//         result::Result[services::Cancellable, hotkey::Refusal]::Err(_why) =>
+//             services::Cancellable::none(),
+//     };
+//
+// The handle is the registration. Cancel it, or let it drop, and the chord goes
+// back to the system — so it is a FIELD on whatever owns the feature, not a
+// local. Rebinding is cancelling one and registering another.
+//
+// The callback runs on the UI thread. The application is usually in the
+// background when it does: call `application::activate()` (or activate a
+// `panel` window, which needs no application switch) before showing anything.
+//
+// Each backend installs a `Host`; with none, `register` answers `Unsupported`.
+
+import "stdlib/result" as result;
+import "stdlib/option" as option;
+import "./services" as services;
+
+// Why a chord was not registered. A value, so an application can tell the
+// person which of these it was — "taken by another application" and "this
+// platform has no global shortcuts" want different words.
+enum Refusal {
+    // No backend seam, or a platform with no such thing (a phone).
+    Unsupported,
+    // `key` is not in the vocabulary below.
+    UnknownKey,
+    // A bare letter would be taken from every text field on the machine. A
+    // chord needs cmd, ctrl or alt; a function key may stand alone.
+    NeedsModifier,
+    // The system refused because the chord is already registered.
+    AlreadyInUse,
+    // The system refused and did not say why.
+    Failed,
+}
+
+// The modifier bits a backend receives. `cmd` is Command on a Mac and the
+// Windows / Super key elsewhere; `alt` is Option on a Mac.
+const MOD_CMD: u32 = 1u32;
+const MOD_CTRL: u32 = 2u32;
+const MOD_ALT: u32 = 4u32;
+const MOD_SHIFT: u32 = 8u32;
+
+struct Host {
+    // Register and answer a non-zero id, or say why not. The callback must be
+    // delivered on the UI thread.
+    register: fn(str, u32, fn(*u8), *u8) -> result::Result[u64, Refusal],
+    unregister: fn(u64),
+}
+
+static HOST: Host = #zero::[Host]();
+
+fn install(h: Host) { HOST = h; return; }
+fn uninstall() { HOST = #zero::[Host](); return; }
+fn is_installed() -> bool {
+    let f: fn(u64) = HOST.unregister;
+    return f.is_not_null();
+}
+
+// ---- the key vocabulary --------------------------------------------------------
+// A KEY, not a character: the physical key that carries this legend on a US
+// layout, which is what every platform's global-shortcut API registers.
+//
+//   "a".."z"  "0".."9"
+//   "space" "return" "tab" "escape" "delete"
+//   "left" "right" "up" "down"
+//   "f1".."f12"
+//   "-" "=" "[" "]" ";" "'" "," "." "/" "\\" "`"
+
+fn is_function_key(key: str) -> bool {
+    return key == "f1" || key == "f2" || key == "f3" || key == "f4"
+        || key == "f5" || key == "f6" || key == "f7" || key == "f8"
+        || key == "f9" || key == "f10" || key == "f11" || key == "f12";
+}
+
+fn is_named_key(key: str) -> bool {
+    return key == "space" || key == "return" || key == "tab" || key == "escape"
+        || key == "delete" || key == "left" || key == "right" || key == "up"
+        || key == "down";
+}
+
+fn is_known_key(key: str) -> bool {
+    if is_function_key(key) || is_named_key(key) { return true; }
+    if key.count() != (1 as usize) { return false; }
+    let c: u8 = match key.byte_at(0 as usize) {
+        option::Option[u8]::Some(b) => b,
+        option::Option[u8]::None => 0u8,
+    };
+    if c >= 97u8 && c <= 122u8 { return true; }      // a..z
+    if c >= 48u8 && c <= 57u8 { return true; }       // 0..9
+    return key == "-" || key == "=" || key == "[" || key == "]" || key == ";"
+        || key == "'" || key == "," || key == "." || key == "/" || key == "\\"
+        || key == "`";
+}
+
+fn modifier_bits(cmd: bool, ctrl: bool, alt: bool, shift: bool) -> u32 {
+    var m: u32 = 0u32;
+    if cmd { m = m | MOD_CMD; }
+    if ctrl { m = m | MOD_CTRL; }
+    if alt { m = m | MOD_ALT; }
+    if shift { m = m | MOD_SHIFT; }
+    return m;
+}
+
+// Register `key` with the stated modifiers. The handler's context is the slot
+// after it, so a bound method fits: `hotkey::register("k", this.on_k, cmd: true)`.
+fn register(key: str, on_press: fn(*u8), on_press_ctx: *u8 = 0 as *u8,
+            cmd: bool = false, ctrl: bool = false, alt: bool = false,
+            shift: bool = false) -> result::Result[services::Cancellable, Refusal] {
+    if !is_known_key(key) {
+        return result::Result[services::Cancellable, Refusal]::Err(Refusal::UnknownKey);
+    }
+    if !cmd && !ctrl && !alt && !is_function_key(key) {
+        return result::Result[services::Cancellable, Refusal]::Err(Refusal::NeedsModifier);
+    }
+    if on_press.is_null() {
+        return result::Result[services::Cancellable, Refusal]::Err(Refusal::Failed);
+    }
+    let f: fn(str, u32, fn(*u8), *u8) -> result::Result[u64, Refusal] = HOST.register;
+    let undo: fn(u64) = HOST.unregister;
+    if f.is_null() || undo.is_null() {
+        return result::Result[services::Cancellable, Refusal]::Err(Refusal::Unsupported);
+    }
+    return match f(key, modifier_bits(cmd, ctrl, alt, shift), on_press, on_press_ctx) {
+        result::Result[u64, Refusal]::Ok(id) => {
+            if id == (0 as u64) {
+                result::Result[services::Cancellable, Refusal]::Err(Refusal::Failed)
+            } else {
+                result::Result[services::Cancellable, Refusal]::Ok(services::Cancellable::of(id, undo))
+            }
+        }
+        result::Result[u64, Refusal]::Err(why) =>
+            result::Result[services::Cancellable, Refusal]::Err(why),
+    };
+}
+
+// ---- tests ---------------------------------------------------------------------
+
+static HT_LAST_KEY_LEN: usize = 0 as usize;
+static HT_LAST_MODS: u32 = 0u32;
+static HT_CB: fn(*u8) = #zero::[fn(*u8)]();
+static HT_CTX: *u8 = 0 as *u8;
+static HT_UNREGISTERED: u64 = 0 as u64;
+static HT_TAKEN: bool = false;
+static HT_PRESSES: i32 = 0;
+
+fn ht_register(key: str, mods: u32, cb: fn(*u8), ctx: *u8) -> result::Result[u64, Refusal] {
+    if HT_TAKEN { return result::Result[u64, Refusal]::Err(Refusal::AlreadyInUse); }
+    HT_LAST_KEY_LEN = key.count();
+    HT_LAST_MODS = mods;
+    HT_CB = cb;
+    HT_CTX = ctx;
+    return result::Result[u64, Refusal]::Ok(7 as u64);
+}
+fn ht_unregister(id: u64) { HT_UNREGISTERED = id; return; }
+fn ht_pressed(ctx: *u8) { HT_PRESSES = HT_PRESSES + 1; return; }
+fn ht_install() {
+    HT_TAKEN = false;
+    HT_UNREGISTERED = 0 as u64;
+    HT_PRESSES = 0;
+    install(Host { register: ht_register, unregister: ht_unregister });
+}
+
+fn ht_refusal(r: result::Result[services::Cancellable, Refusal]) -> Refusal {
+    return match r {
+        result::Result[services::Cancellable, Refusal]::Ok(_h) => Refusal::Failed,
+        result::Result[services::Cancellable, Refusal]::Err(why) => why,
+    };
+}
+
+fn ht_is_ok(r: result::Result[services::Cancellable, Refusal]) -> bool {
+    return match r {
+        result::Result[services::Cancellable, Refusal]::Ok(_h) => true,
+        result::Result[services::Cancellable, Refusal]::Err(_why) => false,
+    };
+}
+
+#[test]
+fn a_chord_with_no_backend_is_unsupported_not_a_trap() {
+    uninstall();
+    assert ht_refusal(register("space", ht_pressed, alt: true)) == Refusal::Unsupported;
+}
+
+#[test]
+fn a_bare_letter_is_refused_and_a_bare_function_key_is_not() {
+    ht_install();
+    assert ht_refusal(register("a", ht_pressed)) == Refusal::NeedsModifier;
+    assert ht_refusal(register("a", ht_pressed, shift: true)) == Refusal::NeedsModifier;
+    assert ht_is_ok(register("f5", ht_pressed));
+    assert ht_is_ok(register("a", ht_pressed, ctrl: true));
+    uninstall();
+}
+
+#[test]
+fn a_key_outside_the_vocabulary_is_refused_before_the_system_is_asked() {
+    ht_install();
+    HT_LAST_KEY_LEN = 0 as usize;
+    assert ht_refusal(register("Space", ht_pressed, alt: true)) == Refusal::UnknownKey;
+    assert ht_refusal(register("", ht_pressed, alt: true)) == Refusal::UnknownKey;
+    assert ht_refusal(register("f13", ht_pressed)) == Refusal::UnknownKey;
+    assert HT_LAST_KEY_LEN == (0 as usize);
+    uninstall();
+}
+
+#[test]
+fn the_modifiers_reach_the_backend_as_bits_and_the_handler_as_given() {
+    ht_install();
+    var h: services::Cancellable = match register("space", ht_pressed, alt: true, shift: true) {
+        result::Result[services::Cancellable, Refusal]::Ok(c) => c,
+        result::Result[services::Cancellable, Refusal]::Err(_why) => services::Cancellable::none(),
+    };
+    assert h.pending();
+    assert HT_LAST_KEY_LEN == (5 as usize);
+    assert HT_LAST_MODS == (MOD_ALT | MOD_SHIFT);
+    let f: fn(*u8) = HT_CB;
+    f(HT_CTX);
+    assert HT_PRESSES == 1;
+    // Cancelling is what gives the chord back.
+    assert HT_UNREGISTERED == (0 as u64);
+    h.cancel();
+    assert HT_UNREGISTERED == (7 as u64);
+    assert h.pending() == false;
+    uninstall();
+}
+
+#[test]
+fn a_dropped_handle_unregisters() {
+    ht_install();
+    if true {
+        let _h: result::Result[services::Cancellable, Refusal] = register("k", ht_pressed, cmd: true);
+    }
+    assert HT_UNREGISTERED == (7 as u64);
+    uninstall();
+}
+
+#[test]
+fn a_chord_the_system_already_has_says_so() {
+    ht_install();
+    HT_TAKEN = true;
+    assert ht_refusal(register("space", ht_pressed, cmd: true)) == Refusal::AlreadyInUse;
+    uninstall();
+}
