@@ -1254,9 +1254,7 @@ fn cell_resize_imp(self_obj: *u8, cmd: *u8, old: rt::Size) {
     if np.is_null() { return; }
     let f: rt::Rect = { rt::msg_rect(self_obj, rt::sel(#str_ptr("frame\0"))) };
     if f.w < 1.0f64 || f.h < 1.0f64 { return; }
-    // Width only. A height change moves the row, it does not re-wrap it — and
-    // the height the table gives a cell is the height it asked us for.
-    if f.w == old.w { return; }
+    if f.w == old.w && f.h == old.h { return; }
     place_row_content(self_obj, np, f.w, f.h);
 }
 
@@ -1507,25 +1505,38 @@ fn place_row(cell: *u8, np: *core::Node, w: f64, floor_h: f64 = 1.0f64,
 fn place_row_content(cell: *u8, np: *core::Node, w: f64, h: f64) {
     PLACING_ROW = true;
     without_implicit_animation_begin();
-    // Lay out at the cell's width; height is natural so a short label can be
-    // centred in `h` the same way place_row does after a fixed row_height.
-    { (*np).calculate_layout(width: w) };
-    geometry::reposition(np, force: true);
     let rv: *u8 = core::view_of(np);
-    if rv.is_not_null() {
-        var content_h: f64 = { (*np).frame().height };
-        if content_h < 1.0f64 { content_h = h; }
-        var y: f64 = 0.0f64;
-        var vh: f64 = content_h;
-        if content_h + 0.5f64 < h {
-            y = (h - content_h) / 2.0f64;
-        } else {
-            vh = h;
-            { (*np).calculate_layout(width: w, height: h) };
-            geometry::reposition(np, force: true);
+    if h > 64.0f64 {
+        // Tall / multi-line row (e.g. prose bubble, code card): lay out once at
+        // the exact cell box (w, h) instead of measuring unbounded first and
+        // running a second clamped pass. Avoids 2x CoreText fittingSize per frame.
+        { (*np).calculate_layout(width: w, height: h) };
+        geometry::reposition(np, force: true);
+        if rv.is_not_null() {
+            { msg_void_rect(rv, rt::sel(#str_ptr("setFrame:\0")),
+                            rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
         }
-        { msg_void_rect(rv, rt::sel(#str_ptr("setFrame:\0")),
-                        rt::Rect { x: 0.0f64, y: y, w: w, h: vh }) };
+    } else {
+        // Short row: lay out at natural height so a single-line label centres in `h`.
+        { (*np).calculate_layout(width: w) };
+        geometry::reposition(np, force: true);
+        if rv.is_not_null() {
+            var content_h: f64 = { (*np).frame().height };
+            if content_h < 1.0f64 { content_h = h; }
+            var y: f64 = 0.0f64;
+            var vh: f64 = content_h;
+            if content_h + 0.5f64 < h {
+                y = (h - content_h) / 2.0f64;
+            } else {
+                vh = h;
+                if content_h > h + 0.5f64 {
+                    { (*np).calculate_layout(width: w, height: h) };
+                    geometry::reposition(np, force: true);
+                }
+            }
+            { msg_void_rect(rv, rt::sel(#str_ptr("setFrame:\0")),
+                            rt::Rect { x: 0.0f64, y: y, w: w, h: vh }) };
+        }
     }
     without_implicit_animation_end();
     PLACING_ROW = false;
@@ -3857,30 +3868,116 @@ fn reload_job(ctx: *u8) {
     // width re-wraps rows taller, so the content grows under the viewport and
     // "at the bottom" stops being true by the time the reload has run.
     { (*s).follow_tail = is_near_bottom(tv) };
-    // The measurements belonged to the old width.
-    { (*s).heights.remove_all() };
-    { (*s).heights_width = 0.0f64 };
-    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
-    if { (*s).follow_tail } {
+    // A WIDTH CHANGE IS NOT A RELOAD FOR TABLES.
+    // Every visible row sits inside a `FacetRowCell` whose `resizeSubviewsWithOldSize:`
+    // already re-ran flex at the new column width synchronously. Calling `reloadData`
+    // destroys and rebuilds every visible cell (and re-runs `build_row` + attributed
+    // string creation) on every pixel of a live window resize. `noteHeightOfRowsWithIndexesChanged:`
+    // updates uneven row heights in place while keeping every visible cell and selection alive.
+    var did_full_reload: bool = false;
+    var heights_changed: bool = true;
+    if { (*s).grid } {
+        { (*s).heights.remove_all() };
+        { (*s).heights_width = 0.0f64 };
+        { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+        did_full_reload = true;
+    } else {
+        let rows: i64 = { rt::msg_i64(tv, rt::sel(#str_ptr("numberOfRows\0"))) };
+        let fh: f64 = { (*s).fixed_height };
+        let states: bool = props::states_row_height({ (*s).row_height_at }, { (*s).row_height_of });
+        if rows <= (0 as i64) {
+            { (*s).heights.remove_all() };
+            { (*s).heights_width = 0.0f64 };
+            { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+            did_full_reload = true;
+        } else if fh >= 1.0f64 && !states {
+            // Fixed-height table: row heights never depend on width, so nothing
+            // needs height invalidation or re-tiling.
+            { (*s).heights_width = w };
+            heights_changed = false;
+        } else if states {
+            // Stated row heights: compute new heights into `(*s).heights` and ONLY
+            // notify AppKit for rows whose height actually changed. On a live width
+            // drag, width-independent lists (timelines, trees) and cached buckets
+            // skip `noteHeightOfRowsWithIndexesChanged:` completely.
+            let hp: *vec::Vec[f64] = { #addr_of((*s).heights) };
+            let had_prev: bool = { (*s).heights_width } > 0.0f64;
+            let changed_set: *u8 = { rt::alloc_init(#str_ptr("NSMutableIndexSet\0")) };
+            var any_changed: bool = false;
+            var r: i64 = 0 as i64;
+            while r < rows {
+                let idx: usize = r as usize;
+                var old_h: f64 = 0.0f64;
+                if had_prev {
+                    match { (*hp).at(idx) } {
+                        option::Option[f64]::Some(v) => { old_h = v; }
+                        option::Option[f64]::None => { }
+                    }
+                }
+                while { (*hp).count() } <= idx { append_zero(hp); }
+                let at: i64 = resolve_row(s, r);
+                var stated: f64 = 0.0f64;
+                if at >= (0 as i64) {
+                    stated = props::stated_row_height(
+                        { (*s).row_height_at }, { (*s).row_height_at_ctx },
+                        { (*s).row_height_of }, { (*s).row_height_of_ctx }, at as usize, w);
+                }
+                if stated >= 1.0f64 {
+                    set_height(hp, idx, stated);
+                    let dh: f64 = stated - old_h;
+                    if old_h < 1.0f64 || dh > 0.5f64 || dh < -0.5f64 {
+                        if changed_set.is_not_null() {
+                            { rt::msg_void_u64(changed_set, rt::sel(#str_ptr("addIndex:\0")), r as u64) };
+                        }
+                        any_changed = true;
+                    }
+                } else {
+                    set_height(hp, idx, 0.0f64);
+                    if changed_set.is_not_null() {
+                        { rt::msg_void_u64(changed_set, rt::sel(#str_ptr("addIndex:\0")), r as u64) };
+                    }
+                    any_changed = true;
+                }
+                r = r +% (1 as i64);
+            }
+            { (*s).heights_width = w };
+            heights_changed = any_changed;
+            if any_changed {
+                if changed_set.is_not_null() {
+                    { rt::msg_void_id(tv, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:\0")), changed_set) };
+                } else {
+                    let all: *u8 = { msg_id_range(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                                  rt::sel(#str_ptr("indexSetWithIndexesInRange:\0")),
+                                                  rt::Range { location: 0 as u64, length: rows as u64 }) };
+                    if all.is_not_null() {
+                        { rt::msg_void_id(tv, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:\0")), all) };
+                    }
+                }
+            }
+            if changed_set.is_not_null() { rt::release(changed_set); }
+        } else {
+            { (*s).heights.remove_all() };
+            { (*s).heights_width = 0.0f64 };
+            let all: *u8 = { msg_id_range(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                          rt::sel(#str_ptr("indexSetWithIndexesInRange:\0")),
+                                          rt::Range { location: 0 as u64, length: rows as u64 }) };
+            if all.is_not_null() {
+                { rt::msg_void_id(tv, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:\0")), all) };
+            } else {
+                { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+                did_full_reload = true;
+            }
+        }
+    }
+    if { (*s).follow_tail } && heights_changed {
         if { (*s).grid } { grid_scroll_to_bottom(tv, s); }
         else { scroll_to_bottom(tv); }
     }
-    // ...and the SELECTION is the other piece of table state `reloadData`
-    // destroys. The scroll position above is read before and restored after
-    // for exactly this reason; the selection had no such restore, so a window
-    // resize — or one frame of a divider drag, since this job runs live on the
-    // tick — silently dropped the highlight while `l.selected_index()` went on
-    // answering the row that was picked. facet's props are what did not
-    // change, so they are what it is read back from.
-    //
-    // `select_data_rows` and not raw row indices: a grouped list's third item
-    // is not its third row, and `table_row_of` is the translation. A negative
-    // index means nothing is selected, and a table that has just reloaded has
-    // no selection either — so that case is left alone rather than spending a
-    // `deselectAll:` to confirm it.
-    let p: *props::ListProps = props_of_list({ (*s).node });
-    if p.is_not_null() && { (*p).selected_index } >= (0 as i64) {
-        select_data_rows(tv, s, #addr_of((*p).selection));
+    if did_full_reload {
+        let p: *props::ListProps = props_of_list({ (*s).node });
+        if p.is_not_null() && { (*p).selected_index } >= (0 as i64) {
+            select_data_rows(tv, s, #addr_of((*p).selection));
+        }
     }
 }
 
