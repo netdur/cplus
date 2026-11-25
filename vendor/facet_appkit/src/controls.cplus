@@ -128,6 +128,14 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
         | label::P_TEXT_COLOR | label::P_TEXT_ALIGN | label::P_TEXT_FORMAT
         | label::P_FORMATTED_TEXT;
     if (dirty & rich) != (0 as u64) {
+        // A selectable rich label (line_height, spans, formatted_text, HTML,
+        // kern, decoration) needs `allowsEditingTextAttributes = YES` BEFORE
+        // `setAttributedStringValue:`, otherwise clicking to select text causes
+        // AppKit's field editor to strip NSParagraphStyle (collapsing line_height
+        // to 0) and inline runs. Labels are non-editable (`isEditable = NO`), so
+        // the field editor stays read-only while preserving exact typography.
+        let is_rich: bool = has_spans(n) || is_html(p) || formatted_count(p) > (0 as usize) || label_wants_rich(p);
+        f.set_allows_editing_text_attributes(is_rich);
         if has_spans(n) {
             let runs: *u8 = build_runs(n);
             if runs.is_not_null() {

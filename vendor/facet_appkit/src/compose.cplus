@@ -88,6 +88,12 @@ extern fn object_setClass(obj: *u8, cls: *u8) -> *u8;
 extern fn add_method_rect_rect(cls: *u8, sel: *u8,
                                imp: fn(*u8, *u8, rt::Rect) -> rt::Rect, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
+extern fn add_method_edit_frame(cls: *u8, sel: *u8,
+                                imp: fn(*u8, *u8, rt::Rect, *u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_select_frame(cls: *u8, sel: *u8,
+                                  imp: fn(*u8, *u8, rt::Rect, *u8, *u8, *u8, i64, i64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
 extern fn add_method_point_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> rt::Point,
                              types: *u8) -> i8;
 #[link_name = "objc_msgSend"]
@@ -181,6 +187,14 @@ fn subclass_of(base: *u8, prefix: str, flavour: u32) -> *u8 {
                 if flavour == flavour_cell() {
                     let _m: i8 = add_method_rect_rect(cls,
                         rt::sel(#str_ptr("drawingRectForBounds:\0")), drawing_rect_imp, rect_types);
+                    let _e: i8 = add_method_edit_frame(cls,
+                        rt::sel(#str_ptr("editWithFrame:inView:editor:delegate:event:\0")),
+                        edit_with_frame_imp,
+                        #str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}@@@@\0"));
+                    let _s: i8 = add_method_select_frame(cls,
+                        rt::sel(#str_ptr("selectWithFrame:inView:editor:delegate:start:length:\0")),
+                        select_with_frame_imp,
+                        #str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}@@@qq\0"));
                 }
                 if flavour == flavour_title() {
                     let _m: i8 = add_method_rect_rect(cls,
@@ -324,13 +338,8 @@ fn control_is_flipped(cell: *u8) -> bool {
     return { rt::msg_i8(cv, rt::sel(#str_ptr("isFlipped\0"))) } != (0 as i8);
 }
 
-// The rect the cell draws its text in. Super's answer is the whole interior,
-// which is why a taller field centres: the text is laid out inside it. Shrink
-// it to what the text NEEDS and put that where the node asked, and the trailing
-// inset a clear button occupies comes off the same rect — one place that owns
-// where the text goes.
-fn drawing_rect_imp(self_obj: *u8, cmd: *u8, bounds: rt::Rect) -> rt::Rect {
-    var base: rt::Rect = padded(self_obj, super_drawing_rect(self_obj, cmd, bounds));
+fn apply_cell_rect(self_obj: *u8, cmd: *u8, bounds: rt::Rect, super_base: rt::Rect) -> rt::Rect {
+    var base: rt::Rect = padded(self_obj, super_base);
     let trailing: f64 = { synth::get_associated(self_obj, trailing_key()) as u64 } as f64;
     if trailing > 0.0f64 && base.w > trailing {
         base = rt::Rect { x: base.x, y: base.y, w: base.w - trailing, h: base.h };
@@ -371,6 +380,59 @@ fn drawing_rect_imp(self_obj: *u8, cmd: *u8, bounds: rt::Rect) -> rt::Rect {
         if flipped { y = box.y + slack; }
     }
     return rt::Rect { x: base.x, y: y, w: base.w, h: h };
+}
+
+// The rect the cell draws its text in. Super's answer is the whole interior,
+// which is why a taller field centres: the text is laid out inside it. Shrink
+// it to what the text NEEDS and put that where the node asked, and the trailing
+// inset a clear button occupies comes off the same rect — one place that owns
+// where the text goes.
+fn drawing_rect_imp(self_obj: *u8, cmd: *u8, bounds: rt::Rect) -> rt::Rect {
+    let super_base: rt::Rect = super_drawing_rect(self_obj, cmd, bounds);
+    return apply_cell_rect(self_obj, cmd, bounds, super_base);
+}
+
+// Field-editor placement matches `drawingRectForBounds:` so clicking a
+// vertically-aligned or padded selectable label / input never jumps up.
+// Express the adjustment as a delta against super's drawing rect so super's
+// own bezel inset on bezeled fields is not applied twice.
+fn edit_target_rect(self_obj: *u8, rect: rt::Rect) -> rt::Rect {
+    let dr_sel: *u8 = rt::sel(#str_ptr("drawingRectForBounds:\0"));
+    let base: rt::Rect = super_drawing_rect(self_obj, dr_sel, rect);
+    let adj: rt::Rect = apply_cell_rect(self_obj, dr_sel, rect, base);
+    let dx: f64 = adj.x - base.x;
+    let dy: f64 = adj.y - base.y;
+    let dw: f64 = base.w - adj.w;
+    let dh: f64 = base.h - adj.h;
+    var w: f64 = rect.w - dw;
+    var h: f64 = rect.h - dh;
+    if w < 0.0f64 { w = 0.0f64; }
+    if h < 0.0f64 { h = 0.0f64; }
+    return rt::Rect { x: rect.x + dx, y: rect.y + dy, w: w, h: h };
+}
+
+fn edit_with_frame_imp(self_obj: *u8, cmd: *u8, rect: rt::Rect, view: *u8,
+                       editor: *u8, delegate: *u8, event: *u8) {
+    let f_mine: fn(*u8, *u8, rt::Rect, *u8, *u8, *u8, *u8) = edit_with_frame_imp;
+    let mine: *u8 = { f_mine as *u8 };
+    let imp: *u8 = super_imp_below(self_obj, cmd, mine);
+    if imp.is_null() { return; }
+    let target: rt::Rect = edit_target_rect(self_obj, rect);
+    let f: fn(*u8, *u8, rt::Rect, *u8, *u8, *u8, *u8) =
+        { imp as fn(*u8, *u8, rt::Rect, *u8, *u8, *u8, *u8) };
+    f(self_obj, cmd, target, view, editor, delegate, event);
+}
+
+fn select_with_frame_imp(self_obj: *u8, cmd: *u8, rect: rt::Rect, view: *u8,
+                         editor: *u8, delegate: *u8, sel_start: i64, sel_len: i64) {
+    let f_mine: fn(*u8, *u8, rt::Rect, *u8, *u8, *u8, i64, i64) = select_with_frame_imp;
+    let mine: *u8 = { f_mine as *u8 };
+    let imp: *u8 = super_imp_below(self_obj, cmd, mine);
+    if imp.is_null() { return; }
+    let target: rt::Rect = edit_target_rect(self_obj, rect);
+    let f: fn(*u8, *u8, rt::Rect, *u8, *u8, *u8, i64, i64) =
+        { imp as fn(*u8, *u8, rt::Rect, *u8, *u8, *u8, i64, i64) };
+    f(self_obj, cmd, target, view, editor, delegate, sel_start, sel_len);
 }
 
 #[link_name = "objc_msgSend"]
