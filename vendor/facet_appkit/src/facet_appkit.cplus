@@ -105,6 +105,7 @@ fn install() {
     app_window::install_host(window::window_host());
     app::set_activate_fn(window::activate_window);
     app::set_activate_app_fn(window::activate_application);
+    window::arm_window_trace();     // FACET_TRACE_WINDOW=1; inert otherwise
     hotkey::install(hotkey_appkit::host());
     status_item::install(status_item_appkit::host());
     app::set_badge_fn(window::set_badge_label);

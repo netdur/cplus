@@ -17,6 +17,8 @@ import "stdlib/text" as text;
 import "stdlib/box" as box;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/mount" as mount;
@@ -1498,8 +1500,58 @@ extern fn msg_void_rect_v(recv: *u8, sel: *u8, r: rt::Rect);
 // `makeKeyAndOrderFront:` is both halves of the verb: raise it, and make it the
 // one receiving keys. Ordering without the key half leaves a window visibly in
 // front and deaf.
+// ---- window trace (FACET_TRACE_WINDOW=1) -------------------------------------
+// "The bar appeared and went away again" has two very different causes — this
+// application hid it, or something ELSE took the keyboard and the
+// application's own focus-loss handler hid it — and from inside the app they
+// look the same. With the switch set, every activate, show, hide and loss of
+// key is printed to stderr with the application that is frontmost at that
+// moment, which is what tells the two apart.
+static TRACE_READ: bool = false;
+static TRACE_ON: bool = false;
+
+fn trace_on() -> bool {
+    if !TRACE_READ { TRACE_READ = true; TRACE_ON = env::has_var("FACET_TRACE_WINDOW"); }
+    return TRACE_ON;
+}
+
+fn frontmost_app_name() -> text::Text {
+    let ws: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSWorkspace\0")), rt::sel(#str_ptr("sharedWorkspace\0"))) };
+    if ws.is_null() { return text::new(); }
+    let front: *u8 = { rt::msg_id(ws, rt::sel(#str_ptr("frontmostApplication\0"))) };
+    if front.is_null() { return text::new(); }
+    let name: *u8 = { rt::msg_id(front, rt::sel(#str_ptr("localizedName\0"))) };
+    if name.is_null() { return text::new(); }
+    return bridge::to_text(name);
+}
+
+fn trace_window(what: str, win: *u8) {
+    if !trace_on() { return; }
+    var title: text::Text = text::new();
+    if win.is_not_null() {
+        let t: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("title\0"))) };
+        if t.is_not_null() { title = bridge::to_text(t); }
+    }
+    let front: text::Text = frontmost_app_name();
+    io::eprintln("[facet window] ${what} \"${title.view()}\" (frontmost app: ${front.view()})");
+}
+
+// Every window of this application that stops being key, whoever caused it.
+fn trace_resigned_key(ctx: *u8) {
+    let nsapp: *u8 = ak::Application::shared_application().raw();
+    let key: *u8 = { rt::msg_id(nsapp, rt::sel(#str_ptr("keyWindow\0"))) };
+    trace_window("a window LOST KEY; this app's key window is now", key);
+}
+
+fn arm_window_trace() {
+    if !trace_on() { return; }
+    let _id: u64 = akx::observe_named("NSWindowDidResignKeyNotification", 0 as *u8,
+                                      trace_resigned_key, 0 as *u8);
+}
+
 fn activate_window(win: *u8) {
     if win.is_null() { return; }
+    trace_window("activate", win);
     // A panel is the exception, and the reason panels exist: activating the
     // application would pull its other windows forward and, from another
     // application's full-screen Space, switch Spaces under the person.
@@ -1624,6 +1676,7 @@ fn wh_close(root: *core::Node) { close_window_of(root); return; }
 fn wh_set_visible(root: *core::Node, visible: bool) {
     let w: *u8 = app::window_native(root);
     if w.is_null() { return; }
+    if visible { trace_window("show", w); } else { trace_window("hide", w); }
     if visible {
         { rt::msg_void_id(w, rt::sel(#str_ptr("orderFront:\0")), 0 as *u8) };
     } else {

@@ -706,6 +706,13 @@ Dismissing is the application's decision, made from parts that already exist:
 `w.on_inactive(this.on_blur)` for a click elsewhere, and a `.gesture(on_key:)`
 handler that reads `gestures::key_escape()`. Both end in `w.hide()`.
 
+**When a summoned window appears and immediately goes away**, run the app with
+`FACET_TRACE_WINDOW=1` (macOS). Every activate, show, hide and loss of key is
+printed to stderr with the application that was frontmost at that moment. A
+"LOST KEY" line that names another application before your own `hide` means
+something else took the keyboard and your `on_inactive` handler did the hiding:
+most often another application answering the same global chord.
+
 `application::activate()` (also `runtime::app().activate()`) brings the
 APPLICATION to the front. Use it before showing an ordinary window from a
 trigger that arrived in the background. A panel does not need it.
