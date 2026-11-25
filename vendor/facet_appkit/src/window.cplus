@@ -1441,6 +1441,15 @@ fn activate_window(win: *u8) {
     { rt::msg_void_id(win, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), 0 as *u8) };
 }
 
+fn set_badge_label(label: str) {
+    let app_raw: *u8 = ak::Application::shared_application().raw();
+    if app_raw.is_null() { return; }
+    let tile: *u8 = { rt::msg_id(app_raw, rt::sel(#str_ptr("dockTile\0"))) };
+    if tile.is_null() { return; }
+    let ns: *u8 = if label == "" { 0 as *u8 } else { bridge::nsstring(label) };
+    { rt::msg_void_id(tile, rt::sel(#str_ptr("setBadgeLabel:\0")), ns) };
+}
+
 // ---- the window cursor's host ---------------------------------------------------
 // What `facet/window.cplus` calls when an application says
 // `window::find("inspector").frame()`. Every slot takes the ROOT, which is the

@@ -152,6 +152,16 @@ fn agent_pin(view: *u8, a: vocab::Agent) {
 static ACTIVATE_FN: fn(*u8) = #zero::[fn(*u8)]();
 fn set_activate_fn(f: fn(*u8)) { ACTIVATE_FN = f; return; }
 
+static BADGE_FN: fn(str) = #zero::[fn(str)]();
+fn set_badge_fn(f: fn(str)) { BADGE_FN = f; return; }
+
+// Set the application's dock / launcher badge label (empty string clears it).
+// Portable no-op when the backend has no badge surface.
+fn set_badge_label(label: str) {
+    let f: fn(str) = BADGE_FN;
+    if f.is_not_null() { f(label); }
+}
+
 // Point the agent surface at `win`. Inert when no agent is serving, which is
 // every app that never called `agent::enable()`.
 fn agent_attach(win: *u8) {

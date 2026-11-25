@@ -100,6 +100,7 @@ fn install() {
     // answers the neutral zero on a Mac — the seam exists and nothing fills it.
     app_window::install_host(window::window_host());
     app::set_activate_fn(window::activate_window);
+    app::set_badge_fn(window::set_badge_label);
     theme::set_theme_changed_fn(theme_changed);
     scheduler::install_sync_tick();
     // The reactor's wake source. Without it a `spawn_ui` task runs to its
@@ -118,6 +119,7 @@ fn installed() -> bool { return INSTALLED; }
 fn uninstall() {
     app_window::uninstall_host();
     app::set_activate_fn(0 as fn(*u8));
+    app::set_badge_fn(0 as fn(str));
     mount::uninstall();
     services::uninstall_scheduler();
     gestures::uninstall_key_reader();
