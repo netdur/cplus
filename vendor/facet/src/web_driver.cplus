@@ -1,0 +1,91 @@
+// web_driver — portable programmatic hooks for a `facet/web` view. HAND-WRITTEN.
+//
+// `facet/web` covers user-driven browsing (source, back, forward, reload,
+// fire-and-forget eval). An application whose agent drives a web view needs
+// four more platform capabilities: evaluating JavaScript with a return value,
+// injecting a document-start script (for console/error capture), capturing a
+// PNG snapshot of the view, reading the live URL/title, and opting a new web
+// view into non-persistent (ephemeral) storage.
+//
+// Each backend installs its own `Driver` vtable once at startup; without a
+// backend (headless tests) every verb fails cleanly without trapping.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "./facet" as core;
+
+struct Driver {
+    set_next_non_persistent: fn(bool),
+    add_user_script: fn(*core::Node, str),
+    eval_js: fn(*core::Node, str, fn(bool, str, *u8), *u8),
+    snapshot_png: fn(*core::Node, fn(bool, *u8, usize, *u8), *u8),
+    current_url: fn(*core::Node) -> text::Text,
+    current_title: fn(*core::Node) -> text::Text,
+}
+
+static DRIVER: Driver = #zero::[Driver]();
+static HAS_DRIVER: bool = false;
+
+fn install(d: Driver) {
+    DRIVER = d;
+    HAS_DRIVER = true;
+}
+
+fn uninstall() {
+    DRIVER = #zero::[Driver]();
+    HAS_DRIVER = false;
+}
+
+fn is_installed() -> bool {
+    return HAS_DRIVER;
+}
+
+// Ask the backend to create the next `web` view with a non-persistent
+// (ephemeral) data store so it shares no cookies or logins with the system
+// browser. Cleared automatically when that view is created.
+fn set_next_non_persistent(v: bool) {
+    if !HAS_DRIVER { return; }
+    let f: fn(bool) = DRIVER.set_next_non_persistent;
+    f(v);
+}
+
+// Inject a JavaScript snippet at document start on an already-mounted `web` node.
+fn add_user_script(n: *core::Node, script: str) {
+    if !HAS_DRIVER || n.is_null() { return; }
+    let f: fn(*core::Node, str) = DRIVER.add_user_script;
+    f(n, script);
+}
+
+// Evaluate JavaScript on `n` and deliver `(ok, result_or_error)` on the UI thread.
+fn eval_js(n: *core::Node, script: str, cb: fn(bool, str, *u8), ctx: *u8 = 0 as *u8) {
+    if !HAS_DRIVER || n.is_null() {
+        cb(false, "web driver unavailable", ctx);
+        return;
+    }
+    let f: fn(*core::Node, str, fn(bool, str, *u8), *u8) = DRIVER.eval_js;
+    f(n, script, cb, ctx);
+}
+
+// Capture a PNG snapshot of `n` and deliver `(ok, bytes, len)` on the UI thread.
+fn snapshot_png(n: *core::Node, cb: fn(bool, *u8, usize, *u8), ctx: *u8 = 0 as *u8) {
+    if !HAS_DRIVER || n.is_null() {
+        cb(false, 0 as *u8, 0 as usize, ctx);
+        return;
+    }
+    let f: fn(*core::Node, fn(bool, *u8, usize, *u8), *u8) = DRIVER.snapshot_png;
+    f(n, cb, ctx);
+}
+
+// Live URL currently loaded in `n`.
+fn current_url(n: *core::Node) -> text::Text {
+    if !HAS_DRIVER || n.is_null() { return text::from_str(""); }
+    let f: fn(*core::Node) -> text::Text = DRIVER.current_url;
+    return f(n);
+}
+
+// Live document title of `n`.
+fn current_title(n: *core::Node) -> text::Text {
+    if !HAS_DRIVER || n.is_null() { return text::from_str(""); }
+    let f: fn(*core::Node) -> text::Text = DRIVER.current_title;
+    return f(n);
+}

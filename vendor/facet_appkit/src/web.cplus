@@ -27,6 +27,7 @@
 // Underneath, the up channel is WebKit's script-message handler named `facet`;
 // `window.facet.postMessage` is a document-start user script over it.
 
+import "stdlib/box" as box;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/status" as status;
@@ -37,6 +38,7 @@ import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/web" as web;
+import "facet/web_driver" as web_driver;
 import "facet/hybrid_web" as hybrid_web;
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
@@ -83,6 +85,16 @@ fn refresh_nav_state(n: *core::Node, view: *u8) {
     let w: wk::WebView = wk::WebView::from_raw(view);
     { (*p).can_go_back = w.can_go_back() };
     { (*p).can_go_forward = w.can_go_forward() };
+    let u: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("URL\0"))) };
+    if u.is_not_null() {
+        let abs: *u8 = { rt::msg_id(u, rt::sel(#str_ptr("absoluteString\0"))) };
+        if abs.is_not_null() {
+            let s: text::Text = bridge::to_text(abs);
+            if !s.is_empty() {
+                { (*p).source = s };
+            }
+        }
+    }
 }
 
 fn props_of_web(n: *core::Node) -> *props::WebProps {
@@ -209,8 +221,19 @@ fn new_web_view(config: *u8) -> *u8 {
 #[link_name = "objc_msgSend"]
 extern fn msg_id_rect_id(recv: *u8, sel: *u8, a: rt::Rect, b: *u8) -> *u8;
 
+static NEXT_NON_PERSISTENT: bool = false;
+
+fn set_next_non_persistent(v: bool) {
+    NEXT_NON_PERSISTENT = v;
+}
+
 fn create_web(n: *core::Node) -> *u8 {
     let config: *u8 = new_configuration();
+    if NEXT_NON_PERSISTENT {
+        NEXT_NON_PERSISTENT = false;
+        let ds: wk::WebsiteDataStore = wk::WebsiteDataStore::non_persistent_data_store();
+        wk::WebViewConfiguration::from_raw(config).set_website_data_store(ds);
+    }
     let v: *u8 = new_web_view(config);
     rt::release(config);
     if v.is_null() { return 0 as *u8; }
@@ -656,3 +679,152 @@ fn install_scheme(config: *u8, n: *core::Node) -> *u8 {
 
 #[link_name = "objc_msgSend"]
 extern fn msg_id_id_i64_id(recv: *u8, sel: *u8, a: *u8, b: i64, c: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn msg_id_u64_id(recv: *u8, sel: *u8, a: u64, b: *u8) -> *u8;
+
+// ---- web_driver hooks --------------------------------------------------------
+
+struct _EvalBox {
+    cb: fn(bool, str, *u8),
+    opaque ctx: *u8,
+}
+
+fn _on_eval_done(raw_ctx: *u8, result_i64: i64, err_ptr: *u8) {
+    if raw_ctx.is_null() { return; }
+    let boxed: _EvalBox = box::from_raw::[_EvalBox](raw_ctx).unwrap();
+    let cb: fn(bool, str, *u8) = boxed.cb;
+    let ctx: *u8 = boxed.ctx;
+    if err_ptr.is_not_null() {
+        let desc: *u8 = { rt::msg_id(err_ptr, rt::sel(#str_ptr("localizedDescription\0"))) };
+        let msg: text::Text = if desc.is_not_null() { bridge::to_text(desc) } else { text::from_str("JavaScript error") };
+        cb(false, msg.view(), ctx);
+        return;
+    }
+    let res_obj: *u8 = { result_i64 as *u8 };
+    if res_obj.is_null() {
+        cb(true, "", ctx);
+        return;
+    }
+    let desc: *u8 = { rt::msg_id(res_obj, rt::sel(#str_ptr("description\0"))) };
+    let txt: text::Text = if desc.is_not_null() { bridge::to_text(desc) } else { text::from_str("") };
+    cb(true, txt.view(), ctx);
+}
+
+struct _SnapBox {
+    cb: fn(bool, *u8, usize, *u8),
+    opaque ctx: *u8,
+}
+
+fn _on_snap_done(raw_ctx: *u8, img_ptr: *u8, err_ptr: *u8) {
+    if raw_ctx.is_null() { return; }
+    let boxed: _SnapBox = box::from_raw::[_SnapBox](raw_ctx).unwrap();
+    let cb: fn(bool, *u8, usize, *u8) = boxed.cb;
+    let ctx: *u8 = boxed.ctx;
+    if err_ptr.is_not_null() || img_ptr.is_null() {
+        cb(false, 0 as *u8, 0 as usize, ctx);
+        return;
+    }
+    let tiff: *u8 = { rt::msg_id(img_ptr, rt::sel(#str_ptr("TIFFRepresentation\0"))) };
+    if tiff.is_null() {
+        cb(false, 0 as *u8, 0 as usize, ctx);
+        return;
+    }
+    let rep: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSBitmapImageRep\0")),
+                                   rt::sel(#str_ptr("imageRepWithData:\0")), tiff) };
+    if rep.is_null() {
+        cb(false, 0 as *u8, 0 as usize, ctx);
+        return;
+    }
+    let props_dict: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSDictionary\0")),
+                                       rt::sel(#str_ptr("dictionary\0"))) };
+    // NSBitmapImageFileTypePNG = 4.
+    let png_data: *u8 = { msg_id_u64_id(rep, rt::sel(#str_ptr("representationUsingType:properties:\0")),
+                                        4 as u64, props_dict) };
+    if png_data.is_null() {
+        cb(false, 0 as *u8, 0 as usize, ctx);
+        return;
+    }
+    let len: usize = { rt::msg_u64(png_data, rt::sel(#str_ptr("length\0"))) } as usize;
+    let bytes: *u8 = { rt::msg_id(png_data, rt::sel(#str_ptr("bytes\0"))) };
+    if len == (0 as usize) || bytes.is_null() {
+        cb(false, 0 as *u8, 0 as usize, ctx);
+        return;
+    }
+    cb(true, bytes, len, ctx);
+}
+
+fn driver_add_user_script(n: *core::Node, script: str) {
+    if n.is_null() || script == "" { return; }
+    let v: *u8 = core::native(n);
+    if v.is_null() || !is_web_view(v) { return; }
+    let cfg: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("configuration\0"))) };
+    if cfg.is_null() { return; }
+    let ucc: *u8 = { rt::msg_id(cfg, rt::sel(#str_ptr("userContentController\0"))) };
+    if ucc.is_null() { return; }
+    let us: wk::UserScript = wk::UserScript::new(script, wk::UserScriptInjectionTime::AtDocumentStart, false);
+    wk::UserContentController::from_raw(ucc).add_user_script(us);
+}
+
+fn driver_eval_js(n: *core::Node, script: str, cb: fn(bool, str, *u8), ctx: *u8) {
+    if n.is_null() { cb(false, "no web view", ctx); return; }
+    let v: *u8 = core::native(n);
+    if v.is_null() || !is_web_view(v) { cb(false, "web view not mounted", ctx); return; }
+    match box::new::[_EvalBox](_EvalBox { cb: cb, ctx: ctx }) {
+        option::Option[box::Box[_EvalBox]]::Some(b) => {
+            let raw: *u8 = b.into_raw() as *u8;
+            wk::WebView::from_raw(v).evaluate_java_script(script, _on_eval_done, raw);
+        }
+        option::Option[box::Box[_EvalBox]]::None => {
+            cb(false, "out of memory", ctx);
+        }
+    }
+}
+
+fn driver_snapshot_png(n: *core::Node, cb: fn(bool, *u8, usize, *u8), ctx: *u8) {
+    if n.is_null() { cb(false, 0 as *u8, 0 as usize, ctx); return; }
+    let v: *u8 = core::native(n);
+    if v.is_null() || !is_web_view(v) { cb(false, 0 as *u8, 0 as usize, ctx); return; }
+    match box::new::[_SnapBox](_SnapBox { cb: cb, ctx: ctx }) {
+        option::Option[box::Box[_SnapBox]]::Some(b) => {
+            let raw: *u8 = b.into_raw() as *u8;
+            let cfg_raw: *u8 = { rt::alloc_init(#str_ptr("WKSnapshotConfiguration\0")) };
+            let cfg: wk::SnapshotConfiguration = wk::SnapshotConfiguration::from_raw(cfg_raw);
+            wk::WebView::from_raw(v).take_snapshot_with_configuration(cfg, _on_snap_done, raw);
+            if cfg_raw.is_not_null() { rt::release(cfg_raw); }
+        }
+        option::Option[box::Box[_SnapBox]]::None => {
+            cb(false, 0 as *u8, 0 as usize, ctx);
+        }
+    }
+}
+
+fn driver_current_url(n: *core::Node) -> text::Text {
+    if n.is_null() { return text::from_str(""); }
+    let v: *u8 = core::native(n);
+    if v.is_null() || !is_web_view(v) { return text::from_str(""); }
+    let u: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("URL\0"))) };
+    if u.is_null() { return text::from_str(""); }
+    let abs: *u8 = { rt::msg_id(u, rt::sel(#str_ptr("absoluteString\0"))) };
+    if abs.is_null() { return text::from_str(""); }
+    return bridge::to_text(abs);
+}
+
+fn driver_current_title(n: *core::Node) -> text::Text {
+    if n.is_null() { return text::from_str(""); }
+    let v: *u8 = core::native(n);
+    if v.is_null() || !is_web_view(v) { return text::from_str(""); }
+    let t: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("title\0"))) };
+    if t.is_null() { return text::from_str(""); }
+    return bridge::to_text(t);
+}
+
+fn driver() -> web_driver::Driver {
+    return web_driver::Driver {
+        set_next_non_persistent: set_next_non_persistent,
+        add_user_script: driver_add_user_script,
+        eval_js: driver_eval_js,
+        snapshot_png: driver_snapshot_png,
+        current_url: driver_current_url,
+        current_title: driver_current_title,
+    };
+}

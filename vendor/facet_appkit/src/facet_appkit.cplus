@@ -47,6 +47,8 @@ import "./window" as window;
 import "./app_events_appkit" as app_events_appkit;
 import "./dialogs" as dialogs;
 import "facet/navigation" as navigation;
+import "facet/web_driver" as web_driver;
+import "./web" as web;
 
 type Node = flex::Node;
 
@@ -91,6 +93,7 @@ fn install() {
     relist::set_scroll_metrics_fn(recycler::relist_scroll_metrics);
     // facet/text_metrics: a string measured through this backend's own label.
     text_metrics::set_measure_fn(views::measure_text);
+    web_driver::install(web::driver());
     // A screen the navigator PRESENTS is a sheet on the Mac (spendwise S20 item 6).
     navigation::set_modal_fns(dialogs::present_screen_sheet, dialogs::dismiss_screen_sheet);
     // The window cursor's platform half. Without this `window::find(k).frame()`
@@ -122,6 +125,7 @@ fn uninstall() {
     theme::set_is_dark_fn(0 as fn() -> bool);
     theme::set_theme_changed_fn(0 as fn());
     text_metrics::set_measure_fn(0 as fn(str, f64, *text_metrics::Style) -> vocab::Size);
+    web_driver::uninstall();
     relist::set_scroll_metrics_fn(0 as fn(*core::Node) -> relist::ScrollMetrics);
     INSTALLED = false;
 }

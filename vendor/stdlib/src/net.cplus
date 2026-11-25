@@ -229,6 +229,28 @@ impl TcpStream {
         return result::io_ok::[usize](written);
     }
 
+    // Read one chunk up to `cap` bytes, waiting at most `timeout_ms` for
+    // readability. Returns >0 bytes read, 0 on EOF/timeout, or -1 on error.
+    fn read_some(ref this, buf: *u8, cap: usize, timeout_ms: i32) -> isize {
+        if this._fd < (0 as i32) || buf.is_null() || cap == (0 as usize) { return -1 as isize; }
+        if timeout_ms > (0 as i32) {
+            var secs: i64 = ((timeout_ms +% (999 as i32)) / (1000 as i32)) as i64;
+            if secs < (1 as i64) { secs = 1 as i64; }
+            let _ = netsys::set_timeout(this._fd, secs);
+        }
+        loop {
+            let n: isize = netsys::recv_fd(this._fd, buf, cap);
+            if n < (0 as isize) {
+                let err: i32 = netsys::errno();
+                if err == netsys::eintr() { continue; }
+                if err == netsys::eagain() { return 0 as isize; }
+                return -1 as isize;
+            }
+            return n;
+        }
+        return 0 as isize;
+    }
+
     // Half-close the write side so the peer sees EOF. Pairs with a remote
     // `read_to_end` that would otherwise block forever waiting for more.
     fn shutdown_write(this) {
